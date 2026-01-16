@@ -11,14 +11,6 @@ interface HeaderProps {
 }
 
 export function Header({ repoPath, branch, isLoading, error }: HeaderProps): React.ReactElement {
-  if (error) {
-    return (
-      <Box justifyContent="space-between">
-        <Text color="red">{error}</Text>
-      </Box>
-    );
-  }
-
   if (!repoPath) {
     return (
       <Box>
@@ -29,12 +21,15 @@ export function Header({ repoPath, branch, isLoading, error }: HeaderProps): Rea
   }
 
   const displayPath = shortenPath(repoPath);
+  const isNotGitRepo = error === 'Not a git repository';
 
   return (
     <Box justifyContent="space-between">
       <Box>
-        <Text color="cyan" bold>{displayPath}</Text>
-        {isLoading && <Text color="yellow"> (loading...)</Text>}
+        <Text bold color="cyan">{displayPath}</Text>
+        {isLoading && <Text color="yellow"> ⟳</Text>}
+        {isNotGitRepo && <Text color="yellow"> (not a git repository)</Text>}
+        {error && !isNotGitRepo && <Text color="red"> ({error})</Text>}
       </Box>
 
       {branch && (
