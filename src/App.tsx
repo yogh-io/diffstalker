@@ -445,6 +445,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             scrollOffset={historyScrollOffset}
             maxHeight={bottomPaneHeight - 1}
             isActive={currentPane === 'history'}
+            width={terminalWidth}
           />
         )}
       </Box>

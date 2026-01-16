@@ -8,6 +8,7 @@ interface HistoryViewProps {
   scrollOffset: number;
   maxHeight: number;
   isActive: boolean;
+  width: number;
 }
 
 function formatDate(date: Date): string {
@@ -39,7 +40,8 @@ export function HistoryView({
   selectedIndex,
   scrollOffset,
   maxHeight,
-  isActive
+  isActive,
+  width
 }: HistoryViewProps): React.ReactElement {
   if (commits.length === 0) {
     return (
@@ -57,6 +59,16 @@ export function HistoryView({
         const actualIndex = scrollOffset + idx;
         const isSelected = actualIndex === selectedIndex && isActive;
 
+        const dateStr = formatDate(commit.date);
+        // Calculate available space: width - hash(7) - spaces(4) - date - parens(2) - refs - buffer
+        const fixedWidth = 7 + 4 + dateStr.length + 2 + (commit.refs ? commit.refs.length + 1 : 0);
+        const availableWidth = Math.max(20, width - fixedWidth);
+
+        const needsTruncation = commit.message.length > availableWidth;
+        const displayMessage = needsTruncation
+          ? commit.message.slice(0, availableWidth - 3) + '...'
+          : commit.message;
+
         return (
           <Box key={commit.hash}>
             <Text color="yellow">{commit.shortHash}</Text>
@@ -66,10 +78,10 @@ export function HistoryView({
               bold={isSelected}
               inverse={isSelected}
             >
-              {commit.message.slice(0, 60)}{commit.message.length > 60 ? '...' : ''}
+              {displayMessage}
             </Text>
             <Text> </Text>
-            <Text dimColor>({formatDate(commit.date)})</Text>
+            <Text dimColor>({dateStr})</Text>
             {commit.refs && (
               <>
                 <Text> </Text>
