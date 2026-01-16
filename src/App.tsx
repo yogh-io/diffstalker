@@ -72,12 +72,13 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   // Commit input focus state (for keybinding control)
   const [commitInputFocused, setCommitInputFocused] = useState(false);
 
-  // Fetch commit history when switching to history tab or when repo changes
+  // Fetch commit history when switching to history tab, repo changes, or status updates
+  // Status updates after commits (via git watcher), so history auto-refreshes
   useEffect(() => {
     if (repoPath && bottomTab === 'history') {
       getCommitHistory(repoPath, 100).then(setCommits);
     }
-  }, [repoPath, bottomTab]);
+  }, [repoPath, bottomTab, status]);
 
   // File list helpers
   const files = status?.files ?? [];
