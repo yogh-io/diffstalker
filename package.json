@@ -1,0 +1,40 @@
+{
+  "name": "diffstalker",
+  "version": "0.1.0",
+  "description": "Terminal application that displays git diff/status for directories",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "diffstalker": "./bin/diffstalker"
+  },
+  "scripts": {
+    "dev": "tsx src/index.tsx",
+    "build": "tsc",
+    "bundle": "npm run build && ncc build dist/index.js -o dist/bundle -m",
+    "start": "node dist/index.js",
+    "start:bundle": "node dist/bundle/index.js"
+  },
+  "keywords": [
+    "git",
+    "diff",
+    "terminal",
+    "tui",
+    "cli"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "chokidar": "^4.0.3",
+    "ink": "^5.0.1",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "@types/react": "^18.3.18",
+    "@vercel/ncc": "^0.38.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
