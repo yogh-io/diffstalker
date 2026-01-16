@@ -42,6 +42,8 @@ export function useGit(repoPath: string | null): UseGitResult {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refreshingRef = useRef(false);
+  const debouncedRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshRef = useRef<() => Promise<void>>();
 
   const refresh = useCallback(async () => {
     if (!repoPath) {
@@ -111,7 +113,20 @@ export function useGit(repoPath: string | null): UseGitResult {
     }
   }, [repoPath, selectedFile]);
 
-  // Watch .git directory for external changes
+  // Keep ref updated for use in debouncedRefresh
+  refreshRef.current = refresh;
+
+  // Debounced refresh for use after rapid operations (stage/unstage)
+  const debouncedRefresh = useCallback(() => {
+    if (debouncedRefreshTimer.current) {
+      clearTimeout(debouncedRefreshTimer.current);
+    }
+    debouncedRefreshTimer.current = setTimeout(() => {
+      refreshRef.current?.();
+    }, 150);
+  }, []);
+
+  // Watch .git directory and working directory for changes
   useEffect(() => {
     if (!repoPath) return;
 
@@ -123,7 +138,8 @@ export function useGit(repoPath: string | null): UseGitResult {
     const headFile = path.join(gitDir, 'HEAD');
     const refsDir = path.join(gitDir, 'refs');
 
-    const watcher = watch([indexFile, headFile, refsDir], {
+    // Watch git internals
+    const gitWatcher = watch([indexFile, headFile, refsDir], {
       persistent: true,
       ignoreInitial: true,
       awaitWriteFinish: {
@@ -132,24 +148,39 @@ export function useGit(repoPath: string | null): UseGitResult {
       },
     });
 
-    // Debounce refresh to avoid hammering during rapid changes
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const debouncedRefresh = () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        refresh();
-      }, 200);
-    };
+    // Watch working directory for file changes (to detect unstaged changes)
+    const workingDirWatcher = watch(repoPath, {
+      persistent: true,
+      ignoreInitial: true,
+      ignored: [
+        '**/node_modules/**',
+        '**/.git/**',
+        '**/dist/**',
+        '**/build/**',
+        '**/*.log',
+        '**/.DS_Store',
+      ],
+      awaitWriteFinish: {
+        stabilityThreshold: 100,
+        pollInterval: 50,
+      },
+      depth: 10,
+    });
 
-    watcher.on('change', debouncedRefresh);
-    watcher.on('add', debouncedRefresh);
-    watcher.on('unlink', debouncedRefresh);
+    // Use the shared debounced refresh to avoid multiple timers
+    gitWatcher.on('change', debouncedRefresh);
+    gitWatcher.on('add', debouncedRefresh);
+    gitWatcher.on('unlink', debouncedRefresh);
+
+    workingDirWatcher.on('change', debouncedRefresh);
+    workingDirWatcher.on('add', debouncedRefresh);
+    workingDirWatcher.on('unlink', debouncedRefresh);
 
     return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      watcher.close();
+      gitWatcher.close();
+      workingDirWatcher.close();
     };
-  }, [repoPath, refresh]);
+  }, [repoPath, debouncedRefresh]);
 
   // Refresh when repoPath changes
   useEffect(() => {
@@ -184,23 +215,49 @@ export function useGit(repoPath: string | null): UseGitResult {
 
   const stage = useCallback(async (file: FileEntry) => {
     if (!repoPath) return;
+    // Optimistic update: immediately move file to staged in UI
+    setStatus(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        files: prev.files.map(f =>
+          f.path === file.path && !f.staged ? { ...f, staged: true } : f
+        ),
+      };
+    });
     try {
       await stageFile(repoPath, file.path);
-      await refresh();
+      // Debounced refresh to sync with actual git state
+      debouncedRefresh();
     } catch (err) {
+      // Revert optimistic update on error
+      refresh();
       setError(`Failed to stage ${file.path}: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [repoPath, refresh]);
+  }, [repoPath, refresh, debouncedRefresh]);
 
   const unstage = useCallback(async (file: FileEntry) => {
     if (!repoPath) return;
+    // Optimistic update: immediately move file to unstaged in UI
+    setStatus(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        files: prev.files.map(f =>
+          f.path === file.path && f.staged ? { ...f, staged: false } : f
+        ),
+      };
+    });
     try {
       await unstageFile(repoPath, file.path);
-      await refresh();
+      // Debounced refresh to sync with actual git state
+      debouncedRefresh();
     } catch (err) {
+      // Revert optimistic update on error
+      refresh();
       setError(`Failed to unstage ${file.path}: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [repoPath, refresh]);
+  }, [repoPath, refresh, debouncedRefresh]);
 
   const discard = useCallback(async (file: FileEntry) => {
     if (!repoPath) return;

@@ -1,7 +1,7 @@
 import { useInput } from 'ink';
 
-export type Pane = 'files' | 'diff' | 'commit';
-export type BottomTab = 'diff' | 'commit';
+export type Pane = 'files' | 'diff' | 'commit' | 'history';
+export type BottomTab = 'diff' | 'commit' | 'history';
 
 export interface KeymapActions {
   onStage: () => void;
@@ -24,11 +24,8 @@ export function useKeymap(
   isCommitInputActive: boolean
 ): void {
   useInput((input, key) => {
-    // Don't handle keys when commit input is active (except Escape and Ctrl+C)
+    // Don't handle keys when commit input is active - let CommitPanel handle them
     if (isCommitInputActive) {
-      if (key.escape) {
-        actions.onSwitchTab('diff');
-      }
       return;
     }
 
@@ -58,13 +55,17 @@ export function useKeymap(
       return;
     }
 
-    // Tab switching: 1/2
+    // Tab switching: 1/2/3
     if (input === '1') {
       actions.onSwitchTab('diff');
       return;
     }
     if (input === '2') {
       actions.onSwitchTab('commit');
+      return;
+    }
+    if (input === '3') {
+      actions.onSwitchTab('history');
       return;
     }
 

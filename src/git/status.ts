@@ -240,3 +240,29 @@ export async function getHeadMessage(repoPath: string): Promise<string> {
     return '';
   }
 }
+
+export interface CommitInfo {
+  hash: string;
+  shortHash: string;
+  message: string;
+  author: string;
+  date: Date;
+  refs: string;
+}
+
+export async function getCommitHistory(repoPath: string, count: number = 50): Promise<CommitInfo[]> {
+  const git = simpleGit(repoPath);
+  try {
+    const log = await git.log({ n: count });
+    return log.all.map(entry => ({
+      hash: entry.hash,
+      shortHash: entry.hash.slice(0, 7),
+      message: entry.message.split('\n')[0], // First line only
+      author: entry.author_name,
+      date: new Date(entry.date),
+      refs: entry.refs || '',
+    }));
+  } catch {
+    return [];
+  }
+}

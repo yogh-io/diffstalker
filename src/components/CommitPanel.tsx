@@ -10,6 +10,7 @@ interface CommitPanelProps {
   onCommit: (message: string, amend: boolean) => Promise<void>;
   onCancel: () => void;
   getHeadMessage: () => Promise<string>;
+  onInputFocusChange?: (focused: boolean) => void;
 }
 
 export function CommitPanel({
@@ -19,14 +20,21 @@ export function CommitPanel({
   onCommit,
   onCancel,
   getHeadMessage,
+  onInputFocusChange,
 }: CommitPanelProps): React.ReactElement {
   const [message, setMessage] = useState('');
   const [amend, setAmend] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inputFocused, setInputFocused] = useState(false);
 
   const aiAvailable = isAIAvailable();
+
+  // Notify parent of focus state changes
+  useEffect(() => {
+    onInputFocusChange?.(inputFocused);
+  }, [inputFocused, onInputFocusChange]);
 
   // Load HEAD message when amend is toggled
   useEffect(() => {
@@ -58,11 +66,37 @@ export function CommitPanel({
   useInput((input, key) => {
     if (!isActive) return;
 
+    // When input is focused, Escape unfocuses it (but stays on commit tab)
+    // When input is unfocused, Escape cancels and goes back to diff
     if (key.escape) {
-      onCancel();
+      if (inputFocused) {
+        setInputFocused(false);
+      } else {
+        onCancel();
+      }
       return;
     }
 
+    // When input is unfocused, allow refocusing with 'i' or Enter
+    if (!inputFocused) {
+      if (input === 'i' || key.return) {
+        setInputFocused(true);
+        return;
+      }
+      // Toggle amend with 'a' when unfocused
+      if (input === 'a') {
+        setAmend(!amend);
+        return;
+      }
+      // Generate with 'g' when unfocused
+      if (input === 'g' && aiAvailable) {
+        handleGenerate();
+        return;
+      }
+      return; // Don't handle other keys - let them bubble up to useKeymap
+    }
+
+    // When input is focused, only handle special keys
     // Toggle amend with 'a' when message is empty
     if (input === 'a' && !message) {
       setAmend(!amend);
@@ -117,13 +151,17 @@ export function CommitPanel({
         {amend && <Text color="yellow"> (amending)</Text>}
       </Box>
 
-      <Box borderStyle="round" paddingX={1}>
-        <TextInput
-          value={message}
-          onChange={setMessage}
-          onSubmit={handleSubmit}
-          placeholder="Enter commit message..."
-        />
+      <Box borderStyle="round" borderColor={inputFocused ? 'cyan' : undefined} paddingX={1}>
+        {inputFocused ? (
+          <TextInput
+            value={message}
+            onChange={setMessage}
+            onSubmit={handleSubmit}
+            placeholder="Enter commit message..."
+          />
+        ) : (
+          <Text dimColor={!message}>{message || 'Press i or Enter to edit...'}</Text>
+        )}
       </Box>
 
       <Box marginTop={1} gap={2}>
@@ -151,7 +189,7 @@ export function CommitPanel({
 
       <Box marginTop={1}>
         <Text dimColor>
-          Staged: {stagedCount} file(s) | Enter: commit | Esc: cancel
+          Staged: {stagedCount} file(s) | {inputFocused ? 'Enter: commit | Esc: unfocus' : 'i/Enter: edit | Esc: cancel | 1/3: switch tab'}
           {aiAvailable && ' | g: AI generate'}
         </Text>
       </Box>

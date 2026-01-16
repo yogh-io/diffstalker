@@ -1,10 +1,11 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
-import { FileEntry } from './git/status.js';
+import { FileEntry, CommitInfo, getCommitHistory } from './git/status.js';
 import { Header } from './components/Header.js';
 import { FileList, getFileAtIndex, getTotalFileCount } from './components/FileList.js';
 import { DiffView } from './components/DiffView.js';
 import { CommitPanel } from './components/CommitPanel.js';
+import { HistoryView } from './components/HistoryView.js';
 import { Footer } from './components/Footer.js';
 import { useWatcher } from './hooks/useWatcher.js';
 import { useGit } from './hooks/useGit.js';
@@ -62,6 +63,21 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [diffScrollOffset, setDiffScrollOffset] = useState(0);
   const [fileListScrollOffset, setFileListScrollOffset] = useState(0);
   const [pendingDiscard, setPendingDiscard] = useState<FileEntry | null>(null);
+
+  // History state
+  const [commits, setCommits] = useState<CommitInfo[]>([]);
+  const [historyScrollOffset, setHistoryScrollOffset] = useState(0);
+  const [historySelectedIndex, setHistorySelectedIndex] = useState(0);
+
+  // Commit input focus state (for keybinding control)
+  const [commitInputFocused, setCommitInputFocused] = useState(false);
+
+  // Fetch commit history when switching to history tab or when repo changes
+  useEffect(() => {
+    if (repoPath && bottomTab === 'history') {
+      getCommitHistory(repoPath, 100).then(setCommits);
+    }
+  }, [repoPath, bottomTab]);
 
   // File list helpers
   const files = status?.files ?? [];
@@ -242,8 +258,17 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       setSelectedIndex(prev => Math.max(0, prev - 1));
     } else if (currentPane === 'diff') {
       setDiffScrollOffset(prev => Math.max(0, prev - 3));
+    } else if (currentPane === 'history') {
+      setHistorySelectedIndex(prev => {
+        const newIndex = Math.max(0, prev - 1);
+        // Auto-scroll to keep selection visible
+        if (newIndex < historyScrollOffset) {
+          setHistoryScrollOffset(newIndex);
+        }
+        return newIndex;
+      });
     }
-  }, [currentPane]);
+  }, [currentPane, historyScrollOffset]);
 
   const handleNavigateDown = useCallback(() => {
     if (currentPane === 'files') {
@@ -251,22 +276,34 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     } else if (currentPane === 'diff') {
       const maxOffset = Math.max(0, (diff?.lines.length ?? 0) - (bottomPaneHeight - 4));
       setDiffScrollOffset(prev => Math.min(maxOffset, prev + 3));
+    } else if (currentPane === 'history') {
+      setHistorySelectedIndex(prev => {
+        const newIndex = Math.min(commits.length - 1, prev + 1);
+        // Auto-scroll to keep selection visible
+        const visibleEnd = historyScrollOffset + bottomPaneHeight - 2;
+        if (newIndex >= visibleEnd) {
+          setHistoryScrollOffset(prev => prev + 1);
+        }
+        return newIndex;
+      });
     }
-  }, [currentPane, totalFiles, diff?.lines.length, bottomPaneHeight]);
+  }, [currentPane, totalFiles, diff?.lines.length, bottomPaneHeight, commits.length, historyScrollOffset]);
 
   const handleTogglePane = useCallback(() => {
     setCurrentPane(prev => {
-      if (prev === 'files') return 'diff';
+      if (prev === 'files') return bottomTab;
       return 'files';
     });
-  }, []);
+  }, [bottomTab]);
 
   const handleSwitchTab = useCallback((tab: BottomTab) => {
     setBottomTab(tab);
     if (tab === 'commit') {
       setCurrentPane('commit');
+    } else if (tab === 'history') {
+      setCurrentPane('history');
     } else {
-      setCurrentPane(prev => prev === 'commit' ? 'diff' : prev);
+      setCurrentPane('diff');
     }
   }, []);
 
@@ -302,6 +339,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   }, []);
 
   // Use keymap (no config param anymore)
+  // Only suppress keybindings when commit input is actually focused
   useKeymap(
     {
       onStage: handleStage,
@@ -318,7 +356,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       onSelect: handleSelect,
     },
     currentPane,
-    bottomTab === 'commit' && currentPane === 'commit'
+    commitInputFocused
   );
 
   // Handle confirmation dialog input
@@ -370,14 +408,17 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
       <Separator />
 
-      {/* Bottom pane: Diff or Commit */}
+      {/* Bottom pane: Diff, Commit, or History */}
       <Box flexDirection="column" height={bottomPaneHeight} overflowY="hidden">
         <Box justifyContent="space-between">
-          <Text bold color={currentPane === 'diff' || currentPane === 'commit' ? 'cyan' : undefined}>
-            {bottomTab === 'diff' ? 'DIFF' : 'COMMIT'}
+          <Text bold color={currentPane !== 'files' ? 'cyan' : undefined}>
+            {bottomTab === 'diff' ? 'DIFF' : bottomTab === 'commit' ? 'COMMIT' : 'HISTORY'}
           </Text>
           {selectedFile && bottomTab === 'diff' && (
             <Text dimColor>{selectedFile.path}</Text>
+          )}
+          {bottomTab === 'history' && (
+            <Text dimColor>{commits.length} commits</Text>
           )}
         </Box>
 
@@ -387,7 +428,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             maxHeight={bottomPaneHeight - 1}
             scrollOffset={diffScrollOffset}
           />
-        ) : (
+        ) : bottomTab === 'commit' ? (
           <CommitPanel
             isActive={currentPane === 'commit'}
             stagedCount={stagedCount}
@@ -395,6 +436,15 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             onCommit={commit}
             onCancel={handleCommitCancel}
             getHeadMessage={getHeadCommitMessage}
+            onInputFocusChange={setCommitInputFocused}
+          />
+        ) : (
+          <HistoryView
+            commits={commits}
+            selectedIndex={historySelectedIndex}
+            scrollOffset={historyScrollOffset}
+            maxHeight={bottomPaneHeight - 1}
+            isActive={currentPane === 'history'}
           />
         )}
       </Box>
