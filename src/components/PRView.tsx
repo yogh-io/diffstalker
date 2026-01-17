@@ -10,6 +10,8 @@ interface PRViewProps {
   maxHeight: number;
   width: number;
   isActive: boolean;
+  includeUncommitted: boolean;
+  onToggleIncludeUncommitted: () => void;
 }
 
 interface RenderRow {
@@ -63,15 +65,19 @@ function FileHeaderComponent({ file }: { file: PRFileDiff }): React.ReactElement
     renamed: 'R',
   };
 
+  const isUncommitted = file.isUncommitted ?? false;
+
   return (
     <Box>
-      <Text color={statusColors[file.status]} bold>{statusChars[file.status]}</Text>
-      <Text bold> {file.path}</Text>
+      {isUncommitted && <Text color="magenta" bold>*</Text>}
+      <Text color={isUncommitted ? 'magenta' : statusColors[file.status]} bold>{statusChars[file.status]}</Text>
+      <Text bold color={isUncommitted ? 'magenta' : undefined}> {file.path}</Text>
       <Text dimColor> (</Text>
       <Text color="green">+{file.additions}</Text>
       <Text dimColor> </Text>
       <Text color="red">-{file.deletions}</Text>
       <Text dimColor>)</Text>
+      {isUncommitted && <Text color="magenta" dimColor> [uncommitted]</Text>}
     </Box>
   );
 }
@@ -84,6 +90,8 @@ export function PRView({
   maxHeight,
   width,
   isActive,
+  includeUncommitted,
+  onToggleIncludeUncommitted,
 }: PRViewProps): React.ReactElement {
   // Header line
   const renderHeader = (): React.ReactElement => {
@@ -126,7 +134,10 @@ export function PRView({
         {uncommittedCount > 0 && (
           <>
             <Text dimColor> | </Text>
-            <Text color="yellow">{uncommittedCount} uncommitted</Text>
+            <Text color={includeUncommitted ? 'magenta' : 'yellow'}>
+              [{includeUncommitted ? 'x' : ' '}] Include uncommitted
+            </Text>
+            <Text dimColor> (u)</Text>
           </>
         )}
       </Box>

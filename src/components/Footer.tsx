@@ -14,6 +14,11 @@ export function Footer({ activeTab }: FooterProps): React.ReactElement {
         <Text dimColor>^A</Text> stage all{' '}
         <Text dimColor>rclick</Text> discard{' '}
         <Text dimColor>c</Text> commit{' '}
+        {activeTab === 'pr' && (
+          <>
+            <Text dimColor>u</Text> uncommitted{' '}
+          </>
+        )}
         <Text dimColor>q</Text> quit
       </Text>
 

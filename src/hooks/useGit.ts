@@ -20,6 +20,7 @@ import {
   getStagedDiff,
   getDefaultBaseBranch,
   getDiffBetweenRefs,
+  getPRDiffWithUncommitted,
   DiffResult,
   PRDiff,
 } from '../git/diff.js';
@@ -45,7 +46,7 @@ export interface UseGitResult {
   prBaseBranch: string | null;
   prLoading: boolean;
   prError: string | null;
-  refreshPRDiff: () => Promise<void>;
+  refreshPRDiff: (includeUncommitted?: boolean) => Promise<void>;
 }
 
 export function useGit(repoPath: string | null): UseGitResult {
@@ -328,7 +329,7 @@ export function useGit(repoPath: string | null): UseGitResult {
     return getHeadMessage(repoPath);
   }, [repoPath]);
 
-  const refreshPRDiff = useCallback(async () => {
+  const refreshPRDiff = useCallback(async (includeUncommitted: boolean = false) => {
     if (!repoPath) return;
     setPRLoading(true);
     setPRError(null);
@@ -339,7 +340,9 @@ export function useGit(repoPath: string | null): UseGitResult {
         setPRBaseBranch(base);
       }
       if (base) {
-        const diff = await getDiffBetweenRefs(repoPath, base);
+        const diff = includeUncommitted
+          ? await getPRDiffWithUncommitted(repoPath, base)
+          : await getDiffBetweenRefs(repoPath, base);
         setPRDiff(diff);
       } else {
         setPRDiff(null);

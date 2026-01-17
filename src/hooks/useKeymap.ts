@@ -16,6 +16,7 @@ export interface KeymapActions {
   onTogglePane: () => void;
   onSwitchTab: (tab: BottomTab) => void;
   onSelect: () => void;
+  onToggleIncludeUncommitted?: () => void;
 }
 
 export function useKeymap(
@@ -70,6 +71,12 @@ export function useKeymap(
     }
     if (input === '4') {
       actions.onSwitchTab('pr');
+      return;
+    }
+
+    // Toggle include uncommitted in PR view: u
+    if (input === 'u' && actions.onToggleIncludeUncommitted) {
+      actions.onToggleIncludeUncommitted();
       return;
     }
 

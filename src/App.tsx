@@ -76,6 +76,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
   // PR view state
   const [prScrollOffset, setPRScrollOffset] = useState(0);
+  const [includeUncommitted, setIncludeUncommitted] = useState(false);
 
   // Commit input focus state (for keybinding control)
   const [commitInputFocused, setCommitInputFocused] = useState(false);
@@ -88,12 +89,12 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     }
   }, [repoPath, bottomTab, status]);
 
-  // Fetch PR diff when switching to PR tab or when repo/status changes
+  // Fetch PR diff when switching to PR tab, when repo/status changes, or when toggle changes
   useEffect(() => {
     if (repoPath && bottomTab === 'pr') {
-      refreshPRDiff();
+      refreshPRDiff(includeUncommitted);
     }
-  }, [repoPath, bottomTab, status, refreshPRDiff]);
+  }, [repoPath, bottomTab, status, refreshPRDiff, includeUncommitted]);
 
   // File list helpers
   const files = status?.files ?? [];
@@ -419,6 +420,10 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     setCurrentPane('files');
   }, []);
 
+  const handleToggleIncludeUncommitted = useCallback(() => {
+    setIncludeUncommitted(prev => !prev);
+  }, []);
+
   // Use keymap (no config param anymore)
   // Only suppress keybindings when commit input is actually focused
   useKeymap(
@@ -435,6 +440,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       onTogglePane: handleTogglePane,
       onSwitchTab: handleSwitchTab,
       onSelect: handleSelect,
+      onToggleIncludeUncommitted: handleToggleIncludeUncommitted,
     },
     currentPane,
     commitInputFocused
@@ -539,6 +545,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             maxHeight={bottomPaneHeight - 1}
             width={terminalWidth}
             isActive={currentPane === 'pr'}
+            includeUncommitted={includeUncommitted}
+            onToggleIncludeUncommitted={handleToggleIncludeUncommitted}
           />
         )}
       </Box>
