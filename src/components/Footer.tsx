@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 interface FooterProps {
-  activeTab: 'diff' | 'commit' | 'history';
+  activeTab: 'diff' | 'commit' | 'history' | 'pr';
 }
 
 export function Footer({ activeTab }: FooterProps): React.ReactElement {
@@ -28,6 +28,10 @@ export function Footer({ activeTab }: FooterProps): React.ReactElement {
         {' '}
         <Text color={activeTab === 'history' ? 'cyan' : undefined} bold={activeTab === 'history'}>
           [3]History
+        </Text>
+        {' '}
+        <Text color={activeTab === 'pr' ? 'cyan' : undefined} bold={activeTab === 'pr'}>
+          [4]PR
         </Text>
       </Text>
     </Box>

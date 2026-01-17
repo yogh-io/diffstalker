@@ -6,6 +6,7 @@ import { FileList, getFileAtIndex, getTotalFileCount } from './components/FileLi
 import { DiffView } from './components/DiffView.js';
 import { CommitPanel } from './components/CommitPanel.js';
 import { HistoryView } from './components/HistoryView.js';
+import { PRView } from './components/PRView.js';
 import { Footer } from './components/Footer.js';
 import { useWatcher } from './hooks/useWatcher.js';
 import { useGit } from './hooks/useGit.js';
@@ -30,12 +31,12 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   // Get terminal dimensions for layout (reactive to resize)
   const { rows: terminalHeight, columns: terminalWidth } = useTerminalSize();
   const contentHeight = terminalHeight - LAYOUT_OVERHEAD;
-  const topPaneHeight = Math.floor(contentHeight * 0.4);
-  const bottomPaneHeight = contentHeight - topPaneHeight;
 
-  // File watcher (or use initial path)
-  const watchedPath = useWatcher(config.targetFile);
-  const repoPath = initialPath ?? watchedPath;
+  // File watcher (only active when config.watcherEnabled is true)
+  const watcherState = useWatcher(config.watcherEnabled, config.targetFile, config.debug);
+
+  // Determine repo path with priority: CLI path > watcher path > cwd
+  const repoPath = initialPath ?? watcherState.path ?? process.cwd();
 
   // Git state
   const {
@@ -54,6 +55,10 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     commit,
     refresh,
     getHeadCommitMessage,
+    prDiff,
+    prLoading,
+    prError,
+    refreshPRDiff,
   } = useGit(repoPath);
 
   // UI state
@@ -69,6 +74,9 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [historyScrollOffset, setHistoryScrollOffset] = useState(0);
   const [historySelectedIndex, setHistorySelectedIndex] = useState(0);
 
+  // PR view state
+  const [prScrollOffset, setPRScrollOffset] = useState(0);
+
   // Commit input focus state (for keybinding control)
   const [commitInputFocused, setCommitInputFocused] = useState(false);
 
@@ -80,10 +88,43 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     }
   }, [repoPath, bottomTab, status]);
 
+  // Fetch PR diff when switching to PR tab or when repo/status changes
+  useEffect(() => {
+    if (repoPath && bottomTab === 'pr') {
+      refreshPRDiff();
+    }
+  }, [repoPath, bottomTab, status, refreshPRDiff]);
+
   // File list helpers
   const files = status?.files ?? [];
   const totalFiles = getTotalFileCount(files);
   const stagedCount = files.filter(f => f.staged).length;
+
+  // Calculate dynamic layout based on file count
+  const { topPaneHeight, bottomPaneHeight } = useMemo(() => {
+    const unstagedCount = files.filter(f => !f.staged).length;
+    const stagedFileCount = files.filter(f => f.staged).length;
+
+    // Calculate content rows needed for staging area
+    // 1 for "STAGING AREA" header
+    // unstaged header + files (if any)
+    // spacer (if both sections exist)
+    // staged header + files (if any)
+    let neededRows = 1; // "STAGING AREA" header
+    if (unstagedCount > 0) neededRows += 1 + unstagedCount; // header + files
+    if (stagedFileCount > 0) neededRows += 1 + stagedFileCount; // header + files
+    if (unstagedCount > 0 && stagedFileCount > 0) neededRows += 1; // spacer
+
+    // Minimum height of 3 (header + 2 lines for empty state)
+    const minHeight = 3;
+    // Maximum is 40% of content area
+    const maxHeight = Math.floor(contentHeight * 0.4);
+    // Use the smaller of needed or max, but at least min
+    const topHeight = Math.max(minHeight, Math.min(neededRows, maxHeight));
+    const bottomHeight = contentHeight - topHeight;
+
+    return { topPaneHeight: topHeight, bottomPaneHeight: bottomHeight };
+  }, [files, contentHeight]);
 
   // Get currently selected file
   const currentFile = useMemo(() => {
@@ -210,22 +251,46 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
           }
         }
       }
-      // Click in diff pane
+      // Click in bottom pane
       else if (y >= diffPaneStart && y <= diffPaneEnd) {
-        setCurrentPane('diff');
+        setCurrentPane(bottomTab);
       }
     }
     // Scroll events
     else if (type === 'scroll-up' || type === 'scroll-down') {
       const scrollAmount = 3;
 
-      // Scroll in diff pane
+      // Scroll in bottom pane (depends on which tab is active)
       if (y >= diffPaneStart && y <= diffPaneEnd) {
-        if (type === 'scroll-up') {
-          setDiffScrollOffset(prev => Math.max(0, prev - scrollAmount));
-        } else {
-          const maxOffset = Math.max(0, (diff?.lines.length ?? 0) - (bottomPaneHeight - 2));
-          setDiffScrollOffset(prev => Math.min(maxOffset, prev + scrollAmount));
+        if (bottomTab === 'diff') {
+          if (type === 'scroll-up') {
+            setDiffScrollOffset(prev => Math.max(0, prev - scrollAmount));
+          } else {
+            const maxOffset = Math.max(0, (diff?.lines.length ?? 0) - (bottomPaneHeight - 2));
+            setDiffScrollOffset(prev => Math.min(maxOffset, prev + scrollAmount));
+          }
+        } else if (bottomTab === 'history') {
+          if (type === 'scroll-up') {
+            setHistoryScrollOffset(prev => Math.max(0, prev - scrollAmount));
+          } else {
+            const maxOffset = Math.max(0, commits.length - (bottomPaneHeight - 2));
+            setHistoryScrollOffset(prev => Math.min(maxOffset, prev + scrollAmount));
+          }
+        } else if (bottomTab === 'pr') {
+          // Calculate total rows for PR view
+          let totalRows = 0;
+          if (prDiff?.files) {
+            for (const file of prDiff.files) {
+              totalRows += 1; // File header
+              totalRows += file.diff.lines.filter(l => l.type !== 'header').length;
+            }
+          }
+          if (type === 'scroll-up') {
+            setPRScrollOffset(prev => Math.max(0, prev - scrollAmount));
+          } else {
+            const maxOffset = Math.max(0, totalRows - (bottomPaneHeight - 4));
+            setPRScrollOffset(prev => Math.min(maxOffset, prev + scrollAmount));
+          }
         }
       }
       // Scroll in file list
@@ -248,7 +313,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         }
       }
     }
-  }, [files, totalFiles, topPaneHeight, bottomPaneHeight, diff?.lines.length, fileListScrollOffset, stage, unstage]);
+  }, [files, totalFiles, topPaneHeight, bottomPaneHeight, diff?.lines.length, fileListScrollOffset, stage, unstage, bottomTab, commits.length, prDiff]);
 
   // Enable mouse support
   useMouse(handleMouseEvent);
@@ -268,6 +333,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         }
         return newIndex;
       });
+    } else if (currentPane === 'pr') {
+      setPRScrollOffset(prev => Math.max(0, prev - 3));
     }
   }, [currentPane, historyScrollOffset]);
 
@@ -287,8 +354,19 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         }
         return newIndex;
       });
+    } else if (currentPane === 'pr') {
+      // Calculate total rows for PR view
+      let totalRows = 0;
+      if (prDiff?.files) {
+        for (const file of prDiff.files) {
+          totalRows += 1; // File header
+          totalRows += file.diff.lines.filter(l => l.type !== 'header').length;
+        }
+      }
+      const maxOffset = Math.max(0, totalRows - (bottomPaneHeight - 4));
+      setPRScrollOffset(prev => Math.min(maxOffset, prev + 3));
     }
-  }, [currentPane, totalFiles, diff?.lines.length, bottomPaneHeight, commits.length, historyScrollOffset]);
+  }, [currentPane, totalFiles, diff?.lines.length, bottomPaneHeight, commits.length, historyScrollOffset, prDiff]);
 
   const handleTogglePane = useCallback(() => {
     setCurrentPane(prev => {
@@ -303,6 +381,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       setCurrentPane('commit');
     } else if (tab === 'history') {
       setCurrentPane('history');
+    } else if (tab === 'pr') {
+      setCurrentPane('pr');
     } else {
       setCurrentPane('diff');
     }
@@ -385,6 +465,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         branch={status?.branch ?? null}
         isLoading={isLoading}
         error={error}
+        debug={config.debug}
+        watcherState={watcherState}
       />
       <Separator />
 
@@ -409,11 +491,11 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
       <Separator />
 
-      {/* Bottom pane: Diff, Commit, or History */}
+      {/* Bottom pane: Diff, Commit, History, or PR */}
       <Box flexDirection="column" height={bottomPaneHeight} overflowY="hidden">
         <Box justifyContent="space-between">
           <Text bold color={currentPane !== 'files' ? 'cyan' : undefined}>
-            {bottomTab === 'diff' ? 'DIFF' : bottomTab === 'commit' ? 'COMMIT' : 'HISTORY'}
+            {bottomTab === 'diff' ? 'DIFF' : bottomTab === 'commit' ? 'COMMIT' : bottomTab === 'history' ? 'HISTORY' : 'PR'}
           </Text>
           {selectedFile && bottomTab === 'diff' && (
             <Text dimColor>{selectedFile.path}</Text>
@@ -439,7 +521,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             getHeadMessage={getHeadCommitMessage}
             onInputFocusChange={setCommitInputFocused}
           />
-        ) : (
+        ) : bottomTab === 'history' ? (
           <HistoryView
             commits={commits}
             selectedIndex={historySelectedIndex}
@@ -447,6 +529,16 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             maxHeight={bottomPaneHeight - 1}
             isActive={currentPane === 'history'}
             width={terminalWidth}
+          />
+        ) : (
+          <PRView
+            prDiff={prDiff}
+            isLoading={prLoading}
+            error={prError}
+            scrollOffset={prScrollOffset}
+            maxHeight={bottomPaneHeight - 1}
+            width={terminalWidth}
+            isActive={currentPane === 'pr'}
           />
         )}
       </Box>

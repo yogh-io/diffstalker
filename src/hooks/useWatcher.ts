@@ -1,15 +1,45 @@
 import { useState, useEffect, useRef } from 'react';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { watch } from 'chokidar';
 import { ensureTargetDir } from '../config.js';
 
-export function useWatcher(targetFile: string): string | null {
-  const [targetPath, setTargetPath] = useState<string | null>(null);
+function expandPath(p: string): string {
+  // Expand ~ to home directory
+  if (p.startsWith('~/')) {
+    return path.join(os.homedir(), p.slice(2));
+  }
+  if (p === '~') {
+    return os.homedir();
+  }
+  return p;
+}
+
+export interface WatcherState {
+  path: string | null;
+  lastUpdate: Date | null;
+  rawContent: string | null;
+  sourceFile: string | null;
+  enabled: boolean;
+}
+
+export function useWatcher(enabled: boolean, targetFile: string, debug: boolean = false): WatcherState {
+  const [state, setState] = useState<WatcherState>({
+    path: null,
+    lastUpdate: null,
+    rawContent: null,
+    sourceFile: enabled ? targetFile : null,
+    enabled,
+  });
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastReadPath = useRef<string | null>(null);
 
   useEffect(() => {
+    // If watcher is disabled, do nothing
+    if (!enabled) {
+      return;
+    }
     // Ensure the directory exists
     ensureTargetDir(targetFile);
 
@@ -29,10 +59,27 @@ export function useWatcher(targetFile: string): string | null {
         try {
           const content = fs.readFileSync(targetFile, 'utf-8').trim();
           if (content && content !== lastReadPath.current) {
-            // Resolve to absolute path
-            const resolved = path.isAbsolute(content) ? content : path.resolve(content);
+            // Expand ~ and resolve to absolute path
+            const expanded = expandPath(content);
+            const resolved = path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
+            const now = new Date();
+
+            if (debug) {
+              process.stderr.write(`[diffstalker ${now.toISOString()}] Path change detected\n`);
+              process.stderr.write(`  Source file: ${targetFile}\n`);
+              process.stderr.write(`  Raw content: "${content}"\n`);
+              process.stderr.write(`  Previous:    "${lastReadPath.current ?? '(none)'}"\n`);
+              process.stderr.write(`  Resolved:    "${resolved}"\n`);
+            }
+
             lastReadPath.current = resolved;
-            setTargetPath(resolved);
+            setState({
+              path: resolved,
+              lastUpdate: now,
+              rawContent: content,
+              sourceFile: targetFile,
+              enabled: true,
+            });
           }
         } catch {
           // Ignore read errors
@@ -44,9 +91,26 @@ export function useWatcher(targetFile: string): string | null {
     try {
       const content = fs.readFileSync(targetFile, 'utf-8').trim();
       if (content) {
-        const resolved = path.isAbsolute(content) ? content : path.resolve(content);
+        // Expand ~ and resolve to absolute path
+        const expanded = expandPath(content);
+        const resolved = path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
+        const now = new Date();
+
+        if (debug) {
+          process.stderr.write(`[diffstalker ${now.toISOString()}] Initial path read\n`);
+          process.stderr.write(`  Source file: ${targetFile}\n`);
+          process.stderr.write(`  Raw content: "${content}"\n`);
+          process.stderr.write(`  Resolved:    "${resolved}"\n`);
+        }
+
         lastReadPath.current = resolved;
-        setTargetPath(resolved);
+        setState({
+          path: resolved,
+          lastUpdate: now,
+          rawContent: content,
+          sourceFile: targetFile,
+          enabled: true,
+        });
       }
     } catch {
       // Ignore read errors
@@ -67,7 +131,7 @@ export function useWatcher(targetFile: string): string | null {
       }
       watcher.close();
     };
-  }, [targetFile]);
+  }, [enabled, targetFile, debug]);
 
-  return targetPath;
+  return state;
 }

@@ -5,10 +5,14 @@ import * as os from 'node:os';
 export interface Config {
   pager?: string;
   targetFile: string;
+  watcherEnabled: boolean;
+  debug: boolean;
 }
 
 const defaultConfig: Config = {
   targetFile: path.join(os.homedir(), '.cache', 'diffstalker', 'target'),
+  watcherEnabled: false,  // Watcher is opt-in via --follow
+  debug: false,
 };
 
 export function loadConfig(): Config {
@@ -17,9 +21,6 @@ export function loadConfig(): Config {
   // Override from environment
   if (process.env.DIFFSTALKER_PAGER) {
     config.pager = process.env.DIFFSTALKER_PAGER;
-  }
-  if (process.env.DIFFSTALKER_TARGET_FILE) {
-    config.targetFile = process.env.DIFFSTALKER_TARGET_FILE;
   }
 
   // Try to load from config file

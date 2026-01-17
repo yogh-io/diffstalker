@@ -36,16 +36,30 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // Parse CLI arguments
-function parseArgs(args: string[]): { targetFile?: string; initialPath?: string; once?: boolean } {
-  const result: { targetFile?: string; initialPath?: string; once?: boolean } = {};
+interface ParsedArgs {
+  follow?: boolean;        // --follow was specified
+  followFile?: string;     // Custom file for --follow (optional)
+  initialPath?: string;    // Positional path argument
+  once?: boolean;
+  debug?: boolean;
+}
+
+function parseArgs(args: string[]): ParsedArgs {
+  const result: ParsedArgs = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
-    if (arg === '--target-file' && args[i + 1]) {
-      result.targetFile = args[++i];
+    if (arg === '--follow' || arg === '-f') {
+      result.follow = true;
+      // Check if next arg is a path (not another flag)
+      if (args[i + 1] && !args[i + 1].startsWith('-')) {
+        result.followFile = args[++i];
+      }
     } else if (arg === '--once') {
       result.once = true;
+    } else if (arg === '--debug' || arg === '-d') {
+      result.debug = true;
     } else if (arg === '--help' || arg === '-h') {
       console.log(`
 diffstalker - Terminal git diff/status viewer
@@ -53,22 +67,23 @@ diffstalker - Terminal git diff/status viewer
 Usage: diffstalker [options] [path]
 
 Options:
-  --target-file PATH   Override the watched file path
+  -f, --follow [FILE]  Follow hook file for dynamic repo switching
                        (default: ~/.cache/diffstalker/target)
   --once               Show status once and exit
+  -d, --debug          Log path changes to stderr for debugging
   -h, --help           Show this help message
 
 Arguments:
-  [path]               Optional path to a git repository
+  [path]               Path to a git repository (fixed, no watching)
+
+Modes:
+  diffstalker                     Fixed on current directory
+  diffstalker /path/to/repo       Fixed on specified repo
+  diffstalker --follow            Follow default hook file
+  diffstalker --follow /tmp/hook  Follow custom hook file
 
 Environment:
   DIFFSTALKER_PAGER       External pager for diff display
-  DIFFSTALKER_TARGET_FILE Override watched file path
-
-Examples:
-  diffstalker                           # Watch for paths
-  diffstalker ~/projects/myrepo         # Show specific repo
-  echo ~/myrepo > ~/.cache/diffstalker/target  # Trigger update
 
 Keyboard:
   j/k, ↑/↓    Navigate files / scroll diff
@@ -100,9 +115,15 @@ Mouse:
 const args = parseArgs(process.argv.slice(2));
 const config = loadConfig();
 
-// Override config with CLI args
-if (args.targetFile) {
-  config.targetFile = args.targetFile;
+// Configure watcher based on --follow flag
+if (args.follow) {
+  config.watcherEnabled = true;
+  if (args.followFile) {
+    config.targetFile = args.followFile;
+  }
+}
+if (args.debug) {
+  config.debug = true;
 }
 
 // Render the app

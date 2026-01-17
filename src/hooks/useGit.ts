@@ -14,7 +14,15 @@ import {
   GitStatus,
   FileEntry,
 } from '../git/status.js';
-import { getDiff, getDiffForUntracked, getStagedDiff, DiffResult } from '../git/diff.js';
+import {
+  getDiff,
+  getDiffForUntracked,
+  getStagedDiff,
+  getDefaultBaseBranch,
+  getDiffBetweenRefs,
+  DiffResult,
+  PRDiff,
+} from '../git/diff.js';
 
 export interface UseGitResult {
   status: GitStatus | null;
@@ -32,6 +40,12 @@ export interface UseGitResult {
   commit: (message: string, amend?: boolean) => Promise<void>;
   refresh: () => Promise<void>;
   getHeadCommitMessage: () => Promise<string>;
+  // PR diff state
+  prDiff: PRDiff | null;
+  prBaseBranch: string | null;
+  prLoading: boolean;
+  prError: string | null;
+  refreshPRDiff: () => Promise<void>;
 }
 
 export function useGit(repoPath: string | null): UseGitResult {
@@ -44,6 +58,12 @@ export function useGit(repoPath: string | null): UseGitResult {
   const refreshingRef = useRef(false);
   const debouncedRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshRef = useRef<() => Promise<void>>();
+
+  // PR diff state
+  const [prDiff, setPRDiff] = useState<PRDiff | null>(null);
+  const [prBaseBranch, setPRBaseBranch] = useState<string | null>(null);
+  const [prLoading, setPRLoading] = useState(false);
+  const [prError, setPRError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!repoPath) {
@@ -308,6 +328,30 @@ export function useGit(repoPath: string | null): UseGitResult {
     return getHeadMessage(repoPath);
   }, [repoPath]);
 
+  const refreshPRDiff = useCallback(async () => {
+    if (!repoPath) return;
+    setPRLoading(true);
+    setPRError(null);
+    try {
+      let base = prBaseBranch;
+      if (!base) {
+        base = await getDefaultBaseBranch(repoPath);
+        setPRBaseBranch(base);
+      }
+      if (base) {
+        const diff = await getDiffBetweenRefs(repoPath, base);
+        setPRDiff(diff);
+      } else {
+        setPRDiff(null);
+        setPRError('No base branch found (no origin/main or origin/master)');
+      }
+    } catch (err) {
+      setPRError(`Failed to load PR diff: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPRLoading(false);
+    }
+  }, [repoPath, prBaseBranch]);
+
   return {
     status,
     diff,
@@ -324,5 +368,10 @@ export function useGit(repoPath: string | null): UseGitResult {
     commit,
     refresh,
     getHeadCommitMessage,
+    prDiff,
+    prBaseBranch,
+    prLoading,
+    prError,
+    refreshPRDiff,
   };
 }

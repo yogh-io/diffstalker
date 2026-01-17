@@ -1,7 +1,7 @@
 import { useInput } from 'ink';
 
-export type Pane = 'files' | 'diff' | 'commit' | 'history';
-export type BottomTab = 'diff' | 'commit' | 'history';
+export type Pane = 'files' | 'diff' | 'commit' | 'history' | 'pr';
+export type BottomTab = 'diff' | 'commit' | 'history' | 'pr';
 
 export interface KeymapActions {
   onStage: () => void;
@@ -66,6 +66,10 @@ export function useKeymap(
     }
     if (input === '3') {
       actions.onSwitchTab('history');
+      return;
+    }
+    if (input === '4') {
+      actions.onSwitchTab('pr');
       return;
     }
 
