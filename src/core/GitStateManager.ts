@@ -14,6 +14,7 @@ import {
   getHeadMessage,
   GitStatus,
   FileEntry,
+  CommitInfo,
 } from '../git/status.js';
 import {
   getDiff,
@@ -22,6 +23,7 @@ import {
   getDefaultBaseBranch,
   getDiffBetweenRefs,
   getPRDiffWithUncommitted,
+  getCommitDiff,
   DiffResult,
   PRDiff,
 } from '../git/diff.js';
@@ -42,9 +44,24 @@ export interface PRState {
   prError: string | null;
 }
 
+export interface HistoryState {
+  selectedCommit: CommitInfo | null;
+  commitDiff: DiffResult | null;
+}
+
+export type PRSelectionType = 'commit' | 'file';
+
+export interface PRSelectionState {
+  type: PRSelectionType | null;
+  index: number;
+  diff: DiffResult | null;
+}
+
 type GitStateEventMap = {
   'state-change': [GitState];
   'pr-state-change': [PRState];
+  'history-state-change': [HistoryState];
+  'pr-selection-change': [PRSelectionState];
   'error': [string];
 };
 
@@ -75,6 +92,17 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     prError: null,
   };
 
+  private _historyState: HistoryState = {
+    selectedCommit: null,
+    commitDiff: null,
+  };
+
+  private _prSelectionState: PRSelectionState = {
+    type: null,
+    index: 0,
+    diff: null,
+  };
+
   constructor(repoPath: string) {
     super();
     this.repoPath = repoPath;
@@ -89,6 +117,14 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     return this._prState;
   }
 
+  get historyState(): HistoryState {
+    return this._historyState;
+  }
+
+  get prSelectionState(): PRSelectionState {
+    return this._prSelectionState;
+  }
+
   private updateState(partial: Partial<GitState>): void {
     this._state = { ...this._state, ...partial };
     this.emit('state-change', this._state);
@@ -97,6 +133,16 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   private updatePRState(partial: Partial<PRState>): void {
     this._prState = { ...this._prState, ...partial };
     this.emit('pr-state-change', this._prState);
+  }
+
+  private updateHistoryState(partial: Partial<HistoryState>): void {
+    this._historyState = { ...this._historyState, ...partial };
+    this.emit('history-state-change', this._historyState);
+  }
+
+  private updatePRSelectionState(partial: Partial<PRSelectionState>): void {
+    this._prSelectionState = { ...this._prSelectionState, ...partial };
+    this.emit('pr-selection-change', this._prSelectionState);
   }
 
   /**
@@ -414,6 +460,65 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
         prError: `Failed to load PR diff: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
+  }
+
+  /**
+   * Select a commit in history view and load its diff.
+   */
+  async selectHistoryCommit(commit: CommitInfo | null): Promise<void> {
+    this.updateHistoryState({ selectedCommit: commit, commitDiff: null });
+
+    if (!commit) return;
+
+    try {
+      await this.queue.enqueue(async () => {
+        const diff = await getCommitDiff(this.repoPath, commit.hash);
+        this.updateHistoryState({ commitDiff: diff });
+      });
+    } catch (err) {
+      this.updateState({
+        error: `Failed to load commit diff: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  /**
+   * Select a commit in PR view and load its diff.
+   */
+  async selectPRCommit(index: number): Promise<void> {
+    const prDiff = this._prState.prDiff;
+    if (!prDiff || index < 0 || index >= prDiff.commits.length) {
+      this.updatePRSelectionState({ type: null, index: 0, diff: null });
+      return;
+    }
+
+    const commit = prDiff.commits[index];
+    this.updatePRSelectionState({ type: 'commit', index, diff: null });
+
+    try {
+      await this.queue.enqueue(async () => {
+        const diff = await getCommitDiff(this.repoPath, commit.hash);
+        this.updatePRSelectionState({ diff });
+      });
+    } catch (err) {
+      this.updateState({
+        error: `Failed to load commit diff: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  /**
+   * Select a file in PR view and show its diff.
+   */
+  selectPRFile(index: number): void {
+    const prDiff = this._prState.prDiff;
+    if (!prDiff || index < 0 || index >= prDiff.files.length) {
+      this.updatePRSelectionState({ type: null, index: 0, diff: null });
+      return;
+    }
+
+    const file = prDiff.files[index];
+    this.updatePRSelectionState({ type: 'file', index, diff: file.diff });
   }
 }
 

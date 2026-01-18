@@ -1,6 +1,41 @@
 import { simpleGit, SimpleGit, StatusResult } from 'simple-git';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 export type FileStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed' | 'copied';
+
+interface FileStats {
+  insertions: number;
+  deletions: number;
+}
+
+// Parse git diff --numstat output into a map of path -> stats
+function parseNumstat(output: string): Map<string, FileStats> {
+  const stats = new Map<string, FileStats>();
+  for (const line of output.trim().split('\n')) {
+    if (!line) continue;
+    const parts = line.split('\t');
+    if (parts.length >= 3) {
+      const insertions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
+      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
+      const filepath = parts.slice(2).join('\t'); // Handle paths with tabs
+      stats.set(filepath, { insertions, deletions });
+    }
+  }
+  return stats;
+}
+
+// Count lines in a file (for untracked files which don't show in numstat)
+async function countFileLines(repoPath: string, filePath: string): Promise<number> {
+  try {
+    const fullPath = path.join(repoPath, filePath);
+    const content = await fs.promises.readFile(fullPath, 'utf-8');
+    // Count non-empty lines
+    return content.split('\n').filter(line => line.length > 0).length;
+  } catch {
+    return 0;
+  }
+}
 
 // Check which files from a list are ignored by git
 async function getIgnoredFiles(git: SimpleGit, files: string[]): Promise<Set<string>> {
@@ -38,6 +73,8 @@ export interface FileEntry {
   status: FileStatus;
   staged: boolean;
   originalPath?: string; // For renamed files
+  insertions?: number;
+  deletions?: number;
 }
 
 export interface BranchInfo {
@@ -177,6 +214,36 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
           status: file.working_dir === '?' ? 'untracked' : parseStatusCode(file.working_dir),
           staged: false,
         });
+      }
+    }
+
+    // Fetch line stats for staged and unstaged files
+    const [stagedNumstat, unstagedNumstat] = await Promise.all([
+      git.diff(['--cached', '--numstat']).catch(() => ''),
+      git.diff(['--numstat']).catch(() => ''),
+    ]);
+
+    const stagedStats = parseNumstat(stagedNumstat);
+    const unstagedStats = parseNumstat(unstagedNumstat);
+
+    // Apply stats to files
+    for (const file of processedFiles) {
+      const stats = file.staged ? stagedStats.get(file.path) : unstagedStats.get(file.path);
+      if (stats) {
+        file.insertions = stats.insertions;
+        file.deletions = stats.deletions;
+      }
+    }
+
+    // Count lines for untracked files (not in numstat output)
+    const untrackedFiles = processedFiles.filter(f => f.status === 'untracked');
+    if (untrackedFiles.length > 0) {
+      const lineCounts = await Promise.all(
+        untrackedFiles.map(f => countFileLines(repoPath, f.path))
+      );
+      for (let i = 0; i < untrackedFiles.length; i++) {
+        untrackedFiles[i].insertions = lineCounts[i];
+        untrackedFiles[i].deletions = 0;
       }
     }
 

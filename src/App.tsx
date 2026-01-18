@@ -6,7 +6,7 @@ import { FileList, getFileAtIndex, getTotalFileCount } from './components/FileLi
 import { DiffView } from './components/DiffView.js';
 import { CommitPanel } from './components/CommitPanel.js';
 import { HistoryView } from './components/HistoryView.js';
-import { PRView } from './components/PRView.js';
+import { PRListView, PRListSelection } from './components/PRListView.js';
 import { Footer } from './components/Footer.js';
 import { useWatcher } from './hooks/useWatcher.js';
 import { useGit } from './hooks/useGit.js';
@@ -45,6 +45,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     selectFile, stage, unstage, discard, stageAll, unstageAll,
     commit, refresh, getHeadCommitMessage,
     prDiff, prLoading, prError, refreshPRDiff,
+    historySelectedCommit, historyCommitDiff, selectHistoryCommit,
+    prSelectionType, prSelectionIndex, prSelectionDiff, selectPRCommit, selectPRFile,
   } = useGit(repoPath);
 
   // File list data
@@ -65,6 +67,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
   // PR view state
   const [includeUncommitted, setIncludeUncommitted] = useState(false);
+  const [prListSelection, setPRListSelection] = useState<PRListSelection | null>(null);
+  const [prSelectedIndex, setPRSelectedIndex] = useState(0);  // Combined index for commits + files
 
   // Layout and scroll state
   const {
@@ -103,7 +107,42 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     selectFile(currentFile);
   }, [currentFile, selectFile]);
 
-  // Calculate PR total rows for scrolling
+  // Update selected history commit when index changes
+  useEffect(() => {
+    if (bottomTab === 'history' && commits.length > 0) {
+      const commit = commits[historySelectedIndex];
+      if (commit) {
+        selectHistoryCommit(commit);
+      }
+    }
+  }, [bottomTab, commits, historySelectedIndex, selectHistoryCommit]);
+
+  // Update PR selection when prSelectedIndex changes
+  useEffect(() => {
+    if (bottomTab === 'pr' && prDiff) {
+      const commitCount = prDiff.commits.length;
+      const fileCount = prDiff.files.length;
+
+      if (prSelectedIndex < commitCount) {
+        // Selected a commit
+        setPRListSelection({ type: 'commit', index: prSelectedIndex });
+        selectPRCommit(prSelectedIndex);
+      } else if (prSelectedIndex < commitCount + fileCount) {
+        // Selected a file
+        const fileIndex = prSelectedIndex - commitCount;
+        setPRListSelection({ type: 'file', index: fileIndex });
+        selectPRFile(fileIndex);
+      }
+    }
+  }, [bottomTab, prDiff, prSelectedIndex, selectPRCommit, selectPRFile]);
+
+  // Calculate PR total items (commits + files) for navigation
+  const prTotalItems = useMemo(() => {
+    if (!prDiff) return 0;
+    return prDiff.commits.length + prDiff.files.length;
+  }, [prDiff]);
+
+  // Calculate PR total rows for scrolling (legacy, kept for compatibility)
   const prTotalRows = useMemo(() => {
     if (!prDiff?.files) return 0;
     return prDiff.files.reduce((total, file) =>
@@ -170,7 +209,16 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   // Tab switching
   const handleSwitchTab = useCallback((tab: BottomTab) => {
     setBottomTab(tab);
-    setCurrentPane(tab === 'diff' ? 'diff' : tab);
+    // Set focus to appropriate pane for each mode
+    if (tab === 'diff') {
+      setCurrentPane('files');  // In diff mode, start focused on file list
+    } else if (tab === 'commit') {
+      setCurrentPane('commit');  // In commit mode, focus on commit panel
+    } else if (tab === 'history') {
+      setCurrentPane('history');  // In history mode, focus on commit list
+    } else if (tab === 'pr') {
+      setCurrentPane('pr');  // In PR mode, focus on PR list
+    }
   }, []);
 
   // Keyboard navigation
@@ -186,9 +234,13 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         return newIndex;
       });
     } else if (currentPane === 'pr') {
-      scrollPR('up', prTotalRows);
+      setPRSelectedIndex(prev => {
+        const newIndex = Math.max(0, prev - 1);
+        if (newIndex < prScrollOffset) setPRScrollOffset(newIndex);
+        return newIndex;
+      });
     }
-  }, [currentPane, historyScrollOffset, scrollDiff, scrollPR, prTotalRows, setHistoryScrollOffset]);
+  }, [currentPane, historyScrollOffset, prScrollOffset, scrollDiff, setHistoryScrollOffset, setPRScrollOffset]);
 
   const handleNavigateDown = useCallback(() => {
     if (currentPane === 'files') {
@@ -198,17 +250,29 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     } else if (currentPane === 'history') {
       setHistorySelectedIndex(prev => {
         const newIndex = Math.min(commits.length - 1, prev + 1);
-        const visibleEnd = historyScrollOffset + bottomPaneHeight - 2;
+        const visibleEnd = historyScrollOffset + topPaneHeight - 2;  // History is now in top pane
         if (newIndex >= visibleEnd) setHistoryScrollOffset(prev => prev + 1);
         return newIndex;
       });
     } else if (currentPane === 'pr') {
-      scrollPR('down', prTotalRows);
+      setPRSelectedIndex(prev => {
+        const newIndex = Math.min(prTotalItems - 1, prev + 1);
+        const visibleEnd = prScrollOffset + topPaneHeight - 2;  // Account for header
+        if (newIndex >= visibleEnd) setPRScrollOffset(prev => prev + 1);
+        return newIndex;
+      });
     }
-  }, [currentPane, totalFiles, commits.length, historyScrollOffset, bottomPaneHeight, scrollDiff, scrollPR, prTotalRows, setHistoryScrollOffset]);
+  }, [currentPane, totalFiles, commits.length, historyScrollOffset, topPaneHeight, prTotalItems, prScrollOffset, scrollDiff, setHistoryScrollOffset, setPRScrollOffset]);
 
   const handleTogglePane = useCallback(() => {
-    setCurrentPane(prev => prev === 'files' ? bottomTab : 'files');
+    // In all modes, toggle between top pane (list) and bottom pane (diff/details)
+    if (bottomTab === 'diff' || bottomTab === 'commit') {
+      setCurrentPane(prev => prev === 'files' ? 'diff' : 'files');
+    } else if (bottomTab === 'history') {
+      setCurrentPane(prev => prev === 'history' ? 'diff' : 'history');
+    } else if (bottomTab === 'pr') {
+      setCurrentPane(prev => prev === 'pr' ? 'diff' : 'pr');
+    }
   }, [bottomTab]);
 
   const handleStage = useCallback(async () => {
@@ -277,30 +341,94 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       <Separator />
 
       <Box flexDirection="column" height={topPaneHeight} overflowY="hidden">
-        <Box>
-          <Text bold color={currentPane === 'files' ? 'cyan' : undefined}>STAGING AREA</Text>
-          <Text dimColor> ({files.filter(f => !f.staged).length} unstaged, {stagedCount} staged)</Text>
-        </Box>
-        <FileList
-          files={files}
-          selectedIndex={selectedIndex}
-          isFocused={currentPane === 'files'}
-          scrollOffset={fileListScrollOffset}
-          maxHeight={topPaneHeight - 1}
-          onStage={stage}
-          onUnstage={unstage}
-        />
+        {/* Top pane: List content based on mode */}
+        {(bottomTab === 'diff' || bottomTab === 'commit') && (
+          <>
+            <Box>
+              <Text bold color={currentPane === 'files' ? 'cyan' : undefined}>STAGING AREA</Text>
+              <Text dimColor> ({files.filter(f => !f.staged && f.status !== 'untracked').length} modified, {files.filter(f => f.status === 'untracked').length} untracked, {stagedCount} staged)</Text>
+            </Box>
+            <FileList
+              files={files}
+              selectedIndex={selectedIndex}
+              isFocused={currentPane === 'files'}
+              scrollOffset={fileListScrollOffset}
+              maxHeight={topPaneHeight - 1}
+              onStage={stage}
+              onUnstage={unstage}
+            />
+          </>
+        )}
+        {bottomTab === 'history' && (
+          <>
+            <Box>
+              <Text bold color={currentPane === 'history' ? 'cyan' : undefined}>COMMITS</Text>
+              <Text dimColor> ({commits.length} commits)</Text>
+            </Box>
+            <HistoryView
+              commits={commits}
+              selectedIndex={historySelectedIndex}
+              scrollOffset={historyScrollOffset}
+              maxHeight={topPaneHeight - 1}
+              isActive={currentPane === 'history'}
+              width={terminalWidth}
+              onSelectCommit={(commit, idx) => setHistorySelectedIndex(idx)}
+            />
+          </>
+        )}
+        {bottomTab === 'pr' && (
+          <>
+            <Box>
+              <Text bold color={currentPane === 'pr' ? 'cyan' : undefined}>PR CHANGES</Text>
+              <Text dimColor>
+                {' '}(vs {prDiff?.baseBranch ?? 'origin/main'}: {prDiff?.commits.length ?? 0} commits, {prDiff?.files.length ?? 0} files)
+              </Text>
+              {prDiff && prDiff.uncommittedCount > 0 && (
+                <>
+                  <Text dimColor> | </Text>
+                  <Text color={includeUncommitted ? 'magenta' : 'yellow'}>
+                    [{includeUncommitted ? 'x' : ' '}] uncommitted
+                  </Text>
+                  <Text dimColor> (u)</Text>
+                </>
+              )}
+            </Box>
+            <PRListView
+              commits={prDiff?.commits ?? []}
+              files={prDiff?.files ?? []}
+              selectedItem={prListSelection}
+              scrollOffset={prScrollOffset}
+              maxHeight={topPaneHeight - 1}
+              isActive={currentPane === 'pr'}
+              width={terminalWidth}
+              includeUncommitted={includeUncommitted}
+              onSelectCommit={(idx) => setPRSelectedIndex(idx)}
+              onSelectFile={(idx) => setPRSelectedIndex((prDiff?.commits.length ?? 0) + idx)}
+              onToggleIncludeUncommitted={handleToggleIncludeUncommitted}
+            />
+          </>
+        )}
       </Box>
 
       <Separator />
 
       <Box flexDirection="column" height={bottomPaneHeight} overflowY="hidden">
+        {/* Bottom pane: Details/Diff content based on mode */}
         <Box justifyContent="space-between">
-          <Text bold color={currentPane !== 'files' ? 'cyan' : undefined}>
-            {bottomTab.toUpperCase()}
+          <Text bold color={currentPane !== 'files' && currentPane !== 'history' && currentPane !== 'pr' ? 'cyan' : undefined}>
+            {bottomTab === 'commit' ? 'COMMIT' : 'DIFF'}
           </Text>
           {selectedFile && bottomTab === 'diff' && <Text dimColor>{selectedFile.path}</Text>}
-          {bottomTab === 'history' && <Text dimColor>{commits.length} commits</Text>}
+          {bottomTab === 'history' && historySelectedCommit && (
+            <Text dimColor>{historySelectedCommit.shortHash} - {historySelectedCommit.message.slice(0, 50)}</Text>
+          )}
+          {bottomTab === 'pr' && prListSelection && (
+            <Text dimColor>
+              {prListSelection.type === 'commit'
+                ? `${prDiff?.commits[prListSelection.index]?.shortHash ?? ''} - ${prDiff?.commits[prListSelection.index]?.message.slice(0, 40) ?? ''}`
+                : prDiff?.files[prListSelection.index]?.path ?? ''}
+            </Text>
+          )}
         </Box>
 
         {bottomTab === 'diff' ? (
@@ -316,26 +444,27 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             onInputFocusChange={setCommitInputFocused}
           />
         ) : bottomTab === 'history' ? (
-          <HistoryView
-            commits={commits}
-            selectedIndex={historySelectedIndex}
-            scrollOffset={historyScrollOffset}
+          <DiffView
+            diff={historyCommitDiff}
             maxHeight={bottomPaneHeight - 1}
-            isActive={currentPane === 'history'}
-            width={terminalWidth}
+            scrollOffset={diffScrollOffset}
           />
         ) : (
-          <PRView
-            prDiff={prDiff}
-            isLoading={prLoading}
-            error={prError}
-            scrollOffset={prScrollOffset}
-            maxHeight={bottomPaneHeight - 1}
-            width={terminalWidth}
-            isActive={currentPane === 'pr'}
-            includeUncommitted={includeUncommitted}
-            onToggleIncludeUncommitted={handleToggleIncludeUncommitted}
-          />
+          <>
+            {prLoading ? (
+              <Text dimColor>Loading PR diff...</Text>
+            ) : prError ? (
+              <Text color="red">{prError}</Text>
+            ) : prSelectionDiff ? (
+              <DiffView
+                diff={prSelectionDiff}
+                maxHeight={bottomPaneHeight - 1}
+                scrollOffset={diffScrollOffset}
+              />
+            ) : (
+              <Text dimColor>Select a commit or file to view diff</Text>
+            )}
+          </>
         )}
       </Box>
 

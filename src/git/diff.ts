@@ -1,5 +1,6 @@
 import { execSync, spawn } from 'node:child_process';
 import { simpleGit } from 'simple-git';
+import { CommitInfo } from './status.js';
 
 export interface DiffLine {
   type: 'header' | 'hunk' | 'addition' | 'deletion' | 'context';
@@ -30,6 +31,7 @@ export interface PRDiff {
   baseBranch: string;
   stats: PRDiffStats;
   files: PRFileDiff[];
+  commits: CommitInfo[];
   uncommittedCount: number;
 }
 
@@ -227,6 +229,17 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
   const status = await git.status();
   const uncommittedCount = status.files.length;
 
+  // Get commits between base and HEAD
+  const log = await git.log({ from: base, to: 'HEAD' });
+  const commits: CommitInfo[] = log.all.map(entry => ({
+    hash: entry.hash,
+    shortHash: entry.hash.slice(0, 7),
+    message: entry.message.split('\n')[0],
+    author: entry.author_name,
+    date: new Date(entry.date),
+    refs: entry.refs || '',
+  }));
+
   return {
     baseBranch: baseRef,
     stats: {
@@ -235,8 +248,57 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
       deletions: totalDeletions,
     },
     files: fileDiffs,
+    commits,
     uncommittedCount,
   };
+}
+
+/**
+ * Get diff for a specific commit.
+ * Shows the changes introduced by that commit.
+ */
+export async function getCommitDiff(repoPath: string, hash: string): Promise<DiffResult> {
+  const git = simpleGit(repoPath);
+
+  try {
+    // git show <hash> --format="" gives just the diff without commit metadata
+    const raw = await git.raw(['show', hash, '--format=']);
+    const lines = raw.split('\n').map(parseDiffLine);
+    return { raw, lines };
+  } catch {
+    return { raw: '', lines: [] };
+  }
+}
+
+/**
+ * Get commits between a base ref and HEAD.
+ * Uses merge-base for three-dot semantics (commits on current branch only).
+ */
+export async function getCommitsBetweenRefs(
+  repoPath: string,
+  baseRef: string
+): Promise<CommitInfo[]> {
+  const git = simpleGit(repoPath);
+
+  try {
+    // Get merge-base for proper three-dot diff semantics
+    const mergeBase = await git.raw(['merge-base', baseRef, 'HEAD']);
+    const base = mergeBase.trim();
+
+    // Get commits from merge-base to HEAD
+    const log = await git.log({ from: base, to: 'HEAD' });
+
+    return log.all.map(entry => ({
+      hash: entry.hash,
+      shortHash: entry.hash.slice(0, 7),
+      message: entry.message.split('\n')[0],
+      author: entry.author_name,
+      date: new Date(entry.date),
+      refs: entry.refs || '',
+    }));
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -378,6 +440,7 @@ export async function getPRDiffWithUncommitted(repoPath: string, baseRef: string
       deletions: totalDeletions,
     },
     files: mergedFiles,
+    commits: committedDiff.commits,
     uncommittedCount: committedDiff.uncommittedCount,
   };
 }

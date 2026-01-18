@@ -5,8 +5,10 @@ import {
   removeManagerForRepo,
   GitState,
   PRState,
+  HistoryState,
+  PRSelectionState,
 } from '../core/GitStateManager.js';
-import { GitStatus, FileEntry } from '../git/status.js';
+import { GitStatus, FileEntry, CommitInfo } from '../git/status.js';
 import { DiffResult, PRDiff } from '../git/diff.js';
 
 export interface UseGitResult {
@@ -31,6 +33,16 @@ export interface UseGitResult {
   prLoading: boolean;
   prError: string | null;
   refreshPRDiff: (includeUncommitted?: boolean) => Promise<void>;
+  // History state
+  historySelectedCommit: CommitInfo | null;
+  historyCommitDiff: DiffResult | null;
+  selectHistoryCommit: (commit: CommitInfo | null) => Promise<void>;
+  // PR selection state
+  prSelectionType: 'commit' | 'file' | null;
+  prSelectionIndex: number;
+  prSelectionDiff: DiffResult | null;
+  selectPRCommit: (index: number) => Promise<void>;
+  selectPRFile: (index: number) => void;
 }
 
 /**
@@ -52,6 +64,17 @@ export function useGit(repoPath: string | null): UseGitResult {
     prBaseBranch: null,
     prLoading: false,
     prError: null,
+  });
+
+  const [historyState, setHistoryState] = useState<HistoryState>({
+    selectedCommit: null,
+    commitDiff: null,
+  });
+
+  const [prSelectionState, setPRSelectionState] = useState<PRSelectionState>({
+    type: null,
+    index: 0,
+    diff: null,
   });
 
   const managerRef = useRef<GitStateManager | null>(null);
@@ -82,8 +105,18 @@ export function useGit(repoPath: string | null): UseGitResult {
       setPRState(state);
     };
 
+    const handleHistoryStateChange = (state: HistoryState) => {
+      setHistoryState(state);
+    };
+
+    const handlePRSelectionChange = (state: PRSelectionState) => {
+      setPRSelectionState(state);
+    };
+
     manager.on('state-change', handleStateChange);
     manager.on('pr-state-change', handlePRStateChange);
+    manager.on('history-state-change', handleHistoryStateChange);
+    manager.on('pr-selection-change', handlePRSelectionChange);
 
     // Start watching and do initial refresh
     manager.startWatching();
@@ -92,6 +125,8 @@ export function useGit(repoPath: string | null): UseGitResult {
     return () => {
       manager.off('state-change', handleStateChange);
       manager.off('pr-state-change', handlePRStateChange);
+      manager.off('history-state-change', handleHistoryStateChange);
+      manager.off('pr-selection-change', handlePRSelectionChange);
       removeManagerForRepo(repoPath);
       managerRef.current = null;
     };
@@ -138,6 +173,18 @@ export function useGit(repoPath: string | null): UseGitResult {
     await managerRef.current?.refreshPRDiff(includeUncommitted);
   }, []);
 
+  const selectHistoryCommit = useCallback(async (commit: CommitInfo | null) => {
+    await managerRef.current?.selectHistoryCommit(commit);
+  }, []);
+
+  const selectPRCommit = useCallback(async (index: number) => {
+    await managerRef.current?.selectPRCommit(index);
+  }, []);
+
+  const selectPRFile = useCallback((index: number) => {
+    managerRef.current?.selectPRFile(index);
+  }, []);
+
   return {
     status: gitState.status,
     diff: gitState.diff,
@@ -159,5 +206,15 @@ export function useGit(repoPath: string | null): UseGitResult {
     prLoading: prState.prLoading,
     prError: prState.prError,
     refreshPRDiff,
+    // History state
+    historySelectedCommit: historyState.selectedCommit,
+    historyCommitDiff: historyState.commitDiff,
+    selectHistoryCommit,
+    // PR selection state
+    prSelectionType: prSelectionState.type,
+    prSelectionIndex: prSelectionState.index,
+    prSelectionDiff: prSelectionState.diff,
+    selectPRCommit,
+    selectPRFile,
   };
 }

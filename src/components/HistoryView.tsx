@@ -9,6 +9,7 @@ interface HistoryViewProps {
   maxHeight: number;
   isActive: boolean;
   width: number;
+  onSelectCommit?: (commit: CommitInfo, index: number) => void;
 }
 
 function formatDate(date: Date): string {
@@ -41,7 +42,8 @@ export function HistoryView({
   scrollOffset,
   maxHeight,
   isActive,
-  width
+  width,
+  onSelectCommit,
 }: HistoryViewProps): React.ReactElement {
   if (commits.length === 0) {
     return (

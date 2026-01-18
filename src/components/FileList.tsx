@@ -42,11 +42,23 @@ interface FileRowProps {
   isFocused: boolean;
 }
 
+function formatStats(insertions?: number, deletions?: number): string | null {
+  if (insertions === undefined && deletions === undefined) return null;
+  const add = insertions ?? 0;
+  const del = deletions ?? 0;
+  if (add === 0 && del === 0) return null;
+  const parts: string[] = [];
+  if (add > 0) parts.push(`+${add}`);
+  if (del > 0) parts.push(`-${del}`);
+  return parts.join(' ');
+}
+
 function FileRow({ file, isSelected, isFocused }: FileRowProps): React.ReactElement {
   const statusChar = getStatusChar(file.status);
   const statusColor = getStatusColor(file.status);
   const actionButton = file.staged ? '[-]' : '[+]';
   const buttonColor = file.staged ? 'red' : 'green';
+  const stats = formatStats(file.insertions, file.deletions);
 
   return (
     <Box>
@@ -61,6 +73,20 @@ function FileRow({ file, isSelected, isFocused }: FileRowProps): React.ReactElem
         {file.path}
         {file.originalPath && <Text dimColor> (from {file.originalPath})</Text>}
       </Text>
+      {stats && (
+        <Text>
+          <Text dimColor> </Text>
+          {file.insertions !== undefined && file.insertions > 0 && (
+            <Text color="green">+{file.insertions}</Text>
+          )}
+          {file.insertions !== undefined && file.insertions > 0 && file.deletions !== undefined && file.deletions > 0 && (
+            <Text dimColor> </Text>
+          )}
+          {file.deletions !== undefined && file.deletions > 0 && (
+            <Text color="red">-{file.deletions}</Text>
+          )}
+        </Text>
+      )}
     </Box>
   );
 }
@@ -80,8 +106,10 @@ export function FileList({
   scrollOffset = 0,
   maxHeight,
 }: FileListProps): React.ReactElement {
+  // Split files into 3 categories: Modified, Untracked, Staged
+  const modifiedFiles = files.filter(f => !f.staged && f.status !== 'untracked');
+  const untrackedFiles = files.filter(f => !f.staged && f.status === 'untracked');
   const stagedFiles = files.filter(f => f.staged);
-  const unstagedFiles = files.filter(f => !f.staged);
 
   if (files.length === 0) {
     return (
@@ -92,23 +120,34 @@ export function FileList({
   }
 
   // Build a flat list of all rows
+  // Order: Modified → Untracked → Staged
   const rows: RowItem[] = [];
+  let currentFileIndex = 0;
 
-  if (unstagedFiles.length > 0) {
-    rows.push({ type: 'header', content: 'Unstaged Changes:', headerColor: 'yellow' });
-    unstagedFiles.forEach((file, i) => {
-      rows.push({ type: 'file', file, fileIndex: i });
+  if (modifiedFiles.length > 0) {
+    rows.push({ type: 'header', content: 'Modified:', headerColor: 'yellow' });
+    modifiedFiles.forEach((file) => {
+      rows.push({ type: 'file', file, fileIndex: currentFileIndex++ });
     });
   }
 
-  if (unstagedFiles.length > 0 && stagedFiles.length > 0) {
-    rows.push({ type: 'spacer' });
+  if (untrackedFiles.length > 0) {
+    if (modifiedFiles.length > 0) {
+      rows.push({ type: 'spacer' });
+    }
+    rows.push({ type: 'header', content: 'Untracked:', headerColor: 'gray' });
+    untrackedFiles.forEach((file) => {
+      rows.push({ type: 'file', file, fileIndex: currentFileIndex++ });
+    });
   }
 
   if (stagedFiles.length > 0) {
-    rows.push({ type: 'header', content: 'Staged Changes:', headerColor: 'green' });
-    stagedFiles.forEach((file, i) => {
-      rows.push({ type: 'file', file, fileIndex: unstagedFiles.length + i });
+    if (modifiedFiles.length > 0 || untrackedFiles.length > 0) {
+      rows.push({ type: 'spacer' });
+    }
+    rows.push({ type: 'header', content: 'Staged:', headerColor: 'green' });
+    stagedFiles.forEach((file) => {
+      rows.push({ type: 'file', file, fileIndex: currentFileIndex++ });
     });
   }
 
@@ -150,9 +189,11 @@ export function FileList({
 }
 
 export function getFileAtIndex(files: FileEntry[], index: number): FileEntry | null {
-  const unstagedFiles = files.filter(f => !f.staged);
+  // Order: Modified → Untracked → Staged
+  const modifiedFiles = files.filter(f => !f.staged && f.status !== 'untracked');
+  const untrackedFiles = files.filter(f => !f.staged && f.status === 'untracked');
   const stagedFiles = files.filter(f => f.staged);
-  const allFiles = [...unstagedFiles, ...stagedFiles];
+  const allFiles = [...modifiedFiles, ...untrackedFiles, ...stagedFiles];
   return allFiles[index] ?? null;
 }
 
