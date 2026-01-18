@@ -154,12 +154,11 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   dispose(): void {
     this.gitWatcher?.close();
     this.workingDirWatcher?.close();
-    this.queue.cancelScheduledRefresh();
     removeQueueForRepo(this.repoPath);
   }
 
   /**
-   * Schedule a debounced refresh.
+   * Schedule a refresh (coalesced if one is already pending).
    */
   scheduleRefresh(): void {
     this.queue.scheduleRefresh(() => this.doRefresh());
