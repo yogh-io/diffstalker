@@ -280,7 +280,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     }
 
     try {
-      await this.queue.enqueue(() => stageFile(this.repoPath, file.path));
+      await this.queue.enqueueMutation(() => stageFile(this.repoPath, file.path));
       this.scheduleRefresh();
     } catch (err) {
       await this.refresh();
@@ -308,7 +308,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     }
 
     try {
-      await this.queue.enqueue(() => unstageFile(this.repoPath, file.path));
+      await this.queue.enqueueMutation(() => unstageFile(this.repoPath, file.path));
       this.scheduleRefresh();
     } catch (err) {
       await this.refresh();
@@ -325,7 +325,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     if (file.staged || file.status === 'untracked') return;
 
     try {
-      await this.queue.enqueue(() => gitDiscardChanges(this.repoPath, file.path));
+      await this.queue.enqueueMutation(() => gitDiscardChanges(this.repoPath, file.path));
       await this.refresh();
     } catch (err) {
       this.updateState({
@@ -339,7 +339,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
    */
   async stageAll(): Promise<void> {
     try {
-      await this.queue.enqueue(() => gitStageAll(this.repoPath));
+      await this.queue.enqueueMutation(() => gitStageAll(this.repoPath));
       await this.refresh();
     } catch (err) {
       this.updateState({
@@ -353,7 +353,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
    */
   async unstageAll(): Promise<void> {
     try {
-      await this.queue.enqueue(() => gitUnstageAll(this.repoPath));
+      await this.queue.enqueueMutation(() => gitUnstageAll(this.repoPath));
       await this.refresh();
     } catch (err) {
       this.updateState({

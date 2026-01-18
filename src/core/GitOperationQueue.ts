@@ -16,6 +16,7 @@ export class GitOperationQueue {
   private isProcessing = false;
   private scheduledRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingRefresh: (() => Promise<void>) | null = null;
+  private pendingMutations = 0; // Track pending stage/unstage operations
 
   /**
    * Enqueue a git operation to be executed sequentially.
@@ -33,22 +34,47 @@ export class GitOperationQueue {
   }
 
   /**
+   * Enqueue a mutation operation (stage/unstage) that should block refreshes.
+   * Refreshes are suppressed while any mutations are pending.
+   */
+  enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    this.pendingMutations++;
+    return this.enqueue(operation).finally(() => {
+      this.pendingMutations--;
+    });
+  }
+
+  /**
+   * Check if there are pending mutation operations.
+   */
+  hasPendingMutations(): boolean {
+    return this.pendingMutations > 0;
+  }
+
+  /**
    * Schedule a debounced refresh operation.
    * Only one refresh can be pending at a time - new calls replace previous ones.
    * The refresh runs through the queue to ensure it doesn't conflict with other operations.
+   * Skips scheduling if there are pending mutations - the last mutation will trigger a refresh.
    */
   scheduleRefresh(callback: () => Promise<void>, delay: number = 150): void {
+    // Store the callback for later (even if we don't schedule now)
+    this.pendingRefresh = callback;
+
+    // If there are pending mutations, don't schedule yet - the last mutation will trigger refresh
+    if (this.pendingMutations > 0) {
+      return;
+    }
+
     // Clear any existing scheduled refresh
     if (this.scheduledRefreshTimer) {
       clearTimeout(this.scheduledRefreshTimer);
     }
 
-    // Store the callback (replacing any previous one)
-    this.pendingRefresh = callback;
-
     // Schedule the refresh
     this.scheduledRefreshTimer = setTimeout(() => {
-      if (this.pendingRefresh) {
+      // Double-check no mutations started while we were waiting
+      if (this.pendingRefresh && this.pendingMutations === 0) {
         const refresh = this.pendingRefresh;
         this.pendingRefresh = null;
         this.scheduledRefreshTimer = null;
