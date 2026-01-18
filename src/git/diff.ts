@@ -5,6 +5,10 @@ import { CommitInfo } from './status.js';
 export interface DiffLine {
   type: 'header' | 'hunk' | 'addition' | 'deletion' | 'context';
   content: string;
+  /** Line number in the old file (for deletions and context) */
+  oldLineNum?: number;
+  /** Line number in the new file (for additions and context) */
+  newLineNum?: number;
 }
 
 export interface DiffResult {
@@ -53,6 +57,73 @@ function parseDiffLine(line: string): DiffLine {
   return { type: 'context', content: line };
 }
 
+/**
+ * Parse a hunk header to extract line numbers.
+ * Format: @@ -oldStart,oldCount +newStart,newCount @@
+ * Example: @@ -1,5 +1,7 @@ or @@ -10 +10,2 @@
+ */
+function parseHunkHeader(line: string): { oldStart: number; newStart: number } | null {
+  const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+  if (match) {
+    return {
+      oldStart: parseInt(match[1], 10),
+      newStart: parseInt(match[2], 10),
+    };
+  }
+  return null;
+}
+
+/**
+ * Parse diff output with line numbers.
+ * Tracks line numbers through hunks for proper display.
+ */
+export function parseDiffWithLineNumbers(raw: string): DiffLine[] {
+  const lines = raw.split('\n');
+  const result: DiffLine[] = [];
+
+  let oldLineNum = 0;
+  let newLineNum = 0;
+
+  for (const line of lines) {
+    if (line.startsWith('diff --git') || line.startsWith('index ') ||
+        line.startsWith('---') || line.startsWith('+++') ||
+        line.startsWith('new file') || line.startsWith('deleted file') ||
+        line.startsWith('Binary files') || line.startsWith('similarity index') ||
+        line.startsWith('rename from') || line.startsWith('rename to')) {
+      result.push({ type: 'header', content: line });
+    } else if (line.startsWith('@@')) {
+      const hunkInfo = parseHunkHeader(line);
+      if (hunkInfo) {
+        oldLineNum = hunkInfo.oldStart;
+        newLineNum = hunkInfo.newStart;
+      }
+      result.push({ type: 'hunk', content: line });
+    } else if (line.startsWith('+')) {
+      result.push({
+        type: 'addition',
+        content: line,
+        newLineNum: newLineNum++,
+      });
+    } else if (line.startsWith('-')) {
+      result.push({
+        type: 'deletion',
+        content: line,
+        oldLineNum: oldLineNum++,
+      });
+    } else {
+      // Context line (starts with space) or empty line
+      result.push({
+        type: 'context',
+        content: line,
+        oldLineNum: oldLineNum++,
+        newLineNum: newLineNum++,
+      });
+    }
+  }
+
+  return result;
+}
+
 export async function getDiff(
   repoPath: string,
   file?: string,
@@ -70,7 +141,7 @@ export async function getDiff(
     }
 
     const raw = await git.diff(args);
-    const lines = raw.split('\n').map(parseDiffLine);
+    const lines = parseDiffWithLineNumbers(raw);
 
     return { raw, lines };
   } catch (error) {
@@ -92,8 +163,9 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
     const contentLines = content.split('\n');
     lines.push({ type: 'hunk', content: `@@ -0,0 +1,${contentLines.length} @@` });
 
+    let lineNum = 1;
     for (const line of contentLines) {
-      lines.push({ type: 'addition', content: '+' + line });
+      lines.push({ type: 'addition', content: '+' + line, newLineNum: lineNum++ });
     }
 
     const raw = lines.map(l => l.content).join('\n');
@@ -204,7 +276,7 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
     if (!match) continue;
 
     const filepath = match[1];
-    const lines = chunk.split('\n').map(parseDiffLine);
+    const lines = parseDiffWithLineNumbers(chunk);
     const stats = fileStats.get(filepath) || { additions: 0, deletions: 0 };
     const status = fileStatuses.get(filepath) || 'modified';
 
@@ -263,7 +335,7 @@ export async function getCommitDiff(repoPath: string, hash: string): Promise<Dif
   try {
     // git show <hash> --format="" gives just the diff without commit metadata
     const raw = await git.raw(['show', hash, '--format=']);
-    const lines = raw.split('\n').map(parseDiffLine);
+    const lines = parseDiffWithLineNumbers(raw);
     return { raw, lines };
   } catch {
     return { raw: '', lines: [] };
@@ -380,7 +452,7 @@ export async function getPRDiffWithUncommitted(repoPath: string, baseRef: string
     if (processedFiles.has(filepath)) continue;
     processedFiles.add(filepath);
 
-    const lines = chunk.split('\n').map(parseDiffLine);
+    const lines = parseDiffWithLineNumbers(chunk);
     const fileStats = uncommittedFiles.get(filepath) || { additions: 0, deletions: 0 };
     const fileStatus = statusMap.get(filepath) || 'modified';
 
