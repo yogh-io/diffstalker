@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import { isAIAvailable, generateCommitMessage } from '../ai/commit.js';
+import { useCommitFlow } from '../hooks/useCommitFlow.js';
 
 interface CommitPanelProps {
   isActive: boolean;
@@ -22,47 +22,33 @@ export function CommitPanel({
   getHeadMessage,
   onInputFocusChange,
 }: CommitPanelProps): React.ReactElement {
-  const [message, setMessage] = useState('');
-  const [amend, setAmend] = useState(false);
-  const [isCommitting, setIsCommitting] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [inputFocused, setInputFocused] = useState(false);
-
-  const aiAvailable = isAIAvailable();
+  const {
+    message,
+    amend,
+    isCommitting,
+    isGenerating,
+    error,
+    inputFocused,
+    aiAvailable,
+    setMessage,
+    toggleAmend,
+    setInputFocused,
+    handleGenerate,
+    handleSubmit,
+  } = useCommitFlow({
+    stagedCount,
+    stagedDiff,
+    onCommit,
+    onSuccess: onCancel,
+    getHeadMessage,
+  });
 
   // Notify parent of focus state changes
   useEffect(() => {
     onInputFocusChange?.(inputFocused);
   }, [inputFocused, onInputFocusChange]);
 
-  // Load HEAD message when amend is toggled
-  useEffect(() => {
-    if (amend) {
-      getHeadMessage().then(msg => {
-        if (msg && !message) {
-          setMessage(msg);
-        }
-      });
-    }
-  }, [amend]);
-
-  const handleGenerate = async () => {
-    if (!aiAvailable || isGenerating) return;
-
-    setIsGenerating(true);
-    setError(null);
-
-    try {
-      const generated = await generateCommitMessage(stagedDiff);
-      setMessage(generated);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Generation failed');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
+  // Keyboard handling
   useInput((input, key) => {
     if (!isActive) return;
 
@@ -85,7 +71,7 @@ export function CommitPanel({
       }
       // Toggle amend with 'a' when unfocused
       if (input === 'a') {
-        setAmend(!amend);
+        toggleAmend();
         return;
       }
       // Generate with 'g' when unfocused
@@ -99,7 +85,7 @@ export function CommitPanel({
     // When input is focused, only handle special keys
     // Toggle amend with 'a' when message is empty
     if (input === 'a' && !message) {
-      setAmend(!amend);
+      toggleAmend();
       return;
     }
 
@@ -109,32 +95,6 @@ export function CommitPanel({
       return;
     }
   }, { isActive });
-
-  const handleSubmit = async (value: string) => {
-    if (!value.trim()) {
-      setError('Commit message cannot be empty');
-      return;
-    }
-
-    if (stagedCount === 0 && !amend) {
-      setError('No changes staged for commit');
-      return;
-    }
-
-    setIsCommitting(true);
-    setError(null);
-
-    try {
-      await onCommit(value.trim(), amend);
-      setMessage('');
-      setAmend(false);
-      onCancel(); // Switch back to diff view
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Commit failed');
-    } finally {
-      setIsCommitting(false);
-    }
-  };
 
   if (!isActive) {
     return (
