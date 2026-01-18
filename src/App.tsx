@@ -432,7 +432,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         </Box>
 
         {bottomTab === 'diff' ? (
-          <DiffView diff={diff} maxHeight={bottomPaneHeight - 1} scrollOffset={diffScrollOffset} />
+          <DiffView diff={diff} filePath={selectedFile?.path} maxHeight={bottomPaneHeight - 1} scrollOffset={diffScrollOffset} />
         ) : bottomTab === 'commit' ? (
           <CommitPanel
             isActive={currentPane === 'commit'}
@@ -458,6 +458,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             ) : prSelectionDiff ? (
               <DiffView
                 diff={prSelectionDiff}
+                filePath={prListSelection?.type === 'file' ? prDiff?.files[prListSelection.index]?.path : undefined}
                 maxHeight={bottomPaneHeight - 1}
                 scrollOffset={diffScrollOffset}
               />

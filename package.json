@@ -25,6 +25,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "chokidar": "^4.0.3",
+    "emphasize": "^7.0.0",
     "ink": "^5.0.1",
     "ink-text-input": "^6.0.0",
     "react": "^18.3.1",
