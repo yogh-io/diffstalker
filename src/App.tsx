@@ -229,6 +229,30 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     };
 
     if (type === 'click') {
+      // Check for tab clicks in the footer (last row)
+      // Tab layout (right-aligned): [1]Diff [2]Commit [3]History [4]PR (35 chars total)
+      const footerRow = terminalHeight;
+      if (y === footerRow && button === 'left') {
+        const tabsStart = terminalWidth - 34; // 1-indexed start of tabs section
+        if (x >= tabsStart) {
+          const tabOffset = x - tabsStart;
+          // [1]Diff: 0-7, [2]Commit: 8-17, [3]History: 18-28, [4]PR: 29-34
+          if (tabOffset >= 0 && tabOffset <= 7) {
+            handleSwitchTab('diff');
+            return;
+          } else if (tabOffset >= 8 && tabOffset <= 17) {
+            handleSwitchTab('commit');
+            return;
+          } else if (tabOffset >= 18 && tabOffset <= 28) {
+            handleSwitchTab('history');
+            return;
+          } else if (tabOffset >= 29) {
+            handleSwitchTab('pr');
+            return;
+          }
+        }
+      }
+
       const clickedIndex = getClickedFileIndex();
 
       if (clickedIndex >= 0 && clickedIndex < totalFiles) {
