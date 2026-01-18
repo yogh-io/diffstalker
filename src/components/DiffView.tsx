@@ -1,7 +1,9 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { createEmphasize, common } from 'emphasize';
+import fastDiff from 'fast-diff';
 import { DiffResult, DiffLine } from '../git/diff.js';
+import { Theme, getTheme, ThemeName } from '../themes.js';
 
 // Create emphasize instance with common languages
 const emphasize = createEmphasize(common);
@@ -11,6 +13,7 @@ interface DiffViewProps {
   filePath?: string;
   maxHeight?: number;
   scrollOffset?: number;
+  theme?: ThemeName;
 }
 
 // Map common file extensions to highlight.js language names
@@ -114,7 +117,106 @@ function getLineContent(line: DiffLine): string {
   return line.content;
 }
 
-function DiffLineComponent({ line, lineNumWidth, language }: { line: DiffLine; lineNumWidth: number; language?: string }): React.ReactElement {
+// Segment with highlighting info for word-level diff
+interface DiffSegment {
+  text: string;
+  isChange: boolean;
+}
+
+// Compute word-level diff between old and new line
+function computeWordDiff(oldContent: string, newContent: string): { oldSegments: DiffSegment[]; newSegments: DiffSegment[] } {
+  const diff = fastDiff(oldContent, newContent);
+
+  const oldSegments: DiffSegment[] = [];
+  const newSegments: DiffSegment[] = [];
+
+  for (const [type, text] of diff) {
+    if (type === fastDiff.EQUAL) {
+      // Text exists in both - not a change
+      oldSegments.push({ text, isChange: false });
+      newSegments.push({ text, isChange: false });
+    } else if (type === fastDiff.DELETE) {
+      // Text only in old - it's a deletion (highlight it)
+      oldSegments.push({ text, isChange: true });
+    } else if (type === fastDiff.INSERT) {
+      // Text only in new - it's an addition (highlight it)
+      newSegments.push({ text, isChange: true });
+    }
+  }
+
+  return { oldSegments, newSegments };
+}
+
+// Find paired modifications (deletion followed by addition)
+interface LinePair {
+  deletion: DiffLine;
+  addition: DiffLine;
+  deletionIndex: number;
+  additionIndex: number;
+}
+
+function findModificationPairs(lines: DiffLine[]): Map<number, LinePair> {
+  const pairs = new Map<number, LinePair>();
+
+  for (let i = 0; i < lines.length - 1; i++) {
+    const current = lines[i];
+    const next = lines[i + 1];
+
+    // Look for deletion followed by addition (single-line modification)
+    if (current.type === 'deletion' && next.type === 'addition') {
+      const pair = { deletion: current, addition: next, deletionIndex: i, additionIndex: i + 1 };
+      pairs.set(i, pair);
+      pairs.set(i + 1, pair);
+    }
+  }
+
+  return pairs;
+}
+
+// Render content with word-level highlighting (Claude Code style)
+function WordDiffContent({
+  segments,
+  isAddition,
+  theme,
+}: {
+  segments: DiffSegment[];
+  isAddition: boolean;
+  theme: Theme;
+}): React.ReactElement {
+  const { colors } = theme;
+  const baseBg = isAddition ? colors.addBg : colors.delBg;
+  const highlightBg = isAddition ? colors.addHighlight : colors.delHighlight;
+
+  return (
+    <>
+      {segments.map((segment, i) => (
+        <Text
+          key={i}
+          color={colors.text}
+          backgroundColor={segment.isChange ? highlightBg : baseBg}
+        >
+          {segment.text || (i === segments.length - 1 ? ' ' : '')}
+        </Text>
+      ))}
+    </>
+  );
+}
+
+function DiffLineComponent({
+  line,
+  lineNumWidth,
+  language,
+  wordDiffSegments,
+  theme,
+}: {
+  line: DiffLine;
+  lineNumWidth: number;
+  language?: string;
+  wordDiffSegments?: DiffSegment[];
+  theme: Theme;
+}): React.ReactElement {
+  const { colors } = theme;
+
   // Headers - show dimmed
   if (line.type === 'header') {
     return (
@@ -124,35 +226,45 @@ function DiffLineComponent({ line, lineNumWidth, language }: { line: DiffLine; l
     );
   }
 
-  // Hunk headers - show with blue styling
+  // Hunk headers - show with blue styling (like @@ -1,5 +1,7 @@)
   if (line.type === 'hunk') {
     const match = line.content.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
     if (match) {
       const context = match[3].trim();
       return (
         <Box>
-          <Text backgroundColor="blue" color="white">
-            {' '.repeat(lineNumWidth * 2 + 3)}
-          </Text>
-          <Text color="blue"> {context || '...'}</Text>
+          <Text color="cyan" dimColor>{line.content.slice(0, line.content.indexOf('@@', 3) + 2)}</Text>
+          {context && <Text color="gray"> {context}</Text>}
         </Box>
       );
     }
-    return <Text color="cyan">{line.content}</Text>;
+    return <Text color="cyan" dimColor>{line.content}</Text>;
   }
 
-  // Content lines (addition, deletion, context)
+  // Get line number to display (use new for additions, old for deletions, either for context)
+  const lineNum = line.type === 'addition'
+    ? line.newLineNum
+    : line.type === 'deletion'
+      ? line.oldLineNum
+      : (line.oldLineNum ?? line.newLineNum);
+
+  const lineNumStr = lineNum !== undefined
+    ? String(lineNum).padStart(lineNumWidth, ' ')
+    : ' '.repeat(lineNumWidth);
+
+  // Content without the leading +/-/space
   const content = getLineContent(line);
-  const highlighted = highlightLine(content, language);
-  const oldNum = line.oldLineNum !== undefined ? String(line.oldLineNum).padStart(lineNumWidth, ' ') : ' '.repeat(lineNumWidth);
-  const newNum = line.newLineNum !== undefined ? String(line.newLineNum).padStart(lineNumWidth, ' ') : ' '.repeat(lineNumWidth);
 
   if (line.type === 'addition') {
     return (
       <Box>
-        <Text dimColor>{' '.repeat(lineNumWidth)}</Text>
-        <Text color="green" bold> {newNum} + </Text>
-        <Text backgroundColor="greenBright">{highlighted || ' '}</Text>
+        <Text backgroundColor={colors.addBg} color={colors.lineNum}>{lineNumStr} </Text>
+        <Text backgroundColor={colors.addBg} color={colors.addSymbol} bold>+ </Text>
+        {wordDiffSegments ? (
+          <WordDiffContent segments={wordDiffSegments} isAddition={true} theme={theme} />
+        ) : (
+          <Text backgroundColor={colors.addBg} color={colors.text}>{content || ' '}</Text>
+        )}
       </Box>
     );
   }
@@ -160,26 +272,52 @@ function DiffLineComponent({ line, lineNumWidth, language }: { line: DiffLine; l
   if (line.type === 'deletion') {
     return (
       <Box>
-        <Text color="red" bold>{oldNum} </Text>
-        <Text dimColor>{' '.repeat(lineNumWidth)}</Text>
-        <Text color="red" bold> - </Text>
-        <Text backgroundColor="redBright">{highlighted || ' '}</Text>
+        <Text backgroundColor={colors.delBg} color={colors.lineNum}>{lineNumStr} </Text>
+        <Text backgroundColor={colors.delBg} color={colors.delSymbol} bold>- </Text>
+        {wordDiffSegments ? (
+          <WordDiffContent segments={wordDiffSegments} isAddition={false} theme={theme} />
+        ) : (
+          <Text backgroundColor={colors.delBg} color={colors.text}>{content || ' '}</Text>
+        )}
       </Box>
     );
   }
 
-  // Context line
+  // Context line - no background, just syntax highlighting
+  const highlighted = highlightLine(content, language);
   return (
     <Box>
-      <Text dimColor>{oldNum} {newNum}   </Text>
+      <Text dimColor>{lineNumStr}   </Text>
       <Text>{highlighted}</Text>
     </Box>
   );
 }
 
-export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0 }: DiffViewProps): React.ReactElement {
-  // Memoize language detection
+export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, theme: themeName = 'dark' }: DiffViewProps): React.ReactElement {
+  // Memoize theme and language detection
+  const theme = useMemo(() => getTheme(themeName), [themeName]);
   const language = useMemo(() => getLanguageFromPath(filePath), [filePath]);
+
+  // Memoize modification pairs and word diffs
+  const wordDiffs = useMemo(() => {
+    if (!diff) return new Map<number, DiffSegment[]>();
+
+    const pairs = findModificationPairs(diff.lines);
+    const diffs = new Map<number, DiffSegment[]>();
+
+    // Compute word diffs for paired lines
+    for (const [index, pair] of pairs) {
+      if (index === pair.deletionIndex) {
+        const oldContent = getLineContent(pair.deletion);
+        const newContent = getLineContent(pair.addition);
+        const { oldSegments, newSegments } = computeWordDiff(oldContent, newContent);
+        diffs.set(pair.deletionIndex, oldSegments);
+        diffs.set(pair.additionIndex, newSegments);
+      }
+    }
+
+    return diffs;
+  }, [diff]);
 
   if (!diff || diff.lines.length === 0) {
     return (
@@ -203,14 +341,21 @@ export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0 }: D
         <Text dimColor>↑ {scrollOffset} more lines above</Text>
       )}
 
-      {visibleLines.map((line, i) => (
-        <DiffLineComponent
-          key={`${scrollOffset + i}-${line.content.slice(0, 20)}`}
-          line={line}
-          lineNumWidth={lineNumWidth}
-          language={language}
-        />
-      ))}
+      {visibleLines.map((line, i) => {
+        const actualIndex = scrollOffset + i;
+        const wordDiffSegments = wordDiffs.get(actualIndex);
+
+        return (
+          <DiffLineComponent
+            key={`${actualIndex}-${line.content.slice(0, 20)}`}
+            line={line}
+            lineNumWidth={lineNumWidth}
+            language={language}
+            wordDiffSegments={wordDiffSegments}
+            theme={theme}
+          />
+        );
+      })}
 
       {hasMore && (
         <Text dimColor>↓ {diff.lines.length - scrollOffset - maxHeight} more lines below</Text>

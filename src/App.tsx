@@ -20,7 +20,9 @@ import {
   isButtonAreaClick,
   isInPane,
 } from './utils/mouseCoordinates.js';
-import { Config } from './config.js';
+import { Config, saveConfig } from './config.js';
+import { ThemePicker } from './components/ThemePicker.js';
+import { ThemeName } from './themes.js';
 
 interface AppProps {
   config: Config;
@@ -60,6 +62,10 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [pendingDiscard, setPendingDiscard] = useState<FileEntry | null>(null);
   const [commitInputFocused, setCommitInputFocused] = useState(false);
+
+  // Theme state
+  const [currentTheme, setCurrentTheme] = useState<ThemeName>(config.theme);
+  const [showThemePicker, setShowThemePicker] = useState(false);
 
   // History state
   const [commits, setCommits] = useState<CommitInfo[]>([]);
@@ -190,12 +196,19 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     else if (type === 'scroll-up' || type === 'scroll-down') {
       const direction = type === 'scroll-up' ? 'up' : 'down';
 
-      if (isInPane(y, diffPaneStart, diffPaneEnd)) {
-        if (bottomTab === 'diff') scrollDiff(direction);
-        else if (bottomTab === 'history') scrollHistory(direction, commits.length);
-        else if (bottomTab === 'pr') scrollPR(direction, prTotalRows);
-      } else if (isInPane(y, stagingPaneStart, fileListEnd)) {
-        scrollFileList(direction);
+      // Top pane scrolling - depends on current mode
+      if (isInPane(y, stagingPaneStart, fileListEnd)) {
+        if (bottomTab === 'diff' || bottomTab === 'commit') {
+          scrollFileList(direction);
+        } else if (bottomTab === 'history') {
+          scrollHistory(direction, commits.length);
+        } else if (bottomTab === 'pr') {
+          scrollPR(direction, prTotalRows);
+        }
+      }
+      // Bottom pane scrolling - always scrolls the diff view
+      else if (isInPane(y, diffPaneStart, diffPaneEnd)) {
+        scrollDiff(direction);
       }
     }
   }, [
@@ -298,7 +311,22 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     setIncludeUncommitted(prev => !prev);
   }, []);
 
-  // Keymap
+  // Theme handlers
+  const handleOpenThemePicker = useCallback(() => {
+    setShowThemePicker(true);
+  }, []);
+
+  const handleThemeSelect = useCallback((theme: ThemeName) => {
+    setCurrentTheme(theme);
+    setShowThemePicker(false);
+    saveConfig({ theme });
+  }, []);
+
+  const handleThemeCancel = useCallback(() => {
+    setShowThemePicker(false);
+  }, []);
+
+  // Keymap (disabled when theme picker is open)
   useKeymap({
     onStage: handleStage,
     onUnstage: handleUnstage,
@@ -313,7 +341,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     onSwitchTab: handleSwitchTab,
     onSelect: handleSelect,
     onToggleIncludeUncommitted: handleToggleIncludeUncommitted,
-  }, currentPane, commitInputFocused);
+    onOpenThemePicker: handleOpenThemePicker,
+  }, currentPane, commitInputFocused || showThemePicker);
 
   // Discard confirmation
   useInput((input, key) => {
@@ -432,7 +461,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         </Box>
 
         {bottomTab === 'diff' ? (
-          <DiffView diff={diff} filePath={selectedFile?.path} maxHeight={bottomPaneHeight - 1} scrollOffset={diffScrollOffset} />
+          <DiffView diff={diff} filePath={selectedFile?.path} maxHeight={bottomPaneHeight - 1} scrollOffset={diffScrollOffset} theme={currentTheme} />
         ) : bottomTab === 'commit' ? (
           <CommitPanel
             isActive={currentPane === 'commit'}
@@ -448,6 +477,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             diff={historyCommitDiff}
             maxHeight={bottomPaneHeight - 1}
             scrollOffset={diffScrollOffset}
+            theme={currentTheme}
           />
         ) : (
           <>
@@ -461,6 +491,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
                 filePath={prListSelection?.type === 'file' ? prDiff?.files[prListSelection.index]?.path : undefined}
                 maxHeight={bottomPaneHeight - 1}
                 scrollOffset={diffScrollOffset}
+                theme={currentTheme}
               />
             ) : (
               <Text dimColor>Select a commit or file to view diff</Text>
@@ -480,6 +511,19 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         </Box>
       ) : (
         <Footer activeTab={bottomTab} />
+      )}
+
+      {/* Theme picker modal overlay */}
+      {showThemePicker && (
+        <Box position="absolute" marginTop={0} marginLeft={0}>
+          <ThemePicker
+            currentTheme={currentTheme}
+            onSelect={handleThemeSelect}
+            onCancel={handleThemeCancel}
+            width={terminalWidth}
+            height={terminalHeight}
+          />
+        </Box>
       )}
     </Box>
   );

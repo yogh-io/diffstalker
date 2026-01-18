@@ -19,6 +19,7 @@ export function Footer({ activeTab }: FooterProps): React.ReactElement {
             <Text dimColor>u</Text> uncommitted{' '}
           </>
         )}
+        <Text dimColor>t</Text> theme{' '}
         <Text dimColor>q</Text> quit
       </Text>
 

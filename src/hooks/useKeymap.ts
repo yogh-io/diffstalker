@@ -17,6 +17,7 @@ export interface KeymapActions {
   onSwitchTab: (tab: BottomTab) => void;
   onSelect: () => void;
   onToggleIncludeUncommitted?: () => void;
+  onOpenThemePicker?: () => void;
 }
 
 export function useKeymap(
@@ -77,6 +78,12 @@ export function useKeymap(
     // Toggle include uncommitted in PR view: u
     if (input === 'u' && actions.onToggleIncludeUncommitted) {
       actions.onToggleIncludeUncommitted();
+      return;
+    }
+
+    // Open theme picker: t
+    if (input === 't' && actions.onOpenThemePicker) {
+      actions.onOpenThemePicker();
       return;
     }
 
