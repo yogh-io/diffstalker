@@ -6,7 +6,8 @@ import { FileList, getFileAtIndex, getTotalFileCount } from './components/FileLi
 import { DiffView } from './components/DiffView.js';
 import { CommitPanel } from './components/CommitPanel.js';
 import { HistoryView } from './components/HistoryView.js';
-import { PRListView, PRListSelection } from './components/PRListView.js';
+import { PRListView, PRListSelection, getPRItemIndexFromRow } from './components/PRListView.js';
+import { PRView, getFileScrollOffset } from './components/PRView.js';
 import { Footer } from './components/Footer.js';
 import { useWatcher } from './hooks/useWatcher.js';
 import { useGit } from './hooks/useGit.js';
@@ -175,19 +176,20 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       const fileCount = prDiff.files.length;
 
       if (prSelectedIndex < commitCount) {
-        // Selected a commit
+        // Selected a commit - show commit diff from top
         setPRListSelection({ type: 'commit', index: prSelectedIndex });
         selectPRCommit(prSelectedIndex);
         setDiffScrollOffset(0);
       } else if (prSelectedIndex < commitCount + fileCount) {
-        // Selected a file
+        // Selected a file - scroll to file in full PR diff
         const fileIndex = prSelectedIndex - commitCount;
         setPRListSelection({ type: 'file', index: fileIndex });
-        selectPRFile(fileIndex);
-        setDiffScrollOffset(0);
+        // Calculate scroll offset to jump to this file's section
+        const scrollTo = getFileScrollOffset(prDiff, fileIndex);
+        setDiffScrollOffset(scrollTo);
       }
     }
-  }, [bottomTab, prDiff, prSelectedIndex, selectPRCommit, selectPRFile, setDiffScrollOffset]);
+  }, [bottomTab, prDiff, prSelectedIndex, selectPRCommit, setDiffScrollOffset]);
 
   // Calculate PR total items (commits + files) for navigation
   const prTotalItems = useMemo(() => {
@@ -245,13 +247,17 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             setDiffScrollOffset(0);
             return;
           }
-        } else if (bottomTab === 'pr') {
-          // PR list clicks - calculate clicked item index (commits then files)
-          const clickedIndex = (y - stagingPaneStart - 1) + prScrollOffset;
-          if (clickedIndex >= 0 && clickedIndex < prTotalItems) {
-            setPRSelectedIndex(clickedIndex);
+        } else if (bottomTab === 'pr' && prDiff) {
+          // PR list clicks - map visual row to item index (accounting for headers/spacers)
+          const visualRow = (y - stagingPaneStart - 1) + prScrollOffset;
+          const itemIndex = getPRItemIndexFromRow(
+            visualRow,
+            prDiff.commits.length,
+            prDiff.files.length
+          );
+          if (itemIndex >= 0 && itemIndex < prTotalItems) {
+            setPRSelectedIndex(itemIndex);
             setCurrentPane('pr');
-            setDiffScrollOffset(0);
             return;
           }
         }
@@ -604,16 +610,29 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
               <Text dimColor>Loading PR diff...</Text>
             ) : prError ? (
               <Text color="red">{prError}</Text>
-            ) : prSelectionDiff ? (
+            ) : prListSelection?.type === 'commit' && prSelectionDiff ? (
+              // Show single commit diff when a commit is selected
               <DiffView
                 diff={prSelectionDiff}
-                filePath={prListSelection?.type === 'file' ? prDiff?.files[prListSelection.index]?.path : undefined}
                 maxHeight={bottomPaneHeight - 1}
                 scrollOffset={diffScrollOffset}
                 theme={currentTheme}
               />
+            ) : prDiff ? (
+              // Show full PR diff when a file is selected or nothing selected
+              <PRView
+                prDiff={prDiff}
+                isLoading={false}
+                error={null}
+                scrollOffset={diffScrollOffset}
+                maxHeight={bottomPaneHeight - 1}
+                width={terminalWidth}
+                isActive={currentPane === 'diff'}
+                includeUncommitted={includeUncommitted}
+                onToggleIncludeUncommitted={handleToggleIncludeUncommitted}
+              />
             ) : (
-              <Text dimColor>Select a commit or file to view diff</Text>
+              <Text dimColor>No PR diff available</Text>
             )}
           </>
         )}

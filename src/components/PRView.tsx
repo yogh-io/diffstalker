@@ -82,6 +82,22 @@ function FileHeaderComponent({ file }: { file: PRFileDiff }): React.ReactElement
   );
 }
 
+/**
+ * Calculate the row offset to scroll to a specific file in the PR diff.
+ * Returns the row index where the file header starts.
+ */
+export function getFileScrollOffset(prDiff: PRDiff | null, fileIndex: number): number {
+  if (!prDiff || fileIndex < 0 || fileIndex >= prDiff.files.length) return 0;
+
+  let offset = 0;
+  for (let i = 0; i < fileIndex; i++) {
+    const file = prDiff.files[i];
+    // 1 for file header + diff lines (excluding header lines)
+    offset += 1 + file.diff.lines.filter(l => l.type !== 'header').length;
+  }
+  return offset;
+}
+
 export function PRView({
   prDiff,
   isLoading,
