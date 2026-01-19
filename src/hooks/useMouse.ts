@@ -4,7 +4,7 @@ import { useStdin } from 'ink';
 export interface MouseEvent {
   x: number;
   y: number;
-  type: 'click' | 'scroll-up' | 'scroll-down' | 'drag';
+  type: 'click' | 'scroll-up' | 'scroll-down';
   button: 'left' | 'middle' | 'right' | 'none';
 }
 
@@ -15,8 +15,9 @@ export function useMouse(onEvent: (event: MouseEvent) => void): void {
     if (!stdin || !setRawMode) return;
 
     // Enable mouse tracking (SGR extended mode for better coordinates)
+    // Note: We only enable click tracking (1000h), not drag tracking (1002h),
+    // so that normal text selection still works in the terminal
     process.stdout.write('\x1b[?1000h'); // Enable mouse click tracking
-    process.stdout.write('\x1b[?1002h'); // Enable mouse drag tracking
     process.stdout.write('\x1b[?1006h'); // Enable SGR extended mode
 
     const handleData = (data: Buffer) => {
@@ -76,7 +77,6 @@ export function useMouse(onEvent: (event: MouseEvent) => void): void {
       stdin.off('data', handleData);
       // Disable mouse tracking
       process.stdout.write('\x1b[?1006l');
-      process.stdout.write('\x1b[?1002l');
       process.stdout.write('\x1b[?1000l');
     };
   }, [stdin, setRawMode, onEvent]);
