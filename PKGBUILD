@@ -2,7 +2,7 @@
 pkgname=diffstalker-git
 pkgver=0.1.0.r0.g0000000
 pkgrel=1
-pkgdesc="Terminal UI for git staging and committing"
+pkgdesc="Terminal UI for git staging, committing, and reviewing changes"
 arch=('any')
 url="https://github.com/user/diffstalker"
 license=('MIT')
@@ -21,8 +21,8 @@ pkgver() {
 
 build() {
     cd "$pkgname"
-    npm ci
-    npm run bundle  # Creates bundled output in dist/bundle/
+    npm ci --ignore-scripts
+    npm run bundle
 }
 
 package() {
@@ -40,6 +40,7 @@ exec node /usr/lib/diffstalker/index.js "$@"
 EOF
     chmod 755 "$pkgdir/usr/bin/diffstalker"
 
-    # Install license
+    # Install license and documentation
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 }
