@@ -1,4 +1,5 @@
 import React from 'react';
+import * as path from 'node:path';
 import { Box, Text } from 'ink';
 import { BranchInfo } from '../git/status.js';
 import { shortenPath } from '../config.js';
@@ -12,6 +13,26 @@ interface HeaderProps {
   debug?: boolean;
   watcherState?: WatcherState;
   width?: number;
+}
+
+function BranchDisplay({ branch }: { branch: BranchInfo }): React.ReactElement {
+  return (
+    <Box>
+      <Text color="green" bold>{branch.current}</Text>
+      {branch.tracking && (
+        <>
+          <Text dimColor> → </Text>
+          <Text color="blue">{branch.tracking}</Text>
+        </>
+      )}
+      {(branch.ahead > 0 || branch.behind > 0) && (
+        <Text>
+          {branch.ahead > 0 && <Text color="green"> ↑{branch.ahead}</Text>}
+          {branch.behind > 0 && <Text color="red"> ↓{branch.behind}</Text>}
+        </Text>
+      )}
+    </Box>
+  );
 }
 
 export function Header({ repoPath, branch, isLoading, error, debug, watcherState, width = 80 }: HeaderProps): React.ReactElement {
@@ -53,56 +74,71 @@ export function Header({ repoPath, branch, isLoading, error, debug, watcherState
     if (branch.behind > 0) branchWidth += 3 + String(branch.behind).length;
   }
 
-  // Calculate left side content width
+  // Calculate left side content width (without follow)
   let leftWidth = displayPath.length;
   if (isLoading) leftWidth += 2;
   if (isNotGitRepo) leftWidth += 24;
   if (error && !isNotGitRepo) leftWidth += error.length + 3;
 
-  // Determine follow indicator display
+  // Determine follow indicator display and layout
   let followText: string | null = null;
+  let wrapBranch = false;
+
   if (watcherState?.enabled && watcherState.sourceFile) {
-    const availableForFollow = width - leftWidth - branchWidth - 4; // 4 for spacing
-    if (availableForFollow >= 10) { // " (follow)" = 9 chars
-      const followPath = shortenPath(watcherState.sourceFile);
-      const fullFollow = ` (follow: ${followPath})`;
-      if (fullFollow.length <= availableForFollow) {
+    const followPath = shortenPath(watcherState.sourceFile);
+    const followFilename = path.basename(watcherState.sourceFile);
+    const fullFollow = ` (follow: ${followPath})`;
+    const filenameFollow = ` (follow: ${followFilename})`;
+
+    const availableOneLine = width - leftWidth - branchWidth - 4; // 4 for spacing
+
+    if (fullFollow.length <= availableOneLine) {
+      // Everything fits on one line
+      followText = fullFollow;
+    } else if (filenameFollow.length <= availableOneLine) {
+      // Filename version fits on one line
+      followText = filenameFollow;
+    } else {
+      // Need to wrap branch to second line
+      const availableWithWrap = width - leftWidth - 2;
+      if (fullFollow.length <= availableWithWrap) {
         followText = fullFollow;
-      } else if (availableForFollow >= 9) {
-        followText = ' (follow)';
+        wrapBranch = true;
+      } else if (filenameFollow.length <= availableWithWrap) {
+        followText = filenameFollow;
+        wrapBranch = true;
       }
+      // If even filename doesn't fit, don't show follow at all
     }
   }
 
   return (
     <Box flexDirection="column">
-      <Box justifyContent="space-between">
-        <Box>
-          <Text bold color="cyan">{displayPath}</Text>
-          {isLoading && <Text color="yellow"> ⟳</Text>}
-          {isNotGitRepo && <Text color="yellow"> (not a git repository)</Text>}
-          {error && !isNotGitRepo && <Text color="red"> ({error})</Text>}
-          {followText && <Text dimColor>{followText}</Text>}
-        </Box>
-
-        {branch && (
+      {wrapBranch ? (
+        // Two-line layout: path + follow on first line, branch on second
+        <>
           <Box>
-            <Text color="green" bold>{branch.current}</Text>
-            {branch.tracking && (
-              <>
-                <Text dimColor> → </Text>
-                <Text color="blue">{branch.tracking}</Text>
-              </>
-            )}
-            {(branch.ahead > 0 || branch.behind > 0) && (
-              <Text>
-                {branch.ahead > 0 && <Text color="green"> ↑{branch.ahead}</Text>}
-                {branch.behind > 0 && <Text color="red"> ↓{branch.behind}</Text>}
-              </Text>
-            )}
+            <Text bold color="cyan">{displayPath}</Text>
+            {isLoading && <Text color="yellow"> ⟳</Text>}
+            {isNotGitRepo && <Text color="yellow"> (not a git repository)</Text>}
+            {error && !isNotGitRepo && <Text color="red"> ({error})</Text>}
+            {followText && <Text dimColor>{followText}</Text>}
           </Box>
-        )}
-      </Box>
+          {branch && <BranchDisplay branch={branch} />}
+        </>
+      ) : (
+        // Single-line layout
+        <Box justifyContent="space-between">
+          <Box>
+            <Text bold color="cyan">{displayPath}</Text>
+            {isLoading && <Text color="yellow"> ⟳</Text>}
+            {isNotGitRepo && <Text color="yellow"> (not a git repository)</Text>}
+            {error && !isNotGitRepo && <Text color="red"> ({error})</Text>}
+            {followText && <Text dimColor>{followText}</Text>}
+          </Box>
+          {branch && <BranchDisplay branch={branch} />}
+        </Box>
+      )}
 
       {debug && watcherState && watcherState.enabled && watcherState.sourceFile && (
         <Box>
