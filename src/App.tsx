@@ -288,7 +288,9 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     historyScrollOffset, prScrollOffset, setDiffScrollOffset,
   ]);
 
-  const { mouseEnabled, toggleMouse } = useMouse(handleMouseEvent);
+  // Disable mouse tracking when text inputs are focused to prevent escape sequences from entering input
+  const mouseDisabled = commitInputFocused || showBaseBranchPicker;
+  const { mouseEnabled, toggleMouse } = useMouse(handleMouseEvent, mouseDisabled);
 
   // Tab switching
   const handleSwitchTab = useCallback((tab: BottomTab) => {

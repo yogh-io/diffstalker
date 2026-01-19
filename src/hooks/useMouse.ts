@@ -8,7 +8,10 @@ export interface MouseEvent {
   button: 'left' | 'middle' | 'right' | 'none';
 }
 
-export function useMouse(onEvent: (event: MouseEvent) => void): { mouseEnabled: boolean; toggleMouse: () => void } {
+export function useMouse(
+  onEvent: (event: MouseEvent) => void,
+  disabled: boolean = false
+): { mouseEnabled: boolean; toggleMouse: () => void } {
   const { stdin, setRawMode } = useStdin();
   const [mouseEnabled, setMouseEnabled] = useState(true);
   const onEventRef = useRef(onEvent);
@@ -18,16 +21,16 @@ export function useMouse(onEvent: (event: MouseEvent) => void): { mouseEnabled: 
     setMouseEnabled(prev => !prev);
   }, []);
 
-  // Handle mouse mode changes
+  // Handle mouse mode changes (also disable when text input is focused)
   useEffect(() => {
-    if (mouseEnabled) {
+    if (mouseEnabled && !disabled) {
       process.stdout.write('\x1b[?1000h');
       process.stdout.write('\x1b[?1006h');
     } else {
       process.stdout.write('\x1b[?1006l');
       process.stdout.write('\x1b[?1000l');
     }
-  }, [mouseEnabled]);
+  }, [mouseEnabled, disabled]);
 
   // Set up event listener (separate from mode toggle)
   useEffect(() => {
