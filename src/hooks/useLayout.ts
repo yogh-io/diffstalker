@@ -55,7 +55,7 @@ export interface UseLayoutResult {
   setPRScrollOffset: React.Dispatch<React.SetStateAction<number>>;
 
   // Scroll helpers
-  scrollDiff: (direction: 'up' | 'down', amount?: number) => void;
+  scrollDiff: (direction: 'up' | 'down', amount?: number, maxRows?: number) => void;
   scrollFileList: (direction: 'up' | 'down', amount?: number) => void;
   scrollHistory: (direction: 'up' | 'down', amount?: number, totalItems?: number) => void;
   scrollPR: (direction: 'up' | 'down', totalRows: number, amount?: number) => void;
@@ -146,8 +146,10 @@ export function useLayout(
   }, [selectedIndex, files, topPaneHeight]);
 
   // Scroll helpers
-  const scrollDiff = useCallback((direction: 'up' | 'down', amount: number = 3) => {
-    const maxOffset = Math.max(0, (diff?.lines.length ?? 0) - (bottomPaneHeight - 4));
+  const scrollDiff = useCallback((direction: 'up' | 'down', amount: number = 3, maxRows?: number) => {
+    // Use provided maxRows or fall back to diff line count
+    const totalRows = maxRows ?? (diff?.lines.length ?? 0);
+    const maxOffset = Math.max(0, totalRows - (bottomPaneHeight - 4));
     setDiffScrollOffset(prev => {
       if (direction === 'up') {
         return Math.max(0, prev - amount);

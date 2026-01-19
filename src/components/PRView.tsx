@@ -14,10 +14,34 @@ interface PRViewProps {
   onToggleIncludeUncommitted: () => void;
 }
 
-interface RenderRow {
+export interface PRDiffRow {
   type: 'file-header' | 'diff-line';
   fileIndex: number;
   content: DiffLine | PRFileDiff;
+}
+
+/**
+ * Build the flat list of rows for the PR diff view.
+ * This is the single source of truth for PR diff row structure.
+ */
+export function buildPRDiffRows(prDiff: PRDiff | null): PRDiffRow[] {
+  if (!prDiff || prDiff.files.length === 0) return [];
+
+  const rows: PRDiffRow[] = [];
+  for (let fileIndex = 0; fileIndex < prDiff.files.length; fileIndex++) {
+    const file = prDiff.files[fileIndex];
+
+    // File header
+    rows.push({ type: 'file-header', fileIndex, content: file });
+
+    // Diff lines (skip the raw diff header lines, start from hunk)
+    for (const line of file.diff.lines) {
+      // Skip redundant header lines as we already show file header
+      if (line.type === 'header') continue;
+      rows.push({ type: 'diff-line', fileIndex, content: line });
+    }
+  }
+  return rows;
 }
 
 function DiffLineComponent({ line }: { line: DiffLine }): React.ReactElement {
@@ -89,13 +113,17 @@ function FileHeaderComponent({ file }: { file: PRFileDiff }): React.ReactElement
 export function getFileScrollOffset(prDiff: PRDiff | null, fileIndex: number): number {
   if (!prDiff || fileIndex < 0 || fileIndex >= prDiff.files.length) return 0;
 
-  let offset = 0;
-  for (let i = 0; i < fileIndex; i++) {
-    const file = prDiff.files[i];
-    // 1 for file header + diff lines (excluding header lines)
-    offset += 1 + file.diff.lines.filter(l => l.type !== 'header').length;
-  }
-  return offset;
+  const rows = buildPRDiffRows(prDiff);
+  // Find the first row for this file (the file-header row)
+  const idx = rows.findIndex(row => row.type === 'file-header' && row.fileIndex === fileIndex);
+  return idx >= 0 ? idx : 0;
+}
+
+/**
+ * Calculate the total number of rows in the PR diff view.
+ */
+export function getPRDiffTotalRows(prDiff: PRDiff | null): number {
+  return buildPRDiffRows(prDiff).length;
 }
 
 export function PRView({
@@ -160,28 +188,8 @@ export function PRView({
     );
   };
 
-  // Build flat list of renderable rows
-  const buildRows = (): RenderRow[] => {
-    if (!prDiff || prDiff.files.length === 0) return [];
-
-    const rows: RenderRow[] = [];
-    for (let fileIndex = 0; fileIndex < prDiff.files.length; fileIndex++) {
-      const file = prDiff.files[fileIndex];
-
-      // File header
-      rows.push({ type: 'file-header', fileIndex, content: file });
-
-      // Diff lines (skip the raw diff header lines, start from hunk)
-      for (const line of file.diff.lines) {
-        // Skip redundant header lines as we already show file header
-        if (line.type === 'header') continue;
-        rows.push({ type: 'diff-line', fileIndex, content: line });
-      }
-    }
-    return rows;
-  };
-
-  const allRows = buildRows();
+  // Use the shared row building function
+  const allRows = buildPRDiffRows(prDiff);
   const contentHeight = maxHeight - 2; // Reserve for header and indicators
   const visibleRows = allRows.slice(scrollOffset, scrollOffset + contentHeight);
   const hasMore = allRows.length > scrollOffset + contentHeight;

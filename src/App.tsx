@@ -7,7 +7,7 @@ import { DiffView } from './components/DiffView.js';
 import { CommitPanel } from './components/CommitPanel.js';
 import { HistoryView } from './components/HistoryView.js';
 import { PRListView, PRListSelection, getPRItemIndexFromRow } from './components/PRListView.js';
-import { PRView, getFileScrollOffset } from './components/PRView.js';
+import { PRView, getFileScrollOffset, getPRDiffTotalRows } from './components/PRView.js';
 import { Footer } from './components/Footer.js';
 import { useWatcher } from './hooks/useWatcher.js';
 import { useGit } from './hooks/useGit.js';
@@ -208,12 +208,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     return prDiff.commits.length + prDiff.files.length;
   }, [prDiff]);
 
-  // Calculate PR total rows for scrolling (legacy, kept for compatibility)
-  const prTotalRows = useMemo(() => {
-    if (!prDiff?.files) return 0;
-    return prDiff.files.reduce((total, file) =>
-      total + 1 + file.diff.lines.filter(l => l.type !== 'header').length, 0);
-  }, [prDiff]);
+  // Calculate PR diff total rows for scrolling (uses shared row building logic)
+  const prDiffTotalRows = useMemo(() => getPRDiffTotalRows(prDiff), [prDiff]);
 
   // Mouse handler
   const handleMouseEvent = useCallback((event: { x: number; y: number; type: string; button: string }) => {
@@ -296,7 +292,9 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       }
       // Bottom pane scrolling (anywhere below top pane scrolls diff)
       else {
-        scrollDiff(direction);
+        // In PR view showing full diff, pass the PR diff row count
+        const maxRows = (bottomTab === 'pr' && prListSelection?.type !== 'commit') ? prDiffTotalRows : undefined;
+        scrollDiff(direction, 3, maxRows);
       }
     }
   }, [
@@ -304,6 +302,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     bottomTab, commits.length, prTotalItems, stage, unstage,
     scrollDiff, scrollFileList, scrollHistory, scrollPR,
     historyScrollOffset, prScrollOffset, setDiffScrollOffset,
+    prListSelection?.type, prDiffTotalRows,
   ]);
 
   // Disable mouse tracking when text inputs are focused to prevent escape sequences from entering input
@@ -330,7 +329,9 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     if (currentPane === 'files') {
       setSelectedIndex(prev => Math.max(0, prev - 1));
     } else if (currentPane === 'diff') {
-      scrollDiff('up');
+      // In PR view showing full diff, pass the PR diff row count
+      const maxRows = (bottomTab === 'pr' && prListSelection?.type !== 'commit') ? prDiffTotalRows : undefined;
+      scrollDiff('up', 3, maxRows);
     } else if (currentPane === 'history') {
       setHistorySelectedIndex(prev => {
         const newIndex = Math.max(0, prev - 1);
@@ -345,13 +346,15 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         return newIndex;
       });
     }
-  }, [currentPane, historyScrollOffset, prScrollOffset, scrollDiff, setHistoryScrollOffset, setPRScrollOffset]);
+  }, [currentPane, bottomTab, prListSelection?.type, prDiffTotalRows, historyScrollOffset, prScrollOffset, scrollDiff, setHistoryScrollOffset, setPRScrollOffset]);
 
   const handleNavigateDown = useCallback(() => {
     if (currentPane === 'files') {
       setSelectedIndex(prev => Math.min(totalFiles - 1, prev + 1));
     } else if (currentPane === 'diff') {
-      scrollDiff('down');
+      // In PR view showing full diff, pass the PR diff row count
+      const maxRows = (bottomTab === 'pr' && prListSelection?.type !== 'commit') ? prDiffTotalRows : undefined;
+      scrollDiff('down', 3, maxRows);
     } else if (currentPane === 'history') {
       setHistorySelectedIndex(prev => {
         const newIndex = Math.min(commits.length - 1, prev + 1);
@@ -368,7 +371,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         return newIndex;
       });
     }
-  }, [currentPane, totalFiles, commits.length, historyScrollOffset, topPaneHeight, prTotalItems, prScrollOffset, scrollDiff, setHistoryScrollOffset, setPRScrollOffset]);
+  }, [currentPane, bottomTab, prListSelection?.type, prDiffTotalRows, totalFiles, commits.length, historyScrollOffset, topPaneHeight, prTotalItems, prScrollOffset, scrollDiff, setHistoryScrollOffset, setPRScrollOffset]);
 
   const handleTogglePane = useCallback(() => {
     // In all modes, toggle between top pane (list) and bottom pane (diff/details)

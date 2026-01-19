@@ -124,3 +124,14 @@ Ink doesn't have native modal support. Modals are implemented by:
 - Mouse coordinates from terminals are 1-indexed
 - `simple-git` status may include gitignored files in some cases; we filter with `git check-ignore`
 - Ink's flexbox can add padding if container height doesn't match content; keep `LAYOUT_OVERHEAD` accurate
+
+## Code Quality Guidelines
+
+### Single Source of Truth for Layout/Row Calculations
+When building UI structures with rows (like diff views, file lists, PR views):
+- **Always use a single exported function** to build/count rows (e.g., `buildPRDiffRows()`)
+- The same function must be used for both rendering and scroll calculations
+- Never duplicate row-counting logic inline - if rendering adds headers/separators, scroll max calculation must use the same logic
+- Example: `PRView.tsx` exports `buildPRDiffRows()` which is used by the component itself, `getFileScrollOffset()`, and `getPRDiffTotalRows()`
+
+This prevents subtle bugs where scroll limits don't match actual content, or click detection is off by N rows because header count changed.
