@@ -17,14 +17,14 @@ function ThemePreview({ theme }: { theme: Theme }): React.ReactElement {
   return (
     <Box flexDirection="column" marginLeft={2}>
       <Box>
-        <Text backgroundColor={colors.delBg} color={colors.lineNum}>{'  5 '}</Text>
+        <Text backgroundColor={colors.delBg} color={colors.delLineNum}>{'  5 '}</Text>
         <Text backgroundColor={colors.delBg} color={colors.delSymbol} bold>{'- '}</Text>
         <Text backgroundColor={colors.delBg} color={colors.text}>{'const '}</Text>
         <Text backgroundColor={colors.delHighlight} color={colors.text}>{'old'}</Text>
         <Text backgroundColor={colors.delBg} color={colors.text}>{' = value;'}</Text>
       </Box>
       <Box>
-        <Text backgroundColor={colors.addBg} color={colors.lineNum}>{'  5 '}</Text>
+        <Text backgroundColor={colors.addBg} color={colors.addLineNum}>{'  5 '}</Text>
         <Text backgroundColor={colors.addBg} color={colors.addSymbol} bold>{'+ '}</Text>
         <Text backgroundColor={colors.addBg} color={colors.text}>{'const '}</Text>
         <Text backgroundColor={colors.addHighlight} color={colors.text}>{'new'}</Text>

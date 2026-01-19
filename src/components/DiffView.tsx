@@ -258,7 +258,7 @@ function DiffLineComponent({
   if (line.type === 'addition') {
     return (
       <Box>
-        <Text backgroundColor={colors.addBg} color={colors.lineNum}>{lineNumStr} </Text>
+        <Text backgroundColor={colors.addBg} color={colors.addLineNum}>{lineNumStr} </Text>
         <Text backgroundColor={colors.addBg} color={colors.addSymbol} bold>+ </Text>
         {wordDiffSegments ? (
           <WordDiffContent segments={wordDiffSegments} isAddition={true} theme={theme} />
@@ -272,7 +272,7 @@ function DiffLineComponent({
   if (line.type === 'deletion') {
     return (
       <Box>
-        <Text backgroundColor={colors.delBg} color={colors.lineNum}>{lineNumStr} </Text>
+        <Text backgroundColor={colors.delBg} color={colors.delLineNum}>{lineNumStr} </Text>
         <Text backgroundColor={colors.delBg} color={colors.delSymbol} bold>- </Text>
         {wordDiffSegments ? (
           <WordDiffContent segments={wordDiffSegments} isAddition={false} theme={theme} />
@@ -287,7 +287,7 @@ function DiffLineComponent({
   const highlighted = highlightLine(content, language);
   return (
     <Box>
-      <Text dimColor>{lineNumStr}   </Text>
+      <Text color={colors.contextLineNum}>{lineNumStr}   </Text>
       <Text>{highlighted}</Text>
     </Box>
   );
