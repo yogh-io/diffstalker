@@ -67,13 +67,14 @@ export function useLayout(
   selectedIndex: number,
   diff: DiffResult | null,
   mode: BottomTab = 'diff',
-  historySelectedIndex?: number
+  historySelectedIndex?: number,
+  initialSplitRatio?: number
 ): UseLayoutResult {
   // Calculate content height (terminal minus overhead)
   const contentHeight = terminalHeight - LAYOUT_OVERHEAD;
 
   // Custom split ratio state (null means use default for mode)
-  const [customSplitRatio, setCustomSplitRatio] = useState<number | null>(null);
+  const [customSplitRatio, setCustomSplitRatio] = useState<number | null>(initialSplitRatio ?? null);
 
   // Get the effective split ratio
   const effectiveSplitRatio = customSplitRatio ?? DEFAULT_SPLIT_RATIOS[mode];
@@ -128,7 +129,7 @@ export function useLayout(
     setDiffScrollOffset(0);
   }, [diff]);
 
-  // Auto-scroll file list to keep selected item visible
+  // Auto-scroll file list to keep selected item visible (only when selection changes)
   useEffect(() => {
     const unstagedCount = files.filter(f => !f.staged).length;
     const stagedCount = files.filter(f => f.staged).length;
@@ -136,11 +137,11 @@ export function useLayout(
     const selectedRow = getRowForFileIndex(selectedIndex, unstagedCount, stagedCount);
     const visibleHeight = topPaneHeight - 1;
 
-    const newOffset = calculateScrollOffset(selectedRow, fileListScrollOffset, visibleHeight);
-    if (newOffset !== fileListScrollOffset) {
-      setFileListScrollOffset(newOffset);
-    }
-  }, [selectedIndex, files, topPaneHeight, fileListScrollOffset]);
+    setFileListScrollOffset(prev => {
+      const newOffset = calculateScrollOffset(selectedRow, prev, visibleHeight);
+      return newOffset;
+    });
+  }, [selectedIndex, files, topPaneHeight]);
 
   // Scroll helpers
   const scrollDiff = useCallback((direction: 'up' | 'down', amount: number = 3) => {

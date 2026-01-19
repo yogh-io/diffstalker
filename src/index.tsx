@@ -4,12 +4,12 @@ import { render } from 'ink';
 import { App } from './App.js';
 import { loadConfig } from './config.js';
 
-// Cleanup function to reset terminal state (especially mouse mode)
+// Cleanup function to reset terminal state
 function cleanupTerminal(): void {
-  // Disable mouse tracking
-  process.stdout.write('\x1b[?1006l'); // Disable SGR extended mode
-  process.stdout.write('\x1b[?1002l'); // Disable mouse drag tracking
-  process.stdout.write('\x1b[?1000l'); // Disable mouse click tracking
+  // Disable any mouse tracking
+  process.stdout.write('\x1b[?1006l');
+  process.stdout.write('\x1b[?1002l');
+  process.stdout.write('\x1b[?1000l');
   // Show cursor
   process.stdout.write('\x1b[?25h');
 }

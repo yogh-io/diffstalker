@@ -21,12 +21,14 @@ import {
   getDiffForUntracked,
   getStagedDiff,
   getDefaultBaseBranch,
+  getCandidateBaseBranches,
   getDiffBetweenRefs,
   getPRDiffWithUncommitted,
   getCommitDiff,
   DiffResult,
   PRDiff,
 } from '../git/diff.js';
+import { getCachedBaseBranch, setCachedBaseBranch } from '../utils/baseBranchCache.js';
 
 export interface GitState {
   status: GitStatus | null;
@@ -438,7 +440,8 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
       await this.queue.enqueue(async () => {
         let base = this._prState.prBaseBranch;
         if (!base) {
-          base = await getDefaultBaseBranch(this.repoPath);
+          // Try cached value first, then fall back to default detection
+          base = getCachedBaseBranch(this.repoPath) ?? await getDefaultBaseBranch(this.repoPath);
           this.updatePRState({ prBaseBranch: base });
         }
         if (base) {
@@ -450,7 +453,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
           this.updatePRState({
             prDiff: null,
             prLoading: false,
-            prError: 'No base branch found (no origin/main or origin/master)',
+            prError: 'No base branch found',
           });
         }
       });
@@ -460,6 +463,23 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
         prError: `Failed to load PR diff: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
+  }
+
+  /**
+   * Get candidate base branches for PR comparison.
+   */
+  async getCandidateBaseBranches(): Promise<string[]> {
+    return getCandidateBaseBranches(this.repoPath);
+  }
+
+  /**
+   * Set the base branch for PR comparison and refresh.
+   * Also saves the selection to the cache for future sessions.
+   */
+  async setPRBaseBranch(branch: string, includeUncommitted: boolean = false): Promise<void> {
+    this.updatePRState({ prBaseBranch: branch });
+    setCachedBaseBranch(this.repoPath, branch);
+    await this.refreshPRDiff(includeUncommitted);
   }
 
   /**

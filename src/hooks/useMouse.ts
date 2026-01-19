@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useStdin } from 'ink';
 
 export interface MouseEvent {
@@ -8,16 +8,30 @@ export interface MouseEvent {
   button: 'left' | 'middle' | 'right' | 'none';
 }
 
-export function useMouse(onEvent: (event: MouseEvent) => void): void {
+export function useMouse(onEvent: (event: MouseEvent) => void): { mouseEnabled: boolean; toggleMouse: () => void } {
   const { stdin, setRawMode } = useStdin();
+  const [mouseEnabled, setMouseEnabled] = useState(true);
+  const onEventRef = useRef(onEvent);
+  onEventRef.current = onEvent;
 
+  const toggleMouse = useCallback(() => {
+    setMouseEnabled(prev => !prev);
+  }, []);
+
+  // Handle mouse mode changes
+  useEffect(() => {
+    if (mouseEnabled) {
+      process.stdout.write('\x1b[?1000h');
+      process.stdout.write('\x1b[?1006h');
+    } else {
+      process.stdout.write('\x1b[?1006l');
+      process.stdout.write('\x1b[?1000l');
+    }
+  }, [mouseEnabled]);
+
+  // Set up event listener (separate from mode toggle)
   useEffect(() => {
     if (!stdin || !setRawMode) return;
-
-    // Enable mouse tracking (SGR extended mode for better coordinates)
-    // 1000h enables basic click tracking only - text selection still works
-    process.stdout.write('\x1b[?1000h'); // Enable click tracking
-    process.stdout.write('\x1b[?1006h'); // Enable SGR extended mode
 
     const handleData = (data: Buffer) => {
       const str = data.toString();
@@ -30,45 +44,35 @@ export function useMouse(onEvent: (event: MouseEvent) => void): void {
         const y = parseInt(sgrMatch[3], 10);
         const isRelease = sgrMatch[4] === 'm';
 
-        // Determine button
-        const baseButton = buttonCode & 3;
-        let button: MouseEvent['button'] = 'none';
-        if (baseButton === 0) button = 'left';
-        else if (baseButton === 1) button = 'middle';
-        else if (baseButton === 2) button = 'right';
-
-        // Scroll wheel (button codes 64-67)
+        // Scroll wheel events (button codes 64-67)
         if (buttonCode >= 64 && buttonCode < 96) {
           const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
-          onEvent({ x, y, type, button: 'none' });
-          return;
+          onEventRef.current({ x, y, type, button: 'none' });
         }
-
-        // Click on release
-        if (isRelease && buttonCode < 64) {
-          onEvent({ x, y, type: 'click', button });
+        // Click events (button codes 0-2) - only on release to avoid double-firing
+        else if (isRelease && buttonCode >= 0 && buttonCode < 3) {
+          const button = buttonCode === 0 ? 'left' : buttonCode === 1 ? 'middle' : 'right';
+          onEventRef.current({ x, y, type: 'click', button });
         }
 
         return;
       }
 
-      // Parse legacy mouse events: \x1b[M<button><x><y>
+      // Parse legacy mouse events
       const legacyMatch = str.match(/\x1b\[M(.)(.)(.)/);
       if (legacyMatch) {
         const buttonCode = legacyMatch[1].charCodeAt(0) - 32;
         const x = legacyMatch[2].charCodeAt(0) - 32;
         const y = legacyMatch[3].charCodeAt(0) - 32;
 
-        // Scroll wheel
         if (buttonCode >= 64) {
           const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
-          onEvent({ x, y, type, button: 'none' });
-          return;
+          onEventRef.current({ x, y, type, button: 'none' });
         }
-
-        // Click (on release, buttonCode & 3 === 3)
-        if ((buttonCode & 3) === 3) {
-          onEvent({ x, y, type: 'click', button: 'left' });
+        // Legacy click events (button codes 0-2)
+        else if (buttonCode >= 0 && buttonCode < 3) {
+          const button = buttonCode === 0 ? 'left' : buttonCode === 1 ? 'middle' : 'right';
+          onEventRef.current({ x, y, type: 'click', button });
         }
       }
     };
@@ -77,9 +81,11 @@ export function useMouse(onEvent: (event: MouseEvent) => void): void {
 
     return () => {
       stdin.off('data', handleData);
-      // Disable mouse tracking
+      // Disable mouse tracking on unmount
       process.stdout.write('\x1b[?1006l');
       process.stdout.write('\x1b[?1000l');
     };
-  }, [stdin, setRawMode, onEvent]);
+  }, [stdin, setRawMode]);
+
+  return { mouseEnabled, toggleMouse };
 }

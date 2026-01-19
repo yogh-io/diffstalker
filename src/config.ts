@@ -9,6 +9,7 @@ export interface Config {
   watcherEnabled: boolean;
   debug: boolean;
   theme: ThemeName;
+  splitRatio?: number;
 }
 
 const defaultConfig: Config = {
@@ -41,6 +42,9 @@ export function loadConfig(): Config {
       if (fileConfig.pager) config.pager = fileConfig.pager;
       if (fileConfig.targetFile) config.targetFile = fileConfig.targetFile;
       if (isValidTheme(fileConfig.theme)) config.theme = fileConfig.theme;
+      if (typeof fileConfig.splitRatio === 'number' && fileConfig.splitRatio >= 0.15 && fileConfig.splitRatio <= 0.85) {
+        config.splitRatio = fileConfig.splitRatio;
+      }
     } catch {
       // Ignore config file errors
     }
@@ -49,7 +53,7 @@ export function loadConfig(): Config {
   return config;
 }
 
-export function saveConfig(updates: Partial<Pick<Config, 'theme' | 'pager' | 'targetFile'>>): void {
+export function saveConfig(updates: Partial<Pick<Config, 'theme' | 'pager' | 'targetFile' | 'splitRatio'>>): void {
   // Ensure config directory exists
   const configDir = path.dirname(CONFIG_PATH);
   if (!fs.existsSync(configDir)) {

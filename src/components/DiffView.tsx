@@ -187,8 +187,9 @@ function WordDiffContent({
   const baseBg = isAddition ? colors.addBg : colors.delBg;
   const highlightBg = isAddition ? colors.addHighlight : colors.delHighlight;
 
+  // Wrap in parent Text to ensure inline rendering
   return (
-    <>
+    <Text backgroundColor={baseBg}>
       {segments.map((segment, i) => (
         <Text
           key={i}
@@ -198,7 +199,7 @@ function WordDiffContent({
           {segment.text || (i === segments.length - 1 ? ' ' : '')}
         </Text>
       ))}
-    </>
+    </Text>
   );
 }
 
@@ -217,11 +218,24 @@ function DiffLineComponent({
 }): React.ReactElement {
   const { colors } = theme;
 
-  // Headers - show dimmed
+  // Headers - simplify verbose lines (redundant headers pre-filtered in displayableLines)
   if (line.type === 'header') {
+    const content = line.content;
+    // Extract file path from diff --git and show as clean separator
+    if (content.startsWith('diff --git')) {
+      const match = content.match(/diff --git a\/.+ b\/(.+)$/);
+      if (match) {
+        return (
+          <Box>
+            <Text color="cyan" bold>── {match[1]} ──</Text>
+          </Box>
+        );
+      }
+    }
+    // Keep useful headers (new/deleted file, binary, rename info)
     return (
       <Box>
-        <Text dimColor>{line.content}</Text>
+        <Text dimColor>{content}</Text>
       </Box>
     );
   }
@@ -319,7 +333,26 @@ export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, the
     return diffs;
   }, [diff]);
 
-  if (!diff || diff.lines.length === 0) {
+  // Filter out lines that will render as empty (skipped headers)
+  // Keep original index for word diff lookup
+  const displayableLines = useMemo(() => {
+    return diff?.lines
+      .map((line, originalIndex) => ({ line, originalIndex }))
+      .filter(({ line }) => {
+        if (line.type !== 'header') return true;
+        const content = line.content;
+        // These headers are skipped in rendering
+        if (content.startsWith('index ') ||
+            content.startsWith('--- ') ||
+            content.startsWith('+++ ') ||
+            content.startsWith('similarity index')) {
+          return false;
+        }
+        return true;
+      }) ?? [];
+  }, [diff]);
+
+  if (!diff || displayableLines.length === 0) {
     return (
       <Box paddingX={1}>
         <Text dimColor>No diff to display</Text>
@@ -328,11 +361,11 @@ export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, the
   }
 
   // Calculate line number width for consistent column sizing
-  const lineNumWidth = getLineNumWidth(diff.lines);
+  const lineNumWidth = getLineNumWidth(displayableLines.map(d => d.line));
 
   // Apply scroll offset and limit
-  const visibleLines = diff.lines.slice(scrollOffset, scrollOffset + maxHeight);
-  const hasMore = diff.lines.length > scrollOffset + maxHeight;
+  const visibleLines = displayableLines.slice(scrollOffset, scrollOffset + maxHeight);
+  const hasMore = displayableLines.length > scrollOffset + maxHeight;
   const hasPrevious = scrollOffset > 0;
 
   return (
@@ -341,13 +374,12 @@ export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, the
         <Text dimColor>↑ {scrollOffset} more lines above</Text>
       )}
 
-      {visibleLines.map((line, i) => {
-        const actualIndex = scrollOffset + i;
-        const wordDiffSegments = wordDiffs.get(actualIndex);
+      {visibleLines.map(({ line, originalIndex }, i) => {
+        const wordDiffSegments = wordDiffs.get(originalIndex);
 
         return (
           <DiffLineComponent
-            key={`${actualIndex}-${line.content.slice(0, 20)}`}
+            key={`${originalIndex}-${line.content.slice(0, 20)}`}
             line={line}
             lineNumWidth={lineNumWidth}
             language={language}
@@ -358,7 +390,7 @@ export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, the
       })}
 
       {hasMore && (
-        <Text dimColor>↓ {diff.lines.length - scrollOffset - maxHeight} more lines below</Text>
+        <Text dimColor>↓ {displayableLines.length - scrollOffset - maxHeight} more lines below</Text>
       )}
     </Box>
   );

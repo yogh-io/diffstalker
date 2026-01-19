@@ -189,22 +189,77 @@ export function spawnPager(pager: string, diff: string): void {
 }
 
 /**
+ * Get candidate base branches for PR comparison.
+ * Uses git log to find branches that appear in recent history (likely PR targets).
+ */
+export async function getCandidateBaseBranches(repoPath: string): Promise<string[]> {
+  const git = simpleGit(repoPath);
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+
+  try {
+    // Get recent commits with decorations to find branches in our history
+    const logOutput = await git.raw([
+      'log', '--oneline', '--decorate=short', '--all', '-n', '200'
+    ]);
+
+    // Extract remote branch refs from decorations like (origin/main, upstream/feature)
+    const refPattern = /\(([^)]+)\)/g;
+    for (const line of logOutput.split('\n')) {
+      const match = refPattern.exec(line);
+      if (match) {
+        const refs = match[1].split(',').map(r => r.trim());
+        for (const ref of refs) {
+          // Skip HEAD, tags, and local branches - only want remote branches
+          if (ref.startsWith('HEAD') || ref.startsWith('tag:') || !ref.includes('/')) continue;
+          // Clean up "origin/main" from things like "HEAD -> origin/main"
+          const cleaned = ref.replace(/^.*-> /, '');
+          if (cleaned.includes('/') && !seen.has(cleaned)) {
+            seen.add(cleaned);
+            candidates.push(cleaned);
+          }
+        }
+      }
+      refPattern.lastIndex = 0; // Reset regex state
+    }
+
+    // If we found candidates, sort main/master to top, prefer non-origin
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => {
+        const aName = a.split('/').slice(1).join('/');
+        const bName = b.split('/').slice(1).join('/');
+        const aIsMain = aName === 'main' || aName === 'master';
+        const bIsMain = bName === 'main' || bName === 'master';
+
+        // main/master first
+        if (aIsMain && !bIsMain) return -1;
+        if (!aIsMain && bIsMain) return 1;
+
+        // Among main/master, prefer non-origin
+        if (aIsMain && bIsMain) {
+          const aIsOrigin = a.startsWith('origin/');
+          const bIsOrigin = b.startsWith('origin/');
+          if (aIsOrigin && !bIsOrigin) return 1;
+          if (!aIsOrigin && bIsOrigin) return -1;
+        }
+
+        return 0; // Keep discovery order otherwise
+      });
+    }
+  } catch {
+    // Failed to get branches
+  }
+
+  // Return unique candidates (Set deduplication)
+  return [...new Set(candidates)];
+}
+
+/**
  * Get the best default base branch for PR comparison.
- * Tries origin/main, origin/master, upstream/main, upstream/master in order.
  */
 export async function getDefaultBaseBranch(repoPath: string): Promise<string | null> {
-  const git = simpleGit(repoPath);
-  const candidates = ['origin/main', 'origin/master', 'upstream/main', 'upstream/master'];
-
-  for (const candidate of candidates) {
-    try {
-      await git.raw(['rev-parse', '--verify', candidate]);
-      return candidate;
-    } catch {
-      // Ref doesn't exist, try next
-    }
-  }
-  return null;
+  const candidates = await getCandidateBaseBranches(repoPath);
+  return candidates[0] ?? null;
 }
 
 /**

@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { CommitInfo } from '../git/status.js';
 import { PRFileDiff } from '../git/diff.js';
+import { shortenPath } from '../utils/formatPath.js';
 
 export type PRListSelectionType = 'commit' | 'file';
 
@@ -106,10 +107,12 @@ function FileRow({
   file,
   isSelected,
   isActive,
+  maxPathLength,
 }: {
   file: PRFileDiff;
   isSelected: boolean;
   isActive: boolean;
+  maxPathLength: number;
 }): React.ReactElement {
   const statusColors: Record<PRFileDiff['status'], string> = {
     added: 'green',
@@ -126,6 +129,10 @@ function FileRow({
   };
 
   const isUncommitted = file.isUncommitted ?? false;
+  // Account for stats: " (+123 -456)" and possible "[uncommitted]"
+  const statsLength = 5 + String(file.additions).length + String(file.deletions).length;
+  const uncommittedLength = isUncommitted ? 14 : 0;
+  const availableForPath = maxPathLength - statsLength - uncommittedLength;
 
   return (
     <Box>
@@ -139,7 +146,7 @@ function FileRow({
         color={isSelected && isActive ? 'cyan' : isUncommitted ? 'magenta' : undefined}
         inverse={isSelected && isActive}
       >
-        {' '}{file.path}
+        {' '}{shortenPath(file.path, availableForPath)}
       </Text>
       <Text dimColor> (</Text>
       <Text color="green">+{file.additions}</Text>
@@ -253,6 +260,7 @@ export function PRListView({
               file={row.file}
               isSelected={isSelected}
               isActive={isActive}
+              maxPathLength={width - 5}
             />
           );
         }

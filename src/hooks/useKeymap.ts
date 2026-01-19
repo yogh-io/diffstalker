@@ -17,10 +17,13 @@ export interface KeymapActions {
   onSwitchTab: (tab: BottomTab) => void;
   onSelect: () => void;
   onToggleIncludeUncommitted?: () => void;
+  onCycleBaseBranch?: () => void;
   onOpenThemePicker?: () => void;
   onShrinkTopPane?: () => void;
   onGrowTopPane?: () => void;
   onOpenHotkeysModal?: () => void;
+  onToggleMouse?: () => void;
+  onToggleFollow?: () => void;
 }
 
 export function useKeymap(
@@ -84,6 +87,12 @@ export function useKeymap(
       return;
     }
 
+    // Cycle base branch in PR view: b
+    if (input === 'b' && actions.onCycleBaseBranch) {
+      actions.onCycleBaseBranch();
+      return;
+    }
+
     // Open theme picker: t
     if (input === 't' && actions.onOpenThemePicker) {
       actions.onOpenThemePicker();
@@ -105,6 +114,18 @@ export function useKeymap(
     // Grow top pane: ]
     if (input === ']' && actions.onGrowTopPane) {
       actions.onGrowTopPane();
+      return;
+    }
+
+    // Toggle mouse mode: m
+    if (input === 'm' && actions.onToggleMouse) {
+      actions.onToggleMouse();
+      return;
+    }
+
+    // Toggle follow mode: f
+    if (input === 'f' && actions.onToggleFollow) {
+      actions.onToggleFollow();
       return;
     }
 

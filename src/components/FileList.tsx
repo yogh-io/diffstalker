@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { FileEntry, FileStatus } from '../git/status.js';
+import { shortenPath } from '../utils/formatPath.js';
 
 interface FileListProps {
   files: FileEntry[];
@@ -8,6 +9,7 @@ interface FileListProps {
   isFocused: boolean;
   scrollOffset?: number;
   maxHeight?: number;
+  width?: number;
   onStage: (file: FileEntry) => void;
   onUnstage: (file: FileEntry) => void;
 }
@@ -40,6 +42,7 @@ interface FileRowProps {
   file: FileEntry;
   isSelected: boolean;
   isFocused: boolean;
+  maxPathLength: number;
 }
 
 function formatStats(insertions?: number, deletions?: number): string | null {
@@ -53,12 +56,17 @@ function formatStats(insertions?: number, deletions?: number): string | null {
   return parts.join(' ');
 }
 
-function FileRow({ file, isSelected, isFocused }: FileRowProps): React.ReactElement {
+function FileRow({ file, isSelected, isFocused, maxPathLength }: FileRowProps): React.ReactElement {
   const statusChar = getStatusChar(file.status);
   const statusColor = getStatusColor(file.status);
   const actionButton = file.staged ? '[-]' : '[+]';
   const buttonColor = file.staged ? 'red' : 'green';
   const stats = formatStats(file.insertions, file.deletions);
+
+  // Calculate available space for path (account for stats if present)
+  const statsLength = stats ? stats.length + 1 : 0;
+  const availableForPath = maxPathLength - statsLength;
+  const displayPath = shortenPath(file.path, availableForPath);
 
   return (
     <Box>
@@ -70,8 +78,8 @@ function FileRow({ file, isSelected, isFocused }: FileRowProps): React.ReactElem
       <Text color={buttonColor}>{actionButton} </Text>
       <Text color={statusColor}>{statusChar} </Text>
       <Text color={isSelected && isFocused ? 'cyan' : undefined}>
-        {file.path}
-        {file.originalPath && <Text dimColor> (from {file.originalPath})</Text>}
+        {displayPath}
+        {file.originalPath && <Text dimColor> ← {shortenPath(file.originalPath, 30)}</Text>}
       </Text>
       {stats && (
         <Text>
@@ -105,7 +113,10 @@ export function FileList({
   isFocused,
   scrollOffset = 0,
   maxHeight,
+  width = 80,
 }: FileListProps): React.ReactElement {
+  // Calculate max path length: width minus prefix chars (▸/space + [+]/[-] + status + spaces = ~10)
+  const maxPathLength = width - 10;
   // Split files into 3 categories: Modified, Untracked, Staged
   const modifiedFiles = files.filter(f => !f.staged && f.status !== 'untracked');
   const untrackedFiles = files.filter(f => !f.staged && f.status === 'untracked');
@@ -178,6 +189,7 @@ export function FileList({
               file={row.file}
               isSelected={row.fileIndex === selectedIndex}
               isFocused={isFocused}
+              maxPathLength={maxPathLength}
             />
           );
         }

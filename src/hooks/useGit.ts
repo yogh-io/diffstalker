@@ -33,6 +33,8 @@ export interface UseGitResult {
   prLoading: boolean;
   prError: string | null;
   refreshPRDiff: (includeUncommitted?: boolean) => Promise<void>;
+  getCandidateBaseBranches: () => Promise<string[]>;
+  setPRBaseBranch: (branch: string, includeUncommitted?: boolean) => Promise<void>;
   // History state
   historySelectedCommit: CommitInfo | null;
   historyCommitDiff: DiffResult | null;
@@ -173,6 +175,14 @@ export function useGit(repoPath: string | null): UseGitResult {
     await managerRef.current?.refreshPRDiff(includeUncommitted);
   }, []);
 
+  const getCandidateBaseBranches = useCallback(async (): Promise<string[]> => {
+    return managerRef.current?.getCandidateBaseBranches() ?? [];
+  }, []);
+
+  const setPRBaseBranch = useCallback(async (branch: string, includeUncommitted: boolean = false) => {
+    await managerRef.current?.setPRBaseBranch(branch, includeUncommitted);
+  }, []);
+
   const selectHistoryCommit = useCallback(async (commit: CommitInfo | null) => {
     await managerRef.current?.selectHistoryCommit(commit);
   }, []);
@@ -206,6 +216,8 @@ export function useGit(repoPath: string | null): UseGitResult {
     prLoading: prState.prLoading,
     prError: prState.prError,
     refreshPRDiff,
+    getCandidateBaseBranches,
+    setPRBaseBranch,
     // History state
     historySelectedCommit: historyState.selectedCommit,
     historyCommitDiff: historyState.commitDiff,

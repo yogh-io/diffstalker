@@ -24,16 +24,31 @@ export interface WatcherState {
   enabled: boolean;
 }
 
-export function useWatcher(enabled: boolean, targetFile: string, debug: boolean = false): WatcherState {
+export interface UseWatcherResult {
+  state: WatcherState;
+  setEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
+}
+
+export function useWatcher(initialEnabled: boolean, targetFile: string, debug: boolean = false): UseWatcherResult {
+  const [enabled, setEnabled] = useState(initialEnabled);
   const [state, setState] = useState<WatcherState>({
     path: null,
     lastUpdate: null,
     rawContent: null,
-    sourceFile: enabled ? targetFile : null,
-    enabled,
+    sourceFile: initialEnabled ? targetFile : null,
+    enabled: initialEnabled,
   });
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastReadPath = useRef<string | null>(null);
+
+  // Update state when enabled changes
+  useEffect(() => {
+    setState(prev => ({
+      ...prev,
+      enabled,
+      sourceFile: enabled ? targetFile : null,
+    }));
+  }, [enabled, targetFile]);
 
   useEffect(() => {
     // If watcher is disabled, do nothing
@@ -133,5 +148,5 @@ export function useWatcher(enabled: boolean, targetFile: string, debug: boolean 
     };
   }, [enabled, targetFile, debug]);
 
-  return state;
+  return { state, setEnabled };
 }

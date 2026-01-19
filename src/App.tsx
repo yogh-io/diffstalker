@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import { FileEntry, CommitInfo, getCommitHistory } from './git/status.js';
 import { Header } from './components/Header.js';
@@ -23,7 +23,9 @@ import {
 import { Config, saveConfig } from './config.js';
 import { ThemePicker } from './components/ThemePicker.js';
 import { HotkeysModal } from './components/HotkeysModal.js';
+import { BaseBranchPicker } from './components/BaseBranchPicker.js';
 import { ThemeName } from './themes.js';
+import { shortenPath } from './utils/formatPath.js';
 
 interface AppProps {
   config: Config;
@@ -37,7 +39,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const { rows: terminalHeight, columns: terminalWidth } = useTerminalSize();
 
   // File watcher
-  const watcherState = useWatcher(config.watcherEnabled, config.targetFile, config.debug);
+  const { state: watcherState, setEnabled: setWatcherEnabled } = useWatcher(config.watcherEnabled, config.targetFile, config.debug);
 
   // Determine repo path: CLI path > watcher path > cwd
   const repoPath = initialPath ?? watcherState.path ?? process.cwd();
@@ -48,6 +50,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     selectFile, stage, unstage, discard, stageAll, unstageAll,
     commit, refresh, getHeadCommitMessage,
     prDiff, prLoading, prError, refreshPRDiff,
+    getCandidateBaseBranches, setPRBaseBranch,
     historySelectedCommit, historyCommitDiff, selectHistoryCommit,
     prSelectionType, prSelectionIndex, prSelectionDiff, selectPRCommit, selectPRFile,
   } = useGit(repoPath);
@@ -76,18 +79,36 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [historySelectedIndex, setHistorySelectedIndex] = useState(0);
 
   // PR view state
-  const [includeUncommitted, setIncludeUncommitted] = useState(false);
+  const [includeUncommitted, setIncludeUncommitted] = useState(true);
   const [prListSelection, setPRListSelection] = useState<PRListSelection | null>(null);
   const [prSelectedIndex, setPRSelectedIndex] = useState(0);  // Combined index for commits + files
+  const [baseBranchCandidates, setBaseBranchCandidates] = useState<string[]>([]);
+  const [showBaseBranchPicker, setShowBaseBranchPicker] = useState(false);
 
   // Layout and scroll state
   const {
     topPaneHeight, bottomPaneHeight, paneBoundaries,
-    adjustSplitRatio,
+    splitRatio, adjustSplitRatio,
     fileListScrollOffset, diffScrollOffset, historyScrollOffset, prScrollOffset,
     setFileListScrollOffset, setDiffScrollOffset, setHistoryScrollOffset, setPRScrollOffset,
     scrollDiff, scrollFileList, scrollHistory, scrollPR,
-  } = useLayout(terminalHeight, terminalWidth, files, selectedIndex, diff, bottomTab);
+  } = useLayout(terminalHeight, terminalWidth, files, selectedIndex, diff, bottomTab, undefined, config.splitRatio);
+
+  // Keep a ref to paneBoundaries for use in callbacks
+  const paneBoundariesRef = useRef(paneBoundaries);
+  paneBoundariesRef.current = paneBoundaries;
+
+  // Save split ratio to config when it changes (debounced)
+  const initialSplitRatioRef = useRef(config.splitRatio);
+  useEffect(() => {
+    // Only save if it changed from the initial value
+    if (splitRatio !== initialSplitRatioRef.current) {
+      const timer = setTimeout(() => {
+        saveConfig({ splitRatio });
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [splitRatio]);
 
   // Get currently selected file
   const currentFile = useMemo(() => getFileAtIndex(files, selectedIndex), [files, selectedIndex]);
@@ -106,6 +127,13 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     }
   }, [repoPath, bottomTab, status, refreshPRDiff, includeUncommitted]);
 
+  // Fetch base branch candidates when entering PR view
+  useEffect(() => {
+    if (repoPath && bottomTab === 'pr') {
+      getCandidateBaseBranches().then(setBaseBranchCandidates);
+    }
+  }, [repoPath, bottomTab, getCandidateBaseBranches]);
+
   // Auto-select when files change
   useEffect(() => {
     if (totalFiles > 0 && selectedIndex >= totalFiles) {
@@ -118,15 +146,23 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     selectFile(currentFile);
   }, [currentFile, selectFile]);
 
+  // Reset diff scroll when file selection changes
+  useEffect(() => {
+    if (bottomTab === 'diff' || bottomTab === 'commit') {
+      setDiffScrollOffset(0);
+    }
+  }, [selectedIndex, bottomTab, setDiffScrollOffset]);
+
   // Update selected history commit when index changes
   useEffect(() => {
     if (bottomTab === 'history' && commits.length > 0) {
       const commit = commits[historySelectedIndex];
       if (commit) {
         selectHistoryCommit(commit);
+        setDiffScrollOffset(0);
       }
     }
-  }, [bottomTab, commits, historySelectedIndex, selectHistoryCommit]);
+  }, [bottomTab, commits, historySelectedIndex, selectHistoryCommit, setDiffScrollOffset]);
 
   // Update PR selection when prSelectedIndex changes
   useEffect(() => {
@@ -138,14 +174,16 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         // Selected a commit
         setPRListSelection({ type: 'commit', index: prSelectedIndex });
         selectPRCommit(prSelectedIndex);
+        setDiffScrollOffset(0);
       } else if (prSelectedIndex < commitCount + fileCount) {
         // Selected a file
         const fileIndex = prSelectedIndex - commitCount;
         setPRListSelection({ type: 'file', index: fileIndex });
         selectPRFile(fileIndex);
+        setDiffScrollOffset(0);
       }
     }
-  }, [bottomTab, prDiff, prSelectedIndex, selectPRCommit, selectPRFile]);
+  }, [bottomTab, prDiff, prSelectedIndex, selectPRCommit, selectPRFile, setDiffScrollOffset]);
 
   // Calculate PR total items (commits + files) for navigation
   const prTotalItems = useMemo(() => {
@@ -163,7 +201,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   // Mouse handler
   const handleMouseEvent = useCallback((event: { x: number; y: number; type: string; button: string }) => {
     const { x, y, type, button } = event;
-    const { stagingPaneStart, fileListEnd, diffPaneStart, diffPaneEnd, footerRow } = paneBoundaries;
+    const { stagingPaneStart, fileListEnd, diffPaneStart, diffPaneEnd, footerRow } = paneBoundariesRef.current;
 
     if (type === 'click') {
       // Tab clicks in footer
@@ -175,21 +213,44 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         }
       }
 
-      // File list clicks
-      const clickedIndex = getClickedFileIndex(y, fileListScrollOffset, files, stagingPaneStart, fileListEnd);
-      if (clickedIndex >= 0 && clickedIndex < totalFiles) {
-        setSelectedIndex(clickedIndex);
-        setCurrentPane('files');
+      // Top pane clicks - depends on current mode
+      if (isInPane(y, stagingPaneStart + 1, fileListEnd)) {
+        if (bottomTab === 'diff' || bottomTab === 'commit') {
+          // File list clicks
+          const clickedIndex = getClickedFileIndex(y, fileListScrollOffset, files, stagingPaneStart, fileListEnd);
+          if (clickedIndex >= 0 && clickedIndex < totalFiles) {
+            setSelectedIndex(clickedIndex);
+            setCurrentPane('files');
 
-        const file = getFileAtIndex(files, clickedIndex);
-        if (file) {
-          if (button === 'right' && !file.staged && file.status !== 'untracked') {
-            setPendingDiscard(file);
-          } else if (button === 'left' && isButtonAreaClick(x)) {
-            file.staged ? unstage(file) : stage(file);
+            const file = getFileAtIndex(files, clickedIndex);
+            if (file) {
+              if (button === 'right' && !file.staged && file.status !== 'untracked') {
+                setPendingDiscard(file);
+              } else if (button === 'left' && isButtonAreaClick(x)) {
+                file.staged ? unstage(file) : stage(file);
+              }
+            }
+            return;
+          }
+        } else if (bottomTab === 'history') {
+          // History list clicks - calculate clicked commit index
+          const clickedIndex = (y - stagingPaneStart - 1) + historyScrollOffset;
+          if (clickedIndex >= 0 && clickedIndex < commits.length) {
+            setHistorySelectedIndex(clickedIndex);
+            setCurrentPane('history');
+            setDiffScrollOffset(0);
+            return;
+          }
+        } else if (bottomTab === 'pr') {
+          // PR list clicks - calculate clicked item index (commits then files)
+          const clickedIndex = (y - stagingPaneStart - 1) + prScrollOffset;
+          if (clickedIndex >= 0 && clickedIndex < prTotalItems) {
+            setPRSelectedIndex(clickedIndex);
+            setCurrentPane('pr');
+            setDiffScrollOffset(0);
+            return;
           }
         }
-        return;
       }
 
       // Bottom pane clicks
@@ -208,21 +269,22 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         } else if (bottomTab === 'history') {
           scrollHistory(direction, commits.length);
         } else if (bottomTab === 'pr') {
-          scrollPR(direction, prTotalRows);
+          scrollPR(direction, prTotalItems);
         }
       }
-      // Bottom pane scrolling - always scrolls the diff view
-      else if (isInPane(y, diffPaneStart, diffPaneEnd)) {
+      // Bottom pane scrolling (anywhere below top pane scrolls diff)
+      else {
         scrollDiff(direction);
       }
     }
   }, [
-    paneBoundaries, terminalWidth, fileListScrollOffset, files, totalFiles,
-    bottomTab, commits.length, prTotalRows, stage, unstage,
+    terminalWidth, fileListScrollOffset, files, totalFiles,
+    bottomTab, commits.length, prTotalItems, stage, unstage,
     scrollDiff, scrollFileList, scrollHistory, scrollPR,
+    historyScrollOffset, prScrollOffset, setDiffScrollOffset,
   ]);
 
-  useMouse(handleMouseEvent);
+  const { mouseEnabled, toggleMouse } = useMouse(handleMouseEvent);
 
   // Tab switching
   const handleSwitchTab = useCallback((tab: BottomTab) => {
@@ -316,6 +378,19 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     setIncludeUncommitted(prev => !prev);
   }, []);
 
+  const handleOpenBaseBranchPicker = useCallback(() => {
+    setShowBaseBranchPicker(true);
+  }, []);
+
+  const handleBaseBranchSelect = useCallback((branch: string) => {
+    setShowBaseBranchPicker(false);
+    setPRBaseBranch(branch, includeUncommitted);
+  }, [setPRBaseBranch, includeUncommitted]);
+
+  const handleBaseBranchCancel = useCallback(() => {
+    setShowBaseBranchPicker(false);
+  }, []);
+
   // Theme handlers
   const handleOpenThemePicker = useCallback(() => {
     setShowThemePicker(true);
@@ -349,6 +424,11 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     adjustSplitRatio(SPLIT_RATIO_STEP);
   }, [adjustSplitRatio]);
 
+  // Follow mode toggle handler
+  const handleToggleFollow = useCallback(() => {
+    setWatcherEnabled(prev => !prev);
+  }, [setWatcherEnabled]);
+
   // Keymap (disabled when modals are open)
   useKeymap({
     onStage: handleStage,
@@ -364,11 +444,14 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     onSwitchTab: handleSwitchTab,
     onSelect: handleSelect,
     onToggleIncludeUncommitted: handleToggleIncludeUncommitted,
+    onCycleBaseBranch: handleOpenBaseBranchPicker,
     onOpenThemePicker: handleOpenThemePicker,
     onShrinkTopPane: handleShrinkTopPane,
     onGrowTopPane: handleGrowTopPane,
     onOpenHotkeysModal: handleOpenHotkeysModal,
-  }, currentPane, commitInputFocused || showThemePicker || showHotkeysModal);
+    onToggleMouse: toggleMouse,
+    onToggleFollow: handleToggleFollow,
+  }, currentPane, commitInputFocused || showThemePicker || showHotkeysModal || showBaseBranchPicker);
 
   // Discard confirmation
   useInput((input, key) => {
@@ -409,6 +492,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
               isFocused={currentPane === 'files'}
               scrollOffset={fileListScrollOffset}
               maxHeight={topPaneHeight - 1}
+              width={terminalWidth}
               onStage={stage}
               onUnstage={unstage}
             />
@@ -435,9 +519,9 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
           <>
             <Box>
               <Text bold color={currentPane === 'pr' ? 'cyan' : undefined}>PR CHANGES</Text>
-              <Text dimColor>
-                {' '}(vs {prDiff?.baseBranch ?? 'origin/main'}: {prDiff?.commits.length ?? 0} commits, {prDiff?.files.length ?? 0} files)
-              </Text>
+              <Text dimColor>{' '}(vs </Text>
+              <Text color="cyan">{prDiff?.baseBranch ?? '...'}</Text>
+              <Text dimColor>: {prDiff?.commits.length ?? 0} commits, {prDiff?.files.length ?? 0} files) (b)</Text>
               {prDiff && prDiff.uncommittedCount > 0 && (
                 <>
                   <Text dimColor> | </Text>
@@ -473,7 +557,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
           <Text bold color={currentPane !== 'files' && currentPane !== 'history' && currentPane !== 'pr' ? 'cyan' : undefined}>
             {bottomTab === 'commit' ? 'COMMIT' : 'DIFF'}
           </Text>
-          {selectedFile && bottomTab === 'diff' && <Text dimColor>{selectedFile.path}</Text>}
+          {selectedFile && bottomTab === 'diff' && <Text dimColor>{shortenPath(selectedFile.path, terminalWidth - 10)}</Text>}
           {bottomTab === 'history' && historySelectedCommit && (
             <Text dimColor>{historySelectedCommit.shortHash} - {historySelectedCommit.message.slice(0, 50)}</Text>
           )}
@@ -481,7 +565,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             <Text dimColor>
               {prListSelection.type === 'commit'
                 ? `${prDiff?.commits[prListSelection.index]?.shortHash ?? ''} - ${prDiff?.commits[prListSelection.index]?.message.slice(0, 40) ?? ''}`
-                : prDiff?.files[prListSelection.index]?.path ?? ''}
+                : shortenPath(prDiff?.files[prListSelection.index]?.path ?? '', terminalWidth - 10)}
             </Text>
           )}
         </Box>
@@ -536,7 +620,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
           <Text dimColor>(y/n)</Text>
         </Box>
       ) : (
-        <Footer activeTab={bottomTab} />
+        <Footer activeTab={bottomTab} mouseEnabled={mouseEnabled} />
       )}
 
       {/* Theme picker modal overlay */}
@@ -557,6 +641,20 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         <Box position="absolute" marginTop={0} marginLeft={0}>
           <HotkeysModal
             onClose={handleCloseHotkeysModal}
+            width={terminalWidth}
+            height={terminalHeight}
+          />
+        </Box>
+      )}
+
+      {/* Base branch picker modal overlay */}
+      {showBaseBranchPicker && (
+        <Box position="absolute" marginTop={0} marginLeft={0}>
+          <BaseBranchPicker
+            candidates={baseBranchCandidates}
+            currentBranch={prDiff?.baseBranch ?? null}
+            onSelect={handleBaseBranchSelect}
+            onCancel={handleBaseBranchCancel}
             width={terminalWidth}
             height={terminalHeight}
           />

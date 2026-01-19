@@ -49,6 +49,9 @@ export function Header({ repoPath, branch, isLoading, error, debug, watcherState
           {isLoading && <Text color="yellow"> ⟳</Text>}
           {isNotGitRepo && <Text color="yellow"> (not a git repository)</Text>}
           {error && !isNotGitRepo && <Text color="red"> ({error})</Text>}
+          {watcherState?.enabled && watcherState.sourceFile && (
+            <Text dimColor> (follow: {shortenPath(watcherState.sourceFile)})</Text>
+          )}
         </Box>
 
         {branch && (
