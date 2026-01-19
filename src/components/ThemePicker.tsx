@@ -1,6 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { ThemeName, Theme, themes, themeOrder, getTheme } from '../themes.js';
+import { Modal, centerModal } from './Modal.js';
 
 interface ThemePickerProps {
   currentTheme: ThemeName;
@@ -62,62 +63,53 @@ export function ThemePicker({
 
   // Calculate box dimensions
   const boxWidth = Math.min(50, width - 4);
-  const boxHeight = Math.min(themeOrder.length + 8, height - 4);
+  const boxHeight = Math.min(themeOrder.length + 10, height - 4); // +10 for header, preview, footer, borders
 
   // Center the modal
-  const paddingLeft = Math.floor((width - boxWidth) / 2);
-  const paddingTop = Math.floor((height - boxHeight) / 2);
+  const { x, y } = centerModal(boxWidth, boxHeight, width, height);
 
   return (
-    <Box
-      flexDirection="column"
-      width={width}
-      height={height}
-      paddingTop={paddingTop}
-    >
-      <Box paddingLeft={paddingLeft} flexDirection="column">
-        {/* Header */}
-        <Box borderStyle="round" borderColor="cyan" flexDirection="column" width={boxWidth}>
-          <Box justifyContent="center" marginBottom={1}>
-            <Text bold color="cyan"> Select Theme </Text>
-          </Box>
+    <Modal x={x} y={y} width={boxWidth} height={boxHeight}>
+      <Box borderStyle="round" borderColor="cyan" flexDirection="column" width={boxWidth}>
+        <Box justifyContent="center" marginBottom={1}>
+          <Text bold color="cyan"> Select Theme </Text>
+        </Box>
 
-          {/* Theme list */}
-          {themeOrder.map((themeName, index) => {
-            const theme = themes[themeName];
-            const isSelected = index === selectedIndex;
-            const isCurrent = themeName === currentTheme;
+        {/* Theme list */}
+        {themeOrder.map((themeName, index) => {
+          const theme = themes[themeName];
+          const isSelected = index === selectedIndex;
+          const isCurrent = themeName === currentTheme;
 
-            return (
-              <Box key={themeName}>
-                <Text color={isSelected ? 'cyan' : undefined}>
-                  {isSelected ? '▸ ' : '  '}
-                </Text>
-                <Text
-                  bold={isSelected}
-                  color={isSelected ? 'cyan' : undefined}
-                >
-                  {theme.displayName}
-                </Text>
-                {isCurrent && (
-                  <Text dimColor> (current)</Text>
-                )}
-              </Box>
-            );
-          })}
+          return (
+            <Box key={themeName}>
+              <Text color={isSelected ? 'cyan' : undefined}>
+                {isSelected ? '▸ ' : '  '}
+              </Text>
+              <Text
+                bold={isSelected}
+                color={isSelected ? 'cyan' : undefined}
+              >
+                {theme.displayName}
+              </Text>
+              {isCurrent && (
+                <Text dimColor> (current)</Text>
+              )}
+            </Box>
+          );
+        })}
 
-          {/* Preview section */}
-          <Box marginTop={1} flexDirection="column">
-            <Text dimColor>Preview:</Text>
-            <ThemePreview theme={previewTheme} />
-          </Box>
+        {/* Preview section */}
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>Preview:</Text>
+          <ThemePreview theme={previewTheme} />
+        </Box>
 
-          {/* Footer */}
-          <Box marginTop={1} justifyContent="center">
-            <Text dimColor>↑↓ navigate • Enter select • Esc cancel</Text>
-          </Box>
+        {/* Footer */}
+        <Box marginTop={1} justifyContent="center">
+          <Text dimColor>↑↓ navigate • Enter select • Esc cancel</Text>
         </Box>
       </Box>
-    </Box>
+    </Modal>
   );
 }

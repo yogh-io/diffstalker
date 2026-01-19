@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text, useInput } from 'ink';
+import { Modal, centerModal } from './Modal.js';
 
 interface HotkeysModalProps {
   onClose: () => void;
@@ -86,57 +87,37 @@ export function HotkeysModal({
 
   // Calculate box dimensions
   const boxWidth = Math.min(60, width - 4);
-  const totalLines = hotkeyGroups.reduce((sum, g) => sum + g.entries.length + 1, 0) + 5;
+  const totalLines = hotkeyGroups.reduce((sum, g) => sum + g.entries.length + 2, 0) + 4; // +2 per group for title+spacing, +4 for header/footer/borders
   const boxHeight = Math.min(totalLines, height - 4);
 
   // Center the modal
-  const paddingLeft = Math.floor((width - boxWidth) / 2);
-  const paddingTop = Math.floor((height - boxHeight) / 2);
-
-  // Create backdrop lines (fill entire screen with dark background)
-  const backdropLine = ' '.repeat(width);
+  const { x, y } = centerModal(boxWidth, boxHeight, width, height);
 
   return (
-    <Box flexDirection="column" width={width} height={height}>
-      {/* Opaque backdrop */}
-      {Array.from({ length: height }).map((_, i) => (
-        <Text key={i} backgroundColor="#1a1a1a">{backdropLine}</Text>
-      ))}
+    <Modal x={x} y={y} width={boxWidth} height={boxHeight}>
+      <Box borderStyle="round" borderColor="cyan" flexDirection="column" width={boxWidth}>
+        <Box justifyContent="center" marginBottom={1}>
+          <Text bold color="cyan"> Keyboard Shortcuts </Text>
+        </Box>
 
-      {/* Modal content overlaid on backdrop */}
-      <Box
-        position="absolute"
-        flexDirection="column"
-        width={width}
-        height={height}
-        paddingTop={paddingTop}
-      >
-        <Box paddingLeft={paddingLeft} flexDirection="column">
-          <Box borderStyle="round" borderColor="cyan" flexDirection="column" width={boxWidth}>
-            <Box justifyContent="center" marginBottom={1}>
-              <Text bold color="cyan"> Keyboard Shortcuts </Text>
-            </Box>
-
-            {hotkeyGroups.map((group) => (
-              <Box key={group.title} flexDirection="column" marginBottom={1}>
-                <Text bold dimColor>{group.title}</Text>
-                {group.entries.map((entry) => (
-                  <Box key={entry.key}>
-                    <Box width={15}>
-                      <Text color="cyan">{entry.key}</Text>
-                    </Box>
-                    <Text>{entry.description}</Text>
-                  </Box>
-                ))}
+        {hotkeyGroups.map((group) => (
+          <Box key={group.title} flexDirection="column" marginBottom={1}>
+            <Text bold dimColor>{group.title}</Text>
+            {group.entries.map((entry) => (
+              <Box key={entry.key}>
+                <Box width={15}>
+                  <Text color="cyan">{entry.key}</Text>
+                </Box>
+                <Text>{entry.description}</Text>
               </Box>
             ))}
-
-            <Box marginTop={1} justifyContent="center">
-              <Text dimColor>Press Esc, Enter, or ? to close</Text>
-            </Box>
           </Box>
+        ))}
+
+        <Box marginTop={1} justifyContent="center">
+          <Text dimColor>Press Esc, Enter, or ? to close</Text>
         </Box>
       </Box>
-    </Box>
+    </Modal>
   );
 }

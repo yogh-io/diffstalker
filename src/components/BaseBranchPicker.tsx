@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { Modal, centerModal } from './Modal.js';
 
 interface BaseBranchPickerProps {
   candidates: string[];
@@ -57,92 +58,79 @@ export function BaseBranchPicker({
   // Calculate box dimensions
   const boxWidth = Math.min(60, width - 4);
   const maxListHeight = Math.min(10, height - 10);
-  const boxHeight = Math.min(maxListHeight + 7, height - 4);
+  const boxHeight = Math.min(maxListHeight + 9, height - 4); // +9 for header, input, footer, borders
 
   // Center the modal
-  const paddingLeft = Math.floor((width - boxWidth) / 2);
-  const paddingTop = Math.floor((height - boxHeight) / 2);
+  const { x, y } = centerModal(boxWidth, boxHeight, width, height);
 
   // Visible candidates (with scroll)
   const scrollOffset = Math.max(0, clampedIndex - maxListHeight + 1);
   const visibleCandidates = filteredCandidates.slice(scrollOffset, scrollOffset + maxListHeight);
 
   return (
-    <Box flexDirection="column" width={width} height={height}>
-      {/* Fill entire screen with blank lines to cover content behind */}
-      {Array.from({ length: height }).map((_, i) => (
-        <Text key={`bg-${i}`}>{' '.repeat(width)}</Text>
-      ))}
-      {/* Modal positioned absolutely on top */}
-      <Box
-        position="absolute"
-        marginTop={paddingTop}
-        marginLeft={paddingLeft}
-        flexDirection="column"
-      >
-        <Box borderStyle="round" borderColor="cyan" flexDirection="column" width={boxWidth}>
-          <Box justifyContent="center" marginBottom={1}>
-            <Text bold color="cyan"> Select Base Branch </Text>
-          </Box>
+    <Modal x={x} y={y} width={boxWidth} height={boxHeight}>
+      <Box borderStyle="round" borderColor="cyan" flexDirection="column" width={boxWidth}>
+        <Box justifyContent="center" marginBottom={1}>
+          <Text bold color="cyan"> Select Base Branch </Text>
+        </Box>
 
-          {/* Text input */}
-          <Box marginBottom={1}>
-            <Text dimColor>Filter: </Text>
-            <Text color="cyan">{inputValue}</Text>
-            <Text color="cyan">▌</Text>
-          </Box>
+        {/* Text input */}
+        <Box marginBottom={1}>
+          <Text dimColor>Filter: </Text>
+          <Text color="cyan">{inputValue}</Text>
+          <Text color="cyan">▌</Text>
+        </Box>
 
-          {/* Candidate list */}
-          <Box flexDirection="column" height={maxListHeight}>
-            {visibleCandidates.length > 0 ? (
-              visibleCandidates.map((branch, index) => {
-                const actualIndex = scrollOffset + index;
-                const isSelected = actualIndex === clampedIndex;
-                const isCurrent = branch === currentBranch;
+        {/* Candidate list */}
+        <Box flexDirection="column" height={maxListHeight}>
+          {visibleCandidates.length > 0 ? (
+            visibleCandidates.map((branch, index) => {
+              const actualIndex = scrollOffset + index;
+              const isSelected = actualIndex === clampedIndex;
+              const isCurrent = branch === currentBranch;
 
-                return (
-                  <Box key={branch}>
-                    <Text color={isSelected ? 'cyan' : undefined}>
-                      {isSelected ? '▸ ' : '  '}
-                    </Text>
-                    <Text
-                      bold={isSelected}
-                      color={isSelected ? 'cyan' : undefined}
-                    >
-                      {branch}
-                    </Text>
-                    {isCurrent && (
-                      <Text dimColor> (current)</Text>
-                    )}
-                  </Box>
-                );
-              })
-            ) : inputValue ? (
-              <Box>
-                <Text dimColor>  No matches. Press Enter to use: </Text>
-                <Text color="yellow">{inputValue}</Text>
-              </Box>
-            ) : (
-              <Text dimColor>  No candidates found</Text>
-            )}
-          </Box>
-
-          {/* Scroll indicator */}
-          {filteredCandidates.length > maxListHeight && (
+              return (
+                <Box key={branch}>
+                  <Text color={isSelected ? 'cyan' : undefined}>
+                    {isSelected ? '▸ ' : '  '}
+                  </Text>
+                  <Text
+                    bold={isSelected}
+                    color={isSelected ? 'cyan' : undefined}
+                  >
+                    {branch}
+                  </Text>
+                  {isCurrent && (
+                    <Text dimColor> (current)</Text>
+                  )}
+                </Box>
+              );
+            })
+          ) : inputValue ? (
             <Box>
-              <Text dimColor>
-                {scrollOffset > 0 ? '↑ ' : '  '}
-                {scrollOffset + maxListHeight < filteredCandidates.length ? '↓ more' : ''}
-              </Text>
+              <Text dimColor>  No matches. Press Enter to use: </Text>
+              <Text color="yellow">{inputValue}</Text>
             </Box>
+          ) : (
+            <Text dimColor>  No candidates found</Text>
           )}
+        </Box>
 
-          {/* Footer */}
-          <Box marginTop={1} justifyContent="center">
-            <Text dimColor>↑↓ navigate • Enter select • Esc cancel</Text>
+        {/* Scroll indicator */}
+        {filteredCandidates.length > maxListHeight && (
+          <Box>
+            <Text dimColor>
+              {scrollOffset > 0 ? '↑ ' : '  '}
+              {scrollOffset + maxListHeight < filteredCandidates.length ? '↓ more' : ''}
+            </Text>
           </Box>
+        )}
+
+        {/* Footer */}
+        <Box marginTop={1} justifyContent="center">
+          <Text dimColor>↑↓ navigate • Enter select • Esc cancel</Text>
         </Box>
       </Box>
-    </Box>
+    </Modal>
   );
 }
