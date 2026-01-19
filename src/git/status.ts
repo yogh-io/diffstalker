@@ -4,13 +4,13 @@ import * as path from 'node:path';
 
 export type FileStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed' | 'copied';
 
-interface FileStats {
+export interface FileStats {
   insertions: number;
   deletions: number;
 }
 
 // Parse git diff --numstat output into a map of path -> stats
-function parseNumstat(output: string): Map<string, FileStats> {
+export function parseNumstat(output: string): Map<string, FileStats> {
   const stats = new Map<string, FileStats>();
   for (const line of output.trim().split('\n')) {
     if (!line) continue;
@@ -90,7 +90,7 @@ export interface GitStatus {
   isRepo: boolean;
 }
 
-function parseStatusCode(code: string): FileStatus {
+export function parseStatusCode(code: string): FileStatus {
   switch (code) {
     case 'M':
       return 'modified';

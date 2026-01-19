@@ -21,9 +21,9 @@ const defaultConfig: Config = {
 
 const CONFIG_PATH = path.join(os.homedir(), '.config', 'diffstalker', 'config.json');
 
-const VALID_THEMES: ThemeName[] = ['dark', 'light', 'dark-colorblind', 'light-colorblind', 'dark-ansi', 'light-ansi'];
+export const VALID_THEMES: ThemeName[] = ['dark', 'light', 'dark-colorblind', 'light-colorblind', 'dark-ansi', 'light-ansi'];
 
-function isValidTheme(theme: unknown): theme is ThemeName {
+export function isValidTheme(theme: unknown): theme is ThemeName {
   return typeof theme === 'string' && VALID_THEMES.includes(theme as ThemeName);
 }
 

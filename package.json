@@ -12,7 +12,9 @@
     "build": "tsc",
     "bundle": "npm run build && ncc build dist/index.js -o dist/bundle -m",
     "start": "node dist/index.js",
-    "start:bundle": "node dist/bundle/index.js"
+    "start:bundle": "node dist/bundle/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [
     "git",
@@ -37,6 +39,7 @@
     "@types/react": "^19.2.0",
     "@vercel/ncc": "^0.38.4",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.0"
   }
 }

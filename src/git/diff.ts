@@ -39,7 +39,7 @@ export interface PRDiff {
   uncommittedCount: number;
 }
 
-function parseDiffLine(line: string): DiffLine {
+export function parseDiffLine(line: string): DiffLine {
   if (line.startsWith('diff --git') || line.startsWith('index ') ||
       line.startsWith('---') || line.startsWith('+++') ||
       line.startsWith('new file') || line.startsWith('deleted file')) {
@@ -62,7 +62,7 @@ function parseDiffLine(line: string): DiffLine {
  * Format: @@ -oldStart,oldCount +newStart,newCount @@
  * Example: @@ -1,5 +1,7 @@ or @@ -10 +10,2 @@
  */
-function parseHunkHeader(line: string): { oldStart: number; newStart: number } | null {
+export function parseHunkHeader(line: string): { oldStart: number; newStart: number } | null {
   const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
   if (match) {
     return {
