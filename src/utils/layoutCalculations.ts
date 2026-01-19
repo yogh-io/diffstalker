@@ -6,6 +6,51 @@ export interface PaneHeights {
 }
 
 /**
+ * Get file counts for the 3 FileList sections.
+ * This is the single source of truth for how files are categorized.
+ * Order: Modified → Untracked → Staged (matches FileList.tsx)
+ */
+export function getFileListSectionCounts(files: FileEntry[]): {
+  modifiedCount: number;
+  untrackedCount: number;
+  stagedCount: number;
+} {
+  const modifiedCount = files.filter(f => !f.staged && f.status !== 'untracked').length;
+  const untrackedCount = files.filter(f => !f.staged && f.status === 'untracked').length;
+  const stagedCount = files.filter(f => f.staged).length;
+  return { modifiedCount, untrackedCount, stagedCount };
+}
+
+/**
+ * Calculate total rows for the FileList component.
+ * Accounts for headers and spacers between sections.
+ */
+export function getFileListTotalRows(files: FileEntry[]): number {
+  const { modifiedCount, untrackedCount, stagedCount } = getFileListSectionCounts(files);
+
+  let rows = 0;
+
+  // Modified section
+  if (modifiedCount > 0) {
+    rows += 1 + modifiedCount; // header + files
+  }
+
+  // Untracked section
+  if (untrackedCount > 0) {
+    if (modifiedCount > 0) rows += 1; // spacer
+    rows += 1 + untrackedCount; // header + files
+  }
+
+  // Staged section
+  if (stagedCount > 0) {
+    if (modifiedCount > 0 || untrackedCount > 0) rows += 1; // spacer
+    rows += 1 + stagedCount; // header + files
+  }
+
+  return rows;
+}
+
+/**
  * Calculate the heights of the top (file list) and bottom (diff/commit/etc) panes
  * based on the number of files and available content area.
  *
@@ -17,18 +62,9 @@ export function calculatePaneHeights(
   contentHeight: number,
   maxTopRatio: number = 0.4
 ): PaneHeights {
-  const unstagedCount = files.filter(f => !f.staged).length;
-  const stagedCount = files.filter(f => f.staged).length;
-
   // Calculate content rows needed for staging area
-  // 1 for "STAGING AREA" header
-  // unstaged header + files (if any)
-  // spacer (if both sections exist)
-  // staged header + files (if any)
-  let neededRows = 1; // "STAGING AREA" header
-  if (unstagedCount > 0) neededRows += 1 + unstagedCount; // header + files
-  if (stagedCount > 0) neededRows += 1 + stagedCount; // header + files
-  if (unstagedCount > 0 && stagedCount > 0) neededRows += 1; // spacer
+  // Uses getFileListTotalRows for consistency with FileList rendering
+  const neededRows = getFileListTotalRows(files);
 
   // Minimum height of 3 (header + 2 lines for empty state)
   const minHeight = 3;
@@ -44,23 +80,43 @@ export function calculatePaneHeights(
 /**
  * Calculate which row in the file list a file at a given index occupies.
  * This accounts for headers and spacers in the list.
+ * File order: Modified → Untracked → Staged (matches FileList.tsx)
  */
 export function getRowForFileIndex(
   selectedIndex: number,
-  unstagedCount: number,
+  modifiedCount: number,
+  untrackedCount: number,
   stagedCount: number
 ): number {
-  if (selectedIndex < unstagedCount) {
-    // In unstaged section: header (0) + file rows
+  let row = 0;
+
+  // Modified section
+  if (selectedIndex < modifiedCount) {
+    // In modified section: header + file rows
     return 1 + selectedIndex;
-  } else {
-    // In staged section
-    const stagedIdx = selectedIndex - unstagedCount;
-    return (unstagedCount > 0 ? 1 + unstagedCount : 0) // unstaged section
-      + (unstagedCount > 0 && stagedCount > 0 ? 1 : 0) // spacer
-      + 1 // staged header
-      + stagedIdx;
   }
+  if (modifiedCount > 0) {
+    row += 1 + modifiedCount; // header + files
+  }
+
+  // Untracked section
+  const untrackedStart = modifiedCount;
+  if (selectedIndex < untrackedStart + untrackedCount) {
+    // In untracked section
+    const untrackedIdx = selectedIndex - untrackedStart;
+    if (modifiedCount > 0) row += 1; // spacer
+    return row + 1 + untrackedIdx; // header + file position
+  }
+  if (untrackedCount > 0) {
+    if (modifiedCount > 0) row += 1; // spacer
+    row += 1 + untrackedCount; // header + files
+  }
+
+  // Staged section
+  const stagedStart = modifiedCount + untrackedCount;
+  const stagedIdx = selectedIndex - stagedStart;
+  if (modifiedCount > 0 || untrackedCount > 0) row += 1; // spacer
+  return row + 1 + stagedIdx; // header + file position
 }
 
 /**

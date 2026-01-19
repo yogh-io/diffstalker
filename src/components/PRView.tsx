@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { PRDiff, PRFileDiff, DiffLine } from '../git/diff.js';
+import { PRDiff, DiffResult, DiffLine } from '../git/diff.js';
+import { DiffView } from './DiffView.js';
+import { ThemeName } from '../themes.js';
 
 interface PRViewProps {
   prDiff: PRDiff | null;
@@ -12,118 +14,89 @@ interface PRViewProps {
   isActive: boolean;
   includeUncommitted: boolean;
   onToggleIncludeUncommitted: () => void;
-}
-
-export interface PRDiffRow {
-  type: 'file-header' | 'diff-line';
-  fileIndex: number;
-  content: DiffLine | PRFileDiff;
+  theme?: ThemeName;
 }
 
 /**
- * Build the flat list of rows for the PR diff view.
- * This is the single source of truth for PR diff row structure.
+ * Build a combined DiffResult from all PR files.
+ * This is the single source of truth for PR diff content.
  */
-export function buildPRDiffRows(prDiff: PRDiff | null): PRDiffRow[] {
-  if (!prDiff || prDiff.files.length === 0) return [];
+export function buildCombinedPRDiff(prDiff: PRDiff | null): DiffResult {
+  if (!prDiff || prDiff.files.length === 0) {
+    return { raw: '', lines: [] };
+  }
 
-  const rows: PRDiffRow[] = [];
-  for (let fileIndex = 0; fileIndex < prDiff.files.length; fileIndex++) {
-    const file = prDiff.files[fileIndex];
+  const allLines: DiffLine[] = [];
+  const rawParts: string[] = [];
 
-    // File header
-    rows.push({ type: 'file-header', fileIndex, content: file });
-
-    // Diff lines (skip the raw diff header lines, start from hunk)
+  for (const file of prDiff.files) {
+    // Include all lines from each file's diff (including headers)
     for (const line of file.diff.lines) {
-      // Skip redundant header lines as we already show file header
-      if (line.type === 'header') continue;
-      rows.push({ type: 'diff-line', fileIndex, content: line });
+      allLines.push(line);
     }
-  }
-  return rows;
-}
-
-function DiffLineComponent({ line }: { line: DiffLine }): React.ReactElement {
-  let color: string | undefined;
-  let dimColor = false;
-
-  switch (line.type) {
-    case 'addition':
-      color = 'green';
-      break;
-    case 'deletion':
-      color = 'red';
-      break;
-    case 'hunk':
-      color = 'cyan';
-      break;
-    case 'header':
-      color = 'yellow';
-      dimColor = true;
-      break;
-    case 'context':
-    default:
-      break;
+    rawParts.push(file.diff.raw);
   }
 
-  return (
-    <Text color={color} dimColor={dimColor}>
-      {'  '}{line.content}
-    </Text>
-  );
+  return {
+    raw: rawParts.join('\n'),
+    lines: allLines,
+  };
 }
 
-function FileHeaderComponent({ file }: { file: PRFileDiff }): React.ReactElement {
-  const statusColors: Record<PRFileDiff['status'], string> = {
-    added: 'green',
-    modified: 'yellow',
-    deleted: 'red',
-    renamed: 'blue',
-  };
-
-  const statusChars: Record<PRFileDiff['status'], string> = {
-    added: 'A',
-    modified: 'M',
-    deleted: 'D',
-    renamed: 'R',
-  };
-
-  const isUncommitted = file.isUncommitted ?? false;
-
-  return (
-    <Box>
-      {isUncommitted && <Text color="magenta" bold>*</Text>}
-      <Text color={isUncommitted ? 'magenta' : statusColors[file.status]} bold>{statusChars[file.status]}</Text>
-      <Text bold color={isUncommitted ? 'magenta' : undefined}> {file.path}</Text>
-      <Text dimColor> (</Text>
-      <Text color="green">+{file.additions}</Text>
-      <Text dimColor> </Text>
-      <Text color="red">-{file.deletions}</Text>
-      <Text dimColor>)</Text>
-      {isUncommitted && <Text color="magenta" dimColor> [uncommitted]</Text>}
-    </Box>
-  );
+/**
+ * Calculate the total number of displayable lines in the PR diff.
+ * This accounts for header filtering done by DiffView.
+ */
+export function getPRDiffTotalRows(prDiff: PRDiff | null): number {
+  const combined = buildCombinedPRDiff(prDiff);
+  // DiffView filters out certain headers (index, ---, +++, similarity index)
+  return combined.lines.filter(line => {
+    if (line.type !== 'header') return true;
+    const content = line.content;
+    if (content.startsWith('index ') ||
+        content.startsWith('--- ') ||
+        content.startsWith('+++ ') ||
+        content.startsWith('similarity index')) {
+      return false;
+    }
+    return true;
+  }).length;
 }
 
 /**
  * Calculate the row offset to scroll to a specific file in the PR diff.
- * Returns the row index where the file header starts.
+ * Returns the row index where the file's diff --git header starts.
  */
 export function getFileScrollOffset(prDiff: PRDiff | null, fileIndex: number): number {
   if (!prDiff || fileIndex < 0 || fileIndex >= prDiff.files.length) return 0;
 
-  const rows = buildPRDiffRows(prDiff);
-  // Find the first row for this file (the file-header row)
-  const idx = rows.findIndex(row => row.type === 'file-header' && row.fileIndex === fileIndex);
-  return idx >= 0 ? idx : 0;
-}
+  const combined = buildCombinedPRDiff(prDiff);
+  let displayableRow = 0;
+  let currentFileIndex = 0;
 
-/**
- * Calculate the total number of rows in the PR diff view.
- */
-export function getPRDiffTotalRows(prDiff: PRDiff | null): number {
-  return buildPRDiffRows(prDiff).length;
+  for (const line of combined.lines) {
+    // Check if this is a file boundary
+    if (line.type === 'header' && line.content.startsWith('diff --git')) {
+      if (currentFileIndex === fileIndex) {
+        return displayableRow;
+      }
+      currentFileIndex++;
+    }
+
+    // Skip lines that DiffView filters out
+    if (line.type === 'header') {
+      const content = line.content;
+      if (content.startsWith('index ') ||
+          content.startsWith('--- ') ||
+          content.startsWith('+++ ') ||
+          content.startsWith('similarity index')) {
+        continue;
+      }
+    }
+    displayableRow++;
+  }
+
+  return 0;
 }
 
 export function PRView({
@@ -136,93 +109,50 @@ export function PRView({
   isActive,
   includeUncommitted,
   onToggleIncludeUncommitted,
+  theme = 'dark',
 }: PRViewProps): React.ReactElement {
-  // Header line
-  const renderHeader = (): React.ReactElement => {
-    if (isLoading) {
-      return (
-        <Box>
-          <Text dimColor>Loading PR diff...</Text>
-        </Box>
-      );
-    }
+  // Build combined diff for DiffView
+  const combinedDiff = useMemo(() => buildCombinedPRDiff(prDiff), [prDiff]);
 
-    if (error) {
-      return (
-        <Box>
-          <Text color="red">{error}</Text>
-        </Box>
-      );
-    }
-
-    if (!prDiff) {
-      return (
-        <Box>
-          <Text dimColor>No base branch found (no origin/main or origin/master)</Text>
-        </Box>
-      );
-    }
-
-    const { baseBranch, stats, uncommittedCount } = prDiff;
-
+  if (isLoading) {
     return (
-      <Box>
-        <Text>Comparing with </Text>
-        <Text color="cyan" bold>{baseBranch}</Text>
-        <Text dimColor> | </Text>
-        <Text>{stats.filesChanged} file{stats.filesChanged !== 1 ? 's' : ''}</Text>
-        <Text dimColor> | </Text>
-        <Text color="green">+{stats.additions}</Text>
-        <Text> </Text>
-        <Text color="red">-{stats.deletions}</Text>
-        {uncommittedCount > 0 && (
-          <>
-            <Text dimColor> | </Text>
-            <Text color={includeUncommitted ? 'magenta' : 'yellow'}>
-              [{includeUncommitted ? 'x' : ' '}] Include uncommitted
-            </Text>
-            <Text dimColor> (u)</Text>
-          </>
-        )}
+      <Box paddingX={1}>
+        <Text dimColor>Loading PR diff...</Text>
       </Box>
     );
-  };
+  }
 
-  // Use the shared row building function
-  const allRows = buildPRDiffRows(prDiff);
-  const contentHeight = maxHeight - 2; // Reserve for header and indicators
-  const visibleRows = allRows.slice(scrollOffset, scrollOffset + contentHeight);
-  const hasMore = allRows.length > scrollOffset + contentHeight;
-  const hasPrevious = scrollOffset > 0;
+  if (error) {
+    return (
+      <Box paddingX={1}>
+        <Text color="red">{error}</Text>
+      </Box>
+    );
+  }
 
-  return (
-    <Box flexDirection="column" paddingX={1}>
-      {renderHeader()}
+  if (!prDiff) {
+    return (
+      <Box paddingX={1}>
+        <Text dimColor>No base branch found (no origin/main or origin/master)</Text>
+      </Box>
+    );
+  }
 
-      {prDiff && prDiff.files.length === 0 && (
+  if (prDiff.files.length === 0) {
+    return (
+      <Box paddingX={1}>
         <Text dimColor>No changes compared to {prDiff.baseBranch}</Text>
-      )}
+      </Box>
+    );
+  }
 
-      {hasPrevious && (
-        <Text dimColor>↑ {scrollOffset} more lines above</Text>
-      )}
-
-      {visibleRows.map((row, i) => {
-        if (row.type === 'file-header') {
-          return <FileHeaderComponent key={`header-${row.fileIndex}`} file={row.content as PRFileDiff} />;
-        }
-        const line = row.content as DiffLine;
-        return (
-          <DiffLineComponent
-            key={`line-${scrollOffset + i}-${line.content.slice(0, 20)}`}
-            line={line}
-          />
-        );
-      })}
-
-      {hasMore && (
-        <Text dimColor>↓ {allRows.length - scrollOffset - contentHeight} more lines below</Text>
-      )}
-    </Box>
+  // Use DiffView for the actual diff rendering (word-level highlighting, themes, line numbers)
+  return (
+    <DiffView
+      diff={combinedDiff}
+      maxHeight={maxHeight}
+      scrollOffset={scrollOffset}
+      theme={theme}
+    />
   );
 }

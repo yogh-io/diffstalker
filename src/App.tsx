@@ -647,6 +647,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
                 isActive={currentPane === 'diff'}
                 includeUncommitted={includeUncommitted}
                 onToggleIncludeUncommitted={handleToggleIncludeUncommitted}
+                theme={currentTheme}
               />
             ) : (
               <Text dimColor>No PR diff available</Text>

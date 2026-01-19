@@ -6,6 +6,8 @@ import {
   calculatePaneHeights,
   getRowForFileIndex,
   calculateScrollOffset,
+  getFileListSectionCounts,
+  getFileListTotalRows,
 } from '../utils/layoutCalculations.js';
 import {
   calculatePaneBoundaries,
@@ -133,10 +135,9 @@ export function useLayout(
 
   // Auto-scroll file list to keep selected item visible (only when selection changes)
   useEffect(() => {
-    const unstagedCount = files.filter(f => !f.staged).length;
-    const stagedCount = files.filter(f => f.staged).length;
+    const { modifiedCount, untrackedCount, stagedCount } = getFileListSectionCounts(files);
 
-    const selectedRow = getRowForFileIndex(selectedIndex, unstagedCount, stagedCount);
+    const selectedRow = getRowForFileIndex(selectedIndex, modifiedCount, untrackedCount, stagedCount);
     const visibleHeight = topPaneHeight - 1;
 
     setFileListScrollOffset(prev => {
@@ -160,14 +161,7 @@ export function useLayout(
   }, [diff?.lines.length, bottomPaneHeight]);
 
   const scrollFileList = useCallback((direction: 'up' | 'down', amount: number = 3) => {
-    const unstagedCount = files.filter(f => !f.staged).length;
-    const stagedCount = files.filter(f => f.staged).length;
-
-    let totalRows = 0;
-    if (unstagedCount > 0) totalRows += 1 + unstagedCount;
-    if (stagedCount > 0) totalRows += 1 + stagedCount;
-    if (unstagedCount > 0 && stagedCount > 0) totalRows += 1;
-
+    const totalRows = getFileListTotalRows(files);
     const visibleRows = topPaneHeight - 1;
     const maxScroll = Math.max(0, totalRows - visibleRows);
 
