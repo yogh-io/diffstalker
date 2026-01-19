@@ -1,84 +1,137 @@
 # Features
 
+A comprehensive list of diffstalker features organized by category.
+
 ## Views
 
 ### Diff View (Tab 1)
-- File list with staging status (Modified, Untracked, Staged sections)
+- File list organized by status: Modified, Untracked, Staged
 - Stage/unstage files with `[+]`/`[-]` buttons or keyboard shortcuts
 - Side-by-side diff display with word-level highlighting
-- Syntax-aware diff coloring
+- Syntax-aware diff coloring based on selected theme
 
 ### Commit View (Tab 2)
-- Commit message input with multi-line support
-- Preview of staged changes
-- Amend mode (Ctrl+M)
-- AI-assisted commit message generation (requires ANTHROPIC_API_KEY)
+- Commit message input with vim-style `i` to enter edit mode
+- Toggle amend mode with `a` key
+- AI-assisted commit message generation with `g` key (requires `ANTHROPIC_API_KEY`)
+- Shows count of staged files
 
 ### History View (Tab 3)
-- Scrollable commit history
-- Click or select commit to view its diff
+- Scrollable commit history for current branch
 - Shows commit hash, message, date, and refs
+- Select commit to view its diff in bottom pane
 
 ### PR View (Tab 4)
-- Compare current branch against a base branch
-- Shows commits and changed files
-- Toggle uncommitted changes inclusion (u key)
-- Base branch picker with text filtering (b key)
+- Compare current branch against a configurable base branch
+- Shows list of commits and changed files
+- Toggle uncommitted changes inclusion with `u` key
+- Base branch picker with fuzzy text filtering (`b` key)
 - Base branch selection cached per repository
 
 ## Navigation
 
 ### Keyboard
-- `↑/k` / `↓/j` - Move up/down
-- `Tab` - Toggle between panes
-- `1/2/3/4` - Switch tabs
-- `Space/Enter` - Toggle stage/unstage
-- `?` - Show hotkeys modal
+| Key | Action |
+|-----|--------|
+| `↑` / `k` | Move up |
+| `↓` / `j` | Move down |
+| `Tab` | Toggle between panes |
+| `1` / `2` / `3` / `4` | Switch tabs |
+| `Space` / `Enter` | Toggle stage/unstage |
+| `?` | Show hotkeys modal |
 
 ### Mouse
-- Click to select files
-- Click `[+]`/`[-]` to stage/unstage
-- Scroll wheel in panes
-- Click tabs in footer to switch
-- Right-click to discard changes (with confirmation)
+| Action | Effect |
+|--------|--------|
+| Click file | Select file |
+| Click `[+]` / `[-]` | Stage / unstage file |
+| Right-click file | Discard changes (with confirmation) |
+| Scroll wheel | Navigate list or scroll diff |
+| Click footer tabs | Switch views |
 
 ### Mouse Modes
 - `m` - Toggle between scroll mode and select mode
+- Scroll mode: scrolling always scrolls, doesn't change selection
+- Select mode: scrolling changes selection in file list
 
 ## Staging Operations
-- `Ctrl+S` - Stage selected file
-- `Ctrl+U` - Unstage selected file
-- `Ctrl+A` - Stage all files
-- `Ctrl+Z` - Unstage all files
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+S` | Stage selected file |
+| `Ctrl+U` | Unstage selected file |
+| `Ctrl+A` | Stage all files |
+| `Ctrl+Z` | Unstage all files |
 
 ## Layout
+
 - `[` / `]` - Resize panes (shrink/grow top pane)
-- Split ratio persisted to config
+- Split ratio persisted to config (range: 0.15 to 0.85)
+- Dynamic header height when follow mode indicator is shown
 
 ## Appearance
-- `t` - Theme picker
-- 6 built-in themes: dark, light, dark-colorblind, light-colorblind, dark-ansi, light-ansi
+
+- `t` - Open theme picker
+- 6 built-in themes:
+  - **Dark** - Default dark theme (sampled from Claude Code)
+  - **Light** - Light background variant
+  - **Dark (colorblind)** - Blue/red color scheme for deuteranopia
+  - **Light (colorblind)** - Blue/red on light background
+  - **Dark (ANSI)** - Uses terminal's native 16 ANSI colors
+  - **Light (ANSI)** - ANSI colors on light background
 - Theme preference persisted to config
 
 ## Follow Mode
-- `--follow` CLI flag to watch a file for repo path changes
+
+- `--follow` CLI flag to watch a file for repository paths
 - `f` - Toggle follow mode at runtime
 - Shows follow status in header when enabled
-- Useful for integration with shell hooks
+- Header gracefully degrades if follow path is too long to display
+- Useful for integration with shell hooks (e.g., update on `cd`)
 
-## Path Shortening
+## Path Display
+
 - Long file paths automatically shortened with ellipsis
 - Keeps first directory and filename visible
-- Applied throughout the UI (file list, diff headers, PR view)
+- Applied throughout the UI: file list, diff headers, PR view
 
 ## Configuration
-- Config file: `~/.config/diffstalker/config.json`
-- Cache directory: `~/.cache/diffstalker/`
-- Base branch cache: `~/.cache/diffstalker/base-branches.json`
-- Follow target file: `~/.cache/diffstalker/target` (default)
 
-## Other
-- `r` / `Ctrl+R` - Refresh
-- `c` - Open commit panel
-- `q` / `Ctrl+C` - Quit
+### Config File
+Location: `~/.config/diffstalker/config.json`
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `theme` | string | Selected theme name |
+| `splitRatio` | number | Top/bottom pane split ratio |
+| `targetFile` | string | File to watch in follow mode |
+
+### Cache Directory
+Location: `~/.cache/diffstalker/`
+
+| File | Purpose |
+|------|---------|
+| `target` | Default follow mode hook file |
+| `base-branches.json` | PR base branch cache per repository |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | API key for AI commit message generation |
+| `DIFFSTALKER_PAGER` | External pager for diff display |
+
+## Other Commands
+
+| Key | Action |
+|-----|--------|
+| `c` | Open commit panel |
+| `r` / `Ctrl+R` | Refresh git status |
+| `q` / `Ctrl+C` | Quit |
+
+## Technical Notes
+
+- Mouse tracking uses SGR extended mode for accurate coordinates
 - Terminal cleanup on exit (mouse mode disabled, cursor restored)
+- Handles SIGINT, SIGTERM, and uncaught exceptions gracefully
+- Mouse tracking automatically disabled when text inputs are focused

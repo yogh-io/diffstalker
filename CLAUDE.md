@@ -13,11 +13,12 @@ diffstalker is a terminal UI for git staging and committing, built with TypeScri
 ## Tech Stack
 
 - **TypeScript** with ESM modules
-- **Ink v5** (React for terminal UIs)
-- **React 18** hooks for state management
+- **Ink v6** (React for terminal UIs)
+- **React 19** hooks for state management
 - **chokidar** for file watching
 - **simple-git** for git operations
 - **@anthropic-ai/sdk** for AI commit messages (optional)
+- **fast-diff** for word-level diff highlighting
 
 ## Build Commands
 
@@ -33,17 +34,18 @@ npm start      # Run compiled version
 src/
 ├── index.tsx           # Entry point, CLI args, terminal cleanup
 ├── App.tsx             # Main component, layout, mouse handling
-├── config.ts           # Configuration loading
-├── themes.ts           # Theme definitions
+├── config.ts           # Configuration loading and saving
+├── themes.ts           # Theme definitions (6 themes)
 ├── components/
 │   ├── Header.tsx      # Repo path, branch info, follow status
 │   ├── FileList.tsx    # Staging area file list
 │   ├── DiffView.tsx    # Diff display with word-level highlighting
-│   ├── CommitPanel.tsx # Commit message input
+│   ├── CommitPanel.tsx # Commit message input UI
 │   ├── Footer.tsx      # Keybinding hints and tab bar
 │   ├── HistoryView.tsx # Commit history list
 │   ├── PRListView.tsx  # PR commits and files list
 │   ├── PRView.tsx      # PR diff container
+│   ├── Modal.tsx       # Reusable modal overlay component
 │   ├── BaseBranchPicker.tsx  # Modal for selecting PR base branch
 │   ├── ThemePicker.tsx # Modal for selecting theme
 │   └── HotkeysModal.tsx # Keyboard shortcuts reference
@@ -53,10 +55,13 @@ src/
 │   ├── useKeymap.ts    # Keyboard handling
 │   ├── useMouse.ts     # Mouse event parsing (SGR mode)
 │   ├── useLayout.ts    # Pane sizing and scroll management
+│   ├── useCommitFlow.ts # Commit panel state machine
 │   └── useTerminalSize.ts # Terminal resize handling
 ├── core/
 │   ├── GitStateManager.ts   # Git state management (non-React)
 │   └── GitOperationQueue.ts # Serializes git operations
+├── services/
+│   └── commitService.ts # Git commit execution
 ├── git/
 │   ├── status.ts       # Git status operations
 │   └── diff.ts         # Diff generation
@@ -83,6 +88,13 @@ All git operations go through `useGit.ts` which wraps functions from `git/status
 ### Layout
 Layout uses a fixed overhead calculation (`LAYOUT_OVERHEAD = 5`) for header, separators, and footer. The remaining space is split 40/60 between the staging area and diff view.
 
+### Modals
+Ink doesn't have native modal support. Modals are implemented by:
+1. Rendering modal last (render order = z-order)
+2. Using `position="absolute"` with calculated x/y offsets
+3. The `Modal` component blankets its own area with spaces before rendering content
+4. Mouse tracking is disabled when text inputs within modals are focused
+
 ## Common Tasks
 
 ### Adding a new git operation
@@ -99,6 +111,13 @@ Layout uses a fixed overhead calculation (`LAYOUT_OVERHEAD = 5`) for header, sep
 ### Adding mouse interaction
 1. Handle in `handleMouseEvent` callback in `App.tsx`
 2. Calculate boundaries based on `topPaneHeight`, `bottomPaneHeight`
+
+### Adding a modal
+1. Create component using `<Modal x={x} y={y} width={w} height={h}>`
+2. Use `centerModal()` helper to calculate position
+3. Add state in `App.tsx` (e.g., `showMyModal`)
+4. If modal has text input, add it to `mouseDisabled` condition in `App.tsx`
+5. Render modal last in the JSX (after other content)
 
 ## Gotchas
 

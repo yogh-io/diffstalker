@@ -1,30 +1,18 @@
 # diffstalker
 
-A terminal UI for git staging and committing, designed to receive paths from external tools.
-
-![diffstalker screenshot](https://github.com/user/diffstalker/assets/screenshot.png)
+A terminal UI for git staging, committing, and reviewing changes. Built with TypeScript and Ink (React for CLIs).
 
 ## Features
 
-- **Two-pane layout**: Staging area (top) and diff view (bottom)
-- **Mouse support**: Click to select files, click `[+]/[-]` to stage/unstage, scroll to navigate
-- **Push-based architecture**: Receives paths via file watching, integrates with shell hooks
-- **AI commit messages**: Generate commit messages using Claude API (optional)
-- **Real-time updates**: Watches `.git` directory for external changes
+- **Four views**: Diff, Commit, History, and PR comparison
+- **Two-pane layout**: File list (top) and diff view (bottom) with resizable split
+- **Mouse support**: Click to select, stage/unstage, scroll, switch tabs
+- **Word-level diff highlighting**: See exactly what changed within each line
+- **6 color themes**: Including colorblind-friendly and ANSI-only variants
+- **Follow mode**: Watch a file for paths written by shell hooks
+- **AI commit messages**: Generate messages using Claude API (optional)
 
 ## Installation
-
-### From npm
-
-```bash
-npm install -g diffstalker
-```
-
-### From AUR (Arch Linux)
-
-```bash
-yay -S diffstalker-git
-```
 
 ### From source
 
@@ -33,28 +21,42 @@ git clone https://github.com/user/diffstalker.git
 cd diffstalker
 npm install
 npm run build
-npm link  # or: sudo npm install -g .
+npm link  # makes 'diffstalker' available globally
+```
+
+### From npm (when published)
+
+```bash
+npm install -g diffstalker
 ```
 
 ## Usage
 
-### Direct path
+### Basic usage
 
 ```bash
+# Open current directory
+diffstalker
+
+# Open specific repository
 diffstalker /path/to/repo
 ```
 
-### Watch mode (default)
+### Follow mode
+
+Follow mode watches a file for repository paths, allowing external tools to control which repo is displayed.
 
 ```bash
-diffstalker
+# Follow default file (~/.cache/diffstalker/target)
+diffstalker --follow
+
+# Follow custom file
+diffstalker --follow /tmp/my-hook-file
 ```
 
-In watch mode, diffstalker monitors `~/.cache/diffstalker/target` for paths written by external tools.
+#### Shell integration
 
-### Shell integration
-
-Add to your `.bashrc` or `.zshrc`:
+Add to your `.bashrc` or `.zshrc` to auto-update diffstalker when changing directories:
 
 ```bash
 diffstalker_notify() {
@@ -63,52 +65,149 @@ diffstalker_notify() {
 cd() { builtin cd "$@" && diffstalker_notify; }
 ```
 
-Now diffstalker updates whenever you `cd` into a git repository.
+Press `f` at runtime to toggle follow mode on/off.
+
+## Views
+
+### 1. Diff View
+
+The default view showing staged/unstaged files and their diffs.
+
+- **Top pane**: File list organized by status (Modified, Untracked, Staged)
+- **Bottom pane**: Diff of selected file with word-level highlighting
+
+### 2. Commit View
+
+Create commits with optional AI-assisted message generation.
+
+- Press `i` or `Enter` to edit the commit message
+- Press `a` to toggle amend mode
+- Press `g` to generate an AI commit message (requires `ANTHROPIC_API_KEY`)
+- Press `Enter` to commit, `Esc` to cancel
+
+### 3. History View
+
+Browse commit history of the current branch.
+
+- Navigate to select commits
+- View the diff for any historical commit
+
+### 4. PR View
+
+Compare your current branch against a base branch (useful for reviewing PR changes).
+
+- Press `b` to select a different base branch
+- Press `u` to toggle inclusion of uncommitted changes
+- Base branch selection is cached per repository
 
 ## Keybindings
 
+### Navigation
+
 | Key | Action |
 |-----|--------|
+| `↑` / `k` | Move up |
+| `↓` / `j` | Move down |
+| `Tab` | Toggle pane focus |
+| `1` | Diff view |
+| `2` | Commit view |
+| `3` | History view |
+| `4` | PR view |
+
+### Staging
+
+| Key | Action |
+|-----|--------|
+| `Space` / `Enter` | Toggle stage/unstage |
 | `Ctrl+S` | Stage selected file |
 | `Ctrl+U` | Unstage selected file |
 | `Ctrl+A` | Stage all files |
 | `Ctrl+Z` | Unstage all files |
-| `j/k` or `Up/Down` | Navigate files / scroll diff |
-| `Tab` | Switch between panes |
-| `Enter` or `Space` | Toggle stage/unstage |
-| `1` / `2` | Switch to Diff / Commit tab |
+
+### Layout & Appearance
+
+| Key | Action |
+|-----|--------|
+| `[` | Shrink top pane |
+| `]` | Grow top pane |
+| `t` | Open theme picker |
+| `m` | Toggle scroll/select mode |
+
+### Other
+
+| Key | Action |
+|-----|--------|
 | `c` | Open commit panel |
-| `g` | Generate AI commit message (in commit panel) |
 | `r` | Refresh |
-| `q` | Quit |
+| `f` | Toggle follow mode |
+| `?` | Show keyboard shortcuts |
+| `q` / `Ctrl+C` | Quit |
+
+### PR View Specific
+
+| Key | Action |
+|-----|--------|
+| `b` | Select base branch |
+| `u` | Toggle uncommitted changes |
 
 ## Mouse
 
 | Action | Effect |
 |--------|--------|
 | Left-click file | Select file |
-| Left-click `[+]/[-]` | Stage/unstage file |
+| Left-click `[+]` / `[-]` | Stage / unstage file |
 | Right-click file | Discard changes (with confirmation) |
-| Scroll | Navigate file list / scroll diff |
+| Scroll wheel | Navigate list / scroll diff |
+| Click footer tabs | Switch views |
+
+## Themes
+
+Six built-in themes available via `t` key:
+
+| Theme | Description |
+|-------|-------------|
+| Dark | Default dark theme |
+| Light | Light background |
+| Dark (colorblind) | Blue/red for deuteranopia |
+| Light (colorblind) | Blue/red on light background |
+| Dark (ANSI) | Uses terminal's 16 ANSI colors |
+| Light (ANSI) | Uses terminal's 16 ANSI colors |
+
+Theme selection is persisted to the config file.
 
 ## Configuration
+
+### Config file
+
+Location: `~/.config/diffstalker/config.json`
+
+```json
+{
+  "theme": "dark",
+  "splitRatio": 0.4,
+  "targetFile": "~/.cache/diffstalker/target"
+}
+```
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `theme` | string | Color theme name |
+| `splitRatio` | number | Top/bottom pane split (0.15-0.85) |
+| `targetFile` | string | File to watch in follow mode |
+
+### Cache directory
+
+Location: `~/.cache/diffstalker/`
+
+- `target` - Default follow mode file
+- `base-branches.json` - Cached PR base branch per repository
 
 ### Environment variables
 
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | API key for AI commit message generation |
-| `DIFFSTALKER_TARGET_FILE` | Override watched file path |
-
-### Config file
-
-`~/.config/diffstalker/config.json`:
-
-```json
-{
-  "targetFile": "~/.cache/diffstalker/target"
-}
-```
+| `DIFFSTALKER_PAGER` | External pager for diff display |
 
 ## CLI Options
 
@@ -116,52 +215,30 @@ Now diffstalker updates whenever you `cd` into a git repository.
 diffstalker [options] [path]
 
 Options:
-  --target-file PATH   Override the watched file path
+  -f, --follow [FILE]  Watch file for repo paths (default: ~/.cache/diffstalker/target)
   --once               Show status once and exit
+  -d, --debug          Log path changes to stderr
   -h, --help           Show help message
 
 Arguments:
   [path]               Path to a git repository
-```
 
-## AI Commit Messages
-
-Set your Anthropic API key to enable AI-generated commit messages:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
-
-In the commit panel, press `g` to generate a commit message based on your staged changes.
-
-## Architecture
-
-```
-External tools                    diffstalker
-─────────────────                ────────────────────────────────
-                                 ┌─────────────────────────────┐
-shell cd hook ──┐                │  Watch ~/.cache/diffstalker │
-tmux hook ──────┼──► write to ──►│  /target file               │
-custom script ──┘    file        │                             │
-                                 │  On change:                 │
-                                 │  1. Read path               │
-                                 │  2. git status/diff         │
-                                 │  3. Render TUI              │
-                                 └─────────────────────────────┘
+Examples:
+  diffstalker                      Open current directory
+  diffstalker /path/to/repo        Open specific repo
+  diffstalker --follow             Follow default hook file
+  diffstalker -f /tmp/hook         Follow custom hook file
 ```
 
 ## Development
 
 ```bash
-# Run in development mode (with hot reload)
-npm run dev
-
-# Build
-npm run build
-
-# Run built version
-npm start
+npm run dev      # Run with hot reload (tsx)
+npm run build    # Compile TypeScript
+npm start        # Run compiled version
 ```
+
+See `CLAUDE.md` for architecture details and contribution guidelines.
 
 ## License
 
