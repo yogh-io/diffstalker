@@ -4,6 +4,7 @@ import { BottomTab } from '../hooks/useKeymap.js';
 export interface PaneBoundaries {
   stagingPaneStart: number;
   fileListEnd: number;
+  separatorRow: number;  // The row with the separator between panes (for drag resizing)
   diffPaneStart: number;
   diffPaneEnd: number;
   footerRow: number;
@@ -21,6 +22,7 @@ export function calculatePaneBoundaries(
   // Row 1: Header, Row 2: Sep, Row 3: "STAGING AREA" header, Row 4+: FileList content
   const stagingPaneStart = 3;
   const fileListEnd = 2 + topPaneHeight; // header + sep + staging pane
+  const separatorRow = fileListEnd + 1; // the separator line between panes
   const diffPaneStart = fileListEnd + 2; // after staging pane + sep + diff header
   const diffPaneEnd = diffPaneStart + bottomPaneHeight - 1;
   const footerRow = terminalHeight;
@@ -28,6 +30,7 @@ export function calculatePaneBoundaries(
   return {
     stagingPaneStart,
     fileListEnd,
+    separatorRow,
     diffPaneStart,
     diffPaneEnd,
     footerRow,

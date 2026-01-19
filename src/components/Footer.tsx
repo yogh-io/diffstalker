@@ -9,18 +9,7 @@ export function Footer({ activeTab }: FooterProps): React.ReactElement {
   return (
     <Box justifyContent="space-between">
       <Text>
-        <Text dimColor>^S</Text> stage{' '}
-        <Text dimColor>^U</Text> unstage{' '}
-        <Text dimColor>^A</Text> stage all{' '}
-        <Text dimColor>rclick</Text> discard{' '}
-        <Text dimColor>c</Text> commit{' '}
-        {activeTab === 'pr' && (
-          <>
-            <Text dimColor>u</Text> uncommitted{' '}
-          </>
-        )}
-        <Text dimColor>t</Text> theme{' '}
-        <Text dimColor>q</Text> quit
+        <Text dimColor>?</Text> for hotkeys
       </Text>
 
       <Text>

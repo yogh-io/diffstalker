@@ -18,6 +18,9 @@ export interface KeymapActions {
   onSelect: () => void;
   onToggleIncludeUncommitted?: () => void;
   onOpenThemePicker?: () => void;
+  onShrinkTopPane?: () => void;
+  onGrowTopPane?: () => void;
+  onOpenHotkeysModal?: () => void;
 }
 
 export function useKeymap(
@@ -84,6 +87,24 @@ export function useKeymap(
     // Open theme picker: t
     if (input === 't' && actions.onOpenThemePicker) {
       actions.onOpenThemePicker();
+      return;
+    }
+
+    // Open hotkeys modal: ?
+    if (input === '?' && actions.onOpenHotkeysModal) {
+      actions.onOpenHotkeysModal();
+      return;
+    }
+
+    // Shrink top pane: [
+    if (input === '[' && actions.onShrinkTopPane) {
+      actions.onShrinkTopPane();
+      return;
+    }
+
+    // Grow top pane: ]
+    if (input === ']' && actions.onGrowTopPane) {
+      actions.onGrowTopPane();
       return;
     }
 

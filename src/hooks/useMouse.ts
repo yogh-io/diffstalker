@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useStdin } from 'ink';
 
 export interface MouseEvent {
@@ -15,9 +15,8 @@ export function useMouse(onEvent: (event: MouseEvent) => void): void {
     if (!stdin || !setRawMode) return;
 
     // Enable mouse tracking (SGR extended mode for better coordinates)
-    // Note: We only enable click tracking (1000h), not drag tracking (1002h),
-    // so that normal text selection still works in the terminal
-    process.stdout.write('\x1b[?1000h'); // Enable mouse click tracking
+    // 1000h enables basic click tracking only - text selection still works
+    process.stdout.write('\x1b[?1000h'); // Enable click tracking
     process.stdout.write('\x1b[?1006h'); // Enable SGR extended mode
 
     const handleData = (data: Buffer) => {
@@ -31,20 +30,23 @@ export function useMouse(onEvent: (event: MouseEvent) => void): void {
         const y = parseInt(sgrMatch[3], 10);
         const isRelease = sgrMatch[4] === 'm';
 
-        // Only handle press events for clicks
-        if (isRelease && buttonCode < 64) {
-          let button: MouseEvent['button'] = 'none';
-          if ((buttonCode & 3) === 0) button = 'left';
-          else if ((buttonCode & 3) === 1) button = 'middle';
-          else if ((buttonCode & 3) === 2) button = 'right';
-
-          onEvent({ x, y, type: 'click', button });
-        }
+        // Determine button
+        const baseButton = buttonCode & 3;
+        let button: MouseEvent['button'] = 'none';
+        if (baseButton === 0) button = 'left';
+        else if (baseButton === 1) button = 'middle';
+        else if (baseButton === 2) button = 'right';
 
         // Scroll wheel (button codes 64-67)
-        if (buttonCode >= 64) {
+        if (buttonCode >= 64 && buttonCode < 96) {
           const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
           onEvent({ x, y, type, button: 'none' });
+          return;
+        }
+
+        // Click on release
+        if (isRelease && buttonCode < 64) {
+          onEvent({ x, y, type: 'click', button });
         }
 
         return;

@@ -13,7 +13,7 @@ import { useGit } from './hooks/useGit.js';
 import { useKeymap, Pane, BottomTab } from './hooks/useKeymap.js';
 import { useMouse } from './hooks/useMouse.js';
 import { useTerminalSize } from './hooks/useTerminalSize.js';
-import { useLayout, LAYOUT_OVERHEAD } from './hooks/useLayout.js';
+import { useLayout, LAYOUT_OVERHEAD, SPLIT_RATIO_STEP } from './hooks/useLayout.js';
 import {
   getClickedFileIndex,
   getClickedTab,
@@ -22,6 +22,7 @@ import {
 } from './utils/mouseCoordinates.js';
 import { Config, saveConfig } from './config.js';
 import { ThemePicker } from './components/ThemePicker.js';
+import { HotkeysModal } from './components/HotkeysModal.js';
 import { ThemeName } from './themes.js';
 
 interface AppProps {
@@ -67,6 +68,9 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(config.theme);
   const [showThemePicker, setShowThemePicker] = useState(false);
 
+  // Hotkeys modal state
+  const [showHotkeysModal, setShowHotkeysModal] = useState(false);
+
   // History state
   const [commits, setCommits] = useState<CommitInfo[]>([]);
   const [historySelectedIndex, setHistorySelectedIndex] = useState(0);
@@ -79,10 +83,11 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   // Layout and scroll state
   const {
     topPaneHeight, bottomPaneHeight, paneBoundaries,
+    adjustSplitRatio,
     fileListScrollOffset, diffScrollOffset, historyScrollOffset, prScrollOffset,
     setFileListScrollOffset, setDiffScrollOffset, setHistoryScrollOffset, setPRScrollOffset,
     scrollDiff, scrollFileList, scrollHistory, scrollPR,
-  } = useLayout(terminalHeight, terminalWidth, files, selectedIndex, diff);
+  } = useLayout(terminalHeight, terminalWidth, files, selectedIndex, diff, bottomTab);
 
   // Get currently selected file
   const currentFile = useMemo(() => getFileAtIndex(files, selectedIndex), [files, selectedIndex]);
@@ -326,7 +331,25 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     setShowThemePicker(false);
   }, []);
 
-  // Keymap (disabled when theme picker is open)
+  // Hotkeys modal handlers
+  const handleOpenHotkeysModal = useCallback(() => {
+    setShowHotkeysModal(true);
+  }, []);
+
+  const handleCloseHotkeysModal = useCallback(() => {
+    setShowHotkeysModal(false);
+  }, []);
+
+  // Pane resize handlers
+  const handleShrinkTopPane = useCallback(() => {
+    adjustSplitRatio(-SPLIT_RATIO_STEP);
+  }, [adjustSplitRatio]);
+
+  const handleGrowTopPane = useCallback(() => {
+    adjustSplitRatio(SPLIT_RATIO_STEP);
+  }, [adjustSplitRatio]);
+
+  // Keymap (disabled when modals are open)
   useKeymap({
     onStage: handleStage,
     onUnstage: handleUnstage,
@@ -342,7 +365,10 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     onSelect: handleSelect,
     onToggleIncludeUncommitted: handleToggleIncludeUncommitted,
     onOpenThemePicker: handleOpenThemePicker,
-  }, currentPane, commitInputFocused || showThemePicker);
+    onShrinkTopPane: handleShrinkTopPane,
+    onGrowTopPane: handleGrowTopPane,
+    onOpenHotkeysModal: handleOpenHotkeysModal,
+  }, currentPane, commitInputFocused || showThemePicker || showHotkeysModal);
 
   // Discard confirmation
   useInput((input, key) => {
@@ -520,6 +546,17 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             currentTheme={currentTheme}
             onSelect={handleThemeSelect}
             onCancel={handleThemeCancel}
+            width={terminalWidth}
+            height={terminalHeight}
+          />
+        </Box>
+      )}
+
+      {/* Hotkeys modal overlay */}
+      {showHotkeysModal && (
+        <Box position="absolute" marginTop={0} marginLeft={0}>
+          <HotkeysModal
+            onClose={handleCloseHotkeysModal}
             width={terminalWidth}
             height={terminalHeight}
           />

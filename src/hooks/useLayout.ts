@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { FileEntry } from '../git/status.js';
 import { DiffResult } from '../git/diff.js';
+import { BottomTab } from './useKeymap.js';
 import {
   calculatePaneHeights,
   getRowForFileIndex,
@@ -15,6 +16,17 @@ import {
 // Header (1) + sep (1) + sep (1) + sep (1) + footer (1) = 5 lines overhead
 export const LAYOUT_OVERHEAD = 5;
 
+// Default split ratios for different modes
+const DEFAULT_SPLIT_RATIOS: Record<BottomTab, number> = {
+  diff: 0.4,     // 40% top pane for staging area
+  commit: 0.4,   // 40% top pane for staging area
+  history: 0.5,  // 50% top pane for commit list (larger default)
+  pr: 0.5,       // 50% top pane for PR list (larger default)
+};
+
+// Step size for keyboard-based pane resizing (5% per keypress)
+export const SPLIT_RATIO_STEP = 0.05;
+
 export interface UseLayoutResult {
   // Pane dimensions
   topPaneHeight: number;
@@ -23,6 +35,11 @@ export interface UseLayoutResult {
 
   // Pane boundaries for mouse handling
   paneBoundaries: PaneBoundaries;
+
+  // Split ratio control
+  splitRatio: number;
+  setSplitRatio: (ratio: number) => void;
+  adjustSplitRatio: (delta: number) => void;
 
   // Scroll state
   fileListScrollOffset: number;
@@ -49,16 +66,45 @@ export function useLayout(
   files: FileEntry[],
   selectedIndex: number,
   diff: DiffResult | null,
+  mode: BottomTab = 'diff',
   historySelectedIndex?: number
 ): UseLayoutResult {
   // Calculate content height (terminal minus overhead)
   const contentHeight = terminalHeight - LAYOUT_OVERHEAD;
 
-  // Calculate pane heights based on files
-  const { topPaneHeight, bottomPaneHeight } = useMemo(
-    () => calculatePaneHeights(files, contentHeight),
-    [files, contentHeight]
-  );
+  // Custom split ratio state (null means use default for mode)
+  const [customSplitRatio, setCustomSplitRatio] = useState<number | null>(null);
+
+  // Get the effective split ratio
+  const effectiveSplitRatio = customSplitRatio ?? DEFAULT_SPLIT_RATIOS[mode];
+
+  // Calculate pane heights based on custom ratio or mode default
+  const { topPaneHeight, bottomPaneHeight } = useMemo(() => {
+    // Apply the split ratio directly
+    const minHeight = 5;
+    const maxHeight = contentHeight - minHeight; // Leave at least minHeight for bottom pane
+    const targetHeight = Math.floor(contentHeight * effectiveSplitRatio);
+    const topHeight = Math.max(minHeight, Math.min(targetHeight, maxHeight));
+    const bottomHeight = contentHeight - topHeight;
+    return { topPaneHeight: topHeight, bottomPaneHeight: bottomHeight };
+  }, [contentHeight, effectiveSplitRatio]);
+
+  // Setter for split ratio with bounds checking
+  const setSplitRatio = useCallback((ratio: number) => {
+    // Clamp ratio between 0.15 and 0.85 to ensure both panes remain usable
+    const clampedRatio = Math.max(0.15, Math.min(0.85, ratio));
+    setCustomSplitRatio(clampedRatio);
+  }, []);
+
+  // Adjust split ratio by delta (for keyboard-based resizing)
+  const adjustSplitRatio = useCallback((delta: number) => {
+    const currentRatio = customSplitRatio ?? DEFAULT_SPLIT_RATIOS[mode];
+    const newRatio = Math.max(0.15, Math.min(0.85, currentRatio + delta));
+    setCustomSplitRatio(newRatio);
+  }, [customSplitRatio, mode]);
+
+  // Expose current split ratio
+  const splitRatio = effectiveSplitRatio;
 
   // Calculate pane boundaries for mouse handling
   const paneBoundaries = useMemo(
@@ -130,7 +176,8 @@ export function useLayout(
   }, [files, topPaneHeight]);
 
   const scrollHistory = useCallback((direction: 'up' | 'down', totalItems: number = 0, amount: number = 3) => {
-    const maxOffset = Math.max(0, totalItems - (bottomPaneHeight - 2));
+    // History is in top pane, so use topPaneHeight - 1 for visible area
+    const maxOffset = Math.max(0, totalItems - (topPaneHeight - 1));
     setHistoryScrollOffset(prev => {
       if (direction === 'up') {
         return Math.max(0, prev - amount);
@@ -138,10 +185,11 @@ export function useLayout(
         return Math.min(maxOffset, prev + amount);
       }
     });
-  }, [bottomPaneHeight]);
+  }, [topPaneHeight]);
 
   const scrollPR = useCallback((direction: 'up' | 'down', totalRows: number, amount: number = 3) => {
-    const maxOffset = Math.max(0, totalRows - (bottomPaneHeight - 4));
+    // PR list is in top pane, so use topPaneHeight - 1 for visible area
+    const maxOffset = Math.max(0, totalRows - (topPaneHeight - 1));
     setPRScrollOffset(prev => {
       if (direction === 'up') {
         return Math.max(0, prev - amount);
@@ -149,13 +197,16 @@ export function useLayout(
         return Math.min(maxOffset, prev + amount);
       }
     });
-  }, [bottomPaneHeight]);
+  }, [topPaneHeight]);
 
   return {
     topPaneHeight,
     bottomPaneHeight,
     contentHeight,
     paneBoundaries,
+    splitRatio,
+    setSplitRatio,
+    adjustSplitRatio,
     fileListScrollOffset,
     diffScrollOffset,
     historyScrollOffset,
