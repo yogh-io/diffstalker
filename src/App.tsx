@@ -475,6 +475,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         error={error}
         debug={config.debug}
         watcherState={watcherState}
+        width={terminalWidth}
       />
       <Separator />
 

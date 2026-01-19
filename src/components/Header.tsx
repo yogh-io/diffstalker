@@ -11,9 +11,10 @@ interface HeaderProps {
   error: string | null;
   debug?: boolean;
   watcherState?: WatcherState;
+  width?: number;
 }
 
-export function Header({ repoPath, branch, isLoading, error, debug, watcherState }: HeaderProps): React.ReactElement {
+export function Header({ repoPath, branch, isLoading, error, debug, watcherState, width = 80 }: HeaderProps): React.ReactElement {
   if (!repoPath) {
     return (
       <Box flexDirection="column">
@@ -41,6 +42,38 @@ export function Header({ repoPath, branch, isLoading, error, debug, watcherState
     return date.toLocaleTimeString();
   };
 
+  // Calculate branch info width for layout
+  let branchWidth = 0;
+  if (branch) {
+    branchWidth = branch.current.length;
+    if (branch.tracking) {
+      branchWidth += 3 + branch.tracking.length; // " → tracking"
+    }
+    if (branch.ahead > 0) branchWidth += 3 + String(branch.ahead).length;
+    if (branch.behind > 0) branchWidth += 3 + String(branch.behind).length;
+  }
+
+  // Calculate left side content width
+  let leftWidth = displayPath.length;
+  if (isLoading) leftWidth += 2;
+  if (isNotGitRepo) leftWidth += 24;
+  if (error && !isNotGitRepo) leftWidth += error.length + 3;
+
+  // Determine follow indicator display
+  let followText: string | null = null;
+  if (watcherState?.enabled && watcherState.sourceFile) {
+    const availableForFollow = width - leftWidth - branchWidth - 4; // 4 for spacing
+    if (availableForFollow >= 10) { // " (follow)" = 9 chars
+      const followPath = shortenPath(watcherState.sourceFile);
+      const fullFollow = ` (follow: ${followPath})`;
+      if (fullFollow.length <= availableForFollow) {
+        followText = fullFollow;
+      } else if (availableForFollow >= 9) {
+        followText = ' (follow)';
+      }
+    }
+  }
+
   return (
     <Box flexDirection="column">
       <Box justifyContent="space-between">
@@ -49,9 +82,7 @@ export function Header({ repoPath, branch, isLoading, error, debug, watcherState
           {isLoading && <Text color="yellow"> ⟳</Text>}
           {isNotGitRepo && <Text color="yellow"> (not a git repository)</Text>}
           {error && !isNotGitRepo && <Text color="red"> ({error})</Text>}
-          {watcherState?.enabled && watcherState.sourceFile && (
-            <Text dimColor> (follow: {shortenPath(watcherState.sourceFile)})</Text>
-          )}
+          {followText && <Text dimColor>{followText}</Text>}
         </Box>
 
         {branch && (
