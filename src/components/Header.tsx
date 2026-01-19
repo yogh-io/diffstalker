@@ -1,5 +1,4 @@
 import React from 'react';
-import * as path from 'node:path';
 import { Box, Text } from 'ink';
 import { BranchInfo } from '../git/status.js';
 import { shortenPath } from '../config.js';
@@ -86,29 +85,21 @@ export function Header({ repoPath, branch, isLoading, error, debug, watcherState
 
   if (watcherState?.enabled && watcherState.sourceFile) {
     const followPath = shortenPath(watcherState.sourceFile);
-    const followFilename = path.basename(watcherState.sourceFile);
     const fullFollow = ` (follow: ${followPath})`;
-    const filenameFollow = ` (follow: ${followFilename})`;
 
     const availableOneLine = width - leftWidth - branchWidth - 4; // 4 for spacing
 
     if (fullFollow.length <= availableOneLine) {
       // Everything fits on one line
       followText = fullFollow;
-    } else if (filenameFollow.length <= availableOneLine) {
-      // Filename version fits on one line
-      followText = filenameFollow;
     } else {
       // Need to wrap branch to second line
       const availableWithWrap = width - leftWidth - 2;
       if (fullFollow.length <= availableWithWrap) {
         followText = fullFollow;
         wrapBranch = true;
-      } else if (filenameFollow.length <= availableWithWrap) {
-        followText = filenameFollow;
-        wrapBranch = true;
       }
-      // If even filename doesn't fit, don't show follow at all
+      // If it doesn't fit, don't show follow at all
     }
   }
 
