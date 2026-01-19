@@ -472,15 +472,17 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
   return (
     <Box flexDirection="column" height={terminalHeight}>
-      <Header
-        repoPath={repoPath}
-        branch={status?.branch ?? null}
-        isLoading={isLoading}
-        error={error}
-        debug={config.debug}
-        watcherState={watcherState}
-        width={terminalWidth}
-      />
+      <Box height={headerHeight}>
+        <Header
+          repoPath={repoPath}
+          branch={status?.branch ?? null}
+          isLoading={isLoading}
+          error={error}
+          debug={config.debug}
+          watcherState={watcherState}
+          width={terminalWidth}
+        />
+      </Box>
       <Separator />
 
       <Box flexDirection="column" height={topPaneHeight} overflowY="hidden">
