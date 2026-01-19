@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 diffstalker is a terminal UI for git staging and committing, built with TypeScript and Ink (React for CLIs). It follows a push-based architecture where external tools write repository paths to a watched file.
 
+## Feature Documentation
+
+**IMPORTANT:** After adding a new feature, update `FEATURES.md` to document it. Keep the feature list organized by category (Views, Navigation, Operations, etc.).
+
 ## Tech Stack
 
 - **TypeScript** with ESM modules
@@ -30,21 +34,37 @@ src/
 ├── index.tsx           # Entry point, CLI args, terminal cleanup
 ├── App.tsx             # Main component, layout, mouse handling
 ├── config.ts           # Configuration loading
+├── themes.ts           # Theme definitions
 ├── components/
-│   ├── Header.tsx      # Repo path, branch info
+│   ├── Header.tsx      # Repo path, branch info, follow status
 │   ├── FileList.tsx    # Staging area file list
-│   ├── DiffView.tsx    # Diff display
+│   ├── DiffView.tsx    # Diff display with word-level highlighting
 │   ├── CommitPanel.tsx # Commit message input
-│   └── Footer.tsx      # Keybinding hints
+│   ├── Footer.tsx      # Keybinding hints and tab bar
+│   ├── HistoryView.tsx # Commit history list
+│   ├── PRListView.tsx  # PR commits and files list
+│   ├── PRView.tsx      # PR diff container
+│   ├── BaseBranchPicker.tsx  # Modal for selecting PR base branch
+│   ├── ThemePicker.tsx # Modal for selecting theme
+│   └── HotkeysModal.tsx # Keyboard shortcuts reference
 ├── hooks/
 │   ├── useGit.ts       # Git state management, operations
 │   ├── useWatcher.ts   # File watching for target path
 │   ├── useKeymap.ts    # Keyboard handling
 │   ├── useMouse.ts     # Mouse event parsing (SGR mode)
+│   ├── useLayout.ts    # Pane sizing and scroll management
 │   └── useTerminalSize.ts # Terminal resize handling
+├── core/
+│   ├── GitStateManager.ts   # Git state management (non-React)
+│   └── GitOperationQueue.ts # Serializes git operations
 ├── git/
 │   ├── status.ts       # Git status operations
 │   └── diff.ts         # Diff generation
+├── utils/
+│   ├── baseBranchCache.ts  # Cache for PR base branch per repo
+│   ├── formatPath.ts       # Path shortening utility
+│   ├── layoutCalculations.ts # UI layout math
+│   └── mouseCoordinates.ts # Mouse position calculations
 └── ai/
     └── commit.ts       # AI commit message generation
 ```
