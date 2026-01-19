@@ -83,6 +83,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [includeUncommitted, setIncludeUncommitted] = useState(true);
   const [prListSelection, setPRListSelection] = useState<PRListSelection | null>(null);
   const [prSelectedIndex, setPRSelectedIndex] = useState(0);  // Combined index for commits + files
+  const prSelectionInitialized = useRef(false);  // Track if user has made explicit selection
   const [baseBranchCandidates, setBaseBranchCandidates] = useState<string[]>([]);
   const [showBaseBranchPicker, setShowBaseBranchPicker] = useState(false);
 
@@ -169,9 +170,19 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     }
   }, [bottomTab, commits, historySelectedIndex, selectHistoryCommit, setDiffScrollOffset]);
 
-  // Update PR selection when prSelectedIndex changes
+  // Reset PR selection state when entering PR tab
   useEffect(() => {
-    if (bottomTab === 'pr' && prDiff) {
+    if (bottomTab === 'pr') {
+      // Reset to show full diff on entering PR tab
+      prSelectionInitialized.current = false;
+      setPRListSelection(null);
+      setDiffScrollOffset(0);
+    }
+  }, [bottomTab, setDiffScrollOffset]);
+
+  // Update PR selection when prSelectedIndex changes (only after user interaction)
+  useEffect(() => {
+    if (bottomTab === 'pr' && prDiff && prSelectionInitialized.current) {
       const commitCount = prDiff.commits.length;
       const fileCount = prDiff.files.length;
 
@@ -256,6 +267,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             prDiff.files.length
           );
           if (itemIndex >= 0 && itemIndex < prTotalItems) {
+            prSelectionInitialized.current = true;
             setPRSelectedIndex(itemIndex);
             setCurrentPane('pr');
             return;
@@ -326,6 +338,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         return newIndex;
       });
     } else if (currentPane === 'pr') {
+      prSelectionInitialized.current = true;
       setPRSelectedIndex(prev => {
         const newIndex = Math.max(0, prev - 1);
         if (newIndex < prScrollOffset) setPRScrollOffset(newIndex);
@@ -347,6 +360,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         return newIndex;
       });
     } else if (currentPane === 'pr') {
+      prSelectionInitialized.current = true;
       setPRSelectedIndex(prev => {
         const newIndex = Math.min(prTotalItems - 1, prev + 1);
         const visibleEnd = prScrollOffset + topPaneHeight - 2;  // Account for header
