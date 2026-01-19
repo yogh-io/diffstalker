@@ -154,18 +154,22 @@ export function Header({ repoPath, branch, isLoading, error, debug, watcherState
   }
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width={width}>
       {wrapBranch ? (
         // Two-line layout: path + follow on first line, branch on second
         <>
-          <Box>
-            <Text bold color="cyan">{displayPath}</Text>
-            {isLoading && <Text color="yellow"> ⟳</Text>}
-            {isNotGitRepo && <Text color="yellow"> (not a git repository)</Text>}
-            {error && !isNotGitRepo && <Text color="red"> ({error})</Text>}
-            {followText && <Text dimColor>{followText}</Text>}
+          <Box justifyContent="space-between">
+            <Box>
+              <Text bold color="cyan">{displayPath}</Text>
+              {isLoading && <Text color="yellow"> ⟳</Text>}
+              {isNotGitRepo && <Text color="yellow"> (not a git repository)</Text>}
+              {error && !isNotGitRepo && <Text color="red"> ({error})</Text>}
+              {followText && <Text dimColor>{followText}</Text>}
+            </Box>
           </Box>
-          {branch && <BranchDisplay branch={branch} />}
+          <Box justifyContent="flex-end">
+            {branch && <BranchDisplay branch={branch} />}
+          </Box>
         </>
       ) : (
         // Single-line layout
