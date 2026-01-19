@@ -472,7 +472,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
   return (
     <Box flexDirection="column" height={terminalHeight}>
-      <Box height={headerHeight}>
+      <Box height={headerHeight} width={terminalWidth}>
         <Header
           repoPath={repoPath}
           branch={status?.branch ?? null}
