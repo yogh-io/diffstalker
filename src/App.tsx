@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import { FileEntry, CommitInfo, getCommitHistory } from './git/status.js';
-import { Header } from './components/Header.js';
+import { Header, getHeaderHeight } from './components/Header.js';
 import { FileList, getFileAtIndex, getTotalFileCount } from './components/FileList.js';
 import { DiffView } from './components/DiffView.js';
 import { CommitPanel } from './components/CommitPanel.js';
@@ -85,6 +85,10 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [baseBranchCandidates, setBaseBranchCandidates] = useState<string[]>([]);
   const [showBaseBranchPicker, setShowBaseBranchPicker] = useState(false);
 
+  // Calculate header height (1 normally, 2 if branch wraps due to follow indicator)
+  const headerHeight = getHeaderHeight(repoPath, status?.branch ?? null, watcherState, terminalWidth, error, isLoading);
+  const extraOverhead = headerHeight - 1; // 1 is already accounted for in LAYOUT_OVERHEAD
+
   // Layout and scroll state
   const {
     topPaneHeight, bottomPaneHeight, paneBoundaries,
@@ -92,7 +96,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     fileListScrollOffset, diffScrollOffset, historyScrollOffset, prScrollOffset,
     setFileListScrollOffset, setDiffScrollOffset, setHistoryScrollOffset, setPRScrollOffset,
     scrollDiff, scrollFileList, scrollHistory, scrollPR,
-  } = useLayout(terminalHeight, terminalWidth, files, selectedIndex, diff, bottomTab, undefined, config.splitRatio);
+  } = useLayout(terminalHeight, terminalWidth, files, selectedIndex, diff, bottomTab, undefined, config.splitRatio, extraOverhead);
 
   // Keep a ref to paneBoundaries for use in callbacks
   const paneBoundariesRef = useRef(paneBoundaries);

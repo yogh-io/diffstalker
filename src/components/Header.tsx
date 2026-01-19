@@ -4,6 +4,56 @@ import { BranchInfo } from '../git/status.js';
 import { shortenPath } from '../config.js';
 import { WatcherState } from '../hooks/useWatcher.js';
 
+/**
+ * Calculate the header height based on whether content needs to wrap.
+ * Returns 1 for single line, 2 if branch wraps to second line.
+ */
+export function getHeaderHeight(
+  repoPath: string | null,
+  branch: BranchInfo | null,
+  watcherState: WatcherState | undefined,
+  width: number,
+  error: string | null = null,
+  isLoading: boolean = false
+): number {
+  if (!repoPath) return 1;
+
+  const displayPath = shortenPath(repoPath);
+  const isNotGitRepo = error === 'Not a git repository';
+
+  // Calculate branch width
+  let branchWidth = 0;
+  if (branch) {
+    branchWidth = branch.current.length;
+    if (branch.tracking) branchWidth += 3 + branch.tracking.length;
+    if (branch.ahead > 0) branchWidth += 3 + String(branch.ahead).length;
+    if (branch.behind > 0) branchWidth += 3 + String(branch.behind).length;
+  }
+
+  // Calculate left side width
+  let leftWidth = displayPath.length;
+  if (isLoading) leftWidth += 2;
+  if (isNotGitRepo) leftWidth += 24;
+  if (error && !isNotGitRepo) leftWidth += error.length + 3;
+
+  // Check if follow indicator causes wrap
+  if (watcherState?.enabled && watcherState.sourceFile) {
+    const followPath = shortenPath(watcherState.sourceFile);
+    const fullFollow = ` (follow: ${followPath})`;
+    const availableOneLine = width - leftWidth - branchWidth - 4;
+
+    if (fullFollow.length > availableOneLine) {
+      // Would need to wrap
+      const availableWithWrap = width - leftWidth - 2;
+      if (fullFollow.length <= availableWithWrap) {
+        return 2; // Branch wraps to second line
+      }
+    }
+  }
+
+  return 1;
+}
+
 interface HeaderProps {
   repoPath: string | null;
   branch: BranchInfo | null;

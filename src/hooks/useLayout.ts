@@ -14,6 +14,7 @@ import {
 
 // Layout constants (compact: single-line separators)
 // Header (1) + sep (1) + sep (1) + sep (1) + footer (1) = 5 lines overhead
+// Note: Header can be 2 lines when follow indicator causes branch to wrap
 export const LAYOUT_OVERHEAD = 5;
 
 // Default split ratios for different modes
@@ -68,10 +69,11 @@ export function useLayout(
   diff: DiffResult | null,
   mode: BottomTab = 'diff',
   historySelectedIndex?: number,
-  initialSplitRatio?: number
+  initialSplitRatio?: number,
+  extraOverhead: number = 0
 ): UseLayoutResult {
   // Calculate content height (terminal minus overhead)
-  const contentHeight = terminalHeight - LAYOUT_OVERHEAD;
+  const contentHeight = terminalHeight - LAYOUT_OVERHEAD - extraOverhead;
 
   // Custom split ratio state (null means use default for mode)
   const [customSplitRatio, setCustomSplitRatio] = useState<number | null>(initialSplitRatio ?? null);
