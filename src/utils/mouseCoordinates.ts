@@ -40,6 +40,8 @@ export function calculatePaneBoundaries(
 /**
  * Given a y-coordinate in the file list area, calculate which file index was clicked.
  * Returns -1 if the click is not on a file.
+ *
+ * FileList layout: Modified → Untracked → Staged (with headers and spacers)
  */
 export function getClickedFileIndex(
   y: number,
@@ -50,34 +52,62 @@ export function getClickedFileIndex(
 ): number {
   if (y < stagingPaneStart + 1 || y > fileListEnd) return -1;
 
+  // Calculate which row in the list was clicked (0-indexed)
   const listRow = (y - 4) + scrollOffset;
-  const unstagedFiles = files.filter(f => !f.staged);
+
+  // Split files into 3 categories (same order as FileList)
+  const modifiedFiles = files.filter(f => !f.staged && f.status !== 'untracked');
+  const untrackedFiles = files.filter(f => !f.staged && f.status === 'untracked');
   const stagedFiles = files.filter(f => f.staged);
 
-  if (unstagedFiles.length > 0 && stagedFiles.length > 0) {
-    const firstUnstagedFileRow = 1;
-    const lastUnstagedFileRow = unstagedFiles.length;
-    const spacerRow = lastUnstagedFileRow + 1;
-    const stagedHeaderRow = spacerRow + 1;
-    const firstStagedFileRow = stagedHeaderRow + 1;
+  // Build row map (same structure as FileList builds)
+  // Each section: header (1) + files (n)
+  // Spacer (1) between sections if previous section exists
+  let currentRow = 0;
+  let currentFileIndex = 0;
 
-    if (listRow >= firstUnstagedFileRow && listRow <= lastUnstagedFileRow) {
-      return listRow - firstUnstagedFileRow;
-    } else if (listRow >= firstStagedFileRow) {
-      const stagedIdx = listRow - firstStagedFileRow;
-      if (stagedIdx < stagedFiles.length) {
-        return unstagedFiles.length + stagedIdx;
+  // Modified section
+  if (modifiedFiles.length > 0) {
+    currentRow++; // "Modified:" header
+    for (let i = 0; i < modifiedFiles.length; i++) {
+      if (listRow === currentRow) {
+        return currentFileIndex;
       }
-    }
-  } else if (unstagedFiles.length > 0) {
-    if (listRow >= 1 && listRow <= unstagedFiles.length) {
-      return listRow - 1;
-    }
-  } else if (stagedFiles.length > 0) {
-    if (listRow >= 1 && listRow <= stagedFiles.length) {
-      return listRow - 1;
+      currentRow++;
+      currentFileIndex++;
     }
   }
+
+  // Untracked section
+  if (untrackedFiles.length > 0) {
+    if (modifiedFiles.length > 0) {
+      currentRow++; // spacer
+    }
+    currentRow++; // "Untracked:" header
+    for (let i = 0; i < untrackedFiles.length; i++) {
+      if (listRow === currentRow) {
+        return currentFileIndex;
+      }
+      currentRow++;
+      currentFileIndex++;
+    }
+  }
+
+  // Staged section
+  if (stagedFiles.length > 0) {
+    if (modifiedFiles.length > 0 || untrackedFiles.length > 0) {
+      currentRow++; // spacer
+    }
+    currentRow++; // "Staged:" header
+    for (let i = 0; i < stagedFiles.length; i++) {
+      if (listRow === currentRow) {
+        return currentFileIndex;
+      }
+      currentRow++;
+      currentFileIndex++;
+    }
+  }
+
   return -1;
 }
 
