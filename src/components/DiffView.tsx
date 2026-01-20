@@ -169,7 +169,7 @@ function calculateSimilarity(oldStr: string, newStr: string): number {
 }
 
 // Minimum similarity ratio to show word-level diff (below this, lines are too different)
-const SIMILARITY_THRESHOLD = 0.3;
+const SIMILARITY_THRESHOLD = 0.35;
 
 // Find paired modifications (deletion followed by addition)
 interface LinePair {
