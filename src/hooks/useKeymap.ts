@@ -1,7 +1,7 @@
 import { useInput } from 'ink';
 
-export type Pane = 'files' | 'diff' | 'commit' | 'history' | 'pr';
-export type BottomTab = 'diff' | 'commit' | 'history' | 'pr';
+export type Pane = 'files' | 'diff' | 'commit' | 'history' | 'compare';
+export type BottomTab = 'diff' | 'commit' | 'history' | 'compare';
 
 export interface KeymapActions {
   onStage: () => void;
@@ -77,17 +77,17 @@ export function useKeymap(
       return;
     }
     if (input === '4') {
-      actions.onSwitchTab('pr');
+      actions.onSwitchTab('compare');
       return;
     }
 
-    // Toggle include uncommitted in PR view: u
+    // Toggle include uncommitted in compare view: u
     if (input === 'u' && actions.onToggleIncludeUncommitted) {
       actions.onToggleIncludeUncommitted();
       return;
     }
 
-    // Cycle base branch in PR view: b
+    // Cycle base branch in compare view: b
     if (input === 'b' && actions.onCycleBaseBranch) {
       actions.onCycleBaseBranch();
       return;

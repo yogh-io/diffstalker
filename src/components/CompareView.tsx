@@ -1,11 +1,11 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { PRDiff, DiffResult, DiffLine } from '../git/diff.js';
+import { CompareDiff, DiffResult, DiffLine } from '../git/diff.js';
 import { DiffView } from './DiffView.js';
 import { ThemeName } from '../themes.js';
 
-interface PRViewProps {
-  prDiff: PRDiff | null;
+interface CompareViewProps {
+  compareDiff: CompareDiff | null;
   isLoading: boolean;
   error: string | null;
   scrollOffset: number;
@@ -18,18 +18,18 @@ interface PRViewProps {
 }
 
 /**
- * Build a combined DiffResult from all PR files.
- * This is the single source of truth for PR diff content.
+ * Build a combined DiffResult from all compare files.
+ * This is the single source of truth for compare diff content.
  */
-export function buildCombinedPRDiff(prDiff: PRDiff | null): DiffResult {
-  if (!prDiff || prDiff.files.length === 0) {
+export function buildCombinedCompareDiff(compareDiff: CompareDiff | null): DiffResult {
+  if (!compareDiff || compareDiff.files.length === 0) {
     return { raw: '', lines: [] };
   }
 
   const allLines: DiffLine[] = [];
   const rawParts: string[] = [];
 
-  for (const file of prDiff.files) {
+  for (const file of compareDiff.files) {
     // Include all lines from each file's diff (including headers)
     for (const line of file.diff.lines) {
       allLines.push(line);
@@ -44,11 +44,11 @@ export function buildCombinedPRDiff(prDiff: PRDiff | null): DiffResult {
 }
 
 /**
- * Calculate the total number of displayable lines in the PR diff.
+ * Calculate the total number of displayable lines in the compare diff.
  * This accounts for header filtering done by DiffView.
  */
-export function getPRDiffTotalRows(prDiff: PRDiff | null): number {
-  const combined = buildCombinedPRDiff(prDiff);
+export function getCompareDiffTotalRows(compareDiff: CompareDiff | null): number {
+  const combined = buildCombinedCompareDiff(compareDiff);
   // DiffView filters out certain headers (index, ---, +++, similarity index)
   return combined.lines.filter(line => {
     if (line.type !== 'header') return true;
@@ -64,13 +64,13 @@ export function getPRDiffTotalRows(prDiff: PRDiff | null): number {
 }
 
 /**
- * Calculate the row offset to scroll to a specific file in the PR diff.
+ * Calculate the row offset to scroll to a specific file in the compare diff.
  * Returns the row index where the file's diff --git header starts.
  */
-export function getFileScrollOffset(prDiff: PRDiff | null, fileIndex: number): number {
-  if (!prDiff || fileIndex < 0 || fileIndex >= prDiff.files.length) return 0;
+export function getFileScrollOffset(compareDiff: CompareDiff | null, fileIndex: number): number {
+  if (!compareDiff || fileIndex < 0 || fileIndex >= compareDiff.files.length) return 0;
 
-  const combined = buildCombinedPRDiff(prDiff);
+  const combined = buildCombinedCompareDiff(compareDiff);
   let displayableRow = 0;
   let currentFileIndex = 0;
 
@@ -99,8 +99,8 @@ export function getFileScrollOffset(prDiff: PRDiff | null, fileIndex: number): n
   return 0;
 }
 
-export function PRView({
-  prDiff,
+export function CompareView({
+  compareDiff,
   isLoading,
   error,
   scrollOffset,
@@ -110,14 +110,14 @@ export function PRView({
   includeUncommitted,
   onToggleIncludeUncommitted,
   theme = 'dark',
-}: PRViewProps): React.ReactElement {
+}: CompareViewProps): React.ReactElement {
   // Build combined diff for DiffView
-  const combinedDiff = useMemo(() => buildCombinedPRDiff(prDiff), [prDiff]);
+  const combinedDiff = useMemo(() => buildCombinedCompareDiff(compareDiff), [compareDiff]);
 
   if (isLoading) {
     return (
       <Box paddingX={1}>
-        <Text dimColor>Loading PR diff...</Text>
+        <Text dimColor>Loading diff...</Text>
       </Box>
     );
   }
@@ -130,7 +130,7 @@ export function PRView({
     );
   }
 
-  if (!prDiff) {
+  if (!compareDiff) {
     return (
       <Box paddingX={1}>
         <Text dimColor>No base branch found (no origin/main or origin/master)</Text>
@@ -138,10 +138,10 @@ export function PRView({
     );
   }
 
-  if (prDiff.files.length === 0) {
+  if (compareDiff.files.length === 0) {
     return (
       <Box paddingX={1}>
-        <Text dimColor>No changes compared to {prDiff.baseBranch}</Text>
+        <Text dimColor>No changes compared to {compareDiff.baseBranch}</Text>
       </Box>
     );
   }

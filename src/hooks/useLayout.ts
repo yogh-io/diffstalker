@@ -24,7 +24,7 @@ const DEFAULT_SPLIT_RATIOS: Record<BottomTab, number> = {
   diff: 0.4,     // 40% top pane for staging area
   commit: 0.4,   // 40% top pane for staging area
   history: 0.5,  // 50% top pane for commit list (larger default)
-  pr: 0.5,       // 50% top pane for PR list (larger default)
+  compare: 0.5,  // 50% top pane for compare list (larger default)
 };
 
 // Step size for keyboard-based pane resizing (5% per keypress)
@@ -48,19 +48,19 @@ export interface UseLayoutResult {
   fileListScrollOffset: number;
   diffScrollOffset: number;
   historyScrollOffset: number;
-  prScrollOffset: number;
+  compareScrollOffset: number;
 
   // Scroll setters
   setFileListScrollOffset: React.Dispatch<React.SetStateAction<number>>;
   setDiffScrollOffset: React.Dispatch<React.SetStateAction<number>>;
   setHistoryScrollOffset: React.Dispatch<React.SetStateAction<number>>;
-  setPRScrollOffset: React.Dispatch<React.SetStateAction<number>>;
+  setCompareScrollOffset: React.Dispatch<React.SetStateAction<number>>;
 
   // Scroll helpers
   scrollDiff: (direction: 'up' | 'down', amount?: number, maxRows?: number) => void;
   scrollFileList: (direction: 'up' | 'down', amount?: number) => void;
   scrollHistory: (direction: 'up' | 'down', amount?: number, totalItems?: number) => void;
-  scrollPR: (direction: 'up' | 'down', totalRows: number, amount?: number) => void;
+  scrollCompare: (direction: 'up' | 'down', totalRows: number, amount?: number) => void;
 }
 
 export function useLayout(
@@ -121,7 +121,7 @@ export function useLayout(
   const [fileListScrollOffset, setFileListScrollOffset] = useState(0);
   const [diffScrollOffset, setDiffScrollOffset] = useState(0);
   const [historyScrollOffset, setHistoryScrollOffset] = useState(0);
-  const [prScrollOffset, setPRScrollOffset] = useState(0);
+  const [compareScrollOffset, setCompareScrollOffset] = useState(0);
 
   // Reset file list scroll when files change
   useEffect(() => {
@@ -186,10 +186,10 @@ export function useLayout(
     });
   }, [topPaneHeight]);
 
-  const scrollPR = useCallback((direction: 'up' | 'down', totalRows: number, amount: number = 3) => {
-    // PR list is in top pane, so use topPaneHeight - 1 for visible area
+  const scrollCompare = useCallback((direction: 'up' | 'down', totalRows: number, amount: number = 3) => {
+    // Compare list is in top pane, so use topPaneHeight - 1 for visible area
     const maxOffset = Math.max(0, totalRows - (topPaneHeight - 1));
-    setPRScrollOffset(prev => {
+    setCompareScrollOffset(prev => {
       if (direction === 'up') {
         return Math.max(0, prev - amount);
       } else {
@@ -209,14 +209,14 @@ export function useLayout(
     fileListScrollOffset,
     diffScrollOffset,
     historyScrollOffset,
-    prScrollOffset,
+    compareScrollOffset,
     setFileListScrollOffset,
     setDiffScrollOffset,
     setHistoryScrollOffset,
-    setPRScrollOffset,
+    setCompareScrollOffset,
     scrollDiff,
     scrollFileList,
     scrollHistory,
-    scrollPR,
+    scrollCompare,
   };
 }

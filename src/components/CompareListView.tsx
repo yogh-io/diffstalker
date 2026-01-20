@@ -1,20 +1,20 @@
 import React, { useState, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { CommitInfo } from '../git/status.js';
-import { PRFileDiff } from '../git/diff.js';
+import { CompareFileDiff } from '../git/diff.js';
 import { shortenPath } from '../utils/formatPath.js';
 
-export type PRListSelectionType = 'commit' | 'file';
+export type CompareListSelectionType = 'commit' | 'file';
 
-export interface PRListSelection {
-  type: PRListSelectionType;
+export interface CompareListSelection {
+  type: CompareListSelectionType;
   index: number;
 }
 
-interface PRListViewProps {
+interface CompareListViewProps {
   commits: CommitInfo[];
-  files: PRFileDiff[];
-  selectedItem: PRListSelection | null;
+  files: CompareFileDiff[];
+  selectedItem: CompareListSelection | null;
   scrollOffset: number;
   maxHeight: number;
   isActive: boolean;
@@ -31,7 +31,7 @@ interface RowItem {
   commitIndex?: number;
   fileIndex?: number;
   commit?: CommitInfo;
-  file?: PRFileDiff;
+  file?: CompareFileDiff;
 }
 
 function formatDate(date: Date): string {
@@ -109,19 +109,19 @@ function FileRow({
   isActive,
   maxPathLength,
 }: {
-  file: PRFileDiff;
+  file: CompareFileDiff;
   isSelected: boolean;
   isActive: boolean;
   maxPathLength: number;
 }): React.ReactElement {
-  const statusColors: Record<PRFileDiff['status'], string> = {
+  const statusColors: Record<CompareFileDiff['status'], string> = {
     added: 'green',
     modified: 'yellow',
     deleted: 'red',
     renamed: 'blue',
   };
 
-  const statusChars: Record<PRFileDiff['status'], string> = {
+  const statusChars: Record<CompareFileDiff['status'], string> = {
     added: 'A',
     modified: 'M',
     deleted: 'D',
@@ -158,7 +158,7 @@ function FileRow({
   );
 }
 
-export function PRListView({
+export function CompareListView({
   commits,
   files,
   selectedItem,
@@ -170,7 +170,7 @@ export function PRListView({
   onSelectCommit,
   onSelectFile,
   onToggleIncludeUncommitted,
-}: PRListViewProps): React.ReactElement {
+}: CompareListViewProps): React.ReactElement {
   const [commitsExpanded, setCommitsExpanded] = useState(true);
   const [filesExpanded, setFilesExpanded] = useState(true);
 
@@ -272,9 +272,9 @@ export function PRListView({
 }
 
 // Helper to get total row count for scrolling
-export function getPRListTotalRows(
+export function getCompareListTotalRows(
   commits: CommitInfo[],
-  files: PRFileDiff[],
+  files: CompareFileDiff[],
   commitsExpanded: boolean = true,
   filesExpanded: boolean = true
 ): number {
@@ -292,7 +292,7 @@ export function getPRListTotalRows(
 }
 
 /**
- * Map a visual row index (from click) to the actual prSelectedIndex.
+ * Map a visual row index (from click) to the actual compareSelectedIndex.
  * Returns -1 if the row is a header or spacer (not selectable).
  * Visual structure (with both sections expanded):
  *   Row 0: "▼ Commits" header
@@ -301,7 +301,7 @@ export function getPRListTotalRows(
  *   Row N+2: "▼ Files" header
  *   Rows N+3..: files
  */
-export function getPRItemIndexFromRow(
+export function getCompareItemIndexFromRow(
   row: number,
   commitCount: number,
   fileCount: number,

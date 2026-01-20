@@ -5,9 +5,10 @@ import { Header, getHeaderHeight } from './components/Header.js';
 import { FileList, getFileAtIndex, getTotalFileCount } from './components/FileList.js';
 import { DiffView } from './components/DiffView.js';
 import { CommitPanel } from './components/CommitPanel.js';
-import { HistoryView } from './components/HistoryView.js';
-import { PRListView, PRListSelection, getPRItemIndexFromRow } from './components/PRListView.js';
-import { PRView, getFileScrollOffset, getPRDiffTotalRows } from './components/PRView.js';
+import { HistoryView, getCommitIndexFromRow, getHistoryTotalRows } from './components/HistoryView.js';
+import { HistoryDiffView, getHistoryDiffTotalRows } from './components/HistoryDiffView.js';
+import { CompareListView, CompareListSelection, getCompareItemIndexFromRow } from './components/CompareListView.js';
+import { CompareView, getFileScrollOffset, getCompareDiffTotalRows } from './components/CompareView.js';
 import { Footer } from './components/Footer.js';
 import { useWatcher } from './hooks/useWatcher.js';
 import { useGit } from './hooks/useGit.js';
@@ -50,10 +51,10 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     status, diff, stagedDiff, selectedFile, isLoading, error,
     selectFile, stage, unstage, discard, stageAll, unstageAll,
     commit, refresh, getHeadCommitMessage,
-    prDiff, prLoading, prError, refreshPRDiff,
-    getCandidateBaseBranches, setPRBaseBranch,
+    compareDiff, compareLoading, compareError, refreshCompareDiff,
+    getCandidateBaseBranches, setCompareBaseBranch,
     historySelectedCommit, historyCommitDiff, selectHistoryCommit,
-    prSelectionType, prSelectionIndex, prSelectionDiff, selectPRCommit, selectPRFile,
+    compareSelectionType, compareSelectionIndex, compareSelectionDiff, selectCompareCommit, selectCompareFile,
   } = useGit(repoPath);
 
   // File list data
@@ -79,11 +80,11 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [commits, setCommits] = useState<CommitInfo[]>([]);
   const [historySelectedIndex, setHistorySelectedIndex] = useState(0);
 
-  // PR view state
+  // Compare view state
   const [includeUncommitted, setIncludeUncommitted] = useState(true);
-  const [prListSelection, setPRListSelection] = useState<PRListSelection | null>(null);
-  const [prSelectedIndex, setPRSelectedIndex] = useState(0);  // Combined index for commits + files
-  const prSelectionInitialized = useRef(false);  // Track if user has made explicit selection
+  const [compareListSelection, setCompareListSelection] = useState<CompareListSelection | null>(null);
+  const [compareSelectedIndex, setCompareSelectedIndex] = useState(0);  // Combined index for commits + files
+  const compareSelectionInitialized = useRef(false);  // Track if user has made explicit selection
   const [baseBranchCandidates, setBaseBranchCandidates] = useState<string[]>([]);
   const [showBaseBranchPicker, setShowBaseBranchPicker] = useState(false);
 
@@ -95,9 +96,9 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const {
     topPaneHeight, bottomPaneHeight, paneBoundaries,
     splitRatio, adjustSplitRatio,
-    fileListScrollOffset, diffScrollOffset, historyScrollOffset, prScrollOffset,
-    setFileListScrollOffset, setDiffScrollOffset, setHistoryScrollOffset, setPRScrollOffset,
-    scrollDiff, scrollFileList, scrollHistory, scrollPR,
+    fileListScrollOffset, diffScrollOffset, historyScrollOffset, compareScrollOffset,
+    setFileListScrollOffset, setDiffScrollOffset, setHistoryScrollOffset, setCompareScrollOffset,
+    scrollDiff, scrollFileList, scrollHistory, scrollCompare,
   } = useLayout(terminalHeight, terminalWidth, files, selectedIndex, diff, bottomTab, undefined, config.splitRatio, extraOverhead);
 
   // Keep a ref to paneBoundaries for use in callbacks
@@ -126,16 +127,16 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     }
   }, [repoPath, bottomTab, status]);
 
-  // Fetch PR diff when needed
+  // Fetch compare diff when needed
   useEffect(() => {
-    if (repoPath && bottomTab === 'pr') {
-      refreshPRDiff(includeUncommitted);
+    if (repoPath && bottomTab === 'compare') {
+      refreshCompareDiff(includeUncommitted);
     }
-  }, [repoPath, bottomTab, status, refreshPRDiff, includeUncommitted]);
+  }, [repoPath, bottomTab, status, refreshCompareDiff, includeUncommitted]);
 
-  // Fetch base branch candidates when entering PR view
+  // Fetch base branch candidates when entering compare view
   useEffect(() => {
-    if (repoPath && bottomTab === 'pr') {
+    if (repoPath && bottomTab === 'compare') {
       getCandidateBaseBranches().then(setBaseBranchCandidates);
     }
   }, [repoPath, bottomTab, getCandidateBaseBranches]);
@@ -170,46 +171,52 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     }
   }, [bottomTab, commits, historySelectedIndex, selectHistoryCommit, setDiffScrollOffset]);
 
-  // Reset PR selection state when entering PR tab
+  // Reset compare selection state when entering compare tab
   useEffect(() => {
-    if (bottomTab === 'pr') {
-      // Reset to show full diff on entering PR tab
-      prSelectionInitialized.current = false;
-      setPRListSelection(null);
+    if (bottomTab === 'compare') {
+      // Reset to show full diff on entering compare tab
+      compareSelectionInitialized.current = false;
+      setCompareListSelection(null);
       setDiffScrollOffset(0);
     }
   }, [bottomTab, setDiffScrollOffset]);
 
-  // Update PR selection when prSelectedIndex changes (only after user interaction)
+  // Update compare selection when compareSelectedIndex changes (only after user interaction)
   useEffect(() => {
-    if (bottomTab === 'pr' && prDiff && prSelectionInitialized.current) {
-      const commitCount = prDiff.commits.length;
-      const fileCount = prDiff.files.length;
+    if (bottomTab === 'compare' && compareDiff && compareSelectionInitialized.current) {
+      const commitCount = compareDiff.commits.length;
+      const fileCount = compareDiff.files.length;
 
-      if (prSelectedIndex < commitCount) {
+      if (compareSelectedIndex < commitCount) {
         // Selected a commit - show commit diff from top
-        setPRListSelection({ type: 'commit', index: prSelectedIndex });
-        selectPRCommit(prSelectedIndex);
+        setCompareListSelection({ type: 'commit', index: compareSelectedIndex });
+        selectCompareCommit(compareSelectedIndex);
         setDiffScrollOffset(0);
-      } else if (prSelectedIndex < commitCount + fileCount) {
-        // Selected a file - scroll to file in full PR diff
-        const fileIndex = prSelectedIndex - commitCount;
-        setPRListSelection({ type: 'file', index: fileIndex });
+      } else if (compareSelectedIndex < commitCount + fileCount) {
+        // Selected a file - scroll to file in full compare diff
+        const fileIndex = compareSelectedIndex - commitCount;
+        setCompareListSelection({ type: 'file', index: fileIndex });
         // Calculate scroll offset to jump to this file's section
-        const scrollTo = getFileScrollOffset(prDiff, fileIndex);
+        const scrollTo = getFileScrollOffset(compareDiff, fileIndex);
         setDiffScrollOffset(scrollTo);
       }
     }
-  }, [bottomTab, prDiff, prSelectedIndex, selectPRCommit, setDiffScrollOffset]);
+  }, [bottomTab, compareDiff, compareSelectedIndex, selectCompareCommit, setDiffScrollOffset]);
 
-  // Calculate PR total items (commits + files) for navigation
-  const prTotalItems = useMemo(() => {
-    if (!prDiff) return 0;
-    return prDiff.commits.length + prDiff.files.length;
-  }, [prDiff]);
+  // Calculate compare total items (commits + files) for navigation
+  const compareTotalItems = useMemo(() => {
+    if (!compareDiff) return 0;
+    return compareDiff.commits.length + compareDiff.files.length;
+  }, [compareDiff]);
 
-  // Calculate PR diff total rows for scrolling (uses shared row building logic)
-  const prDiffTotalRows = useMemo(() => getPRDiffTotalRows(prDiff), [prDiff]);
+  // Calculate compare diff total rows for scrolling (uses shared row building logic)
+  const compareDiffTotalRows = useMemo(() => getCompareDiffTotalRows(compareDiff), [compareDiff]);
+
+  // Calculate history diff total rows for scrolling
+  const historyDiffTotalRows = useMemo(
+    () => getHistoryDiffTotalRows(historySelectedCommit, historyCommitDiff),
+    [historySelectedCommit, historyCommitDiff]
+  );
 
   // Mouse handler
   const handleMouseEvent = useCallback((event: { x: number; y: number; type: string; button: string }) => {
@@ -246,26 +253,27 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             return;
           }
         } else if (bottomTab === 'history') {
-          // History list clicks - calculate clicked commit index
-          const clickedIndex = (y - stagingPaneStart - 1) + historyScrollOffset;
+          // History list clicks - map visual row to commit index (accounting for wrapped lines)
+          const visualRow = y - stagingPaneStart - 1;
+          const clickedIndex = getCommitIndexFromRow(visualRow, commits, terminalWidth, historyScrollOffset);
           if (clickedIndex >= 0 && clickedIndex < commits.length) {
             setHistorySelectedIndex(clickedIndex);
             setCurrentPane('history');
             setDiffScrollOffset(0);
             return;
           }
-        } else if (bottomTab === 'pr' && prDiff) {
-          // PR list clicks - map visual row to item index (accounting for headers/spacers)
-          const visualRow = (y - stagingPaneStart - 1) + prScrollOffset;
-          const itemIndex = getPRItemIndexFromRow(
+        } else if (bottomTab === 'compare' && compareDiff) {
+          // Compare list clicks - map visual row to item index (accounting for headers/spacers)
+          const visualRow = (y - stagingPaneStart - 1) + compareScrollOffset;
+          const itemIndex = getCompareItemIndexFromRow(
             visualRow,
-            prDiff.commits.length,
-            prDiff.files.length
+            compareDiff.commits.length,
+            compareDiff.files.length
           );
-          if (itemIndex >= 0 && itemIndex < prTotalItems) {
-            prSelectionInitialized.current = true;
-            setPRSelectedIndex(itemIndex);
-            setCurrentPane('pr');
+          if (itemIndex >= 0 && itemIndex < compareTotalItems) {
+            compareSelectionInitialized.current = true;
+            setCompareSelectedIndex(itemIndex);
+            setCurrentPane('compare');
             return;
           }
         }
@@ -285,24 +293,29 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         if (bottomTab === 'diff' || bottomTab === 'commit') {
           scrollFileList(direction);
         } else if (bottomTab === 'history') {
-          scrollHistory(direction, commits.length);
-        } else if (bottomTab === 'pr') {
-          scrollPR(direction, prTotalItems);
+          scrollHistory(direction, getHistoryTotalRows(commits, terminalWidth));
+        } else if (bottomTab === 'compare') {
+          scrollCompare(direction, compareTotalItems);
         }
       }
       // Bottom pane scrolling (anywhere below top pane scrolls diff)
       else {
-        // In PR view showing full diff, pass the PR diff row count
-        const maxRows = (bottomTab === 'pr' && prListSelection?.type !== 'commit') ? prDiffTotalRows : undefined;
+        // Pass appropriate max rows based on mode
+        let maxRows: number | undefined;
+        if (bottomTab === 'compare' && compareListSelection?.type !== 'commit') {
+          maxRows = compareDiffTotalRows;
+        } else if (bottomTab === 'history') {
+          maxRows = historyDiffTotalRows;
+        }
         scrollDiff(direction, 3, maxRows);
       }
     }
   }, [
     terminalWidth, fileListScrollOffset, files, totalFiles,
-    bottomTab, commits.length, prTotalItems, stage, unstage,
-    scrollDiff, scrollFileList, scrollHistory, scrollPR,
-    historyScrollOffset, prScrollOffset, setDiffScrollOffset,
-    prListSelection?.type, prDiffTotalRows,
+    bottomTab, commits.length, compareTotalItems, stage, unstage,
+    scrollDiff, scrollFileList, scrollHistory, scrollCompare,
+    historyScrollOffset, compareScrollOffset, setDiffScrollOffset,
+    compareListSelection?.type, compareDiffTotalRows, historyDiffTotalRows,
   ]);
 
   // Disable mouse tracking when text inputs are focused to prevent escape sequences from entering input
@@ -319,8 +332,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       setCurrentPane('commit');  // In commit mode, focus on commit panel
     } else if (tab === 'history') {
       setCurrentPane('history');  // In history mode, focus on commit list
-    } else if (tab === 'pr') {
-      setCurrentPane('pr');  // In PR mode, focus on PR list
+    } else if (tab === 'compare') {
+      setCurrentPane('compare');  // In compare mode, focus on compare list
     }
   }, []);
 
@@ -329,8 +342,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     if (currentPane === 'files') {
       setSelectedIndex(prev => Math.max(0, prev - 1));
     } else if (currentPane === 'diff') {
-      // In PR view showing full diff, pass the PR diff row count
-      const maxRows = (bottomTab === 'pr' && prListSelection?.type !== 'commit') ? prDiffTotalRows : undefined;
+      // In compare view showing full diff, pass the compare diff row count
+      const maxRows = (bottomTab === 'compare' && compareListSelection?.type !== 'commit') ? compareDiffTotalRows : undefined;
       scrollDiff('up', 3, maxRows);
     } else if (currentPane === 'history') {
       setHistorySelectedIndex(prev => {
@@ -338,22 +351,22 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         if (newIndex < historyScrollOffset) setHistoryScrollOffset(newIndex);
         return newIndex;
       });
-    } else if (currentPane === 'pr') {
-      prSelectionInitialized.current = true;
-      setPRSelectedIndex(prev => {
+    } else if (currentPane === 'compare') {
+      compareSelectionInitialized.current = true;
+      setCompareSelectedIndex(prev => {
         const newIndex = Math.max(0, prev - 1);
-        if (newIndex < prScrollOffset) setPRScrollOffset(newIndex);
+        if (newIndex < compareScrollOffset) setCompareScrollOffset(newIndex);
         return newIndex;
       });
     }
-  }, [currentPane, bottomTab, prListSelection?.type, prDiffTotalRows, historyScrollOffset, prScrollOffset, scrollDiff, setHistoryScrollOffset, setPRScrollOffset]);
+  }, [currentPane, bottomTab, compareListSelection?.type, compareDiffTotalRows, historyScrollOffset, compareScrollOffset, scrollDiff, setHistoryScrollOffset, setCompareScrollOffset]);
 
   const handleNavigateDown = useCallback(() => {
     if (currentPane === 'files') {
       setSelectedIndex(prev => Math.min(totalFiles - 1, prev + 1));
     } else if (currentPane === 'diff') {
-      // In PR view showing full diff, pass the PR diff row count
-      const maxRows = (bottomTab === 'pr' && prListSelection?.type !== 'commit') ? prDiffTotalRows : undefined;
+      // In compare view showing full diff, pass the compare diff row count
+      const maxRows = (bottomTab === 'compare' && compareListSelection?.type !== 'commit') ? compareDiffTotalRows : undefined;
       scrollDiff('down', 3, maxRows);
     } else if (currentPane === 'history') {
       setHistorySelectedIndex(prev => {
@@ -362,16 +375,16 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         if (newIndex >= visibleEnd) setHistoryScrollOffset(prev => prev + 1);
         return newIndex;
       });
-    } else if (currentPane === 'pr') {
-      prSelectionInitialized.current = true;
-      setPRSelectedIndex(prev => {
-        const newIndex = Math.min(prTotalItems - 1, prev + 1);
-        const visibleEnd = prScrollOffset + topPaneHeight - 2;  // Account for header
-        if (newIndex >= visibleEnd) setPRScrollOffset(prev => prev + 1);
+    } else if (currentPane === 'compare') {
+      compareSelectionInitialized.current = true;
+      setCompareSelectedIndex(prev => {
+        const newIndex = Math.min(compareTotalItems - 1, prev + 1);
+        const visibleEnd = compareScrollOffset + topPaneHeight - 2;  // Account for header
+        if (newIndex >= visibleEnd) setCompareScrollOffset(prev => prev + 1);
         return newIndex;
       });
     }
-  }, [currentPane, bottomTab, prListSelection?.type, prDiffTotalRows, totalFiles, commits.length, historyScrollOffset, topPaneHeight, prTotalItems, prScrollOffset, scrollDiff, setHistoryScrollOffset, setPRScrollOffset]);
+  }, [currentPane, bottomTab, compareListSelection?.type, compareDiffTotalRows, totalFiles, commits.length, historyScrollOffset, topPaneHeight, compareTotalItems, compareScrollOffset, scrollDiff, setHistoryScrollOffset, setCompareScrollOffset]);
 
   const handleTogglePane = useCallback(() => {
     // In all modes, toggle between top pane (list) and bottom pane (diff/details)
@@ -379,8 +392,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       setCurrentPane(prev => prev === 'files' ? 'diff' : 'files');
     } else if (bottomTab === 'history') {
       setCurrentPane(prev => prev === 'history' ? 'diff' : 'history');
-    } else if (bottomTab === 'pr') {
-      setCurrentPane(prev => prev === 'pr' ? 'diff' : 'pr');
+    } else if (bottomTab === 'compare') {
+      setCurrentPane(prev => prev === 'compare' ? 'diff' : 'compare');
     }
   }, [bottomTab]);
 
@@ -413,8 +426,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
   const handleBaseBranchSelect = useCallback((branch: string) => {
     setShowBaseBranchPicker(false);
-    setPRBaseBranch(branch, includeUncommitted);
-  }, [setPRBaseBranch, includeUncommitted]);
+    setCompareBaseBranch(branch, includeUncommitted);
+  }, [setCompareBaseBranch, includeUncommitted]);
 
   const handleBaseBranchCancel = useCallback(() => {
     setShowBaseBranchPicker(false);
@@ -547,14 +560,14 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             />
           </>
         )}
-        {bottomTab === 'pr' && (
+        {bottomTab === 'compare' && (
           <>
             <Box>
-              <Text bold color={currentPane === 'pr' ? 'cyan' : undefined}>PR CHANGES</Text>
+              <Text bold color={currentPane === 'compare' ? 'cyan' : undefined}>COMPARE</Text>
               <Text dimColor>{' '}(vs </Text>
-              <Text color="cyan">{prDiff?.baseBranch ?? '...'}</Text>
-              <Text dimColor>: {prDiff?.commits.length ?? 0} commits, {prDiff?.files.length ?? 0} files) (b)</Text>
-              {prDiff && prDiff.uncommittedCount > 0 && (
+              <Text color="cyan">{compareDiff?.baseBranch ?? '...'}</Text>
+              <Text dimColor>: {compareDiff?.commits.length ?? 0} commits, {compareDiff?.files.length ?? 0} files) (b)</Text>
+              {compareDiff && compareDiff.uncommittedCount > 0 && (
                 <>
                   <Text dimColor> | </Text>
                   <Text color={includeUncommitted ? 'magenta' : 'yellow'}>
@@ -564,17 +577,17 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
                 </>
               )}
             </Box>
-            <PRListView
-              commits={prDiff?.commits ?? []}
-              files={prDiff?.files ?? []}
-              selectedItem={prListSelection}
-              scrollOffset={prScrollOffset}
+            <CompareListView
+              commits={compareDiff?.commits ?? []}
+              files={compareDiff?.files ?? []}
+              selectedItem={compareListSelection}
+              scrollOffset={compareScrollOffset}
               maxHeight={topPaneHeight - 1}
-              isActive={currentPane === 'pr'}
+              isActive={currentPane === 'compare'}
               width={terminalWidth}
               includeUncommitted={includeUncommitted}
-              onSelectCommit={(idx) => setPRSelectedIndex(idx)}
-              onSelectFile={(idx) => setPRSelectedIndex((prDiff?.commits.length ?? 0) + idx)}
+              onSelectCommit={(idx) => setCompareSelectedIndex(idx)}
+              onSelectFile={(idx) => setCompareSelectedIndex((compareDiff?.commits.length ?? 0) + idx)}
               onToggleIncludeUncommitted={handleToggleIncludeUncommitted}
             />
           </>
@@ -586,18 +599,18 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       <Box flexDirection="column" height={bottomPaneHeight} overflowY="hidden">
         {/* Bottom pane: Details/Diff content based on mode */}
         <Box justifyContent="space-between">
-          <Text bold color={currentPane !== 'files' && currentPane !== 'history' && currentPane !== 'pr' ? 'cyan' : undefined}>
+          <Text bold color={currentPane !== 'files' && currentPane !== 'history' && currentPane !== 'compare' ? 'cyan' : undefined}>
             {bottomTab === 'commit' ? 'COMMIT' : 'DIFF'}
           </Text>
           {selectedFile && bottomTab === 'diff' && <Text dimColor>{shortenPath(selectedFile.path, terminalWidth - 10)}</Text>}
           {bottomTab === 'history' && historySelectedCommit && (
             <Text dimColor>{historySelectedCommit.shortHash} - {historySelectedCommit.message.slice(0, 50)}</Text>
           )}
-          {bottomTab === 'pr' && prListSelection && (
+          {bottomTab === 'compare' && compareListSelection && (
             <Text dimColor>
-              {prListSelection.type === 'commit'
-                ? `${prDiff?.commits[prListSelection.index]?.shortHash ?? ''} - ${prDiff?.commits[prListSelection.index]?.message.slice(0, 40) ?? ''}`
-                : shortenPath(prDiff?.files[prListSelection.index]?.path ?? '', terminalWidth - 10)}
+              {compareListSelection.type === 'commit'
+                ? `${compareDiff?.commits[compareListSelection.index]?.shortHash ?? ''} - ${compareDiff?.commits[compareListSelection.index]?.message.slice(0, 40) ?? ''}`
+                : shortenPath(compareDiff?.files[compareListSelection.index]?.path ?? '', terminalWidth - 10)}
             </Text>
           )}
         </Box>
@@ -615,30 +628,32 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             onInputFocusChange={setCommitInputFocused}
           />
         ) : bottomTab === 'history' ? (
-          <DiffView
+          <HistoryDiffView
+            commit={historySelectedCommit}
             diff={historyCommitDiff}
             maxHeight={bottomPaneHeight - 1}
             scrollOffset={diffScrollOffset}
+            width={terminalWidth}
             theme={currentTheme}
           />
         ) : (
           <>
-            {prLoading ? (
-              <Text dimColor>Loading PR diff...</Text>
-            ) : prError ? (
-              <Text color="red">{prError}</Text>
-            ) : prListSelection?.type === 'commit' && prSelectionDiff ? (
+            {compareLoading ? (
+              <Text dimColor>Loading compare diff...</Text>
+            ) : compareError ? (
+              <Text color="red">{compareError}</Text>
+            ) : compareListSelection?.type === 'commit' && compareSelectionDiff ? (
               // Show single commit diff when a commit is selected
               <DiffView
-                diff={prSelectionDiff}
+                diff={compareSelectionDiff}
                 maxHeight={bottomPaneHeight - 1}
                 scrollOffset={diffScrollOffset}
                 theme={currentTheme}
               />
-            ) : prDiff ? (
-              // Show full PR diff when a file is selected or nothing selected
-              <PRView
-                prDiff={prDiff}
+            ) : compareDiff ? (
+              // Show full compare diff when a file is selected or nothing selected
+              <CompareView
+                compareDiff={compareDiff}
                 isLoading={false}
                 error={null}
                 scrollOffset={diffScrollOffset}
@@ -650,7 +665,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
                 theme={currentTheme}
               />
             ) : (
-              <Text dimColor>No PR diff available</Text>
+              <Text dimColor>No compare diff available</Text>
             )}
           </>
         )}
@@ -698,7 +713,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         <Box position="absolute" marginTop={0} marginLeft={0}>
           <BaseBranchPicker
             candidates={baseBranchCandidates}
-            currentBranch={prDiff?.baseBranch ?? null}
+            currentBranch={compareDiff?.baseBranch ?? null}
             onSelect={handleBaseBranchSelect}
             onCancel={handleBaseBranchCancel}
             width={terminalWidth}

@@ -4,12 +4,12 @@ import {
   getManagerForRepo,
   removeManagerForRepo,
   GitState,
-  PRState,
+  CompareState,
   HistoryState,
-  PRSelectionState,
+  CompareSelectionState,
 } from '../core/GitStateManager.js';
 import { GitStatus, FileEntry, CommitInfo } from '../git/status.js';
-import { DiffResult, PRDiff } from '../git/diff.js';
+import { DiffResult, CompareDiff } from '../git/diff.js';
 
 export interface UseGitResult {
   status: GitStatus | null;
@@ -27,24 +27,24 @@ export interface UseGitResult {
   commit: (message: string, amend?: boolean) => Promise<void>;
   refresh: () => Promise<void>;
   getHeadCommitMessage: () => Promise<string>;
-  // PR diff state
-  prDiff: PRDiff | null;
-  prBaseBranch: string | null;
-  prLoading: boolean;
-  prError: string | null;
-  refreshPRDiff: (includeUncommitted?: boolean) => Promise<void>;
+  // Compare diff state
+  compareDiff: CompareDiff | null;
+  compareBaseBranch: string | null;
+  compareLoading: boolean;
+  compareError: string | null;
+  refreshCompareDiff: (includeUncommitted?: boolean) => Promise<void>;
   getCandidateBaseBranches: () => Promise<string[]>;
-  setPRBaseBranch: (branch: string, includeUncommitted?: boolean) => Promise<void>;
+  setCompareBaseBranch: (branch: string, includeUncommitted?: boolean) => Promise<void>;
   // History state
   historySelectedCommit: CommitInfo | null;
   historyCommitDiff: DiffResult | null;
   selectHistoryCommit: (commit: CommitInfo | null) => Promise<void>;
-  // PR selection state
-  prSelectionType: 'commit' | 'file' | null;
-  prSelectionIndex: number;
-  prSelectionDiff: DiffResult | null;
-  selectPRCommit: (index: number) => Promise<void>;
-  selectPRFile: (index: number) => void;
+  // Compare selection state
+  compareSelectionType: 'commit' | 'file' | null;
+  compareSelectionIndex: number;
+  compareSelectionDiff: DiffResult | null;
+  selectCompareCommit: (index: number) => Promise<void>;
+  selectCompareFile: (index: number) => void;
 }
 
 /**
@@ -61,11 +61,11 @@ export function useGit(repoPath: string | null): UseGitResult {
     error: null,
   });
 
-  const [prState, setPRState] = useState<PRState>({
-    prDiff: null,
-    prBaseBranch: null,
-    prLoading: false,
-    prError: null,
+  const [compareState, setCompareState] = useState<CompareState>({
+    compareDiff: null,
+    compareBaseBranch: null,
+    compareLoading: false,
+    compareError: null,
   });
 
   const [historyState, setHistoryState] = useState<HistoryState>({
@@ -73,7 +73,7 @@ export function useGit(repoPath: string | null): UseGitResult {
     commitDiff: null,
   });
 
-  const [prSelectionState, setPRSelectionState] = useState<PRSelectionState>({
+  const [compareSelectionState, setCompareSelectionState] = useState<CompareSelectionState>({
     type: null,
     index: 0,
     diff: null,
@@ -103,22 +103,22 @@ export function useGit(repoPath: string | null): UseGitResult {
       setGitState(state);
     };
 
-    const handlePRStateChange = (state: PRState) => {
-      setPRState(state);
+    const handleCompareStateChange = (state: CompareState) => {
+      setCompareState(state);
     };
 
     const handleHistoryStateChange = (state: HistoryState) => {
       setHistoryState(state);
     };
 
-    const handlePRSelectionChange = (state: PRSelectionState) => {
-      setPRSelectionState(state);
+    const handleCompareSelectionChange = (state: CompareSelectionState) => {
+      setCompareSelectionState(state);
     };
 
     manager.on('state-change', handleStateChange);
-    manager.on('pr-state-change', handlePRStateChange);
+    manager.on('compare-state-change', handleCompareStateChange);
     manager.on('history-state-change', handleHistoryStateChange);
-    manager.on('pr-selection-change', handlePRSelectionChange);
+    manager.on('compare-selection-change', handleCompareSelectionChange);
 
     // Start watching and do initial refresh
     manager.startWatching();
@@ -126,9 +126,9 @@ export function useGit(repoPath: string | null): UseGitResult {
 
     return () => {
       manager.off('state-change', handleStateChange);
-      manager.off('pr-state-change', handlePRStateChange);
+      manager.off('compare-state-change', handleCompareStateChange);
       manager.off('history-state-change', handleHistoryStateChange);
-      manager.off('pr-selection-change', handlePRSelectionChange);
+      manager.off('compare-selection-change', handleCompareSelectionChange);
       removeManagerForRepo(repoPath);
       managerRef.current = null;
     };
@@ -171,28 +171,28 @@ export function useGit(repoPath: string | null): UseGitResult {
     return managerRef.current?.getHeadCommitMessage() ?? '';
   }, []);
 
-  const refreshPRDiff = useCallback(async (includeUncommitted: boolean = false) => {
-    await managerRef.current?.refreshPRDiff(includeUncommitted);
+  const refreshCompareDiff = useCallback(async (includeUncommitted: boolean = false) => {
+    await managerRef.current?.refreshCompareDiff(includeUncommitted);
   }, []);
 
   const getCandidateBaseBranches = useCallback(async (): Promise<string[]> => {
     return managerRef.current?.getCandidateBaseBranches() ?? [];
   }, []);
 
-  const setPRBaseBranch = useCallback(async (branch: string, includeUncommitted: boolean = false) => {
-    await managerRef.current?.setPRBaseBranch(branch, includeUncommitted);
+  const setCompareBaseBranch = useCallback(async (branch: string, includeUncommitted: boolean = false) => {
+    await managerRef.current?.setCompareBaseBranch(branch, includeUncommitted);
   }, []);
 
   const selectHistoryCommit = useCallback(async (commit: CommitInfo | null) => {
     await managerRef.current?.selectHistoryCommit(commit);
   }, []);
 
-  const selectPRCommit = useCallback(async (index: number) => {
-    await managerRef.current?.selectPRCommit(index);
+  const selectCompareCommit = useCallback(async (index: number) => {
+    await managerRef.current?.selectCompareCommit(index);
   }, []);
 
-  const selectPRFile = useCallback((index: number) => {
-    managerRef.current?.selectPRFile(index);
+  const selectCompareFile = useCallback((index: number) => {
+    managerRef.current?.selectCompareFile(index);
   }, []);
 
   return {
@@ -211,22 +211,22 @@ export function useGit(repoPath: string | null): UseGitResult {
     commit,
     refresh,
     getHeadCommitMessage,
-    prDiff: prState.prDiff,
-    prBaseBranch: prState.prBaseBranch,
-    prLoading: prState.prLoading,
-    prError: prState.prError,
-    refreshPRDiff,
+    compareDiff: compareState.compareDiff,
+    compareBaseBranch: compareState.compareBaseBranch,
+    compareLoading: compareState.compareLoading,
+    compareError: compareState.compareError,
+    refreshCompareDiff,
     getCandidateBaseBranches,
-    setPRBaseBranch,
+    setCompareBaseBranch,
     // History state
     historySelectedCommit: historyState.selectedCommit,
     historyCommitDiff: historyState.commitDiff,
     selectHistoryCommit,
-    // PR selection state
-    prSelectionType: prSelectionState.type,
-    prSelectionIndex: prSelectionState.index,
-    prSelectionDiff: prSelectionState.diff,
-    selectPRCommit,
-    selectPRFile,
+    // Compare selection state
+    compareSelectionType: compareSelectionState.type,
+    compareSelectionIndex: compareSelectionState.index,
+    compareSelectionDiff: compareSelectionState.diff,
+    selectCompareCommit,
+    selectCompareFile,
   };
 }

@@ -32,7 +32,8 @@
     "ink": "^6.6.0",
     "ink-text-input": "^6.0.0",
     "react": "^19.2.0",
-    "simple-git": "^3.27.0"
+    "simple-git": "^3.27.0",
+    "string-width": "^8.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",

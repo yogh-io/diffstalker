@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import stringWidth from 'string-width';
 import { CommitInfo } from '../git/status.js';
 
 interface HistoryViewProps {
@@ -10,6 +11,80 @@ interface HistoryViewProps {
   isActive: boolean;
   width: number;
   onSelectCommit?: (commit: CommitInfo, index: number) => void;
+}
+
+/**
+ * Calculate the visual width of a commit line (accounting for wide characters).
+ */
+function getCommitLineWidth(commit: CommitInfo): number {
+  const dateStr = formatDate(commit.date);
+  // Build the full line as it would be rendered
+  let line = commit.shortHash + ' ' + commit.message + ' ' + '(' + dateStr + ')';
+  if (commit.refs) {
+    line += ' ' + commit.refs;
+  }
+  return stringWidth(line);
+}
+
+/**
+ * Calculate how many visual terminal rows a commit takes (1 if no wrap, more if wrapped).
+ */
+function getCommitRowCount(commit: CommitInfo, terminalWidth: number): number {
+  const lineWidth = getCommitLineWidth(commit);
+  return Math.ceil(lineWidth / terminalWidth);
+}
+
+/**
+ * Map a visual row index (from scrollOffset) to the commit index.
+ * Returns the commit index, or -1 if out of bounds.
+ */
+export function getCommitIndexFromRow(
+  visualRow: number,
+  commits: CommitInfo[],
+  terminalWidth: number,
+  scrollOffset: number = 0
+): number {
+  // The visualRow is relative to scrollOffset, so we need to find which commit
+  // contains this visual row
+  let currentRow = 0;
+
+  for (let i = 0; i < commits.length; i++) {
+    const rowCount = getCommitRowCount(commits[i], terminalWidth);
+
+    // Check if visualRow + scrollOffset falls within this commit's rows
+    if (visualRow + scrollOffset < currentRow + rowCount) {
+      return i;
+    }
+    currentRow += rowCount;
+  }
+
+  return -1; // Out of bounds
+}
+
+/**
+ * Get the total number of visual rows for all commits (accounting for wrapping).
+ */
+export function getHistoryTotalRows(commits: CommitInfo[], terminalWidth: number): number {
+  let total = 0;
+  for (const commit of commits) {
+    total += getCommitRowCount(commit, terminalWidth);
+  }
+  return total;
+}
+
+/**
+ * Get the visual row offset for a given commit index (for scrolling to a commit).
+ */
+export function getHistoryRowOffset(
+  commits: CommitInfo[],
+  commitIndex: number,
+  terminalWidth: number
+): number {
+  let offset = 0;
+  for (let i = 0; i < commitIndex && i < commits.length; i++) {
+    offset += getCommitRowCount(commits[i], terminalWidth);
+  }
+  return offset;
 }
 
 function formatDate(date: Date): string {

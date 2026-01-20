@@ -16,13 +16,13 @@ export interface DiffResult {
   lines: DiffLine[];
 }
 
-export interface PRDiffStats {
+export interface CompareDiffStats {
   filesChanged: number;
   additions: number;
   deletions: number;
 }
 
-export interface PRFileDiff {
+export interface CompareFileDiff {
   path: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed';
   additions: number;
@@ -31,10 +31,10 @@ export interface PRFileDiff {
   isUncommitted?: boolean;
 }
 
-export interface PRDiff {
+export interface CompareDiff {
   baseBranch: string;
-  stats: PRDiffStats;
-  files: PRFileDiff[];
+  stats: CompareDiffStats;
+  files: CompareFileDiff[];
   commits: CommitInfo[];
   uncommittedCount: number;
 }
@@ -266,7 +266,7 @@ export async function getDefaultBaseBranch(repoPath: string): Promise<string | n
  * Get diff between HEAD and a base ref (for PR-like view).
  * Uses three-dot diff (merge-base) to show only changes on current branch.
  */
-export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Promise<PRDiff> {
+export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Promise<CompareDiff> {
   const git = simpleGit(repoPath);
 
   // Get merge-base for three-dot diff
@@ -297,13 +297,13 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
 
   // Parse name-status: "A/M/D/R filepath" per line
   const nameStatusLines = nameStatus.trim().split('\n').filter(l => l);
-  const fileStatuses: Map<string, PRFileDiff['status']> = new Map();
+  const fileStatuses: Map<string, CompareFileDiff['status']> = new Map();
   for (const line of nameStatusLines) {
     const parts = line.split('\t');
     if (parts.length >= 2) {
       const statusChar = parts[0][0];
       const filepath = parts[parts.length - 1]; // Use last part for renamed files
-      let status: PRFileDiff['status'];
+      let status: CompareFileDiff['status'];
       switch (statusChar) {
         case 'A':
           status = 'added';
@@ -322,7 +322,7 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
   }
 
   // Split raw diff by file headers
-  const fileDiffs: PRFileDiff[] = [];
+  const fileDiffs: CompareFileDiff[] = [];
   const diffChunks = rawDiff.split(/(?=^diff --git )/m).filter(chunk => chunk.trim());
 
   for (const chunk of diffChunks) {
@@ -432,7 +432,7 @@ export async function getCommitsBetweenRefs(
  * Get PR diff that includes uncommitted changes (staged + unstaged).
  * Merges committed diff with working tree changes.
  */
-export async function getPRDiffWithUncommitted(repoPath: string, baseRef: string): Promise<PRDiff> {
+export async function getCompareDiffWithUncommitted(repoPath: string, baseRef: string): Promise<CompareDiff> {
   const git = simpleGit(repoPath);
 
   // Get the committed PR diff first
@@ -478,7 +478,7 @@ export async function getPRDiffWithUncommitted(repoPath: string, baseRef: string
 
   // Get status for file status detection
   const status = await git.status();
-  const statusMap: Map<string, PRFileDiff['status']> = new Map();
+  const statusMap: Map<string, CompareFileDiff['status']> = new Map();
   for (const file of status.files) {
     if (file.index === 'A' || file.working_dir === '?') {
       statusMap.set(file.path, 'added');
@@ -492,7 +492,7 @@ export async function getPRDiffWithUncommitted(repoPath: string, baseRef: string
   }
 
   // Split uncommitted diffs by file
-  const uncommittedFileDiffs: PRFileDiff[] = [];
+  const uncommittedFileDiffs: CompareFileDiff[] = [];
   const combinedDiff = stagedDiff + unstagedDiff;
   const diffChunks = combinedDiff.split(/(?=^diff --git )/m).filter(chunk => chunk.trim());
 
@@ -523,7 +523,7 @@ export async function getPRDiffWithUncommitted(repoPath: string, baseRef: string
 
   // Merge: keep committed files, add/replace with uncommitted
   const committedFilePaths = new Set(committedDiff.files.map(f => f.path));
-  const mergedFiles: PRFileDiff[] = [];
+  const mergedFiles: CompareFileDiff[] = [];
 
   // Add committed files first
   for (const file of committedDiff.files) {

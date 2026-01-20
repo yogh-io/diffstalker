@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 interface FooterProps {
-  activeTab: 'diff' | 'commit' | 'history' | 'pr';
+  activeTab: 'diff' | 'commit' | 'history' | 'compare';
   mouseEnabled?: boolean;
 }
 
@@ -28,8 +28,8 @@ export function Footer({ activeTab, mouseEnabled = true }: FooterProps): React.R
           [3]History
         </Text>
         {' '}
-        <Text color={activeTab === 'pr' ? 'cyan' : undefined} bold={activeTab === 'pr'}>
-          [4]PR
+        <Text color={activeTab === 'compare' ? 'cyan' : undefined} bold={activeTab === 'compare'}>
+          [4]Compare
         </Text>
       </Text>
     </Box>

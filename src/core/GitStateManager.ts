@@ -23,10 +23,10 @@ import {
   getDefaultBaseBranch,
   getCandidateBaseBranches,
   getDiffBetweenRefs,
-  getPRDiffWithUncommitted,
+  getCompareDiffWithUncommitted,
   getCommitDiff,
   DiffResult,
-  PRDiff,
+  CompareDiff,
 } from '../git/diff.js';
 import { getCachedBaseBranch, setCachedBaseBranch } from '../utils/baseBranchCache.js';
 
@@ -39,11 +39,11 @@ export interface GitState {
   error: string | null;
 }
 
-export interface PRState {
-  prDiff: PRDiff | null;
-  prBaseBranch: string | null;
-  prLoading: boolean;
-  prError: string | null;
+export interface CompareState {
+  compareDiff: CompareDiff | null;
+  compareBaseBranch: string | null;
+  compareLoading: boolean;
+  compareError: string | null;
 }
 
 export interface HistoryState {
@@ -51,19 +51,19 @@ export interface HistoryState {
   commitDiff: DiffResult | null;
 }
 
-export type PRSelectionType = 'commit' | 'file';
+export type CompareSelectionType = 'commit' | 'file';
 
-export interface PRSelectionState {
-  type: PRSelectionType | null;
+export interface CompareSelectionState {
+  type: CompareSelectionType | null;
   index: number;
   diff: DiffResult | null;
 }
 
 type GitStateEventMap = {
   'state-change': [GitState];
-  'pr-state-change': [PRState];
+  'compare-state-change': [CompareState];
   'history-state-change': [HistoryState];
-  'pr-selection-change': [PRSelectionState];
+  'compare-selection-change': [CompareSelectionState];
   'error': [string];
 };
 
@@ -87,11 +87,11 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     error: null,
   };
 
-  private _prState: PRState = {
-    prDiff: null,
-    prBaseBranch: null,
-    prLoading: false,
-    prError: null,
+  private _compareState: CompareState = {
+    compareDiff: null,
+    compareBaseBranch: null,
+    compareLoading: false,
+    compareError: null,
   };
 
   private _historyState: HistoryState = {
@@ -99,7 +99,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     commitDiff: null,
   };
 
-  private _prSelectionState: PRSelectionState = {
+  private _compareSelectionState: CompareSelectionState = {
     type: null,
     index: 0,
     diff: null,
@@ -115,16 +115,16 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     return this._state;
   }
 
-  get prState(): PRState {
-    return this._prState;
+  get compareState(): CompareState {
+    return this._compareState;
   }
 
   get historyState(): HistoryState {
     return this._historyState;
   }
 
-  get prSelectionState(): PRSelectionState {
-    return this._prSelectionState;
+  get compareSelectionState(): CompareSelectionState {
+    return this._compareSelectionState;
   }
 
   private updateState(partial: Partial<GitState>): void {
@@ -132,9 +132,9 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     this.emit('state-change', this._state);
   }
 
-  private updatePRState(partial: Partial<PRState>): void {
-    this._prState = { ...this._prState, ...partial };
-    this.emit('pr-state-change', this._prState);
+  private updateCompareState(partial: Partial<CompareState>): void {
+    this._compareState = { ...this._compareState, ...partial };
+    this.emit('compare-state-change', this._compareState);
   }
 
   private updateHistoryState(partial: Partial<HistoryState>): void {
@@ -142,9 +142,9 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     this.emit('history-state-change', this._historyState);
   }
 
-  private updatePRSelectionState(partial: Partial<PRSelectionState>): void {
-    this._prSelectionState = { ...this._prSelectionState, ...partial };
-    this.emit('pr-selection-change', this._prSelectionState);
+  private updateCompareSelectionState(partial: Partial<CompareSelectionState>): void {
+    this._compareSelectionState = { ...this._compareSelectionState, ...partial };
+    this.emit('compare-selection-change', this._compareSelectionState);
   }
 
   /**
@@ -431,55 +431,55 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   }
 
   /**
-   * Refresh PR diff.
+   * Refresh compare diff.
    */
-  async refreshPRDiff(includeUncommitted: boolean = false): Promise<void> {
-    this.updatePRState({ prLoading: true, prError: null });
+  async refreshCompareDiff(includeUncommitted: boolean = false): Promise<void> {
+    this.updateCompareState({ compareLoading: true, compareError: null });
 
     try {
       await this.queue.enqueue(async () => {
-        let base = this._prState.prBaseBranch;
+        let base = this._compareState.compareBaseBranch;
         if (!base) {
           // Try cached value first, then fall back to default detection
           base = getCachedBaseBranch(this.repoPath) ?? await getDefaultBaseBranch(this.repoPath);
-          this.updatePRState({ prBaseBranch: base });
+          this.updateCompareState({ compareBaseBranch: base });
         }
         if (base) {
           const diff = includeUncommitted
-            ? await getPRDiffWithUncommitted(this.repoPath, base)
+            ? await getCompareDiffWithUncommitted(this.repoPath, base)
             : await getDiffBetweenRefs(this.repoPath, base);
-          this.updatePRState({ prDiff: diff, prLoading: false });
+          this.updateCompareState({ compareDiff: diff, compareLoading: false });
         } else {
-          this.updatePRState({
-            prDiff: null,
-            prLoading: false,
-            prError: 'No base branch found',
+          this.updateCompareState({
+            compareDiff: null,
+            compareLoading: false,
+            compareError: 'No base branch found',
           });
         }
       });
     } catch (err) {
-      this.updatePRState({
-        prLoading: false,
-        prError: `Failed to load PR diff: ${err instanceof Error ? err.message : String(err)}`,
+      this.updateCompareState({
+        compareLoading: false,
+        compareError: `Failed to load compare diff: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }
 
   /**
-   * Get candidate base branches for PR comparison.
+   * Get candidate base branches for branch comparison.
    */
   async getCandidateBaseBranches(): Promise<string[]> {
     return getCandidateBaseBranches(this.repoPath);
   }
 
   /**
-   * Set the base branch for PR comparison and refresh.
+   * Set the base branch for branch comparison and refresh.
    * Also saves the selection to the cache for future sessions.
    */
-  async setPRBaseBranch(branch: string, includeUncommitted: boolean = false): Promise<void> {
-    this.updatePRState({ prBaseBranch: branch });
+  async setCompareBaseBranch(branch: string, includeUncommitted: boolean = false): Promise<void> {
+    this.updateCompareState({ compareBaseBranch: branch });
     setCachedBaseBranch(this.repoPath, branch);
-    await this.refreshPRDiff(includeUncommitted);
+    await this.refreshCompareDiff(includeUncommitted);
   }
 
   /**
@@ -503,22 +503,22 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   }
 
   /**
-   * Select a commit in PR view and load its diff.
+   * Select a commit in compare view and load its diff.
    */
-  async selectPRCommit(index: number): Promise<void> {
-    const prDiff = this._prState.prDiff;
-    if (!prDiff || index < 0 || index >= prDiff.commits.length) {
-      this.updatePRSelectionState({ type: null, index: 0, diff: null });
+  async selectCompareCommit(index: number): Promise<void> {
+    const compareDiff = this._compareState.compareDiff;
+    if (!compareDiff || index < 0 || index >= compareDiff.commits.length) {
+      this.updateCompareSelectionState({ type: null, index: 0, diff: null });
       return;
     }
 
-    const commit = prDiff.commits[index];
-    this.updatePRSelectionState({ type: 'commit', index, diff: null });
+    const commit = compareDiff.commits[index];
+    this.updateCompareSelectionState({ type: 'commit', index, diff: null });
 
     try {
       await this.queue.enqueue(async () => {
         const diff = await getCommitDiff(this.repoPath, commit.hash);
-        this.updatePRSelectionState({ diff });
+        this.updateCompareSelectionState({ diff });
       });
     } catch (err) {
       this.updateState({
@@ -528,17 +528,17 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   }
 
   /**
-   * Select a file in PR view and show its diff.
+   * Select a file in compare view and show its diff.
    */
-  selectPRFile(index: number): void {
-    const prDiff = this._prState.prDiff;
-    if (!prDiff || index < 0 || index >= prDiff.files.length) {
-      this.updatePRSelectionState({ type: null, index: 0, diff: null });
+  selectCompareFile(index: number): void {
+    const compareDiff = this._compareState.compareDiff;
+    if (!compareDiff || index < 0 || index >= compareDiff.files.length) {
+      this.updateCompareSelectionState({ type: null, index: 0, diff: null });
       return;
     }
 
-    const file = prDiff.files[index];
-    this.updatePRSelectionState({ type: 'file', index, diff: file.diff });
+    const file = compareDiff.files[index];
+    this.updateCompareSelectionState({ type: 'file', index, diff: file.diff });
   }
 }
 
