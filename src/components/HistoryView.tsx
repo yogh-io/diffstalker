@@ -74,11 +74,8 @@ function formatDate(date: Date): string {
     return `${hours}h ago`;
   } else if (days === 1) {
     return 'yesterday';
-  } else if (days < 7) {
+  } else if (days <= 14) {
     return `${days}d ago`;
-  } else if (days < 30) {
-    const weeks = Math.floor(days / 7);
-    return `${weeks}w ago`;
   } else {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
