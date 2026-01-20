@@ -123,12 +123,51 @@ interface DiffSegment {
   isChange: boolean;
 }
 
+// Minimum unchanged segment length to keep as unchanged (shorter gets merged into changes)
+const MIN_UNCHANGED_LENGTH = 3;
+
+// Merge tiny unchanged segments into surrounding changes
+function mergeSmallSegments(segments: DiffSegment[]): DiffSegment[] {
+  if (segments.length === 0) return segments;
+
+  const result: DiffSegment[] = [];
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+
+    // If unchanged segment is too short and surrounded by changes, mark as changed
+    if (!segment.isChange && segment.text.length < MIN_UNCHANGED_LENGTH) {
+      const prevIsChange = i > 0 && result[result.length - 1]?.isChange;
+      const nextIsChange = i < segments.length - 1 && segments[i + 1]?.isChange;
+
+      if (prevIsChange || nextIsChange) {
+        // Merge into previous change segment if possible, otherwise mark as change
+        if (prevIsChange && result.length > 0) {
+          result[result.length - 1].text += segment.text;
+        } else {
+          result.push({ text: segment.text, isChange: true });
+        }
+        continue;
+      }
+    }
+
+    // Merge consecutive segments of same type
+    if (result.length > 0 && result[result.length - 1].isChange === segment.isChange) {
+      result[result.length - 1].text += segment.text;
+    } else {
+      result.push({ ...segment });
+    }
+  }
+
+  return result;
+}
+
 // Compute word-level diff between old and new line
 function computeWordDiff(oldContent: string, newContent: string): { oldSegments: DiffSegment[]; newSegments: DiffSegment[] } {
   const diff = fastDiff(oldContent, newContent);
 
-  const oldSegments: DiffSegment[] = [];
-  const newSegments: DiffSegment[] = [];
+  let oldSegments: DiffSegment[] = [];
+  let newSegments: DiffSegment[] = [];
 
   for (const [type, text] of diff) {
     if (type === fastDiff.EQUAL) {
@@ -143,6 +182,10 @@ function computeWordDiff(oldContent: string, newContent: string): { oldSegments:
       newSegments.push({ text, isChange: true });
     }
   }
+
+  // Merge tiny unchanged segments to avoid fragmented highlighting
+  oldSegments = mergeSmallSegments(oldSegments);
+  newSegments = mergeSmallSegments(newSegments);
 
   return { oldSegments, newSegments };
 }
