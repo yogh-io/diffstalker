@@ -147,6 +147,30 @@ function computeWordDiff(oldContent: string, newContent: string): { oldSegments:
   return { oldSegments, newSegments };
 }
 
+// Calculate similarity ratio between two strings (0 to 1)
+function calculateSimilarity(oldStr: string, newStr: string): number {
+  if (oldStr.length === 0 && newStr.length === 0) return 1;
+  if (oldStr.length === 0 || newStr.length === 0) return 0;
+
+  const diff = fastDiff(oldStr, newStr);
+  let unchanged = 0;
+  let total = 0;
+
+  for (const [type, text] of diff) {
+    if (type === fastDiff.EQUAL) {
+      unchanged += text.length;
+      total += text.length;
+    } else {
+      total += text.length;
+    }
+  }
+
+  return total > 0 ? unchanged / total : 0;
+}
+
+// Minimum similarity ratio to show word-level diff (below this, lines are too different)
+const SIMILARITY_THRESHOLD = 0.3;
+
 // Find paired modifications (deletion followed by addition)
 interface LinePair {
   deletion: DiffLine;
@@ -164,9 +188,15 @@ function findModificationPairs(lines: DiffLine[]): Map<number, LinePair> {
 
     // Look for deletion followed by addition (single-line modification)
     if (current.type === 'deletion' && next.type === 'addition') {
-      const pair = { deletion: current, addition: next, deletionIndex: i, additionIndex: i + 1 };
-      pairs.set(i, pair);
-      pairs.set(i + 1, pair);
+      const oldContent = getLineContent(current);
+      const newContent = getLineContent(next);
+
+      // Only pair if lines are similar enough for meaningful word-level diff
+      if (calculateSimilarity(oldContent, newContent) >= SIMILARITY_THRESHOLD) {
+        const pair = { deletion: current, addition: next, deletionIndex: i, additionIndex: i + 1 };
+        pairs.set(i, pair);
+        pairs.set(i + 1, pair);
+      }
     }
   }
 
