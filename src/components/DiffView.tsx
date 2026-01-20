@@ -449,9 +449,17 @@ export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, the
   const lineNumWidth = getLineNumWidth(displayableLines.map(d => d.line));
 
   // Apply scroll offset and limit
-  const visibleLines = displayableLines.slice(scrollOffset, scrollOffset + maxHeight);
-  const hasMore = displayableLines.length > scrollOffset + maxHeight;
+  // Account for scroll indicators taking up space
   const hasPrevious = scrollOffset > 0;
+  const wouldHaveMore = displayableLines.length > scrollOffset + maxHeight;
+
+  // Reduce visible lines to make room for indicators
+  let effectiveMaxHeight = maxHeight;
+  if (hasPrevious) effectiveMaxHeight--;
+  if (wouldHaveMore) effectiveMaxHeight--;
+
+  const visibleLines = displayableLines.slice(scrollOffset, scrollOffset + effectiveMaxHeight);
+  const hasMore = displayableLines.length > scrollOffset + effectiveMaxHeight;
 
   return (
     <Box flexDirection="column" paddingX={1}>
