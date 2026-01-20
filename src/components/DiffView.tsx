@@ -240,14 +240,26 @@ function DiffLineComponent({
     );
   }
 
-  // Hunk headers - show with blue styling (like @@ -1,5 +1,7 @@)
+  // Hunk headers - show as readable line ranges
   if (line.type === 'hunk') {
-    const match = line.content.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
+    const match = line.content.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/);
     if (match) {
-      const context = match[3].trim();
+      const oldStart = parseInt(match[1], 10);
+      const oldCount = match[2] ? parseInt(match[2], 10) : 1;
+      const newStart = parseInt(match[3], 10);
+      const newCount = match[4] ? parseInt(match[4], 10) : 1;
+      const context = match[5].trim();
+
+      const oldEnd = oldStart + oldCount - 1;
+      const newEnd = newStart + newCount - 1;
+
+      // Format as "Lines X-Y → X-Y" or "Line X → X" for single lines
+      const oldRange = oldCount === 1 ? `${oldStart}` : `${oldStart}-${oldEnd}`;
+      const newRange = newCount === 1 ? `${newStart}` : `${newStart}-${newEnd}`;
+
       return (
         <Box>
-          <Text color="cyan" dimColor>{line.content.slice(0, line.content.indexOf('@@', 3) + 2)}</Text>
+          <Text color="cyan" dimColor>Lines {oldRange} → {newRange}</Text>
           {context && <Text color="gray"> {context}</Text>}
         </Box>
       );
