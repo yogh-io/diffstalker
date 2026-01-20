@@ -464,7 +464,7 @@ export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, the
 
         return (
           <DiffLineComponent
-            key={`${originalIndex}-${line.content.slice(0, 20)}`}
+            key={`${scrollOffset}-${i}-${originalIndex}`}
             line={line}
             lineNumWidth={lineNumWidth}
             language={language}
