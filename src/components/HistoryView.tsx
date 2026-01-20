@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { CommitInfo } from '../git/status.js';
+import { ScrollableList } from './ScrollableList.js';
 
 interface HistoryViewProps {
   commits: CommitInfo[];
@@ -100,12 +101,13 @@ export function HistoryView({
     );
   }
 
-  const visibleCommits = commits.slice(scrollOffset, scrollOffset + maxHeight);
-
   return (
-    <Box flexDirection="column">
-      {visibleCommits.map((commit, idx) => {
-        const actualIndex = scrollOffset + idx;
+    <ScrollableList
+      items={commits}
+      maxHeight={maxHeight}
+      scrollOffset={scrollOffset}
+      getKey={(commit) => commit.hash}
+      renderItem={(commit, actualIndex) => {
         const isSelected = actualIndex === selectedIndex && isActive;
 
         const dateStr = formatDate(commit.date);
@@ -117,18 +119,18 @@ export function HistoryView({
 
         // Allocate space: prioritize message (min 20 chars), rest for refs
         const minMessageWidth = 20;
-        const maxRefsWidth = Math.max(0, remainingWidth - minMessageWidth - 1); // -1 for space before refs
+        const maxRefsWidth = Math.max(0, remainingWidth - minMessageWidth - 1);
 
         // Truncate refs if needed
         let displayRefs = commit.refs || '';
         if (displayRefs.length > maxRefsWidth && maxRefsWidth > 3) {
           displayRefs = displayRefs.slice(0, maxRefsWidth - 3) + '...';
         } else if (displayRefs.length > maxRefsWidth) {
-          displayRefs = ''; // Not enough space for refs
+          displayRefs = '';
         }
 
         // Calculate message width (remaining space after refs)
-        const refsWidth = displayRefs ? displayRefs.length + 1 : 0; // +1 for space
+        const refsWidth = displayRefs ? displayRefs.length + 1 : 0;
         const messageWidth = Math.max(minMessageWidth, remainingWidth - refsWidth);
 
         // Truncate message if needed
@@ -138,7 +140,7 @@ export function HistoryView({
           : commit.message;
 
         return (
-          <Box key={commit.hash}>
+          <>
             <Text color="yellow">{commit.shortHash}</Text>
             <Text> </Text>
             <Text
@@ -156,9 +158,9 @@ export function HistoryView({
                 <Text color="green">{displayRefs}</Text>
               </>
             )}
-          </Box>
+          </>
         );
-      })}
-    </Box>
+      }}
+    />
   );
 }
