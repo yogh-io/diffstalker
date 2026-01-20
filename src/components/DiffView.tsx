@@ -4,6 +4,7 @@ import { createEmphasize, common } from 'emphasize';
 import fastDiff from 'fast-diff';
 import { DiffResult, DiffLine } from '../git/diff.js';
 import { Theme, getTheme, ThemeName } from '../themes.js';
+import { ScrollableList } from './ScrollableList.js';
 
 // Create emphasize instance with common languages
 const emphasize = createEmphasize(common);
@@ -448,43 +449,26 @@ export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, the
   // Calculate line number width for consistent column sizing
   const lineNumWidth = getLineNumWidth(displayableLines.map(d => d.line));
 
-  // Apply scroll offset and limit
-  // Account for scroll indicators taking up space
-  const hasPrevious = scrollOffset > 0;
-  const wouldHaveMore = displayableLines.length > scrollOffset + maxHeight;
-
-  // Reduce visible lines to make room for indicators
-  let effectiveMaxHeight = maxHeight;
-  if (hasPrevious) effectiveMaxHeight--;
-  if (wouldHaveMore) effectiveMaxHeight--;
-
-  const visibleLines = displayableLines.slice(scrollOffset, scrollOffset + effectiveMaxHeight);
-  const hasMore = displayableLines.length > scrollOffset + effectiveMaxHeight;
-
   return (
     <Box flexDirection="column" paddingX={1}>
-      {hasPrevious && (
-        <Text dimColor>↑ {scrollOffset} more lines above</Text>
-      )}
-
-      {visibleLines.map(({ line, originalIndex }, i) => {
-        const wordDiffSegments = wordDiffs.get(originalIndex);
-
-        return (
-          <DiffLineComponent
-            key={`${scrollOffset}-${i}-${originalIndex}`}
-            line={line}
-            lineNumWidth={lineNumWidth}
-            language={language}
-            wordDiffSegments={wordDiffSegments}
-            theme={theme}
-          />
-        );
-      })}
-
-      {hasMore && (
-        <Text dimColor>↓ {displayableLines.length - scrollOffset - maxHeight} more lines below</Text>
-      )}
+      <ScrollableList
+        items={displayableLines}
+        maxHeight={maxHeight}
+        scrollOffset={scrollOffset}
+        getKey={(item) => `${item.originalIndex}`}
+        renderItem={(item) => {
+          const wordDiffSegments = wordDiffs.get(item.originalIndex);
+          return (
+            <DiffLineComponent
+              line={item.line}
+              lineNumWidth={lineNumWidth}
+              language={language}
+              wordDiffSegments={wordDiffSegments}
+              theme={theme}
+            />
+          );
+        }}
+      />
     </Box>
   );
 }
