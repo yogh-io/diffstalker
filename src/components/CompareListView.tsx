@@ -70,13 +70,32 @@ function CommitRow({
   width: number;
 }): React.ReactElement {
   const dateStr = formatDate(commit.date);
-  // Calculate available space
-  const fixedWidth = 2 + 7 + 4 + dateStr.length + 2 + (commit.refs ? commit.refs.length + 1 : 0);
-  const availableWidth = Math.max(20, width - fixedWidth);
+  // Fixed parts: indent(2) + hash(7) + spaces(4) + date + parens(2)
+  const baseWidth = 2 + 7 + 4 + dateStr.length + 2;
 
-  const needsTruncation = commit.message.length > availableWidth;
+  // Calculate space available for message and refs combined
+  const remainingWidth = width - baseWidth;
+
+  // Allocate space: prioritize message (min 20 chars), rest for refs
+  const minMessageWidth = 20;
+  const maxRefsWidth = Math.max(0, remainingWidth - minMessageWidth - 1); // -1 for space before refs
+
+  // Truncate refs if needed
+  let displayRefs = commit.refs || '';
+  if (displayRefs.length > maxRefsWidth && maxRefsWidth > 3) {
+    displayRefs = displayRefs.slice(0, maxRefsWidth - 3) + '...';
+  } else if (displayRefs.length > maxRefsWidth) {
+    displayRefs = ''; // Not enough space for refs
+  }
+
+  // Calculate message width (remaining space after refs)
+  const refsWidth = displayRefs ? displayRefs.length + 1 : 0; // +1 for space
+  const messageWidth = Math.max(minMessageWidth, remainingWidth - refsWidth);
+
+  // Truncate message if needed
+  const needsTruncation = commit.message.length > messageWidth;
   const displayMessage = needsTruncation
-    ? commit.message.slice(0, availableWidth - 3) + '...'
+    ? commit.message.slice(0, messageWidth - 3) + '...'
     : commit.message;
 
   return (
@@ -93,10 +112,10 @@ function CommitRow({
       </Text>
       <Text> </Text>
       <Text dimColor>({dateStr})</Text>
-      {commit.refs && (
+      {displayRefs && (
         <>
           <Text> </Text>
-          <Text color="green">{commit.refs}</Text>
+          <Text color="green">{displayRefs}</Text>
         </>
       )}
     </Box>
