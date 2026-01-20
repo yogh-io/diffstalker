@@ -509,7 +509,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const Separator = () => <Text dimColor>{'─'.repeat(terminalWidth)}</Text>;
 
   return (
-    <Box flexDirection="column" height={terminalHeight}>
+    <Box flexDirection="column" height={terminalHeight} width={terminalWidth}>
       <Box height={headerHeight} width={terminalWidth}>
         <Header
           repoPath={repoPath}
@@ -523,7 +523,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       </Box>
       <Separator />
 
-      <Box flexDirection="column" height={topPaneHeight} overflowY="hidden">
+      <Box flexDirection="column" height={topPaneHeight} width={terminalWidth} overflowY="hidden">
         {/* Top pane: List content based on mode */}
         {(bottomTab === 'diff' || bottomTab === 'commit') && (
           <>
@@ -596,23 +596,25 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
       <Separator />
 
-      <Box flexDirection="column" height={bottomPaneHeight} overflowY="hidden">
+      <Box flexDirection="column" height={bottomPaneHeight} width={terminalWidth} overflowY="hidden">
         {/* Bottom pane: Details/Diff content based on mode */}
-        <Box justifyContent="space-between">
+        <Box width={terminalWidth}>
           <Text bold color={currentPane !== 'files' && currentPane !== 'history' && currentPane !== 'compare' ? 'cyan' : undefined}>
             {bottomTab === 'commit' ? 'COMMIT' : 'DIFF'}
           </Text>
-          {selectedFile && bottomTab === 'diff' && <Text dimColor>{shortenPath(selectedFile.path, terminalWidth - 10)}</Text>}
-          {bottomTab === 'history' && historySelectedCommit && (
-            <Text dimColor>{historySelectedCommit.shortHash} - {historySelectedCommit.message.slice(0, 50)}</Text>
-          )}
-          {bottomTab === 'compare' && compareListSelection && (
-            <Text dimColor>
-              {compareListSelection.type === 'commit'
-                ? `${compareDiff?.commits[compareListSelection.index]?.shortHash ?? ''} - ${compareDiff?.commits[compareListSelection.index]?.message.slice(0, 40) ?? ''}`
-                : shortenPath(compareDiff?.files[compareListSelection.index]?.path ?? '', terminalWidth - 10)}
-            </Text>
-          )}
+          <Box flexGrow={1} justifyContent="flex-end">
+            {selectedFile && bottomTab === 'diff' && <Text dimColor>{shortenPath(selectedFile.path, terminalWidth - 10)}</Text>}
+            {bottomTab === 'history' && historySelectedCommit && (
+              <Text dimColor>{historySelectedCommit.shortHash} - {historySelectedCommit.message.slice(0, 50)}</Text>
+            )}
+            {bottomTab === 'compare' && compareListSelection && (
+              <Text dimColor>
+                {compareListSelection.type === 'commit'
+                  ? `${compareDiff?.commits[compareListSelection.index]?.shortHash ?? ''} - ${compareDiff?.commits[compareListSelection.index]?.message.slice(0, 40) ?? ''}`
+                  : shortenPath(compareDiff?.files[compareListSelection.index]?.path ?? '', terminalWidth - 10)}
+              </Text>
+            )}
+          </Box>
         </Box>
 
         {bottomTab === 'diff' ? (
