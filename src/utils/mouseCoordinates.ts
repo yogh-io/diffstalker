@@ -12,18 +12,23 @@ export interface PaneBoundaries {
 
 /**
  * Calculate the row boundaries for each pane in the layout.
- * Uses compact layout: Header (1) + sep (1) + staging pane + sep (1) + bottom pane + sep (1) + footer (1)
+ * Layout: Header (headerHeight) + sep (1) + top pane + sep (1) + bottom pane + sep (1) + footer (1)
  */
 export function calculatePaneBoundaries(
   topPaneHeight: number,
   bottomPaneHeight: number,
-  terminalHeight: number
+  terminalHeight: number,
+  headerHeight: number = 1
 ): PaneBoundaries {
-  // Row 1: Header, Row 2: Sep, Row 3: "STAGING AREA" header, Row 4+: FileList content
-  const stagingPaneStart = 3;
-  const fileListEnd = 2 + topPaneHeight; // header + sep + staging pane
-  const separatorRow = fileListEnd + 1; // the separator line between panes
-  const diffPaneStart = fileListEnd + 2; // after staging pane + sep + diff header
+  // Layout (1-indexed rows):
+  // Rows 1 to headerHeight: Header
+  // Row headerHeight+1: Separator
+  // Row headerHeight+2: Top pane header ("STAGING AREA" or "COMMITS")
+  // Rows headerHeight+3 to headerHeight+1+topPaneHeight: Top pane content
+  const stagingPaneStart = headerHeight + 2; // First row of top pane (the header row)
+  const fileListEnd = headerHeight + 1 + topPaneHeight; // Last row of top pane
+  const separatorRow = fileListEnd + 1; // Separator between panes
+  const diffPaneStart = fileListEnd + 2; // First row of bottom pane content
   const diffPaneEnd = diffPaneStart + bottomPaneHeight - 1;
   const footerRow = terminalHeight;
 

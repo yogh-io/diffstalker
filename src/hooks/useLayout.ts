@@ -112,9 +112,11 @@ export function useLayout(
   const splitRatio = effectiveSplitRatio;
 
   // Calculate pane boundaries for mouse handling
+  // extraOverhead = headerHeight - 1, so headerHeight = extraOverhead + 1
+  const headerHeight = extraOverhead + 1;
   const paneBoundaries = useMemo(
-    () => calculatePaneBoundaries(topPaneHeight, bottomPaneHeight, terminalHeight),
-    [topPaneHeight, bottomPaneHeight, terminalHeight]
+    () => calculatePaneBoundaries(topPaneHeight, bottomPaneHeight, terminalHeight, headerHeight),
+    [topPaneHeight, bottomPaneHeight, terminalHeight, headerHeight]
   );
 
   // Scroll state
