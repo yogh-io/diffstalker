@@ -2,10 +2,10 @@
 
 Keep your changes visible. A terminal-based git UI designed to run on a secondary monitor, automatically tracking whichever repository you're working in.
 
-![diffstalker diff view](assets/diff.png)
+![diffstalker diff view](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/diff.png)
 *Stage files and review changes with word-level diff highlighting.*
 
-![diffstalker history view](assets/history.png)
+![diffstalker history view](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/history.png)
 *Browse commit history and inspect past changes.*
 
 ## Why diffstalker?
