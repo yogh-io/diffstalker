@@ -1,25 +1,13 @@
 import { FileEntry } from '../git/status.js';
+import { getFileListSectionCounts } from './fileCategories.js';
 
 export interface PaneHeights {
   topPaneHeight: number;
   bottomPaneHeight: number;
 }
 
-/**
- * Get file counts for the 3 FileList sections.
- * This is the single source of truth for how files are categorized.
- * Order: Modified → Untracked → Staged (matches FileList.tsx)
- */
-export function getFileListSectionCounts(files: FileEntry[]): {
-  modifiedCount: number;
-  untrackedCount: number;
-  stagedCount: number;
-} {
-  const modifiedCount = files.filter((f) => !f.staged && f.status !== 'untracked').length;
-  const untrackedCount = files.filter((f) => !f.staged && f.status === 'untracked').length;
-  const stagedCount = files.filter((f) => f.staged).length;
-  return { modifiedCount, untrackedCount, stagedCount };
-}
+// Re-export for backwards compatibility
+export { getFileListSectionCounts } from './fileCategories.js';
 
 /**
  * Calculate total rows for the FileList component.

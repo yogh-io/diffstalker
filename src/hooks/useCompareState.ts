@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { CompareDiff } from '../git/diff.js';
-import { CompareListSelection, getCompareItemIndexFromRow } from '../components/CompareListView.js';
-import { getFileScrollOffset, getCompareDiffTotalRows } from '../components/CompareView.js';
+import { CompareListSelection } from '../components/CompareListView.js';
+import {
+  getCompareItemIndexFromRow,
+  getFileScrollOffset,
+  getCompareDiffTotalRows,
+} from '../utils/rowCalculations.js';
 
 interface UseCompareStateProps {
   repoPath: string;

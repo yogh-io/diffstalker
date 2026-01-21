@@ -4,7 +4,7 @@ import * as path from 'node:path';
 
 export type FileStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed' | 'copied';
 
-export interface FileStats {
+interface FileStats {
   insertions: number;
   deletions: number;
 }

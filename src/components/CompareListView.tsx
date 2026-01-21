@@ -4,6 +4,10 @@ import { CommitInfo } from '../git/status.js';
 import { CompareFileDiff } from '../git/diff.js';
 import { shortenPath } from '../utils/formatPath.js';
 import { formatDate } from '../utils/formatDate.js';
+import { formatCommitDisplay } from '../utils/commitFormat.js';
+
+// Re-export from utils for backwards compatibility
+export { getCompareItemIndexFromRow } from '../utils/rowCalculations.js';
 
 export type CompareListSelectionType = 'commit' | 'file';
 
@@ -45,31 +49,13 @@ function CommitRow({
   const dateStr = formatDate(commit.date);
   // Fixed parts: indent(2) + hash(7) + spaces(4) + date + parens(2)
   const baseWidth = 2 + 7 + 4 + dateStr.length + 2;
-
-  // Calculate space available for message and refs combined
   const remainingWidth = width - baseWidth;
 
-  // Allocate space: prioritize message (min 20 chars), rest for refs
-  const minMessageWidth = 20;
-  const maxRefsWidth = Math.max(0, remainingWidth - minMessageWidth - 1); // -1 for space before refs
-
-  // Truncate refs if needed
-  let displayRefs = commit.refs || '';
-  if (displayRefs.length > maxRefsWidth && maxRefsWidth > 3) {
-    displayRefs = displayRefs.slice(0, maxRefsWidth - 3) + '...';
-  } else if (displayRefs.length > maxRefsWidth) {
-    displayRefs = ''; // Not enough space for refs
-  }
-
-  // Calculate message width (remaining space after refs)
-  const refsWidth = displayRefs ? displayRefs.length + 1 : 0; // +1 for space
-  const messageWidth = Math.max(minMessageWidth, remainingWidth - refsWidth);
-
-  // Truncate message if needed
-  const needsTruncation = commit.message.length > messageWidth;
-  const displayMessage = needsTruncation
-    ? commit.message.slice(0, messageWidth - 3) + '...'
-    : commit.message;
+  const { displayMessage, displayRefs } = formatCommitDisplay(
+    commit.message,
+    commit.refs,
+    remainingWidth
+  );
 
   return (
     <Box>
@@ -289,56 +275,4 @@ export function getCompareListTotalRows(
     if (filesExpanded) count += files.length;
   }
   return count;
-}
-
-/**
- * Map a visual row index (from click) to the actual compareSelectedIndex.
- * Returns -1 if the row is a header or spacer (not selectable).
- * Visual structure (with both sections expanded):
- *   Row 0: "▼ Commits" header
- *   Rows 1..N: commits
- *   Row N+1: spacer (if both sections exist)
- *   Row N+2: "▼ Files" header
- *   Rows N+3..: files
- */
-export function getCompareItemIndexFromRow(
-  row: number,
-  commitCount: number,
-  fileCount: number,
-  commitsExpanded: boolean = true,
-  filesExpanded: boolean = true
-): number {
-  let currentRow = 0;
-
-  // Commits section
-  if (commitCount > 0) {
-    if (row === currentRow) return -1; // "▼ Commits" header
-    currentRow++;
-
-    if (commitsExpanded) {
-      if (row < currentRow + commitCount) {
-        return row - currentRow; // Commit index
-      }
-      currentRow += commitCount;
-    }
-  }
-
-  // Files section
-  if (fileCount > 0) {
-    if (commitCount > 0) {
-      if (row === currentRow) return -1; // Spacer
-      currentRow++;
-    }
-
-    if (row === currentRow) return -1; // "▼ Files" header
-    currentRow++;
-
-    if (filesExpanded) {
-      if (row < currentRow + fileCount) {
-        return commitCount + (row - currentRow); // File index (offset by commit count)
-      }
-    }
-  }
-
-  return -1; // Out of bounds
 }

@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { simpleGit } from 'simple-git';
 import { CommitInfo } from './status.js';
 
@@ -189,15 +189,6 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
 
 export async function getStagedDiff(repoPath: string): Promise<DiffResult> {
   return getDiff(repoPath, undefined, true);
-}
-
-export function spawnPager(pager: string, diff: string): void {
-  const [cmd, ...args] = pager.split(' ');
-  const proc = spawn(cmd, args, {
-    stdio: ['pipe', 'inherit', 'inherit'],
-  });
-  proc.stdin.write(diff);
-  proc.stdin.end();
 }
 
 /**
@@ -410,37 +401,6 @@ export async function getCommitDiff(repoPath: string, hash: string): Promise<Dif
     return { raw, lines };
   } catch {
     return { raw: '', lines: [] };
-  }
-}
-
-/**
- * Get commits between a base ref and HEAD.
- * Uses merge-base for three-dot semantics (commits on current branch only).
- */
-export async function getCommitsBetweenRefs(
-  repoPath: string,
-  baseRef: string
-): Promise<CommitInfo[]> {
-  const git = simpleGit(repoPath);
-
-  try {
-    // Get merge-base for proper three-dot diff semantics
-    const mergeBase = await git.raw(['merge-base', baseRef, 'HEAD']);
-    const base = mergeBase.trim();
-
-    // Get commits from merge-base to HEAD
-    const log = await git.log({ from: base, to: 'HEAD' });
-
-    return log.all.map((entry) => ({
-      hash: entry.hash,
-      shortHash: entry.hash.slice(0, 7),
-      message: entry.message.split('\n')[0],
-      author: entry.author_name,
-      date: new Date(entry.date),
-      refs: entry.refs || '',
-    }));
-  } catch {
-    return [];
   }
 }
 

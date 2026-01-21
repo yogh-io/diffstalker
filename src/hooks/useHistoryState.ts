@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { CommitInfo, getCommitHistory } from '../git/status.js';
 import { DiffResult } from '../git/diff.js';
-import { getHistoryDiffTotalRows } from '../components/HistoryDiffView.js';
-import { getHistoryTotalRows } from '../components/HistoryView.js';
+import { getHistoryDiffTotalRows, getHistoryTotalRows } from '../utils/rowCalculations.js';
 
 interface UseHistoryStateProps {
   repoPath: string;

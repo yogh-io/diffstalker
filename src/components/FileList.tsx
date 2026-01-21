@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { FileEntry, FileStatus } from '../git/status.js';
 import { shortenPath } from '../utils/formatPath.js';
+import { categorizeFiles } from '../utils/fileCategories.js';
 
 interface FileListProps {
   files: FileEntry[];
@@ -135,9 +136,11 @@ export function FileList({
   // Calculate max path length: width minus prefix chars (▸/space + [+]/[-] + status + spaces = ~10)
   const maxPathLength = width - 10;
   // Split files into 3 categories: Modified, Untracked, Staged
-  const modifiedFiles = files.filter((f) => !f.staged && f.status !== 'untracked');
-  const untrackedFiles = files.filter((f) => !f.staged && f.status === 'untracked');
-  const stagedFiles = files.filter((f) => f.staged);
+  const {
+    modified: modifiedFiles,
+    untracked: untrackedFiles,
+    staged: stagedFiles,
+  } = categorizeFiles(files);
 
   if (files.length === 0) {
     return (
@@ -220,12 +223,8 @@ export function FileList({
 }
 
 export function getFileAtIndex(files: FileEntry[], index: number): FileEntry | null {
-  // Order: Modified → Untracked → Staged
-  const modifiedFiles = files.filter((f) => !f.staged && f.status !== 'untracked');
-  const untrackedFiles = files.filter((f) => !f.staged && f.status === 'untracked');
-  const stagedFiles = files.filter((f) => f.staged);
-  const allFiles = [...modifiedFiles, ...untrackedFiles, ...stagedFiles];
-  return allFiles[index] ?? null;
+  const { ordered } = categorizeFiles(files);
+  return ordered[index] ?? null;
 }
 
 export function getTotalFileCount(files: FileEntry[]): number {

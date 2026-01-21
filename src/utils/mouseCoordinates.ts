@@ -1,5 +1,6 @@
 import { FileEntry } from '../git/status.js';
 import { BottomTab } from '../hooks/useKeymap.js';
+import { categorizeFiles } from './fileCategories.js';
 
 export interface PaneBoundaries {
   stagingPaneStart: number;
@@ -61,9 +62,11 @@ export function getClickedFileIndex(
   const listRow = y - 4 + scrollOffset;
 
   // Split files into 3 categories (same order as FileList)
-  const modifiedFiles = files.filter((f) => !f.staged && f.status !== 'untracked');
-  const untrackedFiles = files.filter((f) => !f.staged && f.status === 'untracked');
-  const stagedFiles = files.filter((f) => f.staged);
+  const {
+    modified: modifiedFiles,
+    untracked: untrackedFiles,
+    staged: stagedFiles,
+  } = categorizeFiles(files);
 
   // Build row map (same structure as FileList builds)
   // Each section: header (1) + files (n)

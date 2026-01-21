@@ -5,6 +5,7 @@ import fastDiff from 'fast-diff';
 import { DiffResult, DiffLine } from '../git/diff.js';
 import { Theme, getTheme, ThemeName } from '../themes.js';
 import { ScrollableList } from './ScrollableList.js';
+import { isDisplayableDiffLine } from '../utils/diffFilters.js';
 
 // Create emphasize instance with common languages
 const emphasize = createEmphasize(common);
@@ -450,20 +451,7 @@ export function DiffView({
     return (
       diff?.lines
         .map((line, originalIndex) => ({ line, originalIndex }))
-        .filter(({ line }) => {
-          if (line.type !== 'header') return true;
-          const content = line.content;
-          // These headers are skipped in rendering
-          if (
-            content.startsWith('index ') ||
-            content.startsWith('--- ') ||
-            content.startsWith('+++ ') ||
-            content.startsWith('similarity index')
-          ) {
-            return false;
-          }
-          return true;
-        }) ?? []
+        .filter(({ line }) => isDisplayableDiffLine(line)) ?? []
     );
   }, [diff]);
 

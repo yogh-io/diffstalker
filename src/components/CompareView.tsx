@@ -1,8 +1,16 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { CompareDiff, DiffResult, DiffLine } from '../git/diff.js';
+import { CompareDiff } from '../git/diff.js';
 import { DiffView } from './DiffView.js';
 import { ThemeName } from '../themes.js';
+import { buildCombinedCompareDiff } from '../utils/rowCalculations.js';
+
+// Re-export from utils for backwards compatibility
+export {
+  buildCombinedCompareDiff,
+  getCompareDiffTotalRows,
+  getFileScrollOffset,
+} from '../utils/rowCalculations.js';
 
 interface CompareViewProps {
   compareDiff: CompareDiff | null;
@@ -11,92 +19,6 @@ interface CompareViewProps {
   scrollOffset: number;
   maxHeight: number;
   theme?: ThemeName;
-}
-
-/**
- * Build a combined DiffResult from all compare files.
- * This is the single source of truth for compare diff content.
- */
-export function buildCombinedCompareDiff(compareDiff: CompareDiff | null): DiffResult {
-  if (!compareDiff || compareDiff.files.length === 0) {
-    return { raw: '', lines: [] };
-  }
-
-  const allLines: DiffLine[] = [];
-  const rawParts: string[] = [];
-
-  for (const file of compareDiff.files) {
-    // Include all lines from each file's diff (including headers)
-    for (const line of file.diff.lines) {
-      allLines.push(line);
-    }
-    rawParts.push(file.diff.raw);
-  }
-
-  return {
-    raw: rawParts.join('\n'),
-    lines: allLines,
-  };
-}
-
-/**
- * Calculate the total number of displayable lines in the compare diff.
- * This accounts for header filtering done by DiffView.
- */
-export function getCompareDiffTotalRows(compareDiff: CompareDiff | null): number {
-  const combined = buildCombinedCompareDiff(compareDiff);
-  // DiffView filters out certain headers (index, ---, +++, similarity index)
-  return combined.lines.filter((line) => {
-    if (line.type !== 'header') return true;
-    const content = line.content;
-    if (
-      content.startsWith('index ') ||
-      content.startsWith('--- ') ||
-      content.startsWith('+++ ') ||
-      content.startsWith('similarity index')
-    ) {
-      return false;
-    }
-    return true;
-  }).length;
-}
-
-/**
- * Calculate the row offset to scroll to a specific file in the compare diff.
- * Returns the row index where the file's diff --git header starts.
- */
-export function getFileScrollOffset(compareDiff: CompareDiff | null, fileIndex: number): number {
-  if (!compareDiff || fileIndex < 0 || fileIndex >= compareDiff.files.length) return 0;
-
-  const combined = buildCombinedCompareDiff(compareDiff);
-  let displayableRow = 0;
-  let currentFileIndex = 0;
-
-  for (const line of combined.lines) {
-    // Check if this is a file boundary
-    if (line.type === 'header' && line.content.startsWith('diff --git')) {
-      if (currentFileIndex === fileIndex) {
-        return displayableRow;
-      }
-      currentFileIndex++;
-    }
-
-    // Skip lines that DiffView filters out
-    if (line.type === 'header') {
-      const content = line.content;
-      if (
-        content.startsWith('index ') ||
-        content.startsWith('--- ') ||
-        content.startsWith('+++ ') ||
-        content.startsWith('similarity index')
-      ) {
-        continue;
-      }
-    }
-    displayableRow++;
-  }
-
-  return 0;
 }
 
 export function CompareView({

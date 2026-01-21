@@ -1,9 +1,17 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { CommitInfo } from '../git/status.js';
-import { DiffResult, DiffLine } from '../git/diff.js';
+import { DiffResult } from '../git/diff.js';
 import { DiffView } from './DiffView.js';
 import { ThemeName } from '../themes.js';
+import { buildHistoryDiffRows } from '../utils/rowCalculations.js';
+import { isDisplayableDiffLine } from '../utils/diffFilters.js';
+
+// Re-export from utils for backwards compatibility
+export { buildHistoryDiffRows, getHistoryDiffTotalRows } from '../utils/rowCalculations.js';
+
+// Re-export type for external use
+export type { HistoryDiffRow } from '../utils/rowCalculations.js';
 
 interface HistoryDiffViewProps {
   commit: CommitInfo | null;
@@ -11,98 +19,6 @@ interface HistoryDiffViewProps {
   scrollOffset: number;
   maxHeight: number;
   theme?: ThemeName;
-}
-
-interface HistoryDiffRow {
-  type: 'commit-header' | 'commit-message' | 'spacer' | 'diff-line';
-  content?: string;
-  diffLine?: DiffLine;
-}
-
-function formatDate(date: Date): string {
-  return date.toLocaleString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-/** Filter out redundant headers that DiffView also skips */
-function isDisplayableDiffLine(line: DiffLine): boolean {
-  if (line.type !== 'header') return true;
-  const content = line.content;
-  return !(
-    content.startsWith('index ') ||
-    content.startsWith('--- ') ||
-    content.startsWith('+++ ') ||
-    content.startsWith('similarity index')
-  );
-}
-
-/**
- * Build all displayable rows for the history diff view.
- * This includes commit metadata, message, and diff lines.
- * Single source of truth for both rendering and row counting.
- */
-export function buildHistoryDiffRows(
-  commit: CommitInfo | null,
-  diff: DiffResult | null
-): HistoryDiffRow[] {
-  const rows: HistoryDiffRow[] = [];
-
-  if (commit) {
-    // Commit header: hash, author, date
-    rows.push({
-      type: 'commit-header',
-      content: `commit ${commit.hash}`,
-    });
-    rows.push({
-      type: 'commit-header',
-      content: `Author: ${commit.author}`,
-    });
-    rows.push({
-      type: 'commit-header',
-      content: `Date:   ${formatDate(commit.date)}`,
-    });
-
-    // Blank line before message
-    rows.push({ type: 'spacer' });
-
-    // Commit message (can be multi-line)
-    const messageLines = commit.message.split('\n');
-    for (const line of messageLines) {
-      rows.push({
-        type: 'commit-message',
-        content: `    ${line}`,
-      });
-    }
-
-    // Blank line after message, before diff
-    rows.push({ type: 'spacer' });
-  }
-
-  // Diff lines (filter same as DiffView)
-  if (diff) {
-    for (const line of diff.lines) {
-      if (isDisplayableDiffLine(line)) {
-        rows.push({ type: 'diff-line', diffLine: line });
-      }
-    }
-  }
-
-  return rows;
-}
-
-/**
- * Get total displayable rows for scroll calculation.
- */
-export function getHistoryDiffTotalRows(
-  commit: CommitInfo | null,
-  diff: DiffResult | null
-): number {
-  return buildHistoryDiffRows(commit, diff).length;
 }
 
 export function HistoryDiffView({

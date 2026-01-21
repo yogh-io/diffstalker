@@ -97,7 +97,7 @@ export function ensureTargetDir(targetFile: string): void {
   }
 }
 
-export function shortenPath(fullPath: string): string {
+export function abbreviateHomePath(fullPath: string): string {
   const home = os.homedir();
   if (fullPath.startsWith(home)) {
     return '~' + fullPath.slice(home.length);

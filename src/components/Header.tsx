@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { BranchInfo } from '../git/status.js';
-import { shortenPath } from '../config.js';
+import { abbreviateHomePath } from '../config.js';
 import { WatcherState } from '../hooks/useWatcher.js';
 
 /**
@@ -18,7 +18,7 @@ export function getHeaderHeight(
 ): number {
   if (!repoPath) return 1;
 
-  const displayPath = shortenPath(repoPath);
+  const displayPath = abbreviateHomePath(repoPath);
   const isNotGitRepo = error === 'Not a git repository';
 
   // Calculate branch width
@@ -38,7 +38,7 @@ export function getHeaderHeight(
 
   // Check if follow indicator causes wrap
   if (watcherState?.enabled && watcherState.sourceFile) {
-    const followPath = shortenPath(watcherState.sourceFile);
+    const followPath = abbreviateHomePath(watcherState.sourceFile);
     const fullFollow = ` (follow: ${followPath})`;
     const availableOneLine = width - leftWidth - branchWidth - 4;
 
@@ -104,7 +104,7 @@ export function Header({
         </Box>
         {debug && watcherState && watcherState.enabled && watcherState.sourceFile && (
           <Box>
-            <Text dimColor>[debug] source: {shortenPath(watcherState.sourceFile)}</Text>
+            <Text dimColor>[debug] source: {abbreviateHomePath(watcherState.sourceFile)}</Text>
             {watcherState.rawContent && <Text dimColor> | raw: "{watcherState.rawContent}"</Text>}
           </Box>
         )}
@@ -112,7 +112,7 @@ export function Header({
     );
   }
 
-  const displayPath = shortenPath(repoPath);
+  const displayPath = abbreviateHomePath(repoPath);
   const isNotGitRepo = error === 'Not a git repository';
 
   const formatTime = (date: Date | null): string => {
@@ -142,7 +142,7 @@ export function Header({
   let wrapBranch = false;
 
   if (watcherState?.enabled && watcherState.sourceFile) {
-    const followPath = shortenPath(watcherState.sourceFile);
+    const followPath = abbreviateHomePath(watcherState.sourceFile);
     const fullFollow = ` (follow: ${followPath})`;
 
     const availableOneLine = width - leftWidth - branchWidth - 4; // 4 for spacing
@@ -197,7 +197,7 @@ export function Header({
 
       {debug && watcherState && watcherState.enabled && watcherState.sourceFile && (
         <Box>
-          <Text dimColor>[debug] source: {shortenPath(watcherState.sourceFile)}</Text>
+          <Text dimColor>[debug] source: {abbreviateHomePath(watcherState.sourceFile)}</Text>
           <Text dimColor> | raw: "{watcherState.rawContent}"</Text>
           {watcherState.lastUpdate && (
             <Text dimColor> | updated: {formatTime(watcherState.lastUpdate)}</Text>

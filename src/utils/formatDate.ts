@@ -21,3 +21,18 @@ export function formatDate(date: Date): string {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 }
+
+/**
+ * Format a date as an absolute date/time string.
+ * Used for commit details where exact timestamp is needed.
+ * Example: "Jan 15, 2024, 10:30 AM"
+ */
+export function formatDateAbsolute(date: Date): string {
+  return date.toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}

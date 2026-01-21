@@ -6,6 +6,7 @@ import { FileList } from './FileList.js';
 import { HistoryView } from './HistoryView.js';
 import { CompareListView, CompareListSelection } from './CompareListView.js';
 import { BottomTab, Pane } from '../hooks/useKeymap.js';
+import { categorizeFiles } from '../utils/fileCategories.js';
 
 interface TopPaneProps {
   bottomTab: BottomTab;
@@ -54,8 +55,9 @@ export function TopPane({
   compareScrollOffset,
   includeUncommitted,
 }: TopPaneProps): React.ReactElement {
-  const modifiedCount = files.filter((f) => !f.staged && f.status !== 'untracked').length;
-  const untrackedCount = files.filter((f) => f.status === 'untracked').length;
+  const { modified, untracked } = categorizeFiles(files);
+  const modifiedCount = modified.length;
+  const untrackedCount = untracked.length;
 
   return (
     <Box flexDirection="column" height={topPaneHeight} width={terminalWidth} overflowY="hidden">
