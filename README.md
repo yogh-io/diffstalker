@@ -88,6 +88,8 @@ vim.api.nvim_create_autocmd({"BufEnter"}, {
 echo "/path/to/repo" > ~/.cache/diffstalker/target
 ```
 
+The file-based approach is intentionally simple. IDE plugins, window manager hooks, project switchers, git hooks—if it can write to a file, it can drive diffstalker. Get creative.
+
 ## Views
 
 | View | Key | Purpose |
