@@ -113,10 +113,7 @@ export function HistoryDiffView({
   theme = 'dark',
 }: HistoryDiffViewProps): React.ReactElement {
   // Build rows using shared function
-  const allRows = useMemo(
-    () => buildHistoryDiffRows(commit, diff),
-    [commit, diff]
-  );
+  const allRows = useMemo(() => buildHistoryDiffRows(commit, diff), [commit, diff]);
 
   // Find where diff starts (after commit metadata)
   const diffStartIndex = useMemo(() => {
@@ -146,17 +143,31 @@ export function HistoryDiffView({
         {visibleRows.map((row, i) => {
           const key = `row-${scrollOffset + i}`;
           if (row.type === 'commit-header') {
-            return <Box key={key}><Text color="yellow">{row.content}</Text></Box>;
+            return (
+              <Box key={key}>
+                <Text color="yellow">{row.content}</Text>
+              </Box>
+            );
           }
           if (row.type === 'commit-message') {
-            return <Box key={key}><Text>{row.content}</Text></Box>;
+            return (
+              <Box key={key}>
+                <Text>{row.content}</Text>
+              </Box>
+            );
           }
           if (row.type === 'spacer') {
-            return <Box key={key}><Text> </Text></Box>;
+            return (
+              <Box key={key}>
+                <Text> </Text>
+              </Box>
+            );
           }
           return null;
         })}
-        <Box><Text dimColor>No changes in this commit</Text></Box>
+        <Box>
+          <Text dimColor>No changes in this commit</Text>
+        </Box>
       </Box>
     );
   }
@@ -181,7 +192,7 @@ export function HistoryDiffView({
   }
 
   // Mixed view: some header rows visible, then diff
-  const headerRowsToShow = visibleRows.filter(r => r.type !== 'diff-line');
+  const headerRowsToShow = visibleRows.filter((r) => r.type !== 'diff-line');
   const diffRowsVisible = maxHeight - headerRowsToShow.length;
 
   return (
@@ -190,13 +201,25 @@ export function HistoryDiffView({
         const key = `row-${scrollOffset + i}`;
 
         if (row.type === 'commit-header') {
-          return <Box key={key}><Text color="yellow">{row.content}</Text></Box>;
+          return (
+            <Box key={key}>
+              <Text color="yellow">{row.content}</Text>
+            </Box>
+          );
         }
         if (row.type === 'commit-message') {
-          return <Box key={key}><Text>{row.content}</Text></Box>;
+          return (
+            <Box key={key}>
+              <Text>{row.content}</Text>
+            </Box>
+          );
         }
         if (row.type === 'spacer') {
-          return <Box key={key}><Text> </Text></Box>;
+          return (
+            <Box key={key}>
+              <Text> </Text>
+            </Box>
+          );
         }
 
         // For diff lines, we've reached the diff section

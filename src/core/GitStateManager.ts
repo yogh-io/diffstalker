@@ -64,7 +64,7 @@ type GitStateEventMap = {
   'compare-state-change': [CompareState];
   'history-state-change': [HistoryState];
   'compare-selection-change': [CompareSelectionState];
-  'error': [string];
+  error: [string];
 };
 
 /**
@@ -248,7 +248,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
 
       if (currentSelectedFile) {
         const currentFile = newStatus.files.find(
-          f => f.path === currentSelectedFile.path && f.staged === currentSelectedFile.staged
+          (f) => f.path === currentSelectedFile.path && f.staged === currentSelectedFile.staged
         );
         if (currentFile) {
           if (currentFile.status === 'untracked') {
@@ -319,7 +319,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
       this.updateState({
         status: {
           ...currentStatus,
-          files: currentStatus.files.map(f =>
+          files: currentStatus.files.map((f) =>
             f.path === file.path && !f.staged ? { ...f, staged: true } : f
           ),
         },
@@ -347,7 +347,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
       this.updateState({
         status: {
           ...currentStatus,
-          files: currentStatus.files.map(f =>
+          files: currentStatus.files.map((f) =>
             f.path === file.path && f.staged ? { ...f, staged: false } : f
           ),
         },
@@ -441,7 +441,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
         let base = this._compareState.compareBaseBranch;
         if (!base) {
           // Try cached value first, then fall back to default detection
-          base = getCachedBaseBranch(this.repoPath) ?? await getDefaultBaseBranch(this.repoPath);
+          base = getCachedBaseBranch(this.repoPath) ?? (await getDefaultBaseBranch(this.repoPath));
           this.updateCompareState({ compareBaseBranch: base });
         }
         if (base) {

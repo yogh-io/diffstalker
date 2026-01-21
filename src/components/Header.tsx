@@ -67,7 +67,9 @@ interface HeaderProps {
 function BranchDisplay({ branch }: { branch: BranchInfo }): React.ReactElement {
   return (
     <Box>
-      <Text color="green" bold>{branch.current}</Text>
+      <Text color="green" bold>
+        {branch.current}
+      </Text>
       {branch.tracking && (
         <>
           <Text dimColor> → </Text>
@@ -84,7 +86,15 @@ function BranchDisplay({ branch }: { branch: BranchInfo }): React.ReactElement {
   );
 }
 
-export function Header({ repoPath, branch, isLoading, error, debug, watcherState, width = 80 }: HeaderProps): React.ReactElement {
+export function Header({
+  repoPath,
+  branch,
+  isLoading,
+  error,
+  debug,
+  watcherState,
+  width = 80,
+}: HeaderProps): React.ReactElement {
   if (!repoPath) {
     return (
       <Box flexDirection="column">
@@ -95,9 +105,7 @@ export function Header({ repoPath, branch, isLoading, error, debug, watcherState
         {debug && watcherState && watcherState.enabled && watcherState.sourceFile && (
           <Box>
             <Text dimColor>[debug] source: {shortenPath(watcherState.sourceFile)}</Text>
-            {watcherState.rawContent && (
-              <Text dimColor> | raw: "{watcherState.rawContent}"</Text>
-            )}
+            {watcherState.rawContent && <Text dimColor> | raw: "{watcherState.rawContent}"</Text>}
           </Box>
         )}
       </Box>
@@ -160,22 +168,24 @@ export function Header({ repoPath, branch, isLoading, error, debug, watcherState
         <>
           <Box justifyContent="space-between">
             <Box>
-              <Text bold color="cyan">{displayPath}</Text>
+              <Text bold color="cyan">
+                {displayPath}
+              </Text>
               {isLoading && <Text color="yellow"> ⟳</Text>}
               {isNotGitRepo && <Text color="yellow"> (not a git repository)</Text>}
               {error && !isNotGitRepo && <Text color="red"> ({error})</Text>}
               {followText && <Text dimColor>{followText}</Text>}
             </Box>
           </Box>
-          <Box justifyContent="flex-end">
-            {branch && <BranchDisplay branch={branch} />}
-          </Box>
+          <Box justifyContent="flex-end">{branch && <BranchDisplay branch={branch} />}</Box>
         </>
       ) : (
         // Single-line layout
         <Box justifyContent="space-between">
           <Box>
-            <Text bold color="cyan">{displayPath}</Text>
+            <Text bold color="cyan">
+              {displayPath}
+            </Text>
             {isLoading && <Text color="yellow"> ⟳</Text>}
             {isNotGitRepo && <Text color="yellow"> (not a git repository)</Text>}
             {error && !isNotGitRepo && <Text color="red"> ({error})</Text>}

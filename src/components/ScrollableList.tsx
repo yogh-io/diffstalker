@@ -76,9 +76,7 @@ export function ScrollableList<T>({
     <Box flexDirection="column">
       {header}
 
-      {showIndicators && hasPrevious && (
-        <Text dimColor>↑ {aboveCount} more above</Text>
-      )}
+      {showIndicators && hasPrevious && <Text dimColor>↑ {aboveCount} more above</Text>}
 
       {visibleItems.map((item, i) => (
         <Box key={`${scrollOffset}-${getKey(item, scrollOffset + i)}`}>
@@ -86,9 +84,7 @@ export function ScrollableList<T>({
         </Box>
       ))}
 
-      {showIndicators && hasMore && (
-        <Text dimColor>↓ {belowCount} more below</Text>
-      )}
+      {showIndicators && hasMore && <Text dimColor>↓ {belowCount} more below</Text>}
     </Box>
   );
 }

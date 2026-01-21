@@ -48,7 +48,7 @@ export function useCommitFlow(options: UseCommitFlowOptions): UseCommitFlowResul
   // Load HEAD message when amend is toggled
   useEffect(() => {
     if (amend) {
-      getHeadMessage().then(msg => {
+      getHeadMessage().then((msg) => {
         if (msg && !message) {
           setMessage(msg);
         }
@@ -57,7 +57,7 @@ export function useCommitFlow(options: UseCommitFlowOptions): UseCommitFlowResul
   }, [amend, getHeadMessage]);
 
   const toggleAmend = useCallback(() => {
-    setAmend(prev => !prev);
+    setAmend((prev) => !prev);
   }, []);
 
   const handleGenerate = useCallback(async () => {

@@ -73,7 +73,7 @@ function CommitRow({
 
   return (
     <Box>
-      <Text>  </Text>
+      <Text> </Text>
       <Text color="yellow">{commit.shortHash}</Text>
       <Text> </Text>
       <Text
@@ -128,8 +128,12 @@ function FileRow({
 
   return (
     <Box>
-      <Text>  </Text>
-      {isUncommitted && <Text color="magenta" bold>*</Text>}
+      <Text> </Text>
+      {isUncommitted && (
+        <Text color="magenta" bold>
+          *
+        </Text>
+      )}
       <Text color={isUncommitted ? 'magenta' : statusColors[file.status]} bold>
         {statusChars[file.status]}
       </Text>
@@ -138,14 +142,20 @@ function FileRow({
         color={isSelected && isActive ? 'cyan' : isUncommitted ? 'magenta' : undefined}
         inverse={isSelected && isActive}
       >
-        {' '}{shortenPath(file.path, availableForPath)}
+        {' '}
+        {shortenPath(file.path, availableForPath)}
       </Text>
       <Text dimColor> (</Text>
       <Text color="green">+{file.additions}</Text>
       <Text dimColor> </Text>
       <Text color="red">-{file.deletions}</Text>
       <Text dimColor>)</Text>
-      {isUncommitted && <Text color="magenta" dimColor> [uncommitted]</Text>}
+      {isUncommitted && (
+        <Text color="magenta" dimColor>
+          {' '}
+          [uncommitted]
+        </Text>
+      )}
     </Box>
   );
 }
@@ -229,7 +239,8 @@ export function CompareListView({
         }
 
         if (row.type === 'commit' && row.commit !== undefined && row.commitIndex !== undefined) {
-          const isSelected = selectedItem?.type === 'commit' && selectedItem.index === row.commitIndex;
+          const isSelected =
+            selectedItem?.type === 'commit' && selectedItem.index === row.commitIndex;
           return (
             <CommitRow
               key={key}

@@ -1,9 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  parseDiffLine,
-  parseHunkHeader,
-  parseDiffWithLineNumbers,
-} from './diff.js';
+import { parseDiffLine, parseHunkHeader, parseDiffWithLineNumbers } from './diff.js';
 
 describe('parseDiffLine', () => {
   it('parses diff --git header', () => {
@@ -181,9 +177,9 @@ rename from old.ts
 rename to new.ts`;
     const result = parseDiffWithLineNumbers(diff);
 
-    expect(result.filter(l => l.type === 'header')).toHaveLength(4);
-    expect(result.some(l => l.content.includes('rename from'))).toBe(true);
-    expect(result.some(l => l.content.includes('rename to'))).toBe(true);
+    expect(result.filter((l) => l.type === 'header')).toHaveLength(4);
+    expect(result.some((l) => l.content.includes('rename from'))).toBe(true);
+    expect(result.some((l) => l.content.includes('rename to'))).toBe(true);
   });
 
   it('handles multiple hunks', () => {
@@ -197,11 +193,11 @@ rename to new.ts`;
 +z`;
     const result = parseDiffWithLineNumbers(diff);
 
-    const hunks = result.filter(l => l.type === 'hunk');
+    const hunks = result.filter((l) => l.type === 'hunk');
     expect(hunks).toHaveLength(2);
 
     // Second hunk should start at line 10
-    const secondHunkIdx = result.findIndex(l => l.content === '@@ -10,2 +10,2 @@');
+    const secondHunkIdx = result.findIndex((l) => l.content === '@@ -10,2 +10,2 @@');
     expect(result[secondHunkIdx + 1].oldLineNum).toBe(10);
     expect(result[secondHunkIdx + 1].newLineNum).toBe(10);
   });

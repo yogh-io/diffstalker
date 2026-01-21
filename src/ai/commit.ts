@@ -28,23 +28,26 @@ export async function generateCommitMessage(stagedDiff: string): Promise<string>
 
   // Truncate very long diffs to avoid hitting token limits
   const maxDiffLength = 8000;
-  const truncatedDiff = stagedDiff.length > maxDiffLength
-    ? stagedDiff.slice(0, maxDiffLength) + '\n\n... (diff truncated)'
-    : stagedDiff;
+  const truncatedDiff =
+    stagedDiff.length > maxDiffLength
+      ? stagedDiff.slice(0, maxDiffLength) + '\n\n... (diff truncated)'
+      : stagedDiff;
 
   try {
     const response = await client.messages.create({
       model: process.env.DIFFSTALKER_AI_MODEL || 'claude-sonnet-4-20250514',
       max_tokens: 256,
-      messages: [{
-        role: 'user',
-        content: `Generate a concise git commit message for these staged changes. Follow conventional commit format if appropriate. Include a brief subject line (max 50 chars) and optionally a body with more details. Do not include any markdown formatting or code blocks - just the plain commit message text.
+      messages: [
+        {
+          role: 'user',
+          content: `Generate a concise git commit message for these staged changes. Follow conventional commit format if appropriate. Include a brief subject line (max 50 chars) and optionally a body with more details. Do not include any markdown formatting or code blocks - just the plain commit message text.
 
 Staged changes:
 \`\`\`
 ${truncatedDiff}
 \`\`\``,
-      }],
+        },
+      ],
     });
 
     if (response.content[0].type !== 'text') {

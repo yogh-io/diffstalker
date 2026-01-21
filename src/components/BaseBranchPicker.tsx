@@ -26,7 +26,7 @@ export function BaseBranchPicker({
   const filteredCandidates = useMemo(() => {
     if (!inputValue) return candidates;
     const lower = inputValue.toLowerCase();
-    return candidates.filter(c => c.toLowerCase().includes(lower));
+    return candidates.filter((c) => c.toLowerCase().includes(lower));
   }, [candidates, inputValue]);
 
   // Clamp selected index to valid range
@@ -43,14 +43,14 @@ export function BaseBranchPicker({
         onSelect(filteredCandidates[clampedIndex]);
       }
     } else if (key.upArrow) {
-      setSelectedIndex(prev => Math.max(0, prev - 1));
+      setSelectedIndex((prev) => Math.max(0, prev - 1));
     } else if (key.downArrow) {
-      setSelectedIndex(prev => Math.min(filteredCandidates.length - 1, prev + 1));
+      setSelectedIndex((prev) => Math.min(filteredCandidates.length - 1, prev + 1));
     } else if (key.backspace || key.delete) {
-      setInputValue(prev => prev.slice(0, -1));
+      setInputValue((prev) => prev.slice(0, -1));
       setSelectedIndex(0);
     } else if (input && !key.ctrl && !key.meta) {
-      setInputValue(prev => prev + input);
+      setInputValue((prev) => prev + input);
       setSelectedIndex(0);
     }
   });
@@ -71,7 +71,10 @@ export function BaseBranchPicker({
     <Modal x={x} y={y} width={boxWidth} height={boxHeight}>
       <Box borderStyle="round" borderColor="cyan" flexDirection="column" width={boxWidth}>
         <Box justifyContent="center" marginBottom={1}>
-          <Text bold color="cyan"> Select Base Branch </Text>
+          <Text bold color="cyan">
+            {' '}
+            Select Base Branch{' '}
+          </Text>
         </Box>
 
         {/* Text input */}
@@ -91,28 +94,21 @@ export function BaseBranchPicker({
 
               return (
                 <Box key={branch}>
-                  <Text color={isSelected ? 'cyan' : undefined}>
-                    {isSelected ? '▸ ' : '  '}
-                  </Text>
-                  <Text
-                    bold={isSelected}
-                    color={isSelected ? 'cyan' : undefined}
-                  >
+                  <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '▸ ' : '  '}</Text>
+                  <Text bold={isSelected} color={isSelected ? 'cyan' : undefined}>
                     {branch}
                   </Text>
-                  {isCurrent && (
-                    <Text dimColor> (current)</Text>
-                  )}
+                  {isCurrent && <Text dimColor> (current)</Text>}
                 </Box>
               );
             })
           ) : inputValue ? (
             <Box>
-              <Text dimColor>  No matches. Press Enter to use: </Text>
+              <Text dimColor> No matches. Press Enter to use: </Text>
               <Text color="yellow">{inputValue}</Text>
             </Box>
           ) : (
-            <Text dimColor>  No candidates found</Text>
+            <Text dimColor> No candidates found</Text>
           )}
         </Box>
 

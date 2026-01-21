@@ -40,9 +40,14 @@ export interface CompareDiff {
 }
 
 export function parseDiffLine(line: string): DiffLine {
-  if (line.startsWith('diff --git') || line.startsWith('index ') ||
-      line.startsWith('---') || line.startsWith('+++') ||
-      line.startsWith('new file') || line.startsWith('deleted file')) {
+  if (
+    line.startsWith('diff --git') ||
+    line.startsWith('index ') ||
+    line.startsWith('---') ||
+    line.startsWith('+++') ||
+    line.startsWith('new file') ||
+    line.startsWith('deleted file')
+  ) {
     return { type: 'header', content: line };
   }
   if (line.startsWith('@@')) {
@@ -85,11 +90,18 @@ export function parseDiffWithLineNumbers(raw: string): DiffLine[] {
   let newLineNum = 0;
 
   for (const line of lines) {
-    if (line.startsWith('diff --git') || line.startsWith('index ') ||
-        line.startsWith('---') || line.startsWith('+++') ||
-        line.startsWith('new file') || line.startsWith('deleted file') ||
-        line.startsWith('Binary files') || line.startsWith('similarity index') ||
-        line.startsWith('rename from') || line.startsWith('rename to')) {
+    if (
+      line.startsWith('diff --git') ||
+      line.startsWith('index ') ||
+      line.startsWith('---') ||
+      line.startsWith('+++') ||
+      line.startsWith('new file') ||
+      line.startsWith('deleted file') ||
+      line.startsWith('Binary files') ||
+      line.startsWith('similarity index') ||
+      line.startsWith('rename from') ||
+      line.startsWith('rename to')
+    ) {
       result.push({ type: 'header', content: line });
     } else if (line.startsWith('@@')) {
       const hunkInfo = parseHunkHeader(line);
@@ -144,7 +156,7 @@ export async function getDiff(
     const lines = parseDiffWithLineNumbers(raw);
 
     return { raw, lines };
-  } catch (error) {
+  } catch {
     return { raw: '', lines: [] };
   }
 }
@@ -168,7 +180,7 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
       lines.push({ type: 'addition', content: '+' + line, newLineNum: lineNum++ });
     }
 
-    const raw = lines.map(l => l.content).join('\n');
+    const raw = lines.map((l) => l.content).join('\n');
     return { raw, lines };
   } catch {
     return { raw: '', lines: [] };
@@ -199,16 +211,14 @@ export async function getCandidateBaseBranches(repoPath: string): Promise<string
 
   try {
     // Get recent commits with decorations to find branches in our history
-    const logOutput = await git.raw([
-      'log', '--oneline', '--decorate=short', '--all', '-n', '200'
-    ]);
+    const logOutput = await git.raw(['log', '--oneline', '--decorate=short', '--all', '-n', '200']);
 
     // Extract remote branch refs from decorations like (origin/main, upstream/feature)
     const refPattern = /\(([^)]+)\)/g;
     for (const line of logOutput.split('\n')) {
       const match = refPattern.exec(line);
       if (match) {
-        const refs = match[1].split(',').map(r => r.trim());
+        const refs = match[1].split(',').map((r) => r.trim());
         for (const ref of refs) {
           // Skip HEAD, tags, and local branches - only want remote branches
           if (ref.startsWith('HEAD') || ref.startsWith('tag:') || !ref.includes('/')) continue;
@@ -283,7 +293,10 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
   const rawDiff = await git.raw(['diff', `${base}...HEAD`]);
 
   // Parse numstat: "additions deletions filepath" per line
-  const numstatLines = numstat.trim().split('\n').filter(l => l);
+  const numstatLines = numstat
+    .trim()
+    .split('\n')
+    .filter((l) => l);
   const fileStats: Map<string, { additions: number; deletions: number }> = new Map();
   for (const line of numstatLines) {
     const parts = line.split('\t');
@@ -296,7 +309,10 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
   }
 
   // Parse name-status: "A/M/D/R filepath" per line
-  const nameStatusLines = nameStatus.trim().split('\n').filter(l => l);
+  const nameStatusLines = nameStatus
+    .trim()
+    .split('\n')
+    .filter((l) => l);
   const fileStatuses: Map<string, CompareFileDiff['status']> = new Map();
   for (const line of nameStatusLines) {
     const parts = line.split('\t');
@@ -323,7 +339,7 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
 
   // Split raw diff by file headers
   const fileDiffs: CompareFileDiff[] = [];
-  const diffChunks = rawDiff.split(/(?=^diff --git )/m).filter(chunk => chunk.trim());
+  const diffChunks = rawDiff.split(/(?=^diff --git )/m).filter((chunk) => chunk.trim());
 
   for (const chunk of diffChunks) {
     // Extract file path from the diff header
@@ -358,7 +374,7 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
 
   // Get commits between base and HEAD
   const log = await git.log({ from: base, to: 'HEAD' });
-  const commits: CommitInfo[] = log.all.map(entry => ({
+  const commits: CommitInfo[] = log.all.map((entry) => ({
     hash: entry.hash,
     shortHash: entry.hash.slice(0, 7),
     message: entry.message.split('\n')[0],
@@ -415,7 +431,7 @@ export async function getCommitsBetweenRefs(
     // Get commits from merge-base to HEAD
     const log = await git.log({ from: base, to: 'HEAD' });
 
-    return log.all.map(entry => ({
+    return log.all.map((entry) => ({
       hash: entry.hash,
       shortHash: entry.hash.slice(0, 7),
       message: entry.message.split('\n')[0],
@@ -432,7 +448,10 @@ export async function getCommitsBetweenRefs(
  * Get PR diff that includes uncommitted changes (staged + unstaged).
  * Merges committed diff with working tree changes.
  */
-export async function getCompareDiffWithUncommitted(repoPath: string, baseRef: string): Promise<CompareDiff> {
+export async function getCompareDiffWithUncommitted(
+  repoPath: string,
+  baseRef: string
+): Promise<CompareDiff> {
   const git = simpleGit(repoPath);
 
   // Get the committed PR diff first
@@ -445,10 +464,16 @@ export async function getCompareDiffWithUncommitted(repoPath: string, baseRef: s
   const unstagedDiff = await git.diff([]);
 
   // Parse uncommitted file stats
-  const uncommittedFiles: Map<string, { additions: number; deletions: number; staged: boolean; unstaged: boolean }> = new Map();
+  const uncommittedFiles: Map<
+    string,
+    { additions: number; deletions: number; staged: boolean; unstaged: boolean }
+  > = new Map();
 
   // Parse staged files
-  for (const line of stagedRaw.trim().split('\n').filter(l => l)) {
+  for (const line of stagedRaw
+    .trim()
+    .split('\n')
+    .filter((l) => l)) {
     const parts = line.split('\t');
     if (parts.length >= 3) {
       const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
@@ -459,7 +484,10 @@ export async function getCompareDiffWithUncommitted(repoPath: string, baseRef: s
   }
 
   // Parse unstaged files
-  for (const line of unstagedRaw.trim().split('\n').filter(l => l)) {
+  for (const line of unstagedRaw
+    .trim()
+    .split('\n')
+    .filter((l) => l)) {
     const parts = line.split('\t');
     if (parts.length >= 3) {
       const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
@@ -494,7 +522,7 @@ export async function getCompareDiffWithUncommitted(repoPath: string, baseRef: s
   // Split uncommitted diffs by file
   const uncommittedFileDiffs: CompareFileDiff[] = [];
   const combinedDiff = stagedDiff + unstagedDiff;
-  const diffChunks = combinedDiff.split(/(?=^diff --git )/m).filter(chunk => chunk.trim());
+  const diffChunks = combinedDiff.split(/(?=^diff --git )/m).filter((chunk) => chunk.trim());
 
   // Track files we've already processed (avoid duplicates if file has both staged and unstaged)
   const processedFiles = new Set<string>();
@@ -522,12 +550,12 @@ export async function getCompareDiffWithUncommitted(repoPath: string, baseRef: s
   }
 
   // Merge: keep committed files, add/replace with uncommitted
-  const committedFilePaths = new Set(committedDiff.files.map(f => f.path));
+  const committedFilePaths = new Set(committedDiff.files.map((f) => f.path));
   const mergedFiles: CompareFileDiff[] = [];
 
   // Add committed files first
   for (const file of committedDiff.files) {
-    const uncommittedFile = uncommittedFileDiffs.find(f => f.path === file.path);
+    const uncommittedFile = uncommittedFileDiffs.find((f) => f.path === file.path);
     if (uncommittedFile) {
       // If file has both committed and uncommitted changes, combine them
       // For simplicity, we'll show committed + uncommitted as separate entries

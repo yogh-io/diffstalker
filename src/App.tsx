@@ -3,7 +3,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 import { FileEntry } from './git/status.js';
 import { Header, getHeaderHeight } from './components/Header.js';
 import { getFileAtIndex, getTotalFileCount } from './components/FileList.js';
-import { getCommitIndexFromRow, getHistoryTotalRows } from './components/HistoryView.js';
+import { getCommitIndexFromRow } from './components/HistoryView.js';
 import { Footer } from './components/Footer.js';
 import { TopPane } from './components/TopPane.js';
 import { BottomPane } from './components/BottomPane.js';
@@ -15,7 +15,13 @@ import { useTerminalSize } from './hooks/useTerminalSize.js';
 import { useLayout, SPLIT_RATIO_STEP } from './hooks/useLayout.js';
 import { useHistoryState } from './hooks/useHistoryState.js';
 import { useCompareState } from './hooks/useCompareState.js';
-import { getClickedFileIndex, getClickedTab, getFooterLeftClick, isButtonAreaClick, isInPane } from './utils/mouseCoordinates.js';
+import {
+  getClickedFileIndex,
+  getClickedTab,
+  getFooterLeftClick,
+  isButtonAreaClick,
+  isInPane,
+} from './utils/mouseCoordinates.js';
 import { Config, saveConfig } from './config.js';
 import { ThemePicker } from './components/ThemePicker.js';
 import { HotkeysModal } from './components/HotkeysModal.js';
@@ -37,7 +43,9 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
   // File watcher
   const { state: watcherState, setEnabled: setWatcherEnabled } = useWatcher(
-    config.watcherEnabled, config.targetFile, config.debug
+    config.watcherEnabled,
+    config.targetFile,
+    config.debug
   );
 
   // Determine repo path
@@ -45,19 +53,38 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
   // Git state
   const {
-    status, diff, stagedDiff, selectedFile, isLoading, error,
-    selectFile, stage, unstage, discard, stageAll, unstageAll,
-    commit, refresh, getHeadCommitMessage,
-    compareDiff, compareLoading, compareError, refreshCompareDiff,
-    getCandidateBaseBranches, setCompareBaseBranch,
-    historySelectedCommit, historyCommitDiff, selectHistoryCommit,
-    compareSelectionDiff, selectCompareCommit,
+    status,
+    diff,
+    stagedDiff,
+    selectedFile,
+    isLoading,
+    error,
+    selectFile,
+    stage,
+    unstage,
+    discard,
+    stageAll,
+    unstageAll,
+    commit,
+    refresh,
+    getHeadCommitMessage,
+    compareDiff,
+    compareLoading,
+    compareError,
+    refreshCompareDiff,
+    getCandidateBaseBranches,
+    setCompareBaseBranch,
+    historySelectedCommit,
+    historyCommitDiff,
+    selectHistoryCommit,
+    compareSelectionDiff,
+    selectCompareCommit,
   } = useGit(repoPath);
 
   // File list data
   const files = status?.files ?? [];
   const totalFiles = getTotalFileCount(files);
-  const stagedCount = files.filter(f => f.staged).length;
+  const stagedCount = files.filter((f) => f.staged).length;
 
   // UI state
   const [currentPane, setCurrentPane] = useState<Pane>('files');
@@ -70,17 +97,45 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [autoTabEnabled, setAutoTabEnabled] = useState(false);
 
   // Header height calculation
-  const headerHeight = getHeaderHeight(repoPath, status?.branch ?? null, watcherState, terminalWidth, error, isLoading);
+  const headerHeight = getHeaderHeight(
+    repoPath,
+    status?.branch ?? null,
+    watcherState,
+    terminalWidth,
+    error,
+    isLoading
+  );
   const extraOverhead = headerHeight - 1;
 
   // Layout and scroll state
   const {
-    topPaneHeight, bottomPaneHeight, paneBoundaries,
-    splitRatio, adjustSplitRatio,
-    fileListScrollOffset, diffScrollOffset, historyScrollOffset, compareScrollOffset,
-    setDiffScrollOffset, setHistoryScrollOffset, setCompareScrollOffset,
-    scrollDiff, scrollFileList, scrollHistory, scrollCompare,
-  } = useLayout(terminalHeight, terminalWidth, files, selectedIndex, diff, bottomTab, undefined, config.splitRatio, extraOverhead);
+    topPaneHeight,
+    bottomPaneHeight,
+    paneBoundaries,
+    splitRatio,
+    adjustSplitRatio,
+    fileListScrollOffset,
+    diffScrollOffset,
+    historyScrollOffset,
+    compareScrollOffset,
+    setDiffScrollOffset,
+    setHistoryScrollOffset,
+    setCompareScrollOffset,
+    scrollDiff,
+    scrollFileList,
+    scrollHistory,
+    scrollCompare,
+  } = useLayout(
+    terminalHeight,
+    terminalWidth,
+    files,
+    selectedIndex,
+    diff,
+    bottomTab,
+    undefined,
+    config.splitRatio,
+    extraOverhead
+  );
 
   // History state
   const {
@@ -109,7 +164,6 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const {
     includeUncommitted,
     compareListSelection,
-    compareSelectedIndex,
     baseBranchCandidates,
     showBaseBranchPicker,
     compareTotalItems,
@@ -173,117 +227,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     }
   }, [selectedIndex, bottomTab, setDiffScrollOffset]);
 
-  // Mouse handler
-  const handleMouseEvent = useCallback((event: { x: number; y: number; type: string; button: string }) => {
-    const { x, y, type, button } = event;
-    const { stagingPaneStart, fileListEnd, diffPaneStart, diffPaneEnd, footerRow } = paneBoundariesRef.current;
-
-    if (type === 'click') {
-      // Close modals on any click
-      if (activeModal !== null) {
-        setActiveModal(null);
-        return;
-      }
-
-      // Footer clicks
-      if (y === footerRow && button === 'left') {
-        // Tab clicks on the right side
-        const tab = getClickedTab(x, terminalWidth);
-        if (tab) {
-          handleSwitchTab(tab);
-          return;
-        }
-        // Indicator clicks on the left side
-        const leftClick = getFooterLeftClick(x);
-        if (leftClick === 'hotkeys') {
-          setActiveModal('hotkeys');
-          return;
-        } else if (leftClick === 'mouse-mode') {
-          toggleMouse();
-          return;
-        } else if (leftClick === 'auto-tab') {
-          setAutoTabEnabled(prev => !prev);
-          return;
-        }
-      }
-
-      // Top pane clicks
-      if (isInPane(y, stagingPaneStart + 1, fileListEnd)) {
-        if (bottomTab === 'diff' || bottomTab === 'commit') {
-          const clickedIndex = getClickedFileIndex(y, fileListScrollOffset, files, stagingPaneStart, fileListEnd);
-          if (clickedIndex >= 0 && clickedIndex < totalFiles) {
-            setSelectedIndex(clickedIndex);
-            setCurrentPane('files');
-            const file = getFileAtIndex(files, clickedIndex);
-            if (file) {
-              if (button === 'right' && !file.staged && file.status !== 'untracked') {
-                setPendingDiscard(file);
-              } else if (button === 'left' && isButtonAreaClick(x)) {
-                file.staged ? unstage(file) : stage(file);
-              }
-            }
-            return;
-          }
-        } else if (bottomTab === 'history') {
-          const visualRow = y - stagingPaneStart - 1;
-          const clickedIndex = getCommitIndexFromRow(visualRow, commits, terminalWidth, historyScrollOffset);
-          if (clickedIndex >= 0 && clickedIndex < commits.length) {
-            setHistorySelectedIndex(clickedIndex);
-            setCurrentPane('history');
-            setDiffScrollOffset(0);
-            return;
-          }
-        } else if (bottomTab === 'compare' && compareDiff) {
-          const visualRow = (y - stagingPaneStart - 1) + compareScrollOffset;
-          const itemIndex = getItemIndexFromRow(visualRow);
-          if (itemIndex >= 0 && itemIndex < compareTotalItems) {
-            markSelectionInitialized();
-            setCompareSelectedIndex(itemIndex);
-            setCurrentPane('compare');
-            return;
-          }
-        }
-      }
-
-      // Bottom pane clicks
-      if (isInPane(y, diffPaneStart, diffPaneEnd)) {
-        setCurrentPane(bottomTab);
-      }
-    } else if (type === 'scroll-up' || type === 'scroll-down') {
-      const direction = type === 'scroll-up' ? 'up' : 'down';
-
-      if (isInPane(y, stagingPaneStart, fileListEnd)) {
-        if (bottomTab === 'diff' || bottomTab === 'commit') {
-          scrollFileList(direction);
-        } else if (bottomTab === 'history') {
-          scrollHistory(direction, historyTotalRows);
-        } else if (bottomTab === 'compare') {
-          scrollCompare(direction, compareTotalItems);
-        }
-      } else {
-        let maxRows: number | undefined;
-        if (bottomTab === 'compare' && compareListSelection?.type !== 'commit') {
-          maxRows = compareDiffTotalRows;
-        } else if (bottomTab === 'history') {
-          maxRows = historyDiffTotalRows;
-        }
-        scrollDiff(direction, 3, maxRows);
-      }
-    }
-  }, [
-    terminalWidth, fileListScrollOffset, files, totalFiles, bottomTab, commits, compareDiff,
-    compareTotalItems, stage, unstage, scrollDiff, scrollFileList, scrollHistory, scrollCompare,
-    historyScrollOffset, compareScrollOffset, setDiffScrollOffset, setHistorySelectedIndex,
-    setCompareSelectedIndex, markSelectionInitialized, getItemIndexFromRow,
-    compareListSelection?.type, compareDiffTotalRows, historyDiffTotalRows, historyTotalRows,
-    activeModal,
-  ]);
-
-  // Disable mouse when inputs are focused
-  const mouseDisabled = commitInputFocused || showBaseBranchPicker;
-  const { mouseEnabled, toggleMouse } = useMouse(handleMouseEvent, mouseDisabled);
-
-  // Tab switching
+  // Tab switching (defined early so handleMouseEvent can use it)
   const handleSwitchTab = useCallback((tab: BottomTab) => {
     setBottomTab(tab);
     const paneMap: Record<BottomTab, Pane> = {
@@ -294,6 +238,159 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     };
     setCurrentPane(paneMap[tab]);
   }, []);
+
+  // Ref for toggleMouse (set after useMouse, used in handleMouseEvent)
+  const toggleMouseRef = useRef<() => void>(() => {});
+
+  // Mouse handler
+  const handleMouseEvent = useCallback(
+    (event: { x: number; y: number; type: string; button: string }) => {
+      const { x, y, type, button } = event;
+      const { stagingPaneStart, fileListEnd, diffPaneStart, diffPaneEnd, footerRow } =
+        paneBoundariesRef.current;
+
+      if (type === 'click') {
+        // Close modals on any click
+        if (activeModal !== null) {
+          setActiveModal(null);
+          return;
+        }
+
+        // Footer clicks
+        if (y === footerRow && button === 'left') {
+          // Tab clicks on the right side
+          const tab = getClickedTab(x, terminalWidth);
+          if (tab) {
+            handleSwitchTab(tab);
+            return;
+          }
+          // Indicator clicks on the left side
+          const leftClick = getFooterLeftClick(x);
+          if (leftClick === 'hotkeys') {
+            setActiveModal('hotkeys');
+            return;
+          } else if (leftClick === 'mouse-mode') {
+            toggleMouseRef.current();
+            return;
+          } else if (leftClick === 'auto-tab') {
+            setAutoTabEnabled((prev) => !prev);
+            return;
+          }
+        }
+
+        // Top pane clicks
+        if (isInPane(y, stagingPaneStart + 1, fileListEnd)) {
+          if (bottomTab === 'diff' || bottomTab === 'commit') {
+            const clickedIndex = getClickedFileIndex(
+              y,
+              fileListScrollOffset,
+              files,
+              stagingPaneStart,
+              fileListEnd
+            );
+            if (clickedIndex >= 0 && clickedIndex < totalFiles) {
+              setSelectedIndex(clickedIndex);
+              setCurrentPane('files');
+              const file = getFileAtIndex(files, clickedIndex);
+              if (file) {
+                if (button === 'right' && !file.staged && file.status !== 'untracked') {
+                  setPendingDiscard(file);
+                } else if (button === 'left' && isButtonAreaClick(x)) {
+                  if (file.staged) {
+                    unstage(file);
+                  } else {
+                    stage(file);
+                  }
+                }
+              }
+              return;
+            }
+          } else if (bottomTab === 'history') {
+            const visualRow = y - stagingPaneStart - 1;
+            const clickedIndex = getCommitIndexFromRow(
+              visualRow,
+              commits,
+              terminalWidth,
+              historyScrollOffset
+            );
+            if (clickedIndex >= 0 && clickedIndex < commits.length) {
+              setHistorySelectedIndex(clickedIndex);
+              setCurrentPane('history');
+              setDiffScrollOffset(0);
+              return;
+            }
+          } else if (bottomTab === 'compare' && compareDiff) {
+            const visualRow = y - stagingPaneStart - 1 + compareScrollOffset;
+            const itemIndex = getItemIndexFromRow(visualRow);
+            if (itemIndex >= 0 && itemIndex < compareTotalItems) {
+              markSelectionInitialized();
+              setCompareSelectedIndex(itemIndex);
+              setCurrentPane('compare');
+              return;
+            }
+          }
+        }
+
+        // Bottom pane clicks
+        if (isInPane(y, diffPaneStart, diffPaneEnd)) {
+          setCurrentPane(bottomTab);
+        }
+      } else if (type === 'scroll-up' || type === 'scroll-down') {
+        const direction = type === 'scroll-up' ? 'up' : 'down';
+
+        if (isInPane(y, stagingPaneStart, fileListEnd)) {
+          if (bottomTab === 'diff' || bottomTab === 'commit') {
+            scrollFileList(direction);
+          } else if (bottomTab === 'history') {
+            scrollHistory(direction, historyTotalRows);
+          } else if (bottomTab === 'compare') {
+            scrollCompare(direction, compareTotalItems);
+          }
+        } else {
+          let maxRows: number | undefined;
+          if (bottomTab === 'compare' && compareListSelection?.type !== 'commit') {
+            maxRows = compareDiffTotalRows;
+          } else if (bottomTab === 'history') {
+            maxRows = historyDiffTotalRows;
+          }
+          scrollDiff(direction, 3, maxRows);
+        }
+      }
+    },
+    [
+      terminalWidth,
+      fileListScrollOffset,
+      files,
+      totalFiles,
+      bottomTab,
+      commits,
+      compareDiff,
+      compareTotalItems,
+      stage,
+      unstage,
+      scrollDiff,
+      scrollFileList,
+      scrollHistory,
+      scrollCompare,
+      historyScrollOffset,
+      compareScrollOffset,
+      setDiffScrollOffset,
+      setHistorySelectedIndex,
+      setCompareSelectedIndex,
+      markSelectionInitialized,
+      getItemIndexFromRow,
+      compareListSelection?.type,
+      compareDiffTotalRows,
+      historyDiffTotalRows,
+      historyTotalRows,
+      activeModal,
+    ]
+  );
+
+  // Disable mouse when inputs are focused
+  const mouseDisabled = commitInputFocused || showBaseBranchPicker;
+  const { mouseEnabled, toggleMouse } = useMouse(handleMouseEvent, mouseDisabled);
+  toggleMouseRef.current = toggleMouse;
 
   // Auto-tab mode: switch tabs based on file count transitions
   const prevTotalFilesRef = useRef(totalFiles);
@@ -317,37 +414,60 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   // Navigation handlers
   const handleNavigateUp = useCallback(() => {
     if (currentPane === 'files') {
-      setSelectedIndex(prev => Math.max(0, prev - 1));
+      setSelectedIndex((prev) => Math.max(0, prev - 1));
     } else if (currentPane === 'diff') {
-      const maxRows = (bottomTab === 'compare' && compareListSelection?.type !== 'commit') ? compareDiffTotalRows : undefined;
+      const maxRows =
+        bottomTab === 'compare' && compareListSelection?.type !== 'commit'
+          ? compareDiffTotalRows
+          : undefined;
       scrollDiff('up', 3, maxRows);
     } else if (currentPane === 'history') {
       navigateHistoryUp();
     } else if (currentPane === 'compare') {
       navigateCompareUp();
     }
-  }, [currentPane, bottomTab, compareListSelection?.type, compareDiffTotalRows, scrollDiff, navigateHistoryUp, navigateCompareUp]);
+  }, [
+    currentPane,
+    bottomTab,
+    compareListSelection?.type,
+    compareDiffTotalRows,
+    scrollDiff,
+    navigateHistoryUp,
+    navigateCompareUp,
+  ]);
 
   const handleNavigateDown = useCallback(() => {
     if (currentPane === 'files') {
-      setSelectedIndex(prev => Math.min(totalFiles - 1, prev + 1));
+      setSelectedIndex((prev) => Math.min(totalFiles - 1, prev + 1));
     } else if (currentPane === 'diff') {
-      const maxRows = (bottomTab === 'compare' && compareListSelection?.type !== 'commit') ? compareDiffTotalRows : undefined;
+      const maxRows =
+        bottomTab === 'compare' && compareListSelection?.type !== 'commit'
+          ? compareDiffTotalRows
+          : undefined;
       scrollDiff('down', 3, maxRows);
     } else if (currentPane === 'history') {
       navigateHistoryDown();
     } else if (currentPane === 'compare') {
       navigateCompareDown();
     }
-  }, [currentPane, bottomTab, compareListSelection?.type, compareDiffTotalRows, totalFiles, scrollDiff, navigateHistoryDown, navigateCompareDown]);
+  }, [
+    currentPane,
+    bottomTab,
+    compareListSelection?.type,
+    compareDiffTotalRows,
+    totalFiles,
+    scrollDiff,
+    navigateHistoryDown,
+    navigateCompareDown,
+  ]);
 
   const handleTogglePane = useCallback(() => {
     if (bottomTab === 'diff' || bottomTab === 'commit') {
-      setCurrentPane(prev => prev === 'files' ? 'diff' : 'files');
+      setCurrentPane((prev) => (prev === 'files' ? 'diff' : 'files'));
     } else if (bottomTab === 'history') {
-      setCurrentPane(prev => prev === 'history' ? 'diff' : 'history');
+      setCurrentPane((prev) => (prev === 'history' ? 'diff' : 'history'));
     } else if (bottomTab === 'compare') {
-      setCurrentPane(prev => prev === 'compare' ? 'diff' : 'compare');
+      setCurrentPane((prev) => (prev === 'compare' ? 'diff' : 'compare'));
     }
   }, [bottomTab]);
 
@@ -362,7 +482,11 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
   const handleSelect = useCallback(async () => {
     if (!currentFile) return;
-    currentFile.staged ? await unstage(currentFile) : await stage(currentFile);
+    if (currentFile.staged) {
+      await unstage(currentFile);
+    } else {
+      await stage(currentFile);
+    }
   }, [currentFile, stage, unstage]);
 
   const handleCommit = useCallback(() => handleSwitchTab('commit'), [handleSwitchTab]);
@@ -379,40 +503,47 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   }, []);
 
   // Keymap
-  useKeymap({
-    onStage: handleStage,
-    onUnstage: handleUnstage,
-    onStageAll: stageAll,
-    onUnstageAll: unstageAll,
-    onCommit: handleCommit,
-    onQuit: exit,
-    onRefresh: refresh,
-    onNavigateUp: handleNavigateUp,
-    onNavigateDown: handleNavigateDown,
-    onTogglePane: handleTogglePane,
-    onSwitchTab: handleSwitchTab,
-    onSelect: handleSelect,
-    onToggleIncludeUncommitted: toggleIncludeUncommitted,
-    onCycleBaseBranch: openBaseBranchPicker,
-    onOpenThemePicker: () => setActiveModal('theme'),
-    onShrinkTopPane: () => adjustSplitRatio(-SPLIT_RATIO_STEP),
-    onGrowTopPane: () => adjustSplitRatio(SPLIT_RATIO_STEP),
-    onOpenHotkeysModal: () => setActiveModal('hotkeys'),
-    onToggleMouse: toggleMouse,
-    onToggleFollow: () => setWatcherEnabled(prev => !prev),
-    onToggleAutoTab: () => setAutoTabEnabled(prev => !prev),
-  }, currentPane, commitInputFocused || activeModal !== null || showBaseBranchPicker);
+  useKeymap(
+    {
+      onStage: handleStage,
+      onUnstage: handleUnstage,
+      onStageAll: stageAll,
+      onUnstageAll: unstageAll,
+      onCommit: handleCommit,
+      onQuit: exit,
+      onRefresh: refresh,
+      onNavigateUp: handleNavigateUp,
+      onNavigateDown: handleNavigateDown,
+      onTogglePane: handleTogglePane,
+      onSwitchTab: handleSwitchTab,
+      onSelect: handleSelect,
+      onToggleIncludeUncommitted: toggleIncludeUncommitted,
+      onCycleBaseBranch: openBaseBranchPicker,
+      onOpenThemePicker: () => setActiveModal('theme'),
+      onShrinkTopPane: () => adjustSplitRatio(-SPLIT_RATIO_STEP),
+      onGrowTopPane: () => adjustSplitRatio(SPLIT_RATIO_STEP),
+      onOpenHotkeysModal: () => setActiveModal('hotkeys'),
+      onToggleMouse: toggleMouse,
+      onToggleFollow: () => setWatcherEnabled((prev) => !prev),
+      onToggleAutoTab: () => setAutoTabEnabled((prev) => !prev),
+    },
+    currentPane,
+    commitInputFocused || activeModal !== null || showBaseBranchPicker
+  );
 
   // Discard confirmation
-  useInput((input, key) => {
-    if (!pendingDiscard) return;
-    if (input === 'y' || input === 'Y') {
-      discard(pendingDiscard);
-      setPendingDiscard(null);
-    } else if (input === 'n' || input === 'N' || key.escape) {
-      setPendingDiscard(null);
-    }
-  }, { isActive: !!pendingDiscard });
+  useInput(
+    (input, key) => {
+      if (!pendingDiscard) return;
+      if (input === 'y' || input === 'Y') {
+        discard(pendingDiscard);
+        setPendingDiscard(null);
+      } else if (input === 'n' || input === 'N' || key.escape) {
+        setPendingDiscard(null);
+      }
+    },
+    { isActive: !!pendingDiscard }
+  );
 
   const Separator = () => <Text dimColor>{'─'.repeat(terminalWidth)}</Text>;
 
@@ -486,9 +617,13 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       {/* Footer */}
       {pendingDiscard ? (
         <Box>
-          <Text color="yellow" bold>Discard changes to </Text>
+          <Text color="yellow" bold>
+            Discard changes to{' '}
+          </Text>
           <Text color="cyan">{pendingDiscard.path}</Text>
-          <Text color="yellow" bold>? </Text>
+          <Text color="yellow" bold>
+            ?{' '}
+          </Text>
           <Text dimColor>(y/n)</Text>
         </Box>
       ) : (

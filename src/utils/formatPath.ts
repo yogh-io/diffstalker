@@ -39,7 +39,9 @@ export function shortenPath(path: string, maxLength: number): string {
     if (filename.length > availableForFilename) {
       // Truncate filename itself
       const half = Math.floor((availableForFilename - 1) / 2);
-      return '…/' + filename.slice(0, half) + '…' + filename.slice(-(availableForFilename - half - 1));
+      return (
+        '…/' + filename.slice(0, half) + '…' + filename.slice(-(availableForFilename - half - 1))
+      );
     }
     return '…/' + filename;
   }

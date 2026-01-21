@@ -10,7 +10,11 @@ import {
 import { FileEntry } from '../git/status.js';
 
 // Helper to create test file entries
-function makeFile(path: string, staged: boolean, status: FileEntry['status'] = 'modified'): FileEntry {
+function makeFile(
+  path: string,
+  staged: boolean,
+  status: FileEntry['status'] = 'modified'
+): FileEntry {
   return { path, status, staged };
 }
 
@@ -48,40 +52,28 @@ describe('getClickedFileIndex', () => {
   });
 
   it('returns correct index for modified files section', () => {
-    const files = [
-      makeFile('a.ts', false, 'modified'),
-      makeFile('b.ts', false, 'modified'),
-    ];
+    const files = [makeFile('a.ts', false, 'modified'), makeFile('b.ts', false, 'modified')];
     // Row 4 = start of file list, row 0 = header "Modified:", row 1 = first file
     expect(getClickedFileIndex(5, 0, files, 3, 10)).toBe(0);
     expect(getClickedFileIndex(6, 0, files, 3, 10)).toBe(1);
   });
 
   it('returns correct index for untracked files section', () => {
-    const files = [
-      makeFile('a.ts', false, 'untracked'),
-      makeFile('b.ts', false, 'untracked'),
-    ];
+    const files = [makeFile('a.ts', false, 'untracked'), makeFile('b.ts', false, 'untracked')];
     // No modified section, so untracked header at row 0, files at row 1, 2
     expect(getClickedFileIndex(5, 0, files, 3, 10)).toBe(0);
     expect(getClickedFileIndex(6, 0, files, 3, 10)).toBe(1);
   });
 
   it('returns correct index for staged files section', () => {
-    const files = [
-      makeFile('a.ts', true, 'modified'),
-      makeFile('b.ts', true, 'added'),
-    ];
+    const files = [makeFile('a.ts', true, 'modified'), makeFile('b.ts', true, 'added')];
     // No unstaged section, staged header at row 0, files at row 1, 2
     expect(getClickedFileIndex(5, 0, files, 3, 10)).toBe(0);
     expect(getClickedFileIndex(6, 0, files, 3, 10)).toBe(1);
   });
 
   it('handles mixed modified and untracked files', () => {
-    const files = [
-      makeFile('mod.ts', false, 'modified'),
-      makeFile('new.ts', false, 'untracked'),
-    ];
+    const files = [makeFile('mod.ts', false, 'modified'), makeFile('new.ts', false, 'untracked')];
     // Modified header (0), mod.ts (1), spacer (2), Untracked header (3), new.ts (4)
     expect(getClickedFileIndex(5, 0, files, 3, 15)).toBe(0); // mod.ts
     expect(getClickedFileIndex(8, 0, files, 3, 15)).toBe(1); // new.ts
@@ -98,9 +90,7 @@ describe('getClickedFileIndex', () => {
   });
 
   it('returns -1 for click on header row', () => {
-    const files = [
-      makeFile('a.ts', false, 'modified'),
-    ];
+    const files = [makeFile('a.ts', false, 'modified')];
     // Row 4 with scroll 0 = list row 0 = "Modified:" header
     expect(getClickedFileIndex(4, 0, files, 3, 10)).toBe(-1);
   });

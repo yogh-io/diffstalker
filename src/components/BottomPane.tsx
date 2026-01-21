@@ -66,7 +66,8 @@ export function BottomPane({
   compareListSelection,
   compareSelectionDiff,
 }: BottomPaneProps): React.ReactElement {
-  const isDiffFocused = currentPane !== 'files' && currentPane !== 'history' && currentPane !== 'compare';
+  const isDiffFocused =
+    currentPane !== 'files' && currentPane !== 'history' && currentPane !== 'compare';
 
   // Build header right-side content
   const renderHeaderRight = () => {
@@ -74,12 +75,20 @@ export function BottomPane({
       return <Text dimColor>{shortenPath(selectedFile.path, terminalWidth - 10)}</Text>;
     }
     if (bottomTab === 'history' && historySelectedCommit) {
-      return <Text dimColor>{historySelectedCommit.shortHash} - {historySelectedCommit.message.slice(0, 50)}</Text>;
+      return (
+        <Text dimColor>
+          {historySelectedCommit.shortHash} - {historySelectedCommit.message.slice(0, 50)}
+        </Text>
+      );
     }
     if (bottomTab === 'compare' && compareListSelection) {
       if (compareListSelection.type === 'commit') {
         const commit = compareDiff?.commits[compareListSelection.index];
-        return <Text dimColor>{commit?.shortHash ?? ''} - {commit?.message.slice(0, 40) ?? ''}</Text>;
+        return (
+          <Text dimColor>
+            {commit?.shortHash ?? ''} - {commit?.message.slice(0, 40) ?? ''}
+          </Text>
+        );
       } else {
         const path = compareDiff?.files[compareListSelection.index]?.path ?? '';
         return <Text dimColor>{shortenPath(path, terminalWidth - 10)}</Text>;

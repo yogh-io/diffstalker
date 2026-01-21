@@ -54,16 +54,21 @@ export function TopPane({
   compareScrollOffset,
   includeUncommitted,
 }: TopPaneProps): React.ReactElement {
-  const modifiedCount = files.filter(f => !f.staged && f.status !== 'untracked').length;
-  const untrackedCount = files.filter(f => f.status === 'untracked').length;
+  const modifiedCount = files.filter((f) => !f.staged && f.status !== 'untracked').length;
+  const untrackedCount = files.filter((f) => f.status === 'untracked').length;
 
   return (
     <Box flexDirection="column" height={topPaneHeight} width={terminalWidth} overflowY="hidden">
       {(bottomTab === 'diff' || bottomTab === 'commit') && (
         <>
           <Box>
-            <Text bold color={currentPane === 'files' ? 'cyan' : undefined}>STAGING AREA</Text>
-            <Text dimColor> ({modifiedCount} modified, {untrackedCount} untracked, {stagedCount} staged)</Text>
+            <Text bold color={currentPane === 'files' ? 'cyan' : undefined}>
+              STAGING AREA
+            </Text>
+            <Text dimColor>
+              {' '}
+              ({modifiedCount} modified, {untrackedCount} untracked, {stagedCount} staged)
+            </Text>
           </Box>
           <FileList
             files={files}
@@ -80,7 +85,9 @@ export function TopPane({
       {bottomTab === 'history' && (
         <>
           <Box>
-            <Text bold color={currentPane === 'history' ? 'cyan' : undefined}>COMMITS</Text>
+            <Text bold color={currentPane === 'history' ? 'cyan' : undefined}>
+              COMMITS
+            </Text>
             <Text dimColor> ({commits.length} commits)</Text>
           </Box>
           <HistoryView
@@ -97,10 +104,15 @@ export function TopPane({
       {bottomTab === 'compare' && (
         <>
           <Box>
-            <Text bold color={currentPane === 'compare' ? 'cyan' : undefined}>COMPARE</Text>
-            <Text dimColor>{' '}(vs </Text>
+            <Text bold color={currentPane === 'compare' ? 'cyan' : undefined}>
+              COMPARE
+            </Text>
+            <Text dimColor> (vs </Text>
             <Text color="cyan">{compareDiff?.baseBranch ?? '...'}</Text>
-            <Text dimColor>: {compareDiff?.commits.length ?? 0} commits, {compareDiff?.files.length ?? 0} files) (b)</Text>
+            <Text dimColor>
+              : {compareDiff?.commits.length ?? 0} commits, {compareDiff?.files.length ?? 0} files)
+              (b)
+            </Text>
             {compareDiff && compareDiff.uncommittedCount > 0 && (
               <>
                 <Text dimColor> | </Text>

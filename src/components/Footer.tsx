@@ -7,7 +7,11 @@ interface FooterProps {
   autoTabEnabled?: boolean;
 }
 
-export function Footer({ activeTab, mouseEnabled = true, autoTabEnabled = false }: FooterProps): React.ReactElement {
+export function Footer({
+  activeTab,
+  mouseEnabled = true,
+  autoTabEnabled = false,
+}: FooterProps): React.ReactElement {
   return (
     <Box justifyContent="space-between">
       <Text>
@@ -23,16 +27,13 @@ export function Footer({ activeTab, mouseEnabled = true, autoTabEnabled = false 
       <Text>
         <Text color={activeTab === 'diff' ? 'cyan' : undefined} bold={activeTab === 'diff'}>
           [1]Diff
-        </Text>
-        {' '}
+        </Text>{' '}
         <Text color={activeTab === 'commit' ? 'cyan' : undefined} bold={activeTab === 'commit'}>
           [2]Commit
-        </Text>
-        {' '}
+        </Text>{' '}
         <Text color={activeTab === 'history' ? 'cyan' : undefined} bold={activeTab === 'history'}>
           [3]History
-        </Text>
-        {' '}
+        </Text>{' '}
         <Text color={activeTab === 'compare' ? 'cyan' : undefined} bold={activeTab === 'compare'}>
           [4]Compare
         </Text>

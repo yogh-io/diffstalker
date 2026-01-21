@@ -14,14 +14,21 @@ export interface Config {
 
 const defaultConfig: Config = {
   targetFile: path.join(os.homedir(), '.cache', 'diffstalker', 'target'),
-  watcherEnabled: false,  // Watcher is opt-in via --follow
+  watcherEnabled: false, // Watcher is opt-in via --follow
   debug: false,
   theme: 'dark',
 };
 
 const CONFIG_PATH = path.join(os.homedir(), '.config', 'diffstalker', 'config.json');
 
-export const VALID_THEMES: ThemeName[] = ['dark', 'light', 'dark-colorblind', 'light-colorblind', 'dark-ansi', 'light-ansi'];
+export const VALID_THEMES: ThemeName[] = [
+  'dark',
+  'light',
+  'dark-colorblind',
+  'light-colorblind',
+  'dark-ansi',
+  'light-ansi',
+];
 
 export function isValidTheme(theme: unknown): theme is ThemeName {
   return typeof theme === 'string' && VALID_THEMES.includes(theme as ThemeName);
@@ -42,7 +49,11 @@ export function loadConfig(): Config {
       if (fileConfig.pager) config.pager = fileConfig.pager;
       if (fileConfig.targetFile) config.targetFile = fileConfig.targetFile;
       if (isValidTheme(fileConfig.theme)) config.theme = fileConfig.theme;
-      if (typeof fileConfig.splitRatio === 'number' && fileConfig.splitRatio >= 0.15 && fileConfig.splitRatio <= 0.85) {
+      if (
+        typeof fileConfig.splitRatio === 'number' &&
+        fileConfig.splitRatio >= 0.15 &&
+        fileConfig.splitRatio <= 0.85
+      ) {
         config.splitRatio = fileConfig.splitRatio;
       }
     } catch {
@@ -53,7 +64,9 @@ export function loadConfig(): Config {
   return config;
 }
 
-export function saveConfig(updates: Partial<Pick<Config, 'theme' | 'pager' | 'targetFile' | 'splitRatio'>>): void {
+export function saveConfig(
+  updates: Partial<Pick<Config, 'theme' | 'pager' | 'targetFile' | 'splitRatio'>>
+): void {
   // Ensure config directory exists
   const configDir = path.dirname(CONFIG_PATH);
   if (!fs.existsSync(configDir)) {

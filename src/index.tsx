@@ -37,9 +37,9 @@ process.on('unhandledRejection', (reason) => {
 
 // Parse CLI arguments
 interface ParsedArgs {
-  follow?: boolean;        // --follow was specified
-  followFile?: string;     // Custom file for --follow (optional)
-  initialPath?: string;    // Positional path argument
+  follow?: boolean; // --follow was specified
+  followFile?: string; // Custom file for --follow (optional)
+  initialPath?: string; // Positional path argument
   once?: boolean;
   debug?: boolean;
 }
@@ -127,9 +127,7 @@ if (args.debug) {
 }
 
 // Render the app
-const { waitUntilExit } = render(
-  <App config={config} initialPath={args.initialPath} />
-);
+const { waitUntilExit } = render(<App config={config} initialPath={args.initialPath} />);
 
 waitUntilExit().then(() => {
   process.exit(0);

@@ -46,13 +46,15 @@ export function buildCombinedCompareDiff(compareDiff: CompareDiff | null): DiffR
 export function getCompareDiffTotalRows(compareDiff: CompareDiff | null): number {
   const combined = buildCombinedCompareDiff(compareDiff);
   // DiffView filters out certain headers (index, ---, +++, similarity index)
-  return combined.lines.filter(line => {
+  return combined.lines.filter((line) => {
     if (line.type !== 'header') return true;
     const content = line.content;
-    if (content.startsWith('index ') ||
-        content.startsWith('--- ') ||
-        content.startsWith('+++ ') ||
-        content.startsWith('similarity index')) {
+    if (
+      content.startsWith('index ') ||
+      content.startsWith('--- ') ||
+      content.startsWith('+++ ') ||
+      content.startsWith('similarity index')
+    ) {
       return false;
     }
     return true;
@@ -82,10 +84,12 @@ export function getFileScrollOffset(compareDiff: CompareDiff | null, fileIndex: 
     // Skip lines that DiffView filters out
     if (line.type === 'header') {
       const content = line.content;
-      if (content.startsWith('index ') ||
-          content.startsWith('--- ') ||
-          content.startsWith('+++ ') ||
-          content.startsWith('similarity index')) {
+      if (
+        content.startsWith('index ') ||
+        content.startsWith('--- ') ||
+        content.startsWith('+++ ') ||
+        content.startsWith('similarity index')
+      ) {
         continue;
       }
     }
@@ -140,11 +144,6 @@ export function CompareView({
 
   // Use DiffView for the actual diff rendering (word-level highlighting, themes, line numbers)
   return (
-    <DiffView
-      diff={combinedDiff}
-      maxHeight={maxHeight}
-      scrollOffset={scrollOffset}
-      theme={theme}
-    />
+    <DiffView diff={combinedDiff} maxHeight={maxHeight} scrollOffset={scrollOffset} theme={theme} />
   );
 }

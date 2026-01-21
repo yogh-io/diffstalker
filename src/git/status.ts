@@ -31,7 +31,7 @@ async function countFileLines(repoPath: string, filePath: string): Promise<numbe
     const fullPath = path.join(repoPath, filePath);
     const content = await fs.promises.readFile(fullPath, 'utf-8');
     // Count non-empty lines
-    return content.split('\n').filter(line => line.length > 0).length;
+    return content.split('\n').filter((line) => line.length > 0).length;
   } catch {
     return 0;
   }
@@ -51,7 +51,10 @@ async function getIgnoredFiles(git: SimpleGit, files: string[]): Promise<Set<str
       const batch = files.slice(i, i + batchSize);
       try {
         const result = await git.raw(['check-ignore', ...batch]);
-        const ignored = result.trim().split('\n').filter(f => f.length > 0);
+        const ignored = result
+          .trim()
+          .split('\n')
+          .filter((f) => f.length > 0);
         for (const f of ignored) {
           ignoredFiles.add(f);
         }
@@ -137,7 +140,7 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
     // Process modified staged files
     for (const file of status.modified) {
       // Check if it's in the index (staged)
-      const existingStaged = files.find(f => f.path === file && f.staged);
+      const existingStaged = files.find((f) => f.path === file && f.staged);
       if (!existingStaged) {
         files.push({
           path: file,
@@ -181,9 +184,7 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
     const seen = new Set<string>();
 
     // Collect untracked files to check if they're ignored
-    const untrackedPaths = status.files
-      .filter(f => f.working_dir === '?')
-      .map(f => f.path);
+    const untrackedPaths = status.files.filter((f) => f.working_dir === '?').map((f) => f.path);
 
     // Get the set of ignored files
     const ignoredFiles = await getIgnoredFiles(git, untrackedPaths);
@@ -236,10 +237,10 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
     }
 
     // Count lines for untracked files (not in numstat output)
-    const untrackedFiles = processedFiles.filter(f => f.status === 'untracked');
+    const untrackedFiles = processedFiles.filter((f) => f.status === 'untracked');
     if (untrackedFiles.length > 0) {
       const lineCounts = await Promise.all(
-        untrackedFiles.map(f => countFileLines(repoPath, f.path))
+        untrackedFiles.map((f) => countFileLines(repoPath, f.path))
       );
       for (let i = 0; i < untrackedFiles.length; i++) {
         untrackedFiles[i].insertions = lineCounts[i];
@@ -257,7 +258,7 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
       },
       isRepo: true,
     };
-  } catch (error) {
+  } catch {
     return {
       files: [],
       branch: { current: '', ahead: 0, behind: 0 },
@@ -292,9 +293,12 @@ export async function discardChanges(repoPath: string, filePath: string): Promis
   await git.checkout(['--', filePath]);
 }
 
-export async function commit(repoPath: string, message: string, amend: boolean = false): Promise<void> {
+export async function commit(
+  repoPath: string,
+  message: string,
+  amend: boolean = false
+): Promise<void> {
   const git = simpleGit(repoPath);
-  const options = amend ? ['--amend', '-m', message] : ['-m', message];
   await git.commit(message, undefined, amend ? { '--amend': null } : undefined);
 }
 
@@ -317,11 +321,14 @@ export interface CommitInfo {
   refs: string;
 }
 
-export async function getCommitHistory(repoPath: string, count: number = 50): Promise<CommitInfo[]> {
+export async function getCommitHistory(
+  repoPath: string,
+  count: number = 50
+): Promise<CommitInfo[]> {
   const git = simpleGit(repoPath);
   try {
     const log = await git.log({ n: count });
-    return log.all.map(entry => ({
+    return log.all.map((entry) => ({
       hash: entry.hash,
       shortHash: entry.hash.slice(0, 7),
       message: entry.message.split('\n')[0], // First line only

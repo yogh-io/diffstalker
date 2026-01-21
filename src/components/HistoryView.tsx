@@ -58,7 +58,7 @@ export function HistoryView({
   maxHeight,
   isActive,
   width,
-  onSelectCommit,
+  onSelectCommit: _onSelectCommit,
 }: HistoryViewProps): React.ReactElement {
   if (commits.length === 0) {
     return (
@@ -110,11 +110,7 @@ export function HistoryView({
           <>
             <Text color="yellow">{commit.shortHash}</Text>
             <Text> </Text>
-            <Text
-              color={isSelected ? 'cyan' : undefined}
-              bold={isSelected}
-              inverse={isSelected}
-            >
+            <Text color={isSelected ? 'cyan' : undefined} bold={isSelected} inverse={isSelected}>
               {displayMessage}
             </Text>
             <Text> </Text>

@@ -19,59 +19,59 @@ interface DiffViewProps {
 
 // Map common file extensions to highlight.js language names
 const LANG_MAP: Record<string, string> = {
-  'ts': 'typescript',
-  'tsx': 'typescript',
-  'js': 'javascript',
-  'jsx': 'javascript',
-  'mjs': 'javascript',
-  'cjs': 'javascript',
-  'py': 'python',
-  'rb': 'ruby',
-  'rs': 'rust',
-  'go': 'go',
-  'java': 'java',
-  'c': 'c',
-  'cpp': 'cpp',
-  'h': 'c',
-  'hpp': 'cpp',
-  'cs': 'csharp',
-  'php': 'php',
-  'sh': 'bash',
-  'bash': 'bash',
-  'zsh': 'bash',
-  'json': 'json',
-  'yaml': 'yaml',
-  'yml': 'yaml',
-  'md': 'markdown',
-  'html': 'html',
-  'htm': 'html',
-  'css': 'css',
-  'scss': 'scss',
-  'sass': 'scss',
-  'less': 'less',
-  'sql': 'sql',
-  'xml': 'xml',
-  'toml': 'ini',
-  'ini': 'ini',
-  'dockerfile': 'dockerfile',
-  'makefile': 'makefile',
-  'lua': 'lua',
-  'vim': 'vim',
-  'swift': 'swift',
-  'kt': 'kotlin',
-  'kts': 'kotlin',
-  'scala': 'scala',
-  'r': 'r',
-  'pl': 'perl',
-  'ex': 'elixir',
-  'exs': 'elixir',
-  'erl': 'erlang',
-  'hs': 'haskell',
-  'clj': 'clojure',
-  'ml': 'ocaml',
-  'fs': 'fsharp',
-  'vue': 'xml',
-  'svelte': 'xml',
+  ts: 'typescript',
+  tsx: 'typescript',
+  js: 'javascript',
+  jsx: 'javascript',
+  mjs: 'javascript',
+  cjs: 'javascript',
+  py: 'python',
+  rb: 'ruby',
+  rs: 'rust',
+  go: 'go',
+  java: 'java',
+  c: 'c',
+  cpp: 'cpp',
+  h: 'c',
+  hpp: 'cpp',
+  cs: 'csharp',
+  php: 'php',
+  sh: 'bash',
+  bash: 'bash',
+  zsh: 'bash',
+  json: 'json',
+  yaml: 'yaml',
+  yml: 'yaml',
+  md: 'markdown',
+  html: 'html',
+  htm: 'html',
+  css: 'css',
+  scss: 'scss',
+  sass: 'scss',
+  less: 'less',
+  sql: 'sql',
+  xml: 'xml',
+  toml: 'ini',
+  ini: 'ini',
+  dockerfile: 'dockerfile',
+  makefile: 'makefile',
+  lua: 'lua',
+  vim: 'vim',
+  swift: 'swift',
+  kt: 'kotlin',
+  kts: 'kotlin',
+  scala: 'scala',
+  r: 'r',
+  pl: 'perl',
+  ex: 'elixir',
+  exs: 'elixir',
+  erl: 'erlang',
+  hs: 'haskell',
+  clj: 'clojure',
+  ml: 'ocaml',
+  fs: 'fsharp',
+  vue: 'xml',
+  svelte: 'xml',
 };
 
 // Get language from file path
@@ -84,7 +84,7 @@ function getLanguageFromPath(filePath?: string): string | undefined {
   if (filename === 'makefile' || filename === 'gnumakefile') return 'makefile';
 
   const ext = filename.split('.').pop()?.toLowerCase();
-  return ext ? (LANG_MAP[ext] || ext) : undefined;
+  return ext ? LANG_MAP[ext] || ext : undefined;
 }
 
 // Highlight a single line of code
@@ -93,7 +93,7 @@ function highlightLine(content: string, language?: string): string {
   try {
     return emphasize.highlight(language, content).value;
   } catch {
-    return content;  // Fallback if highlighting fails
+    return content; // Fallback if highlighting fails
   }
 }
 
@@ -110,10 +110,10 @@ function getLineNumWidth(lines: DiffLine[]): number {
 // Get the actual content without the diff symbol (+/-)
 function getLineContent(line: DiffLine): string {
   if (line.type === 'addition' || line.type === 'deletion') {
-    return line.content.slice(1);  // Remove the leading + or -
+    return line.content.slice(1); // Remove the leading + or -
   }
   if (line.type === 'context' && line.content.startsWith(' ')) {
-    return line.content.slice(1);  // Remove the leading space
+    return line.content.slice(1); // Remove the leading space
   }
   return line.content;
 }
@@ -164,7 +164,10 @@ function mergeSmallSegments(segments: DiffSegment[]): DiffSegment[] {
 }
 
 // Compute word-level diff between old and new line
-function computeWordDiff(oldContent: string, newContent: string): { oldSegments: DiffSegment[]; newSegments: DiffSegment[] } {
+function computeWordDiff(
+  oldContent: string,
+  newContent: string
+): { oldSegments: DiffSegment[]; newSegments: DiffSegment[] } {
   const diff = fastDiff(oldContent, newContent);
 
   let oldSegments: DiffSegment[] = [];
@@ -265,11 +268,7 @@ function WordDiffContent({
   return (
     <Text backgroundColor={baseBg}>
       {segments.map((segment, i) => (
-        <Text
-          key={i}
-          color={colors.text}
-          backgroundColor={segment.isChange ? highlightBg : baseBg}
-        >
+        <Text key={i} color={colors.text} backgroundColor={segment.isChange ? highlightBg : baseBg}>
           {segment.text || (i === segments.length - 1 ? ' ' : '')}
         </Text>
       ))}
@@ -301,7 +300,9 @@ function DiffLineComponent({
       if (match) {
         return (
           <Box>
-            <Text color="cyan" bold>── {match[1]} ──</Text>
+            <Text color="cyan" bold>
+              ── {match[1]} ──
+            </Text>
           </Box>
         );
       }
@@ -333,24 +334,30 @@ function DiffLineComponent({
 
       return (
         <Box>
-          <Text color="cyan" dimColor>Lines {oldRange} → {newRange}</Text>
+          <Text color="cyan" dimColor>
+            Lines {oldRange} → {newRange}
+          </Text>
           {context && <Text color="gray"> {context}</Text>}
         </Box>
       );
     }
-    return <Text color="cyan" dimColor>{line.content}</Text>;
+    return (
+      <Text color="cyan" dimColor>
+        {line.content}
+      </Text>
+    );
   }
 
   // Get line number to display (use new for additions, old for deletions, either for context)
-  const lineNum = line.type === 'addition'
-    ? line.newLineNum
-    : line.type === 'deletion'
-      ? line.oldLineNum
-      : (line.oldLineNum ?? line.newLineNum);
+  const lineNum =
+    line.type === 'addition'
+      ? line.newLineNum
+      : line.type === 'deletion'
+        ? line.oldLineNum
+        : (line.oldLineNum ?? line.newLineNum);
 
-  const lineNumStr = lineNum !== undefined
-    ? String(lineNum).padStart(lineNumWidth, ' ')
-    : ' '.repeat(lineNumWidth);
+  const lineNumStr =
+    lineNum !== undefined ? String(lineNum).padStart(lineNumWidth, ' ') : ' '.repeat(lineNumWidth);
 
   // Content without the leading +/-/space
   const content = getLineContent(line);
@@ -358,12 +365,18 @@ function DiffLineComponent({
   if (line.type === 'addition') {
     return (
       <Box>
-        <Text backgroundColor={colors.addBg} color={colors.addLineNum}>{lineNumStr} </Text>
-        <Text backgroundColor={colors.addBg} color={colors.addSymbol} bold>+ </Text>
+        <Text backgroundColor={colors.addBg} color={colors.addLineNum}>
+          {lineNumStr}{' '}
+        </Text>
+        <Text backgroundColor={colors.addBg} color={colors.addSymbol} bold>
+          +{' '}
+        </Text>
         {wordDiffSegments ? (
           <WordDiffContent segments={wordDiffSegments} isAddition={true} theme={theme} />
         ) : (
-          <Text backgroundColor={colors.addBg} color={colors.text}>{content || ' '}</Text>
+          <Text backgroundColor={colors.addBg} color={colors.text}>
+            {content || ' '}
+          </Text>
         )}
       </Box>
     );
@@ -372,12 +385,18 @@ function DiffLineComponent({
   if (line.type === 'deletion') {
     return (
       <Box>
-        <Text backgroundColor={colors.delBg} color={colors.delLineNum}>{lineNumStr} </Text>
-        <Text backgroundColor={colors.delBg} color={colors.delSymbol} bold>- </Text>
+        <Text backgroundColor={colors.delBg} color={colors.delLineNum}>
+          {lineNumStr}{' '}
+        </Text>
+        <Text backgroundColor={colors.delBg} color={colors.delSymbol} bold>
+          -{' '}
+        </Text>
         {wordDiffSegments ? (
           <WordDiffContent segments={wordDiffSegments} isAddition={false} theme={theme} />
         ) : (
-          <Text backgroundColor={colors.delBg} color={colors.text}>{content || ' '}</Text>
+          <Text backgroundColor={colors.delBg} color={colors.text}>
+            {content || ' '}
+          </Text>
         )}
       </Box>
     );
@@ -387,13 +406,19 @@ function DiffLineComponent({
   const highlighted = highlightLine(content, language);
   return (
     <Box>
-      <Text color={colors.contextLineNum}>{lineNumStr}   </Text>
+      <Text color={colors.contextLineNum}>{lineNumStr} </Text>
       <Text>{highlighted}</Text>
     </Box>
   );
 }
 
-export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, theme: themeName = 'dark' }: DiffViewProps): React.ReactElement {
+export function DiffView({
+  diff,
+  filePath,
+  maxHeight = 20,
+  scrollOffset = 0,
+  theme: themeName = 'dark',
+}: DiffViewProps): React.ReactElement {
   // Memoize theme and language detection
   const theme = useMemo(() => getTheme(themeName), [themeName]);
   const language = useMemo(() => getLanguageFromPath(filePath), [filePath]);
@@ -422,20 +447,24 @@ export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, the
   // Filter out lines that will render as empty (skipped headers)
   // Keep original index for word diff lookup
   const displayableLines = useMemo(() => {
-    return diff?.lines
-      .map((line, originalIndex) => ({ line, originalIndex }))
-      .filter(({ line }) => {
-        if (line.type !== 'header') return true;
-        const content = line.content;
-        // These headers are skipped in rendering
-        if (content.startsWith('index ') ||
+    return (
+      diff?.lines
+        .map((line, originalIndex) => ({ line, originalIndex }))
+        .filter(({ line }) => {
+          if (line.type !== 'header') return true;
+          const content = line.content;
+          // These headers are skipped in rendering
+          if (
+            content.startsWith('index ') ||
             content.startsWith('--- ') ||
             content.startsWith('+++ ') ||
-            content.startsWith('similarity index')) {
-          return false;
-        }
-        return true;
-      }) ?? [];
+            content.startsWith('similarity index')
+          ) {
+            return false;
+          }
+          return true;
+        }) ?? []
+    );
   }, [diff]);
 
   if (!diff || displayableLines.length === 0) {
@@ -447,7 +476,7 @@ export function DiffView({ diff, filePath, maxHeight = 20, scrollOffset = 0, the
   }
 
   // Calculate line number width for consistent column sizing
-  const lineNumWidth = getLineNumWidth(displayableLines.map(d => d.line));
+  const lineNumWidth = getLineNumWidth(displayableLines.map((d) => d.line));
 
   return (
     <Box flexDirection="column" paddingX={1}>

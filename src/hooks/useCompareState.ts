@@ -5,7 +5,7 @@ import { getFileScrollOffset, getCompareDiffTotalRows } from '../components/Comp
 
 interface UseCompareStateProps {
   repoPath: string;
-  isActive: boolean;  // bottomTab === 'compare'
+  isActive: boolean; // bottomTab === 'compare'
   compareDiff: CompareDiff | null;
   refreshCompareDiff: (includeUncommitted: boolean) => Promise<void>;
   getCandidateBaseBranches: () => Promise<string[]>;
@@ -15,7 +15,7 @@ interface UseCompareStateProps {
   compareScrollOffset: number;
   setCompareScrollOffset: (offset: number) => void;
   setDiffScrollOffset: (offset: number) => void;
-  status: unknown;  // Trigger refresh when status changes
+  status: unknown; // Trigger refresh when status changes
 }
 
 export interface UseCompareStateResult {
@@ -59,7 +59,9 @@ export function useCompareState({
   status,
 }: UseCompareStateProps): UseCompareStateResult {
   const [includeUncommitted, setIncludeUncommitted] = useState(true);
-  const [compareListSelection, setCompareListSelection] = useState<CompareListSelection | null>(null);
+  const [compareListSelection, setCompareListSelection] = useState<CompareListSelection | null>(
+    null
+  );
   const [compareSelectedIndex, setCompareSelectedIndex] = useState(0);
   const compareSelectionInitialized = useRef(false);
   const [baseBranchCandidates, setBaseBranchCandidates] = useState<string[]>([]);
@@ -113,14 +115,11 @@ export function useCompareState({
     return compareDiff.commits.length + compareDiff.files.length;
   }, [compareDiff]);
 
-  const compareDiffTotalRows = useMemo(
-    () => getCompareDiffTotalRows(compareDiff),
-    [compareDiff]
-  );
+  const compareDiffTotalRows = useMemo(() => getCompareDiffTotalRows(compareDiff), [compareDiff]);
 
   // Handlers
   const toggleIncludeUncommitted = useCallback(() => {
-    setIncludeUncommitted(prev => !prev);
+    setIncludeUncommitted((prev) => !prev);
   }, []);
 
   const openBaseBranchPicker = useCallback(() => {
@@ -131,10 +130,13 @@ export function useCompareState({
     setShowBaseBranchPicker(false);
   }, []);
 
-  const selectBaseBranch = useCallback((branch: string) => {
-    setShowBaseBranchPicker(false);
-    setCompareBaseBranch(branch, includeUncommitted);
-  }, [setCompareBaseBranch, includeUncommitted]);
+  const selectBaseBranch = useCallback(
+    (branch: string) => {
+      setShowBaseBranchPicker(false);
+      setCompareBaseBranch(branch, includeUncommitted);
+    },
+    [setCompareBaseBranch, includeUncommitted]
+  );
 
   const markSelectionInitialized = useCallback(() => {
     compareSelectionInitialized.current = true;
@@ -142,7 +144,7 @@ export function useCompareState({
 
   const navigateCompareUp = useCallback(() => {
     compareSelectionInitialized.current = true;
-    setCompareSelectedIndex(prev => {
+    setCompareSelectedIndex((prev) => {
       const newIndex = Math.max(0, prev - 1);
       if (newIndex < compareScrollOffset) setCompareScrollOffset(newIndex);
       return newIndex;
@@ -151,7 +153,7 @@ export function useCompareState({
 
   const navigateCompareDown = useCallback(() => {
     compareSelectionInitialized.current = true;
-    setCompareSelectedIndex(prev => {
+    setCompareSelectedIndex((prev) => {
       const newIndex = Math.min(compareTotalItems - 1, prev + 1);
       const visibleEnd = compareScrollOffset + topPaneHeight - 2;
       if (newIndex >= visibleEnd) setCompareScrollOffset(compareScrollOffset + 1);
@@ -159,14 +161,17 @@ export function useCompareState({
     });
   }, [compareTotalItems, compareScrollOffset, topPaneHeight, setCompareScrollOffset]);
 
-  const getItemIndexFromRow = useCallback((visualRow: number) => {
-    if (!compareDiff) return -1;
-    return getCompareItemIndexFromRow(
-      visualRow,
-      compareDiff.commits.length,
-      compareDiff.files.length
-    );
-  }, [compareDiff]);
+  const getItemIndexFromRow = useCallback(
+    (visualRow: number) => {
+      if (!compareDiff) return -1;
+      return getCompareItemIndexFromRow(
+        visualRow,
+        compareDiff.commits.length,
+        compareDiff.files.length
+      );
+    },
+    [compareDiff]
+  );
 
   return {
     includeUncommitted,

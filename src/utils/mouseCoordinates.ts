@@ -4,7 +4,7 @@ import { BottomTab } from '../hooks/useKeymap.js';
 export interface PaneBoundaries {
   stagingPaneStart: number;
   fileListEnd: number;
-  separatorRow: number;  // The row with the separator between panes (for drag resizing)
+  separatorRow: number; // The row with the separator between panes (for drag resizing)
   diffPaneStart: number;
   diffPaneEnd: number;
   footerRow: number;
@@ -58,12 +58,12 @@ export function getClickedFileIndex(
   if (y < stagingPaneStart + 1 || y > fileListEnd) return -1;
 
   // Calculate which row in the list was clicked (0-indexed)
-  const listRow = (y - 4) + scrollOffset;
+  const listRow = y - 4 + scrollOffset;
 
   // Split files into 3 categories (same order as FileList)
-  const modifiedFiles = files.filter(f => !f.staged && f.status !== 'untracked');
-  const untrackedFiles = files.filter(f => !f.staged && f.status === 'untracked');
-  const stagedFiles = files.filter(f => f.staged);
+  const modifiedFiles = files.filter((f) => !f.staged && f.status !== 'untracked');
+  const untrackedFiles = files.filter((f) => !f.staged && f.status === 'untracked');
+  const stagedFiles = files.filter((f) => f.staged);
 
   // Build row map (same structure as FileList builds)
   // Each section: header (1) + files (n)
@@ -149,10 +149,7 @@ export function getTabBoundaries(terminalWidth: number): TabBoundaries {
  * Given an x-coordinate in the footer row, determine which tab was clicked.
  * Returns null if no tab was clicked.
  */
-export function getClickedTab(
-  x: number,
-  terminalWidth: number
-): BottomTab | null {
+export function getClickedTab(x: number, terminalWidth: number): BottomTab | null {
   const bounds = getTabBoundaries(terminalWidth);
 
   if (x >= bounds.diffStart && x <= bounds.diffEnd) {

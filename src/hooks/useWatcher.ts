@@ -29,7 +29,11 @@ export interface UseWatcherResult {
   setEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
 }
 
-export function useWatcher(initialEnabled: boolean, targetFile: string, debug: boolean = false): UseWatcherResult {
+export function useWatcher(
+  initialEnabled: boolean,
+  targetFile: string,
+  debug: boolean = false
+): UseWatcherResult {
   const [enabled, setEnabled] = useState(initialEnabled);
   const [state, setState] = useState<WatcherState>({
     path: null,
@@ -43,7 +47,7 @@ export function useWatcher(initialEnabled: boolean, targetFile: string, debug: b
 
   // Update state when enabled changes
   useEffect(() => {
-    setState(prev => ({
+    setState((prev) => ({
       ...prev,
       enabled,
       sourceFile: enabled ? targetFile : null,
@@ -119,6 +123,7 @@ export function useWatcher(initialEnabled: boolean, targetFile: string, debug: b
         }
 
         lastReadPath.current = resolved;
+
         setState({
           path: resolved,
           lastUpdate: now,

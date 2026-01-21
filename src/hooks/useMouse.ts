@@ -15,15 +15,19 @@ export function useMouse(
   const { stdin, setRawMode } = useStdin();
   const [mouseEnabled, setMouseEnabled] = useState(true);
   const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  });
 
   const toggleMouse = useCallback(() => {
-    setMouseEnabled(prev => !prev);
+    setMouseEnabled((prev) => !prev);
   }, []);
 
   // Store mouseEnabled in ref for use in event handler
   const mouseEnabledRef = useRef(mouseEnabled);
-  mouseEnabledRef.current = mouseEnabled;
+  useEffect(() => {
+    mouseEnabledRef.current = mouseEnabled;
+  }, [mouseEnabled]);
 
   // Handle mouse mode changes (disable only when text input is focused)
   // Note: We keep mouse tracking enabled even in "select mode" so clicks still work
@@ -45,6 +49,7 @@ export function useMouse(
       const str = data.toString();
 
       // Parse SGR mouse events: \x1b[<button;x;y[Mm]
+      // eslint-disable-next-line no-control-regex
       const sgrMatch = str.match(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/);
       if (sgrMatch) {
         const buttonCode = parseInt(sgrMatch[1], 10);
@@ -69,6 +74,7 @@ export function useMouse(
       }
 
       // Parse legacy mouse events
+      // eslint-disable-next-line no-control-regex
       const legacyMatch = str.match(/\x1b\[M(.)(.)(.)/);
       if (legacyMatch) {
         const buttonCode = legacyMatch[1].charCodeAt(0) - 32;

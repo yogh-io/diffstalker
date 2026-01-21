@@ -16,25 +16,39 @@ interface FileListProps {
 
 function getStatusChar(status: FileStatus): string {
   switch (status) {
-    case 'modified': return 'M';
-    case 'added': return 'A';
-    case 'deleted': return 'D';
-    case 'untracked': return '?';
-    case 'renamed': return 'R';
-    case 'copied': return 'C';
-    default: return ' ';
+    case 'modified':
+      return 'M';
+    case 'added':
+      return 'A';
+    case 'deleted':
+      return 'D';
+    case 'untracked':
+      return '?';
+    case 'renamed':
+      return 'R';
+    case 'copied':
+      return 'C';
+    default:
+      return ' ';
   }
 }
 
 function getStatusColor(status: FileStatus): string {
   switch (status) {
-    case 'modified': return 'yellow';
-    case 'added': return 'green';
-    case 'deleted': return 'red';
-    case 'untracked': return 'gray';
-    case 'renamed': return 'blue';
-    case 'copied': return 'cyan';
-    default: return 'white';
+    case 'modified':
+      return 'yellow';
+    case 'added':
+      return 'green';
+    case 'deleted':
+      return 'red';
+    case 'untracked':
+      return 'gray';
+    case 'renamed':
+      return 'blue';
+    case 'copied':
+      return 'cyan';
+    default:
+      return 'white';
   }
 }
 
@@ -71,9 +85,11 @@ function FileRow({ file, isSelected, isFocused, maxPathLength }: FileRowProps): 
   return (
     <Box>
       {isSelected && isFocused ? (
-        <Text color="cyan" bold>▸ </Text>
+        <Text color="cyan" bold>
+          ▸{' '}
+        </Text>
       ) : (
-        <Text>  </Text>
+        <Text> </Text>
       )}
       <Text color={buttonColor}>{actionButton} </Text>
       <Text color={statusColor}>{statusChar} </Text>
@@ -87,9 +103,10 @@ function FileRow({ file, isSelected, isFocused, maxPathLength }: FileRowProps): 
           {file.insertions !== undefined && file.insertions > 0 && (
             <Text color="green">+{file.insertions}</Text>
           )}
-          {file.insertions !== undefined && file.insertions > 0 && file.deletions !== undefined && file.deletions > 0 && (
-            <Text dimColor> </Text>
-          )}
+          {file.insertions !== undefined &&
+            file.insertions > 0 &&
+            file.deletions !== undefined &&
+            file.deletions > 0 && <Text dimColor> </Text>}
           {file.deletions !== undefined && file.deletions > 0 && (
             <Text color="red">-{file.deletions}</Text>
           )}
@@ -118,9 +135,9 @@ export function FileList({
   // Calculate max path length: width minus prefix chars (▸/space + [+]/[-] + status + spaces = ~10)
   const maxPathLength = width - 10;
   // Split files into 3 categories: Modified, Untracked, Staged
-  const modifiedFiles = files.filter(f => !f.staged && f.status !== 'untracked');
-  const untrackedFiles = files.filter(f => !f.staged && f.status === 'untracked');
-  const stagedFiles = files.filter(f => f.staged);
+  const modifiedFiles = files.filter((f) => !f.staged && f.status !== 'untracked');
+  const untrackedFiles = files.filter((f) => !f.staged && f.status === 'untracked');
+  const stagedFiles = files.filter((f) => f.staged);
 
   if (files.length === 0) {
     return (
@@ -163,7 +180,9 @@ export function FileList({
   }
 
   // Apply scroll offset and max height
-  const visibleRows = maxHeight ? rows.slice(scrollOffset, scrollOffset + maxHeight) : rows.slice(scrollOffset);
+  const visibleRows = maxHeight
+    ? rows.slice(scrollOffset, scrollOffset + maxHeight)
+    : rows.slice(scrollOffset);
 
   return (
     <Box flexDirection="column">
@@ -202,9 +221,9 @@ export function FileList({
 
 export function getFileAtIndex(files: FileEntry[], index: number): FileEntry | null {
   // Order: Modified → Untracked → Staged
-  const modifiedFiles = files.filter(f => !f.staged && f.status !== 'untracked');
-  const untrackedFiles = files.filter(f => !f.staged && f.status === 'untracked');
-  const stagedFiles = files.filter(f => f.staged);
+  const modifiedFiles = files.filter((f) => !f.staged && f.status !== 'untracked');
+  const untrackedFiles = files.filter((f) => !f.staged && f.status === 'untracked');
+  const stagedFiles = files.filter((f) => f.staged);
   const allFiles = [...modifiedFiles, ...untrackedFiles, ...stagedFiles];
   return allFiles[index] ?? null;
 }

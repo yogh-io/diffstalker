@@ -20,28 +20,19 @@ describe('getFileListSectionCounts', () => {
   });
 
   it('counts only modified files', () => {
-    const files = [
-      makeFile('a.ts', false, 'modified'),
-      makeFile('b.ts', false, 'added'),
-    ];
+    const files = [makeFile('a.ts', false, 'modified'), makeFile('b.ts', false, 'added')];
     const result = getFileListSectionCounts(files);
     expect(result).toEqual({ modifiedCount: 2, untrackedCount: 0, stagedCount: 0 });
   });
 
   it('counts only untracked files', () => {
-    const files = [
-      makeFile('a.ts', false, 'untracked'),
-      makeFile('b.ts', false, 'untracked'),
-    ];
+    const files = [makeFile('a.ts', false, 'untracked'), makeFile('b.ts', false, 'untracked')];
     const result = getFileListSectionCounts(files);
     expect(result).toEqual({ modifiedCount: 0, untrackedCount: 2, stagedCount: 0 });
   });
 
   it('counts only staged files', () => {
-    const files = [
-      makeFile('a.ts', true, 'modified'),
-      makeFile('b.ts', true, 'added'),
-    ];
+    const files = [makeFile('a.ts', true, 'modified'), makeFile('b.ts', true, 'added')];
     const result = getFileListSectionCounts(files);
     expect(result).toEqual({ modifiedCount: 0, untrackedCount: 0, stagedCount: 2 });
   });
@@ -64,19 +55,13 @@ describe('getFileListTotalRows', () => {
   });
 
   it('counts rows for only modified files', () => {
-    const files = [
-      makeFile('a.ts', false, 'modified'),
-      makeFile('b.ts', false, 'modified'),
-    ];
+    const files = [makeFile('a.ts', false, 'modified'), makeFile('b.ts', false, 'modified')];
     // header (1) + 2 files = 3
     expect(getFileListTotalRows(files)).toBe(3);
   });
 
   it('counts rows for only untracked files', () => {
-    const files = [
-      makeFile('a.ts', false, 'untracked'),
-      makeFile('b.ts', false, 'untracked'),
-    ];
+    const files = [makeFile('a.ts', false, 'untracked'), makeFile('b.ts', false, 'untracked')];
     // header (1) + 2 files = 3
     expect(getFileListTotalRows(files)).toBe(3);
   });
@@ -120,10 +105,7 @@ describe('calculatePaneHeights', () => {
   });
 
   it('calculates height for only modified files', () => {
-    const files = [
-      makeFile('a.ts', false, 'modified'),
-      makeFile('b.ts', false, 'modified'),
-    ];
+    const files = [makeFile('a.ts', false, 'modified'), makeFile('b.ts', false, 'modified')];
     const result = calculatePaneHeights(files, 30);
     // header (1) + 2 files = 3
     expect(result.topPaneHeight).toBe(3);

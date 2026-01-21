@@ -6,7 +6,7 @@ import { getHistoryTotalRows } from '../components/HistoryView.js';
 
 interface UseHistoryStateProps {
   repoPath: string;
-  isActive: boolean;  // bottomTab === 'history'
+  isActive: boolean; // bottomTab === 'history'
   selectHistoryCommit: (commit: CommitInfo) => void;
   historyCommitDiff: DiffResult | null;
   historySelectedCommit: CommitInfo | null;
@@ -15,7 +15,7 @@ interface UseHistoryStateProps {
   historyScrollOffset: number;
   setHistoryScrollOffset: (offset: number) => void;
   setDiffScrollOffset: (offset: number) => void;
-  status: unknown;  // Trigger refresh when status changes
+  status: unknown; // Trigger refresh when status changes
 }
 
 export interface UseHistoryStateResult {
@@ -76,7 +76,7 @@ export function useHistoryState({
 
   // Navigation handlers
   const navigateHistoryUp = useCallback(() => {
-    setHistorySelectedIndex(prev => {
+    setHistorySelectedIndex((prev) => {
       const newIndex = Math.max(0, prev - 1);
       if (newIndex < historyScrollOffset) setHistoryScrollOffset(newIndex);
       return newIndex;
@@ -84,7 +84,7 @@ export function useHistoryState({
   }, [historyScrollOffset, setHistoryScrollOffset]);
 
   const navigateHistoryDown = useCallback(() => {
-    setHistorySelectedIndex(prev => {
+    setHistorySelectedIndex((prev) => {
       const newIndex = Math.min(commits.length - 1, prev + 1);
       const visibleEnd = historyScrollOffset + topPaneHeight - 2;
       if (newIndex >= visibleEnd) setHistoryScrollOffset(historyScrollOffset + 1);

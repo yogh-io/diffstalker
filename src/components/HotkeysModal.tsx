@@ -75,11 +75,7 @@ const hotkeyGroups: HotkeyGroup[] = [
   },
 ];
 
-export function HotkeysModal({
-  onClose,
-  width,
-  height,
-}: HotkeysModalProps): React.ReactElement {
+export function HotkeysModal({ onClose, width, height }: HotkeysModalProps): React.ReactElement {
   useInput((input, key) => {
     if (key.escape || key.return || input === '?') {
       onClose();
@@ -112,7 +108,9 @@ export function HotkeysModal({
   // Render a single group
   const renderGroup = (group: HotkeyGroup, colWidth: number) => (
     <Box key={group.title} flexDirection="column" marginBottom={1}>
-      <Text bold dimColor>{group.title}</Text>
+      <Text bold dimColor>
+        {group.title}
+      </Text>
       {group.entries.map((entry) => (
         <Box key={entry.key}>
           <Box width={13}>
@@ -135,7 +133,10 @@ export function HotkeysModal({
       <Modal x={x} y={y} width={boxWidth} height={boxHeight}>
         <Box borderStyle="round" borderColor="cyan" flexDirection="column" width={boxWidth}>
           <Box justifyContent="center" marginBottom={1}>
-            <Text bold color="cyan"> Keyboard Shortcuts </Text>
+            <Text bold color="cyan">
+              {' '}
+              Keyboard Shortcuts{' '}
+            </Text>
           </Box>
 
           <Box>
@@ -159,7 +160,10 @@ export function HotkeysModal({
     <Modal x={x} y={y} width={boxWidth} height={boxHeight}>
       <Box borderStyle="round" borderColor="cyan" flexDirection="column" width={boxWidth}>
         <Box justifyContent="center" marginBottom={1}>
-          <Text bold color="cyan"> Keyboard Shortcuts </Text>
+          <Text bold color="cyan">
+            {' '}
+            Keyboard Shortcuts{' '}
+          </Text>
         </Box>
 
         {hotkeyGroups.map((group) => renderGroup(group, columnWidth))}

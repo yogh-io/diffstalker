@@ -37,13 +37,13 @@ const darkTheme: Theme = {
   name: 'dark',
   displayName: 'Dark',
   colors: {
-    addBg: '#022800',        // sampled: rgb(2,40,0)
-    delBg: '#3D0100',        // sampled: rgb(61,1,0)
+    addBg: '#022800', // sampled: rgb(2,40,0)
+    delBg: '#3D0100', // sampled: rgb(61,1,0)
     addHighlight: '#044700', // sampled: rgb(4,71,0)
     delHighlight: '#5C0200', // sampled: rgb(92,2,0)
     text: 'white',
-    addLineNum: '#368F35',   // sampled: rgb(54,143,53)
-    delLineNum: '#A14040',   // sampled: rgb(161,64,64)
+    addLineNum: '#368F35', // sampled: rgb(54,143,53)
+    delLineNum: '#A14040', // sampled: rgb(161,64,64)
     contextLineNum: 'gray',
     addSymbol: 'greenBright',
     delSymbol: 'redBright',
@@ -55,8 +55,8 @@ const lightTheme: Theme = {
   name: 'light',
   displayName: 'Light',
   colors: {
-    addBg: '#69db7c',        // rgb(105,219,124)
-    delBg: '#ffa8b4',        // rgb(255,168,180)
+    addBg: '#69db7c', // rgb(105,219,124)
+    delBg: '#ffa8b4', // rgb(255,168,180)
     addHighlight: '#2f9d44', // rgb(47,157,68)
     delHighlight: '#d1454b', // rgb(209,69,75)
     text: 'black',
@@ -73,8 +73,8 @@ const darkColorblindTheme: Theme = {
   name: 'dark-colorblind',
   displayName: 'Dark (colorblind)',
   colors: {
-    addBg: '#004466',        // rgb(0,68,102)
-    delBg: '#660000',        // rgb(102,0,0)
+    addBg: '#004466', // rgb(0,68,102)
+    delBg: '#660000', // rgb(102,0,0)
     addHighlight: '#0077b3', // rgb(0,119,179)
     delHighlight: '#b30000', // rgb(179,0,0)
     text: 'white',
@@ -91,8 +91,8 @@ const lightColorblindTheme: Theme = {
   name: 'light-colorblind',
   displayName: 'Light (colorblind)',
   colors: {
-    addBg: '#99ccff',        // rgb(153,204,255)
-    delBg: '#ffcccc',        // rgb(255,204,204)
+    addBg: '#99ccff', // rgb(153,204,255)
+    delBg: '#ffcccc', // rgb(255,204,204)
     addHighlight: '#3366cc', // rgb(51,102,204)
     delHighlight: '#993333', // rgb(153,51,51)
     text: 'black',
@@ -141,8 +141,8 @@ const lightAnsiTheme: Theme = {
 };
 
 export const themes: Record<ThemeName, Theme> = {
-  'dark': darkTheme,
-  'light': lightTheme,
+  dark: darkTheme,
+  light: lightTheme,
   'dark-colorblind': darkColorblindTheme,
   'light-colorblind': lightColorblindTheme,
   'dark-ansi': darkAnsiTheme,

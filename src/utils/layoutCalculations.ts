@@ -15,9 +15,9 @@ export function getFileListSectionCounts(files: FileEntry[]): {
   untrackedCount: number;
   stagedCount: number;
 } {
-  const modifiedCount = files.filter(f => !f.staged && f.status !== 'untracked').length;
-  const untrackedCount = files.filter(f => !f.staged && f.status === 'untracked').length;
-  const stagedCount = files.filter(f => f.staged).length;
+  const modifiedCount = files.filter((f) => !f.staged && f.status !== 'untracked').length;
+  const untrackedCount = files.filter((f) => !f.staged && f.status === 'untracked').length;
+  const stagedCount = files.filter((f) => f.staged).length;
   return { modifiedCount, untrackedCount, stagedCount };
 }
 
@@ -86,7 +86,7 @@ export function getRowForFileIndex(
   selectedIndex: number,
   modifiedCount: number,
   untrackedCount: number,
-  stagedCount: number
+  _stagedCount: number
 ): number {
   let row = 0;
 

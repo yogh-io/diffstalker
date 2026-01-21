@@ -179,9 +179,12 @@ export function useGit(repoPath: string | null): UseGitResult {
     return managerRef.current?.getCandidateBaseBranches() ?? [];
   }, []);
 
-  const setCompareBaseBranch = useCallback(async (branch: string, includeUncommitted: boolean = false) => {
-    await managerRef.current?.setCompareBaseBranch(branch, includeUncommitted);
-  }, []);
+  const setCompareBaseBranch = useCallback(
+    async (branch: string, includeUncommitted: boolean = false) => {
+      await managerRef.current?.setCompareBaseBranch(branch, includeUncommitted);
+    },
+    []
+  );
 
   const selectHistoryCommit = useCallback(async (commit: CommitInfo | null) => {
     await managerRef.current?.selectHistoryCommit(commit);
