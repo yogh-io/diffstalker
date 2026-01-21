@@ -119,7 +119,6 @@ Location: `~/.cache/diffstalker/`
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | API key for AI commit message generation |
-| `DIFFSTALKER_PAGER` | External pager for diff display |
 
 ## Other Commands
 

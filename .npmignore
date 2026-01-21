@@ -1,0 +1,29 @@
+# Source files (published package uses dist/)
+src/
+tsconfig.json
+
+# Development files
+*.test.ts
+*.test.tsx
+.eslintrc*
+eslint.config.*
+.prettierrc*
+vitest.config.*
+
+# Documentation (available on GitHub)
+CLAUDE.md
+FEATURES.md
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+.env*

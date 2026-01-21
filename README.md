@@ -17,7 +17,7 @@ A terminal UI for git staging, committing, and reviewing changes. Built with Typ
 ### From source
 
 ```bash
-git clone https://github.com/user/diffstalker.git
+git clone https://github.com/yogh-io/diffstalker.git
 cd diffstalker
 npm install
 npm run build
@@ -207,7 +207,6 @@ Location: `~/.cache/diffstalker/`
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | API key for AI commit message generation |
-| `DIFFSTALKER_PAGER` | External pager for diff display |
 
 ## CLI Options
 

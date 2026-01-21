@@ -2,6 +2,16 @@
   "name": "diffstalker",
   "version": "0.1.0",
   "description": "Terminal application that displays git diff/status for directories",
+  "author": "yogh-io",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yogh-io/diffstalker.git"
+  },
+  "homepage": "https://github.com/yogh-io/diffstalker#readme",
+  "bugs": {
+    "url": "https://github.com/yogh-io/diffstalker/issues"
+  },
   "type": "module",
   "main": "dist/index.js",
   "bin": {
@@ -27,7 +37,6 @@
     "tui",
     "cli"
   ],
-  "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "chokidar": "^4.0.3",
