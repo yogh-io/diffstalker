@@ -180,3 +180,26 @@ export function isButtonAreaClick(x: number): boolean {
 export function isInPane(y: number, paneStart: number, paneEnd: number): boolean {
   return y >= paneStart && y <= paneEnd;
 }
+
+export type FooterLeftClick = 'hotkeys' | 'mouse-mode' | 'auto-tab' | null;
+
+/**
+ * Given an x-coordinate in the footer row, determine which left indicator was clicked.
+ * Layout: "? hotkeys | [scroll] | [auto-tab:on]"
+ *         1         11        21
+ */
+export function getFooterLeftClick(x: number): FooterLeftClick {
+  // "?" and "hotkeys" area: columns 1-9
+  if (x >= 1 && x <= 9) {
+    return 'hotkeys';
+  }
+  // "[scroll]" or "[select]" area: columns 13-20
+  if (x >= 13 && x <= 20) {
+    return 'mouse-mode';
+  }
+  // "[auto-tab:on/off]" area: columns 24-38
+  if (x >= 24 && x <= 38) {
+    return 'auto-tab';
+  }
+  return null;
+}

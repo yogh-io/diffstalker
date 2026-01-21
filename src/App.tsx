@@ -15,7 +15,7 @@ import { useTerminalSize } from './hooks/useTerminalSize.js';
 import { useLayout, SPLIT_RATIO_STEP } from './hooks/useLayout.js';
 import { useHistoryState } from './hooks/useHistoryState.js';
 import { useCompareState } from './hooks/useCompareState.js';
-import { getClickedFileIndex, getClickedTab, isButtonAreaClick, isInPane } from './utils/mouseCoordinates.js';
+import { getClickedFileIndex, getClickedTab, getFooterLeftClick, isButtonAreaClick, isInPane } from './utils/mouseCoordinates.js';
 import { Config, saveConfig } from './config.js';
 import { ThemePicker } from './components/ThemePicker.js';
 import { HotkeysModal } from './components/HotkeysModal.js';
@@ -67,6 +67,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [commitInputFocused, setCommitInputFocused] = useState(false);
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(config.theme);
   const [activeModal, setActiveModal] = useState<ModalType>(null);
+  const [autoTabEnabled, setAutoTabEnabled] = useState(false);
 
   // Header height calculation
   const headerHeight = getHeaderHeight(repoPath, status?.branch ?? null, watcherState, terminalWidth, error, isLoading);
@@ -178,11 +179,24 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     const { stagingPaneStart, fileListEnd, diffPaneStart, diffPaneEnd, footerRow } = paneBoundariesRef.current;
 
     if (type === 'click') {
-      // Tab clicks in footer
+      // Footer clicks
       if (y === footerRow && button === 'left') {
+        // Tab clicks on the right side
         const tab = getClickedTab(x, terminalWidth);
         if (tab) {
           handleSwitchTab(tab);
+          return;
+        }
+        // Indicator clicks on the left side
+        const leftClick = getFooterLeftClick(x);
+        if (leftClick === 'hotkeys') {
+          setActiveModal('hotkeys');
+          return;
+        } else if (leftClick === 'mouse-mode') {
+          toggleMouse();
+          return;
+        } else if (leftClick === 'auto-tab') {
+          setAutoTabEnabled(prev => !prev);
           return;
         }
       }
@@ -274,6 +288,25 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     setCurrentPane(paneMap[tab]);
   }, []);
 
+  // Auto-tab mode: switch tabs based on file count transitions
+  const prevTotalFilesRef = useRef(totalFiles);
+  useEffect(() => {
+    if (!autoTabEnabled) {
+      prevTotalFilesRef.current = totalFiles;
+      return;
+    }
+    const prevCount = prevTotalFilesRef.current;
+    // Only trigger on transitions, not on current state
+    if (prevCount === 0 && totalFiles > 0) {
+      // Files appeared: switch to diff view
+      handleSwitchTab('diff');
+    } else if (prevCount > 0 && totalFiles === 0) {
+      // Files disappeared: switch to history view
+      handleSwitchTab('history');
+    }
+    prevTotalFilesRef.current = totalFiles;
+  }, [totalFiles, autoTabEnabled, handleSwitchTab]);
+
   // Navigation handlers
   const handleNavigateUp = useCallback(() => {
     if (currentPane === 'files') {
@@ -360,6 +393,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     onOpenHotkeysModal: () => setActiveModal('hotkeys'),
     onToggleMouse: toggleMouse,
     onToggleFollow: () => setWatcherEnabled(prev => !prev),
+    onToggleAutoTab: () => setAutoTabEnabled(prev => !prev),
   }, currentPane, commitInputFocused || activeModal !== null || showBaseBranchPicker);
 
   // Discard confirmation
@@ -456,7 +490,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
           <Text dimColor>(y/n)</Text>
         </Box>
       ) : (
-        <Footer activeTab={bottomTab} mouseEnabled={mouseEnabled} />
+        <Footer activeTab={bottomTab} mouseEnabled={mouseEnabled} autoTabEnabled={autoTabEnabled} />
       )}
 
       {/* Modals */}

@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { CommitInfo } from '../git/status.js';
 import { CompareFileDiff } from '../git/diff.js';
 import { shortenPath } from '../utils/formatPath.js';
+import { formatDate } from '../utils/formatDate.js';
 
 export type CompareListSelectionType = 'commit' | 'file';
 
@@ -32,27 +33,6 @@ interface RowItem {
   fileIndex?: number;
   commit?: CommitInfo;
   file?: CompareFileDiff;
-}
-
-function formatDate(date: Date): string {
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (days === 0) {
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    if (hours === 0) {
-      const mins = Math.floor(diff / (1000 * 60));
-      return `${mins}m ago`;
-    }
-    return `${hours}h ago`;
-  } else if (days === 1) {
-    return 'yesterday';
-  } else if (days <= 14) {
-    return `${days}d ago`;
-  } else {
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  }
 }
 
 function CommitRow({

@@ -24,6 +24,7 @@ export interface KeymapActions {
   onOpenHotkeysModal?: () => void;
   onToggleMouse?: () => void;
   onToggleFollow?: () => void;
+  onToggleAutoTab?: () => void;
 }
 
 export function useKeymap(
@@ -126,6 +127,12 @@ export function useKeymap(
     // Toggle follow mode: f
     if (input === 'f' && actions.onToggleFollow) {
       actions.onToggleFollow();
+      return;
+    }
+
+    // Toggle auto-tab mode: a
+    if (input === 'a' && actions.onToggleAutoTab) {
+      actions.onToggleAutoTab();
       return;
     }
 

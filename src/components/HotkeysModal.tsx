@@ -58,7 +58,8 @@ const hotkeyGroups: HotkeyGroup[] = [
       { key: '1', description: 'Diff view' },
       { key: '2', description: 'Commit panel' },
       { key: '3', description: 'History view' },
-      { key: '4', description: 'PR view' },
+      { key: '4', description: 'Compare view' },
+      { key: 'a', description: 'Toggle auto-tab mode' },
     ],
   },
   {
@@ -67,8 +68,8 @@ const hotkeyGroups: HotkeyGroup[] = [
       { key: 'm', description: 'Toggle scroll/select mode' },
       { key: 'f', description: 'Toggle follow mode' },
       { key: 't', description: 'Theme picker' },
-      { key: 'b', description: 'Base branch picker (PR)' },
-      { key: 'u', description: 'Toggle uncommitted (PR)' },
+      { key: 'b', description: 'Base branch picker' },
+      { key: 'u', description: 'Toggle uncommitted' },
       { key: '?', description: 'This help' },
     ],
   },
@@ -85,13 +86,74 @@ export function HotkeysModal({
     }
   });
 
-  // Calculate box dimensions
-  const boxWidth = Math.min(60, width - 4);
-  const totalLines = hotkeyGroups.reduce((sum, g) => sum + g.entries.length + 2, 0) + 4; // +2 per group for title+spacing, +4 for header/footer/borders
-  const boxHeight = Math.min(totalLines, height - 4);
+  // Determine if we should use 2 columns (need at least 90 chars width)
+  const useTwoColumns = width >= 90;
+  const columnWidth = useTwoColumns ? 38 : 30;
+  const boxWidth = useTwoColumns ? Math.min(82, width - 4) : Math.min(40, width - 4);
+
+  // Calculate height based on layout
+  let boxHeight: number;
+  if (useTwoColumns) {
+    // Split groups into two columns
+    const midpoint = Math.ceil(hotkeyGroups.length / 2);
+    const leftGroups = hotkeyGroups.slice(0, midpoint);
+    const rightGroups = hotkeyGroups.slice(midpoint);
+    const leftLines = leftGroups.reduce((sum, g) => sum + g.entries.length + 2, 0);
+    const rightLines = rightGroups.reduce((sum, g) => sum + g.entries.length + 2, 0);
+    boxHeight = Math.min(Math.max(leftLines, rightLines) + 5, height - 4);
+  } else {
+    const totalLines = hotkeyGroups.reduce((sum, g) => sum + g.entries.length + 2, 0) + 4;
+    boxHeight = Math.min(totalLines, height - 4);
+  }
 
   // Center the modal
   const { x, y } = centerModal(boxWidth, boxHeight, width, height);
+
+  // Render a single group
+  const renderGroup = (group: HotkeyGroup, colWidth: number) => (
+    <Box key={group.title} flexDirection="column" marginBottom={1}>
+      <Text bold dimColor>{group.title}</Text>
+      {group.entries.map((entry) => (
+        <Box key={entry.key}>
+          <Box width={13}>
+            <Text color="cyan">{entry.key}</Text>
+          </Box>
+          <Box width={colWidth - 13}>
+            <Text>{entry.description}</Text>
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  );
+
+  if (useTwoColumns) {
+    const midpoint = Math.ceil(hotkeyGroups.length / 2);
+    const leftGroups = hotkeyGroups.slice(0, midpoint);
+    const rightGroups = hotkeyGroups.slice(midpoint);
+
+    return (
+      <Modal x={x} y={y} width={boxWidth} height={boxHeight}>
+        <Box borderStyle="round" borderColor="cyan" flexDirection="column" width={boxWidth}>
+          <Box justifyContent="center" marginBottom={1}>
+            <Text bold color="cyan"> Keyboard Shortcuts </Text>
+          </Box>
+
+          <Box>
+            <Box flexDirection="column" width={columnWidth} marginRight={2}>
+              {leftGroups.map((g) => renderGroup(g, columnWidth))}
+            </Box>
+            <Box flexDirection="column" width={columnWidth}>
+              {rightGroups.map((g) => renderGroup(g, columnWidth))}
+            </Box>
+          </Box>
+
+          <Box marginTop={1} justifyContent="center">
+            <Text dimColor>Press Esc, Enter, or ? to close</Text>
+          </Box>
+        </Box>
+      </Modal>
+    );
+  }
 
   return (
     <Modal x={x} y={y} width={boxWidth} height={boxHeight}>
@@ -100,19 +162,7 @@ export function HotkeysModal({
           <Text bold color="cyan"> Keyboard Shortcuts </Text>
         </Box>
 
-        {hotkeyGroups.map((group) => (
-          <Box key={group.title} flexDirection="column" marginBottom={1}>
-            <Text bold dimColor>{group.title}</Text>
-            {group.entries.map((entry) => (
-              <Box key={entry.key}>
-                <Box width={15}>
-                  <Text color="cyan">{entry.key}</Text>
-                </Box>
-                <Text>{entry.description}</Text>
-              </Box>
-            ))}
-          </Box>
-        ))}
+        {hotkeyGroups.map((group) => renderGroup(group, columnWidth))}
 
         <Box marginTop={1} justifyContent="center">
           <Text dimColor>Press Esc, Enter, or ? to close</Text>

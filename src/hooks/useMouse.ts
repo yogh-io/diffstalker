@@ -21,16 +21,21 @@ export function useMouse(
     setMouseEnabled(prev => !prev);
   }, []);
 
-  // Handle mouse mode changes (also disable when text input is focused)
+  // Store mouseEnabled in ref for use in event handler
+  const mouseEnabledRef = useRef(mouseEnabled);
+  mouseEnabledRef.current = mouseEnabled;
+
+  // Handle mouse mode changes (disable only when text input is focused)
+  // Note: We keep mouse tracking enabled even in "select mode" so clicks still work
   useEffect(() => {
-    if (mouseEnabled && !disabled) {
+    if (!disabled) {
       process.stdout.write('\x1b[?1000h');
       process.stdout.write('\x1b[?1006h');
     } else {
       process.stdout.write('\x1b[?1006l');
       process.stdout.write('\x1b[?1000l');
     }
-  }, [mouseEnabled, disabled]);
+  }, [disabled]);
 
   // Set up event listener (separate from mode toggle)
   useEffect(() => {
@@ -47,10 +52,12 @@ export function useMouse(
         const y = parseInt(sgrMatch[3], 10);
         const isRelease = sgrMatch[4] === 'm';
 
-        // Scroll wheel events (button codes 64-67)
+        // Scroll wheel events (button codes 64-67) - only when in scroll mode
         if (buttonCode >= 64 && buttonCode < 96) {
-          const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
-          onEventRef.current({ x, y, type, button: 'none' });
+          if (mouseEnabledRef.current) {
+            const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
+            onEventRef.current({ x, y, type, button: 'none' });
+          }
         }
         // Click events (button codes 0-2) - only on release to avoid double-firing
         else if (isRelease && buttonCode >= 0 && buttonCode < 3) {
@@ -69,8 +76,10 @@ export function useMouse(
         const y = legacyMatch[3].charCodeAt(0) - 32;
 
         if (buttonCode >= 64) {
-          const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
-          onEventRef.current({ x, y, type, button: 'none' });
+          if (mouseEnabledRef.current) {
+            const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
+            onEventRef.current({ x, y, type, button: 'none' });
+          }
         }
         // Legacy click events (button codes 0-2)
         else if (buttonCode >= 0 && buttonCode < 3) {

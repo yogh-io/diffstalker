@@ -4,15 +4,18 @@ import { Box, Text } from 'ink';
 interface FooterProps {
   activeTab: 'diff' | 'commit' | 'history' | 'compare';
   mouseEnabled?: boolean;
+  autoTabEnabled?: boolean;
 }
 
-export function Footer({ activeTab, mouseEnabled = true }: FooterProps): React.ReactElement {
+export function Footer({ activeTab, mouseEnabled = true, autoTabEnabled = false }: FooterProps): React.ReactElement {
   return (
     <Box justifyContent="space-between">
       <Text>
         <Text dimColor>?</Text> hotkeys
         <Text dimColor> | </Text>
-        <Text dimColor>[{mouseEnabled ? 'scroll mode' : 'select mode'}]</Text>
+        <Text dimColor>[{mouseEnabled ? 'scroll' : 'select'}]</Text>
+        <Text dimColor> | </Text>
+        <Text dimColor>[auto-tab:{autoTabEnabled ? 'on' : 'off'}]</Text>
       </Text>
 
       <Text>

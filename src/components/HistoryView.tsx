@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { CommitInfo } from '../git/status.js';
 import { ScrollableList } from './ScrollableList.js';
+import { formatDate } from '../utils/formatDate.js';
 
 interface HistoryViewProps {
   commits: CommitInfo[];
@@ -58,27 +59,6 @@ export function getHistoryRowOffset(
   _terminalWidth: number
 ): number {
   return commitIndex;
-}
-
-function formatDate(date: Date): string {
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-  if (days === 0) {
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    if (hours === 0) {
-      const mins = Math.floor(diff / (1000 * 60));
-      return `${mins}m ago`;
-    }
-    return `${hours}h ago`;
-  } else if (days === 1) {
-    return 'yesterday';
-  } else if (days <= 14) {
-    return `${days}d ago`;
-  } else {
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  }
 }
 
 export function HistoryView({
