@@ -1,5 +1,6 @@
 # Source files (published package uses dist/)
 src/
+scripts/
 tsconfig.json
 
 # Type declarations (CLI only, not a library)

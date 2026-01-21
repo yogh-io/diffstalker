@@ -20,7 +20,8 @@
   "scripts": {
     "dev": "tsx src/index.tsx",
     "build": "tsc",
-    "bundle": "npm run build && ncc build dist/index.js -o dist/bundle -m",
+    "build:prod": "tsc && node scripts/minify.js",
+    "bundle": "npm run build:prod && ncc build dist/index.js -o dist/bundle -m",
     "start": "node dist/index.js",
     "start:bundle": "node dist/bundle/index.js",
     "test": "vitest run",
@@ -28,7 +29,8 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",
-    "format:check": "prettier --check src/"
+    "format:check": "prettier --check src/",
+    "prepublishOnly": "npm run build:prod"
   },
   "keywords": [
     "git",
@@ -55,6 +57,7 @@
     "@types/node": "^22.10.7",
     "@types/react": "^19.2.0",
     "@vercel/ncc": "^0.38.4",
+    "esbuild": "^0.27.2",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.0.1",
