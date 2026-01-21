@@ -179,6 +179,12 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     const { stagingPaneStart, fileListEnd, diffPaneStart, diffPaneEnd, footerRow } = paneBoundariesRef.current;
 
     if (type === 'click') {
+      // Close modals on any click
+      if (activeModal !== null) {
+        setActiveModal(null);
+        return;
+      }
+
       // Footer clicks
       if (y === footerRow && button === 'left') {
         // Tab clicks on the right side
@@ -270,6 +276,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     historyScrollOffset, compareScrollOffset, setDiffScrollOffset, setHistorySelectedIndex,
     setCompareSelectedIndex, markSelectionInitialized, getItemIndexFromRow,
     compareListSelection?.type, compareDiffTotalRows, historyDiffTotalRows, historyTotalRows,
+    activeModal,
   ]);
 
   // Disable mouse when inputs are focused
