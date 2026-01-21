@@ -6,6 +6,8 @@ Keep your changes visible. A terminal-based git UI designed to run on a secondar
 
 ## Why diffstalker?
 
+**Keep up with AI.** When AI assistants edit your code, changes happen fast. diffstalker gives you a live view of what's being modified, so you can review changes as they happen rather than piecing things together afterward.
+
 **Always-on visibility.** Put diffstalker on your second monitor and forget about it. As you switch between projects, it follows along—showing your current changes, staged files, and diffs without you ever needing to alt-tab or type `git status`.
 
 **Dead-simple integration.** Follow mode watches a plain text file for paths. Any script, hook, or tool can write to it. Add two lines to your shell config and every `cd` into a git repo updates the display automatically.
