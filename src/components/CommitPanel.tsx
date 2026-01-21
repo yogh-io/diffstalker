@@ -6,7 +6,6 @@ import { useCommitFlow } from '../hooks/useCommitFlow.js';
 interface CommitPanelProps {
   isActive: boolean;
   stagedCount: number;
-  stagedDiff: string;
   onCommit: (message: string, amend: boolean) => Promise<void>;
   onCancel: () => void;
   getHeadMessage: () => Promise<string>;
@@ -16,7 +15,6 @@ interface CommitPanelProps {
 export function CommitPanel({
   isActive,
   stagedCount,
-  stagedDiff,
   onCommit,
   onCancel,
   getHeadMessage,
@@ -26,18 +24,14 @@ export function CommitPanel({
     message,
     amend,
     isCommitting,
-    isGenerating,
     error,
     inputFocused,
-    aiAvailable,
     setMessage,
     toggleAmend,
     setInputFocused,
-    handleGenerate,
     handleSubmit,
   } = useCommitFlow({
     stagedCount,
-    stagedDiff,
     onCommit,
     onSuccess: onCancel,
     getHeadMessage,
@@ -75,11 +69,6 @@ export function CommitPanel({
           toggleAmend();
           return;
         }
-        // Generate with 'g' when unfocused
-        if (input === 'g' && aiAvailable) {
-          handleGenerate();
-          return;
-        }
         return; // Don't handle other keys - let them bubble up to useKeymap
       }
 
@@ -87,12 +76,6 @@ export function CommitPanel({
       // Toggle amend with 'a' when message is empty
       if (input === 'a' && !message) {
         toggleAmend();
-        return;
-      }
-
-      // Generate with 'g' when message is empty
-      if (input === 'g' && !message && aiAvailable) {
-        handleGenerate();
         return;
       }
     },
@@ -130,12 +113,6 @@ export function CommitPanel({
       <Box marginTop={1} gap={2}>
         <Text color={amend ? 'green' : 'gray'}>[{amend ? 'x' : ' '}] Amend</Text>
         <Text dimColor>(a)</Text>
-        {aiAvailable && (
-          <>
-            <Text color="cyan">[g] Generate</Text>
-            {isGenerating && <Text color="yellow">generating...</Text>}
-          </>
-        )}
       </Box>
 
       {error && (
@@ -156,7 +133,6 @@ export function CommitPanel({
           {inputFocused
             ? 'Enter: commit | Esc: unfocus'
             : 'i/Enter: edit | Esc: cancel | 1/3: switch tab'}
-          {aiAvailable && ' | g: AI generate'}
         </Text>
       </Box>
     </Box>

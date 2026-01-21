@@ -13,7 +13,6 @@ A comprehensive list of diffstalker features organized by category.
 ### Commit View (Tab 2)
 - Commit message input with vim-style `i` to enter edit mode
 - Toggle amend mode with `a` key
-- AI-assisted commit message generation with `g` key (requires `ANTHROPIC_API_KEY`)
 - Shows count of staged files
 
 ### History View (Tab 3)
@@ -113,12 +112,6 @@ Location: `~/.cache/diffstalker/`
 |------|---------|
 | `target` | Default follow mode hook file |
 | `base-branches.json` | PR base branch cache per repository |
-
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | API key for AI commit message generation |
 
 ## Other Commands
 

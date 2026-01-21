@@ -25,7 +25,6 @@ interface BottomPaneProps {
 
   // Commit tab props
   stagedCount: number;
-  stagedDiff: string;
   onCommit: (message: string) => Promise<void>;
   onCommitCancel: () => void;
   getHeadCommitMessage: () => Promise<string>;
@@ -53,7 +52,6 @@ export function BottomPane({
   diff,
   selectedFile,
   stagedCount,
-  stagedDiff,
   onCommit,
   onCommitCancel,
   getHeadCommitMessage,
@@ -116,7 +114,6 @@ export function BottomPane({
         <CommitPanel
           isActive={currentPane === 'commit'}
           stagedCount={stagedCount}
-          stagedDiff={stagedDiff}
           onCommit={onCommit}
           onCancel={onCommitCancel}
           getHeadMessage={getHeadCommitMessage}

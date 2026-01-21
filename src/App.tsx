@@ -55,7 +55,6 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const {
     status,
     diff,
-    stagedDiff,
     selectedFile,
     isLoading,
     error,
@@ -606,7 +605,6 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         diff={diff}
         selectedFile={selectedFile}
         stagedCount={stagedCount}
-        stagedDiff={stagedDiff}
         onCommit={commit}
         onCommitCancel={handleCommitCancel}
         getHeadCommitMessage={getHeadCommitMessage}

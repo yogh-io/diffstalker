@@ -17,7 +17,6 @@ diffstalker is a terminal UI for git staging and committing, built with TypeScri
 - **React 19** hooks for state management
 - **chokidar** for file watching
 - **simple-git** for git operations
-- **@anthropic-ai/sdk** for AI commit messages (optional)
 - **fast-diff** for word-level diff highlighting
 
 ## Build Commands
@@ -70,8 +69,6 @@ src/
 │   ├── formatPath.ts       # Path shortening utility
 │   ├── layoutCalculations.ts # UI layout math
 │   └── mouseCoordinates.ts # Mouse position calculations
-└── ai/
-    └── commit.ts       # AI commit message generation
 ```
 
 ## Key Patterns

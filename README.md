@@ -10,7 +10,6 @@ A terminal UI for git staging, committing, and reviewing changes. Built with Typ
 - **Word-level diff highlighting**: See exactly what changed within each line
 - **6 color themes**: Including colorblind-friendly and ANSI-only variants
 - **Follow mode**: Watch a file for paths written by shell hooks
-- **AI commit messages**: Generate messages using Claude API (optional)
 
 ## Installation
 
@@ -78,11 +77,10 @@ The default view showing staged/unstaged files and their diffs.
 
 ### 2. Commit View
 
-Create commits with optional AI-assisted message generation.
+Create commits with message editor.
 
 - Press `i` or `Enter` to edit the commit message
 - Press `a` to toggle amend mode
-- Press `g` to generate an AI commit message (requires `ANTHROPIC_API_KEY`)
 - Press `Enter` to commit, `Esc` to cancel
 
 ### 3. History View
@@ -201,12 +199,6 @@ Location: `~/.cache/diffstalker/`
 
 - `target` - Default follow mode file
 - `base-branches.json` - Cached PR base branch per repository
-
-### Environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `ANTHROPIC_API_KEY` | API key for AI commit message generation |
 
 ## CLI Options
 
