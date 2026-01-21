@@ -1,183 +1,96 @@
 # diffstalker
 
-A terminal UI for git staging, committing, and reviewing changes. Built with TypeScript and Ink (React for CLIs).
+Keep your changes visible. A terminal-based git UI designed to run on a secondary monitor, automatically tracking whichever repository you're working in.
+
+<!-- Screenshots will go here -->
+
+## Why diffstalker?
+
+**Always-on visibility.** Put diffstalker on your second monitor and forget about it. As you switch between projects, it follows along—showing your current changes, staged files, and diffs without you ever needing to alt-tab or type `git status`.
+
+**Dead-simple integration.** Follow mode watches a plain text file for paths. Any script, hook, or tool can write to it. Add two lines to your shell config and every `cd` into a git repo updates the display automatically.
+
+**Everything at a glance.** Auto-tab mode ensures there's always something useful on screen—uncommitted changes when you have them, recent commits when you don't. Word-level diff highlighting shows exactly what changed, not just which lines.
 
 ## Features
 
-- **Four views**: Diff, Commit, History, and PR comparison
-- **Two-pane layout**: File list (top) and diff view (bottom) with resizable split
-- **Mouse support**: Click to select, stage/unstage, scroll, switch tabs
-- **Word-level diff highlighting**: See exactly what changed within each line
-- **6 color themes**: Including colorblind-friendly and ANSI-only variants
-- **Follow mode**: Watch a file for paths written by shell hooks
+- **Follow mode** — Automatically tracks repos via a simple file-based hook
+- **Auto-tab** — Always shows relevant content (changes → history → PR diff)
+- **Word-level diffs** — See precise changes within each line
+- **Four views** — Diff, Commit, History, and PR comparison
+- **Mouse & keyboard** — Click, scroll, or use vim-style navigation
+- **6 themes** — Including colorblind-friendly and ANSI-only variants
 
 ## Installation
-
-### From source
-
-```bash
-git clone https://github.com/yogh-io/diffstalker.git
-cd diffstalker
-npm install
-npm run build
-npm link  # makes 'diffstalker' available globally
-```
-
-### From npm (when published)
 
 ```bash
 npm install -g diffstalker
 ```
 
-## Usage
-
-### Basic usage
-
+Or from source:
 ```bash
-# Open current directory
-diffstalker
+git clone https://github.com/yogh-io/diffstalker.git
+cd diffstalker
+npm install && npm run build:prod
+npm link
+```
 
-# Open specific repository
+## Quick Start
+
+**Basic usage:**
+```bash
+diffstalker              # current directory
 diffstalker /path/to/repo
 ```
 
-### Follow mode
-
-Follow mode watches a file for repository paths, allowing external tools to control which repo is displayed.
-
+**Follow mode** (recommended for secondary monitor):
 ```bash
-# Follow default file (~/.cache/diffstalker/target)
 diffstalker --follow
-
-# Follow custom file
-diffstalker --follow /tmp/my-hook-file
 ```
 
-#### Shell integration
-
-Add to your `.bashrc` or `.zshrc` to auto-update diffstalker when changing directories:
-
+Add to your `.bashrc` or `.zshrc`:
 ```bash
 diffstalker_notify() {
-    echo "$PWD" > ~/.cache/diffstalker/target
+    [[ -d .git ]] && echo "$PWD" > ~/.cache/diffstalker/target
 }
 cd() { builtin cd "$@" && diffstalker_notify; }
 ```
 
-Press `f` at runtime to toggle follow mode on/off.
+Now diffstalker updates whenever you `cd` into a git repository.
 
 ## Views
 
-### 1. Diff View
-
-The default view showing staged/unstaged files and their diffs.
-
-- **Top pane**: File list organized by status (Modified, Untracked, Staged)
-- **Bottom pane**: Diff of selected file with word-level highlighting
-
-### 2. Commit View
-
-Create commits with message editor.
-
-- Press `i` or `Enter` to edit the commit message
-- Press `a` to toggle amend mode
-- Press `Enter` to commit, `Esc` to cancel
-
-### 3. History View
-
-Browse commit history of the current branch.
-
-- Navigate to select commits
-- View the diff for any historical commit
-
-### 4. PR View
-
-Compare your current branch against a base branch (useful for reviewing PR changes).
-
-- Press `b` to select a different base branch
-- Press `u` to toggle inclusion of uncommitted changes
-- Base branch selection is cached per repository
+| View | Key | Purpose |
+|------|-----|---------|
+| **Diff** | `1` | Stage/unstage files, review changes |
+| **Commit** | `2` | Write commit messages |
+| **History** | `3` | Browse recent commits and their diffs |
+| **PR** | `4` | Compare branch against base (main/master) |
 
 ## Keybindings
 
-### Navigation
+**Navigation:** `↑↓` or `jk` to move, `Tab` to switch panes, `1-4` for views
 
-| Key | Action |
-|-----|--------|
-| `↑` / `k` | Move up |
-| `↓` / `j` | Move down |
-| `Tab` | Toggle pane focus |
-| `1` | Diff view |
-| `2` | Commit view |
-| `3` | History view |
-| `4` | PR view |
+**Staging:** `Space` toggle, `Ctrl+A` stage all, `Ctrl+Z` unstage all
 
-### Staging
+**Other:** `t` themes, `?` help, `q` quit
 
-| Key | Action |
-|-----|--------|
-| `Space` / `Enter` | Toggle stage/unstage |
-| `Ctrl+S` | Stage selected file |
-| `Ctrl+U` | Unstage selected file |
-| `Ctrl+A` | Stage all files |
-| `Ctrl+Z` | Unstage all files |
-
-### Layout & Appearance
-
-| Key | Action |
-|-----|--------|
-| `[` | Shrink top pane |
-| `]` | Grow top pane |
-| `t` | Open theme picker |
-| `m` | Toggle scroll/select mode |
-
-### Other
-
-| Key | Action |
-|-----|--------|
-| `c` | Open commit panel |
-| `r` | Refresh |
-| `f` | Toggle follow mode |
-| `?` | Show keyboard shortcuts |
-| `q` / `Ctrl+C` | Quit |
-
-### PR View Specific
-
-| Key | Action |
-|-----|--------|
-| `b` | Select base branch |
-| `u` | Toggle uncommitted changes |
-
-## Mouse
-
-| Action | Effect |
-|--------|--------|
-| Left-click file | Select file |
-| Left-click `[+]` / `[-]` | Stage / unstage file |
-| Right-click file | Discard changes (with confirmation) |
-| Scroll wheel | Navigate list / scroll diff |
-| Click footer tabs | Switch views |
+Full keybinding reference available with `?` in the app.
 
 ## Themes
 
-Six built-in themes available via `t` key:
+Six built-in themes (`t` to switch):
 
 | Theme | Description |
 |-------|-------------|
-| Dark | Default dark theme |
+| Dark | Default |
 | Light | Light background |
-| Dark (colorblind) | Blue/red for deuteranopia |
-| Light (colorblind) | Blue/red on light background |
-| Dark (ANSI) | Uses terminal's 16 ANSI colors |
-| Light (ANSI) | Uses terminal's 16 ANSI colors |
-
-Theme selection is persisted to the config file.
+| Dark/Light (colorblind) | Blue/red palette |
+| Dark/Light (ANSI) | Terminal's 16 colors |
 
 ## Configuration
 
-### Config file
-
-Location: `~/.config/diffstalker/config.json`
+Config: `~/.config/diffstalker/config.json`
 
 ```json
 {
@@ -187,49 +100,17 @@ Location: `~/.config/diffstalker/config.json`
 }
 ```
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `theme` | string | Color theme name |
-| `splitRatio` | number | Top/bottom pane split (0.15-0.85) |
-| `targetFile` | string | File to watch in follow mode |
-
-### Cache directory
-
-Location: `~/.cache/diffstalker/`
-
-- `target` - Default follow mode file
-- `base-branches.json` - Cached PR base branch per repository
-
 ## CLI Options
 
 ```
 diffstalker [options] [path]
 
 Options:
-  -f, --follow [FILE]  Watch file for repo paths (default: ~/.cache/diffstalker/target)
+  -f, --follow [FILE]  Watch file for repo paths
   --once               Show status once and exit
   -d, --debug          Log path changes to stderr
-  -h, --help           Show help message
-
-Arguments:
-  [path]               Path to a git repository
-
-Examples:
-  diffstalker                      Open current directory
-  diffstalker /path/to/repo        Open specific repo
-  diffstalker --follow             Follow default hook file
-  diffstalker -f /tmp/hook         Follow custom hook file
+  -h, --help           Show help
 ```
-
-## Development
-
-```bash
-npm run dev      # Run with hot reload (tsx)
-npm run build    # Compile TypeScript
-npm start        # Run compiled version
-```
-
-See `CLAUDE.md` for architecture details and contribution guidelines.
 
 ## License
 
