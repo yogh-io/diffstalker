@@ -37,6 +37,9 @@
     "tui",
     "cli"
   ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "chokidar": "^4.0.3",
     "emphasize": "^7.0.0",
