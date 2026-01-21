@@ -405,11 +405,19 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       // Files appeared: switch to diff view
       handleSwitchTab('diff');
     } else if (prevCount > 0 && totalFiles === 0) {
-      // Files disappeared: switch to history view
+      // Files disappeared: switch to history view and select newest commit
+      setHistorySelectedIndex(0);
+      setHistoryScrollOffset(0);
       handleSwitchTab('history');
     }
     prevTotalFilesRef.current = totalFiles;
-  }, [totalFiles, autoTabEnabled, handleSwitchTab]);
+  }, [
+    totalFiles,
+    autoTabEnabled,
+    handleSwitchTab,
+    setHistorySelectedIndex,
+    setHistoryScrollOffset,
+  ]);
 
   // Navigation handlers
   const handleNavigateUp = useCallback(() => {
