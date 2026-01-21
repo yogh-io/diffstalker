@@ -63,16 +63,10 @@ diffstalker_notify() {
 cd() { builtin cd "$@" && diffstalker_notify; }
 ```
 
-**WezTerm** — update when switching tabs/panes:
-```lua
--- In wezterm.lua
-wezterm.on('pane-focus-changed', function(window, pane)
-  local cwd = pane:get_current_working_dir()
-  if cwd then
-    local f = io.open(wezterm.home_dir .. '/.cache/diffstalker/target', 'w')
-    if f then f:write(cwd.path); f:close() end
-  end
-end)
+**Tmux** — update on pane/window switch:
+```bash
+# In .tmux.conf
+set-hook -g pane-focus-in 'run-shell "tmux display -p \"#{pane_current_path}\" > ~/.cache/diffstalker/target"'
 ```
 
 **Neovim** — update when changing buffers:
