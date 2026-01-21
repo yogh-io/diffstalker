@@ -29,17 +29,17 @@ export function useMouse(
     mouseEnabledRef.current = mouseEnabled;
   }, [mouseEnabled]);
 
-  // Handle mouse mode changes (disable only when text input is focused)
-  // Note: We keep mouse tracking enabled even in "select mode" so clicks still work
+  // Handle mouse mode changes
+  // When disabled (text input focused) or in select mode, disable mouse tracking for text selection
   useEffect(() => {
-    if (!disabled) {
+    if (!disabled && mouseEnabled) {
       process.stdout.write('\x1b[?1000h');
       process.stdout.write('\x1b[?1006h');
     } else {
       process.stdout.write('\x1b[?1006l');
       process.stdout.write('\x1b[?1000l');
     }
-  }, [disabled]);
+  }, [disabled, mouseEnabled]);
 
   // Set up event listener (separate from mode toggle)
   useEffect(() => {
