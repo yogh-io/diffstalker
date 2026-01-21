@@ -2,6 +2,9 @@
 src/
 tsconfig.json
 
+# Type declarations (CLI only, not a library)
+*.d.ts
+
 # Development files
 *.test.ts
 *.test.tsx
