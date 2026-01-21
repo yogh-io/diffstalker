@@ -27,6 +27,16 @@ A comprehensive list of diffstalker features organized by category.
 - Base branch picker with fuzzy text filtering (`b` key)
 - Base branch selection cached per repository
 
+### Explorer View (Tab 5)
+- Read-only file browser for the repository
+- Breadcrumb navigation showing current path
+- Flat directory listing sorted: directories first, then files
+- Respects `.gitignore` (gitignored files are hidden)
+- File content viewer in bottom pane
+- Binary file detection (shows "Binary file - cannot display")
+- Large file handling (warns >100KB, truncates >1MB)
+- Navigation: `Enter` to enter directory, `Backspace`/`h` to go up
+
 ## Navigation
 
 ### Keyboard
@@ -35,7 +45,7 @@ A comprehensive list of diffstalker features organized by category.
 | `↑` / `k` | Move up |
 | `↓` / `j` | Move down |
 | `Tab` | Toggle between panes |
-| `1` / `2` / `3` / `4` | Switch tabs |
+| `1` / `2` / `3` / `4` / `5` | Switch tabs |
 | `Space` / `Enter` | Toggle stage/unstage |
 | `?` | Show hotkeys modal |
 

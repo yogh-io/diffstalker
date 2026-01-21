@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 interface FooterProps {
-  activeTab: 'diff' | 'commit' | 'history' | 'compare';
+  activeTab: 'diff' | 'commit' | 'history' | 'compare' | 'explorer';
   mouseEnabled?: boolean;
   autoTabEnabled?: boolean;
 }
@@ -36,6 +36,9 @@ export function Footer({
         </Text>{' '}
         <Text color={activeTab === 'compare' ? 'cyan' : undefined} bold={activeTab === 'compare'}>
           [4]Compare
+        </Text>{' '}
+        <Text color={activeTab === 'explorer' ? 'cyan' : undefined} bold={activeTab === 'explorer'}>
+          [5]Explorer
         </Text>
       </Text>
     </Box>

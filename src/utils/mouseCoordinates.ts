@@ -128,14 +128,16 @@ export interface TabBoundaries {
   historyEnd: number;
   compareStart: number;
   compareEnd: number;
+  explorerStart: number;
+  explorerEnd: number;
 }
 
 /**
  * Calculate the x-coordinate boundaries for each tab in the footer.
- * Tab layout (right-aligned): [1]Diff [2]Commit [3]History [4]Compare (39 chars total)
+ * Tab layout (right-aligned): [1]Diff [2]Commit [3]History [4]Compare [5]Explorer (51 chars total)
  */
 export function getTabBoundaries(terminalWidth: number): TabBoundaries {
-  const tabsStart = terminalWidth - 39; // 1-indexed start of tabs section
+  const tabsStart = terminalWidth - 51; // 1-indexed start of tabs section
   return {
     diffStart: tabsStart,
     diffEnd: tabsStart + 6,
@@ -145,6 +147,8 @@ export function getTabBoundaries(terminalWidth: number): TabBoundaries {
     historyEnd: tabsStart + 27,
     compareStart: tabsStart + 29,
     compareEnd: tabsStart + 38,
+    explorerStart: tabsStart + 40,
+    explorerEnd: tabsStart + 50,
   };
 }
 
@@ -163,6 +167,8 @@ export function getClickedTab(x: number, terminalWidth: number): BottomTab | nul
     return 'history';
   } else if (x >= bounds.compareStart && x <= bounds.compareEnd) {
     return 'compare';
+  } else if (x >= bounds.explorerStart && x <= bounds.explorerEnd) {
+    return 'explorer';
   }
   return null;
 }

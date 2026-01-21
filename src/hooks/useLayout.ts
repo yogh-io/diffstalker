@@ -21,6 +21,7 @@ const DEFAULT_SPLIT_RATIOS: Record<BottomTab, number> = {
   commit: 0.4, // 40% top pane for staging area
   history: 0.5, // 50% top pane for commit list (larger default)
   compare: 0.5, // 50% top pane for compare list (larger default)
+  explorer: 0.4, // 40% top pane for file listing
 };
 
 // Step size for keyboard-based pane resizing (5% per keypress)

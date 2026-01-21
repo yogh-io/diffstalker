@@ -1,7 +1,7 @@
 import { useInput } from 'ink';
 
-export type Pane = 'files' | 'diff' | 'commit' | 'history' | 'compare';
-export type BottomTab = 'diff' | 'commit' | 'history' | 'compare';
+export type Pane = 'files' | 'diff' | 'commit' | 'history' | 'compare' | 'explorer';
+export type BottomTab = 'diff' | 'commit' | 'history' | 'compare' | 'explorer';
 
 export interface KeymapActions {
   onStage: () => void;
@@ -25,6 +25,8 @@ export interface KeymapActions {
   onToggleMouse?: () => void;
   onToggleFollow?: () => void;
   onToggleAutoTab?: () => void;
+  onExplorerEnter?: () => void;
+  onExplorerBack?: () => void;
 }
 
 export function useKeymap(
@@ -79,6 +81,10 @@ export function useKeymap(
     }
     if (input === '4') {
       actions.onSwitchTab('compare');
+      return;
+    }
+    if (input === '5') {
+      actions.onSwitchTab('explorer');
       return;
     }
 
@@ -174,6 +180,16 @@ export function useKeymap(
     }
     if (input === 'r') {
       actions.onRefresh();
+      return;
+    }
+
+    // Explorer: Enter to enter directory, Backspace/h to go up
+    if (actions.onExplorerEnter && key.return) {
+      actions.onExplorerEnter();
+      return;
+    }
+    if (actions.onExplorerBack && (key.backspace || key.delete || input === 'h')) {
+      actions.onExplorerBack();
       return;
     }
 

@@ -5,6 +5,8 @@ import { CompareDiff } from '../git/diff.js';
 import { FileList } from './FileList.js';
 import { HistoryView } from './HistoryView.js';
 import { CompareListView, CompareListSelection } from './CompareListView.js';
+import { ExplorerView, buildBreadcrumbs } from './ExplorerView.js';
+import { ExplorerItem } from '../hooks/useExplorerState.js';
 import { BottomTab, Pane } from '../hooks/useKeymap.js';
 import { categorizeFiles } from '../utils/fileCategories.js';
 
@@ -33,6 +35,14 @@ interface TopPaneProps {
   compareListSelection: CompareListSelection | null;
   compareScrollOffset: number;
   includeUncommitted: boolean;
+
+  // Explorer props
+  explorerCurrentPath?: string;
+  explorerItems?: ExplorerItem[];
+  explorerSelectedIndex?: number;
+  explorerScrollOffset?: number;
+  explorerIsLoading?: boolean;
+  explorerError?: string | null;
 }
 
 export function TopPane({
@@ -54,6 +64,12 @@ export function TopPane({
   compareListSelection,
   compareScrollOffset,
   includeUncommitted,
+  explorerCurrentPath = '',
+  explorerItems = [],
+  explorerSelectedIndex = 0,
+  explorerScrollOffset = 0,
+  explorerIsLoading = false,
+  explorerError = null,
 }: TopPaneProps): React.ReactElement {
   const { modified, untracked } = categorizeFiles(files);
   const modifiedCount = modified.length;
@@ -133,6 +149,35 @@ export function TopPane({
             maxHeight={topPaneHeight - 1}
             isActive={currentPane === 'compare'}
             width={terminalWidth}
+          />
+        </>
+      )}
+      {bottomTab === 'explorer' && (
+        <>
+          <Box>
+            <Text bold color={currentPane === 'explorer' ? 'cyan' : undefined}>
+              EXPLORER
+            </Text>
+            <Text dimColor> </Text>
+            {buildBreadcrumbs(explorerCurrentPath).map((segment, i, arr) => (
+              <React.Fragment key={i}>
+                <Text color="blue">{segment}</Text>
+                {i < arr.length - 1 && <Text dimColor> / </Text>}
+              </React.Fragment>
+            ))}
+            {explorerCurrentPath && <Text dimColor> /</Text>}
+            {!explorerCurrentPath && <Text dimColor>(root)</Text>}
+          </Box>
+          <ExplorerView
+            currentPath={explorerCurrentPath}
+            items={explorerItems}
+            selectedIndex={explorerSelectedIndex}
+            scrollOffset={explorerScrollOffset}
+            maxHeight={topPaneHeight - 1}
+            isActive={currentPane === 'explorer'}
+            width={terminalWidth}
+            isLoading={explorerIsLoading}
+            error={explorerError}
           />
         </>
       )}
