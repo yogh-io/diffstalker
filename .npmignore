@@ -5,6 +5,8 @@ tsconfig.json
 # Development files
 *.test.ts
 *.test.tsx
+*.test.js
+*.test.d.ts
 .eslintrc*
 eslint.config.*
 .prettierrc*
@@ -13,6 +15,15 @@ vitest.config.*
 # Documentation (available on GitHub)
 CLAUDE.md
 FEATURES.md
+
+# Claude Code config
+.claude/
+
+# Bundle (not needed, dist/ is sufficient)
+dist/bundle/
+
+# Platform-specific packaging
+PKGBUILD
 
 # IDE and editor
 .vscode/

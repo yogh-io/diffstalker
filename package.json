@@ -15,7 +15,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "diffstalker": "./bin/diffstalker"
+    "diffstalker": "bin/diffstalker"
   },
   "scripts": {
     "dev": "tsx src/index.tsx",
