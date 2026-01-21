@@ -50,15 +50,49 @@ diffstalker /path/to/repo
 diffstalker --follow
 ```
 
-Add to your `.bashrc` or `.zshrc`:
+Follow mode watches `~/.cache/diffstalker/target` for repository paths. Any tool can write to this file—diffstalker will pick up the change instantly.
+
+### Integration Examples
+
+**Shell hook** — update on every `cd`:
 ```bash
+# Add to .bashrc or .zshrc
 diffstalker_notify() {
     [[ -d .git ]] && echo "$PWD" > ~/.cache/diffstalker/target
 }
 cd() { builtin cd "$@" && diffstalker_notify; }
 ```
 
-Now diffstalker updates whenever you `cd` into a git repository.
+**WezTerm** — update when switching tabs/panes:
+```lua
+-- In wezterm.lua
+wezterm.on('pane-focus-changed', function(window, pane)
+  local cwd = pane:get_current_working_dir()
+  if cwd then
+    local f = io.open(wezterm.home_dir .. '/.cache/diffstalker/target', 'w')
+    if f then f:write(cwd.path); f:close() end
+  end
+end)
+```
+
+**Neovim** — update when changing buffers:
+```lua
+-- In init.lua
+vim.api.nvim_create_autocmd({"BufEnter"}, {
+  callback = function()
+    local root = vim.fn.finddir('.git/..', vim.fn.expand('%:p:h') .. ';')
+    if root ~= '' then
+      local f = io.open(os.getenv('HOME') .. '/.cache/diffstalker/target', 'w')
+      if f then f:write(vim.fn.fnamemodify(root, ':p:h')); f:close() end
+    end
+  end
+})
+```
+
+**Any script** — just write to the file:
+```bash
+echo "/path/to/repo" > ~/.cache/diffstalker/target
+```
 
 ## Views
 
