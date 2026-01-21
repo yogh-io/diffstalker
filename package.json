@@ -21,7 +21,7 @@
     "dev": "tsx src/index.tsx",
     "build": "tsc",
     "build:prod": "tsc && node scripts/minify.js",
-    "bundle": "npm run build:prod && ncc build dist/index.js -o dist/bundle -m",
+    "bundle": "npm run build:prod && ncc build dist/index.js -o dist/bundle",
     "start": "node dist/index.js",
     "start:bundle": "node dist/bundle/index.js",
     "test": "vitest run",

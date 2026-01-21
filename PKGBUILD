@@ -1,10 +1,10 @@
-# Maintainer: Your Name <your.email@example.com>
+# Maintainer: yogh-io <info@yogh.nl>
 pkgname=diffstalker-git
 pkgver=0.1.0.r0.g0000000
 pkgrel=1
 pkgdesc="Terminal UI for git staging, committing, and reviewing changes"
 arch=('any')
-url="https://github.com/user/diffstalker"
+url="https://github.com/yogh-io/diffstalker"
 license=('MIT')
 depends=('nodejs')
 makedepends=('npm' 'git')
