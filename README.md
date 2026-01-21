@@ -50,7 +50,7 @@ diffstalker /path/to/repo
 diffstalker --follow
 ```
 
-Follow mode watches `~/.cache/diffstalker/target` for repository paths. Any tool can write to this file—diffstalker will pick up the change instantly.
+Follow mode watches `~/.cache/diffstalker/target` for repository paths. Write or append to this file—diffstalker reads the last non-empty line, so both styles work:
 
 ### Integration Examples
 
@@ -83,9 +83,10 @@ vim.api.nvim_create_autocmd({"BufEnter"}, {
 })
 ```
 
-**Any script** — just write to the file:
+**Any script** — write or append:
 ```bash
-echo "/path/to/repo" > ~/.cache/diffstalker/target
+echo "/path/to/repo" > ~/.cache/diffstalker/target   # overwrite
+echo "/path/to/repo" >> ~/.cache/diffstalker/target  # append (also works)
 ```
 
 The file-based approach is intentionally simple. IDE plugins, window manager hooks, project switchers, git hooks—if it can write to a file, it can drive diffstalker. Get creative.

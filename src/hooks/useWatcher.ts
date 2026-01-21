@@ -16,6 +16,16 @@ function expandPath(p: string): string {
   return p;
 }
 
+function getLastNonEmptyLine(content: string): string {
+  // Support append-only files by reading only the last non-empty line
+  const lines = content.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line) return line;
+  }
+  return '';
+}
+
 export interface WatcherState {
   path: string | null;
   lastUpdate: Date | null;
@@ -76,7 +86,8 @@ export function useWatcher(
 
       debounceTimer.current = setTimeout(() => {
         try {
-          const content = fs.readFileSync(targetFile, 'utf-8').trim();
+          const raw = fs.readFileSync(targetFile, 'utf-8');
+          const content = getLastNonEmptyLine(raw);
           if (content && content !== lastReadPath.current) {
             // Expand ~ and resolve to absolute path
             const expanded = expandPath(content);
@@ -108,7 +119,8 @@ export function useWatcher(
 
     // Read initial value immediately (no debounce for first read)
     try {
-      const content = fs.readFileSync(targetFile, 'utf-8').trim();
+      const raw = fs.readFileSync(targetFile, 'utf-8');
+      const content = getLastNonEmptyLine(raw);
       if (content) {
         // Expand ~ and resolve to absolute path
         const expanded = expandPath(content);
