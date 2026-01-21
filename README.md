@@ -2,7 +2,8 @@
 
 Keep your changes visible. A terminal-based git UI designed to run on a secondary monitor, automatically tracking whichever repository you're working in.
 
-<!-- Screenshots will go here -->
+![diffstalker diff view](assets/diff.png)
+![diffstalker history view](assets/history.png)
 
 ## Why diffstalker?
 
