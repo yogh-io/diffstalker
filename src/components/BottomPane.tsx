@@ -41,8 +41,6 @@ interface BottomPaneProps {
   compareError: string | null;
   compareListSelection: CompareListSelection | null;
   compareSelectionDiff: DiffResult | null;
-  includeUncommitted: boolean;
-  onToggleIncludeUncommitted: () => void;
 }
 
 export function BottomPane({
@@ -67,8 +65,6 @@ export function BottomPane({
   compareError,
   compareListSelection,
   compareSelectionDiff,
-  includeUncommitted,
-  onToggleIncludeUncommitted,
 }: BottomPaneProps): React.ReactElement {
   const isDiffFocused = currentPane !== 'files' && currentPane !== 'history' && currentPane !== 'compare';
 
@@ -127,7 +123,6 @@ export function BottomPane({
           diff={historyCommitDiff}
           maxHeight={bottomPaneHeight - 1}
           scrollOffset={diffScrollOffset}
-          width={terminalWidth}
           theme={currentTheme}
         />
       );
@@ -161,10 +156,6 @@ export function BottomPane({
           error={null}
           scrollOffset={diffScrollOffset}
           maxHeight={bottomPaneHeight - 1}
-          width={terminalWidth}
-          isActive={currentPane === 'diff'}
-          includeUncommitted={includeUncommitted}
-          onToggleIncludeUncommitted={onToggleIncludeUncommitted}
           theme={currentTheme}
         />
       );

@@ -30,7 +30,6 @@ export interface UseCompareStateResult {
 
   // Setters
   setCompareSelectedIndex: React.Dispatch<React.SetStateAction<number>>;
-  setCompareListSelection: React.Dispatch<React.SetStateAction<CompareListSelection | null>>;
 
   // Handlers
   toggleIncludeUncommitted: () => void;
@@ -178,7 +177,6 @@ export function useCompareState({
     compareTotalItems,
     compareDiffTotalRows,
     setCompareSelectedIndex,
-    setCompareListSelection,
     toggleIncludeUncommitted,
     openBaseBranchPicker,
     closeBaseBranchPicker,

@@ -32,9 +32,6 @@ interface TopPaneProps {
   compareListSelection: CompareListSelection | null;
   compareScrollOffset: number;
   includeUncommitted: boolean;
-  onSelectCompareCommit: (index: number) => void;
-  onSelectCompareFile: (index: number) => void;
-  onToggleIncludeUncommitted: () => void;
 }
 
 export function TopPane({
@@ -56,9 +53,6 @@ export function TopPane({
   compareListSelection,
   compareScrollOffset,
   includeUncommitted,
-  onSelectCompareCommit,
-  onSelectCompareFile,
-  onToggleIncludeUncommitted,
 }: TopPaneProps): React.ReactElement {
   const modifiedCount = files.filter(f => !f.staged && f.status !== 'untracked').length;
   const untrackedCount = files.filter(f => f.status === 'untracked').length;
@@ -125,10 +119,6 @@ export function TopPane({
             maxHeight={topPaneHeight - 1}
             isActive={currentPane === 'compare'}
             width={terminalWidth}
-            includeUncommitted={includeUncommitted}
-            onSelectCommit={onSelectCompareCommit}
-            onSelectFile={onSelectCompareFile}
-            onToggleIncludeUncommitted={onToggleIncludeUncommitted}
           />
         </>
       )}

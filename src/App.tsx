@@ -445,9 +445,6 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         compareListSelection={compareListSelection}
         compareScrollOffset={compareScrollOffset}
         includeUncommitted={includeUncommitted}
-        onSelectCompareCommit={(idx) => { markSelectionInitialized(); setCompareSelectedIndex(idx); }}
-        onSelectCompareFile={(idx) => { markSelectionInitialized(); setCompareSelectedIndex((compareDiff?.commits.length ?? 0) + idx); }}
-        onToggleIncludeUncommitted={toggleIncludeUncommitted}
       />
 
       <Separator />
@@ -475,8 +472,6 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         compareError={compareError}
         compareListSelection={compareListSelection}
         compareSelectionDiff={compareSelectionDiff}
-        includeUncommitted={includeUncommitted}
-        onToggleIncludeUncommitted={toggleIncludeUncommitted}
       />
 
       <Separator />

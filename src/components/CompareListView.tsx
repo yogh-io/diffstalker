@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { CommitInfo } from '../git/status.js';
 import { CompareFileDiff } from '../git/diff.js';
@@ -20,10 +20,6 @@ interface CompareListViewProps {
   maxHeight: number;
   isActive: boolean;
   width: number;
-  includeUncommitted: boolean;
-  onSelectCommit: (index: number) => void;
-  onSelectFile: (index: number) => void;
-  onToggleIncludeUncommitted: () => void;
 }
 
 interface RowItem {
@@ -162,13 +158,10 @@ export function CompareListView({
   maxHeight,
   isActive,
   width,
-  includeUncommitted,
-  onSelectCommit,
-  onSelectFile,
-  onToggleIncludeUncommitted,
 }: CompareListViewProps): React.ReactElement {
-  const [commitsExpanded, setCommitsExpanded] = useState(true);
-  const [filesExpanded, setFilesExpanded] = useState(true);
+  // Note: expand/collapse functionality is prepared but not exposed yet
+  const commitsExpanded = true;
+  const filesExpanded = true;
 
   // Build flat list of rows
   const rows = useMemo(() => {

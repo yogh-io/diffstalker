@@ -10,10 +10,6 @@ interface CompareViewProps {
   error: string | null;
   scrollOffset: number;
   maxHeight: number;
-  width: number;
-  isActive: boolean;
-  includeUncommitted: boolean;
-  onToggleIncludeUncommitted: () => void;
   theme?: ThemeName;
 }
 
@@ -105,10 +101,6 @@ export function CompareView({
   error,
   scrollOffset,
   maxHeight,
-  width,
-  isActive,
-  includeUncommitted,
-  onToggleIncludeUncommitted,
   theme = 'dark',
 }: CompareViewProps): React.ReactElement {
   // Build combined diff for DiffView

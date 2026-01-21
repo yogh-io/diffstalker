@@ -13,9 +13,11 @@ export function Footer({ activeTab, mouseEnabled = true, autoTabEnabled = false 
       <Text>
         <Text dimColor>?</Text> hotkeys
         <Text dimColor> | </Text>
-        <Text dimColor>[{mouseEnabled ? 'scroll' : 'select'}]</Text>
+        <Text color="yellow">[{mouseEnabled ? 'scroll' : 'select'}]</Text>
         <Text dimColor> | </Text>
-        <Text dimColor>[auto-tab:{autoTabEnabled ? 'on' : 'off'}]</Text>
+        <Text color={autoTabEnabled ? 'blue' : undefined} dimColor={!autoTabEnabled}>
+          [auto-tab:{autoTabEnabled ? 'on' : 'off'}]
+        </Text>
       </Text>
 
       <Text>

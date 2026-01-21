@@ -10,7 +10,6 @@ interface HistoryDiffViewProps {
   diff: DiffResult | null;
   scrollOffset: number;
   maxHeight: number;
-  width: number;
   theme?: ThemeName;
 }
 
@@ -28,6 +27,18 @@ function formatDate(date: Date): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+/** Filter out redundant headers that DiffView also skips */
+function isDisplayableDiffLine(line: DiffLine): boolean {
+  if (line.type !== 'header') return true;
+  const content = line.content;
+  return !(
+    content.startsWith('index ') ||
+    content.startsWith('--- ') ||
+    content.startsWith('+++ ') ||
+    content.startsWith('similarity index')
+  );
 }
 
 /**
@@ -75,22 +86,9 @@ export function buildHistoryDiffRows(
   // Diff lines (filter same as DiffView)
   if (diff) {
     for (const line of diff.lines) {
-      // Skip certain headers like DiffView does
-      if (line.type === 'header') {
-        const content = line.content;
-        if (
-          content.startsWith('index ') ||
-          content.startsWith('--- ') ||
-          content.startsWith('+++ ') ||
-          content.startsWith('similarity index')
-        ) {
-          continue;
-        }
+      if (isDisplayableDiffLine(line)) {
+        rows.push({ type: 'diff-line', diffLine: line });
       }
-      rows.push({
-        type: 'diff-line',
-        diffLine: line,
-      });
     }
   }
 
@@ -112,7 +110,6 @@ export function HistoryDiffView({
   diff,
   scrollOffset,
   maxHeight,
-  width,
   theme = 'dark',
 }: HistoryDiffViewProps): React.ReactElement {
   // Build rows using shared function
@@ -168,19 +165,11 @@ export function HistoryDiffView({
   // For diff lines, we delegate to DiffView for proper highlighting
   // But we need to handle the mixed content (headers + diff)
 
+  // Build filtered diff lines (computed once, used in both branches below)
+  const diffOnlyLines = diff.lines.filter(isDisplayableDiffLine);
+
   // If scroll is past all headers, just use DiffView directly with adjusted offset
   if (scrollOffset >= diffStartIndex) {
-    const diffOnlyLines = diff.lines.filter(line => {
-      if (line.type !== 'header') return true;
-      const content = line.content;
-      return !(
-        content.startsWith('index ') ||
-        content.startsWith('--- ') ||
-        content.startsWith('+++ ') ||
-        content.startsWith('similarity index')
-      );
-    });
-
     return (
       <DiffView
         diff={{ raw: diff.raw, lines: diffOnlyLines }}
@@ -194,18 +183,6 @@ export function HistoryDiffView({
   // Mixed view: some header rows visible, then diff
   const headerRowsToShow = visibleRows.filter(r => r.type !== 'diff-line');
   const diffRowsVisible = maxHeight - headerRowsToShow.length;
-
-  // Build filtered diff for DiffView
-  const diffOnlyLines = diff.lines.filter(line => {
-    if (line.type !== 'header') return true;
-    const content = line.content;
-    return !(
-      content.startsWith('index ') ||
-      content.startsWith('--- ') ||
-      content.startsWith('+++ ') ||
-      content.startsWith('similarity index')
-    );
-  });
 
   return (
     <Box flexDirection="column">

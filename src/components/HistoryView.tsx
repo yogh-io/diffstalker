@@ -15,16 +15,6 @@ interface HistoryViewProps {
 }
 
 /**
- * Calculate how many visual terminal rows a commit takes.
- * Since rendering truncates messages to fit, this always returns 1.
- */
-function getCommitRowCount(_commit: CommitInfo, _terminalWidth: number): number {
-  // The rendering truncates messages to fit within terminalWidth,
-  // so each commit always takes exactly 1 row
-  return 1;
-}
-
-/**
  * Map a visual row index to the commit index.
  * Since each commit takes 1 row, this is simply visualRow + scrollOffset.
  */
