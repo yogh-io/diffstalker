@@ -8,7 +8,7 @@ async function minifyDir(dir) {
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
 
-    if (entry.isDirectory()) {
+    if (entry.isDirectory() && entry.name !== 'bundle') {
       await minifyDir(fullPath);
     } else if (entry.name.endsWith('.js')) {
       const code = await readFile(fullPath, 'utf8');
@@ -21,6 +21,9 @@ async function minifyDir(dir) {
   }
 }
 
-const distDir = new URL('../dist', import.meta.url).pathname;
-await minifyDir(distDir);
-console.log('Minified dist/');
+const targetDir = process.argv[2]
+  ? new URL(process.argv[2], import.meta.url).pathname
+  : new URL('../dist', import.meta.url).pathname;
+
+await minifyDir(targetDir);
+console.log(`Minified ${targetDir}`);
