@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react';
+import React, { ReactNode, useMemo } from 'react';
 import { Box, Text } from 'ink';
 
 interface ScrollableListProps<T> {
@@ -12,6 +12,8 @@ interface ScrollableListProps<T> {
   header?: ReactNode;
   /** Show scroll indicators when content overflows */
   showIndicators?: boolean;
+  /** Optional function to get item height in rows (for wrapped lines). Defaults to 1. */
+  getItemHeight?: (item: T, index: number) => number;
 }
 
 /**
@@ -39,7 +41,25 @@ export function ScrollableList<T>({
   getKey,
   header,
   showIndicators = true,
+  getItemHeight,
 }: ScrollableListProps<T>): React.ReactElement {
+  // If getItemHeight is not provided, use simple item-based scrolling
+  const hasVariableHeight = !!getItemHeight;
+
+  // Calculate cumulative row positions for variable height items
+  const { itemRowStarts, totalRows } = useMemo(() => {
+    if (!hasVariableHeight) {
+      return { itemRowStarts: [] as number[], totalRows: items.length };
+    }
+    const starts: number[] = [];
+    let cumulative = 0;
+    for (let i = 0; i < items.length; i++) {
+      starts.push(cumulative);
+      cumulative += getItemHeight!(items[i], i);
+    }
+    return { itemRowStarts: starts, totalRows: cumulative };
+  }, [items, getItemHeight, hasVariableHeight]);
+
   // Calculate available space for actual content
   let availableHeight = maxHeight;
 
@@ -48,43 +68,72 @@ export function ScrollableList<T>({
     availableHeight--;
   }
 
-  // Check if we need scroll indicators
   const hasPrevious = scrollOffset > 0;
-  const totalItems = items.length;
+  const contentTotal = hasVariableHeight ? totalRows : items.length;
+  const needsScrolling = contentTotal > maxHeight;
 
-  // Tentatively check if we'd have more items after showing availableHeight
-  const wouldHaveMore = totalItems > scrollOffset + availableHeight;
-
-  // Reserve space for indicators if they'll be shown
-  if (showIndicators) {
-    if (hasPrevious) availableHeight--;
-    if (wouldHaveMore) availableHeight--;
+  // Simple rule: if content needs scrolling, ALWAYS reserve 2 rows for indicators
+  // No clever predictions - just consistent, predictable behavior
+  if (showIndicators && needsScrolling) {
+    availableHeight -= 2;
   }
 
   // Ensure we have at least 1 line for content
   availableHeight = Math.max(1, availableHeight);
 
-  // Slice the visible items
-  const visibleItems = items.slice(scrollOffset, scrollOffset + availableHeight);
-  const hasMore = totalItems > scrollOffset + availableHeight;
+  // Find visible items based on scroll offset (in rows)
+  const visibleItems: { item: T; index: number }[] = [];
+  let usedRows = 0;
+  let rowsAbove = 0;
+  let rowsBelow = 0;
 
-  // Calculate counts for indicators
-  const aboveCount = scrollOffset;
-  const belowCount = totalItems - scrollOffset - visibleItems.length;
+  if (hasVariableHeight) {
+    // Find first visible item (the one that contains scrollOffset row)
+    let startIdx = 0;
+    for (let i = 0; i < items.length; i++) {
+      const itemHeight = getItemHeight!(items[i], i);
+      if (itemRowStarts[i] + itemHeight > scrollOffset) {
+        startIdx = i;
+        break;
+      }
+    }
+
+    // Collect items that fit in available height
+    for (let i = startIdx; i < items.length && usedRows < availableHeight; i++) {
+      const itemHeight = getItemHeight!(items[i], i);
+      visibleItems.push({ item: items[i], index: i });
+      usedRows += itemHeight;
+    }
+
+    rowsAbove = scrollOffset;
+    // Simple calculation: total rows minus what we've scrolled past minus what we're showing
+    rowsBelow = Math.max(0, totalRows - scrollOffset - usedRows);
+  } else {
+    // Simple item-based scrolling (1 item = 1 row)
+    const endIdx = Math.min(scrollOffset + availableHeight, items.length);
+    for (let i = scrollOffset; i < endIdx; i++) {
+      visibleItems.push({ item: items[i], index: i });
+      usedRows++;
+    }
+    rowsAbove = scrollOffset;
+    rowsBelow = Math.max(0, items.length - scrollOffset - usedRows);
+  }
 
   return (
-    <Box flexDirection="column" overflowX="hidden">
+    <Box flexDirection="column" overflowX="hidden" height={maxHeight} overflow="hidden">
       {header}
 
-      {showIndicators && hasPrevious && <Text dimColor>↑ {aboveCount} more above</Text>}
+      {showIndicators &&
+        needsScrolling &&
+        (hasPrevious ? <Text dimColor>↑ {rowsAbove} more above</Text> : <Text> </Text>)}
 
-      {visibleItems.map((item, i) => (
-        <Box key={`${scrollOffset}-${i}-${getKey(item, scrollOffset + i)}`} overflowX="hidden">
-          {renderItem(item, scrollOffset + i)}
-        </Box>
+      {visibleItems.map(({ item, index }) => (
+        <Box key={`${scrollOffset}-${index}-${getKey(item, index)}`}>{renderItem(item, index)}</Box>
       ))}
 
-      {showIndicators && hasMore && <Text dimColor>↓ {belowCount} more below</Text>}
+      {showIndicators &&
+        needsScrolling &&
+        (rowsBelow > 0 ? <Text dimColor>↓ {rowsBelow} more below</Text> : <Text> </Text>)}
     </Box>
   );
 }

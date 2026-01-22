@@ -67,6 +67,7 @@ const hotkeyGroups: HotkeyGroup[] = [
     entries: [
       { key: 'm', description: 'Toggle scroll/select mode' },
       { key: 'f', description: 'Toggle follow mode' },
+      { key: 'w', description: 'Toggle wrap mode' },
       { key: 't', description: 'Theme picker' },
       { key: 'b', description: 'Base branch picker' },
       { key: 'u', description: 'Toggle uncommitted' },

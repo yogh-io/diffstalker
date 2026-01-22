@@ -5,12 +5,14 @@ interface FooterProps {
   activeTab: 'diff' | 'commit' | 'history' | 'compare';
   mouseEnabled?: boolean;
   autoTabEnabled?: boolean;
+  wrapMode?: boolean;
 }
 
 export function Footer({
   activeTab,
   mouseEnabled = true,
   autoTabEnabled = false,
+  wrapMode = false,
 }: FooterProps): React.ReactElement {
   return (
     <Box justifyContent="space-between">
@@ -21,6 +23,10 @@ export function Footer({
         <Text dimColor> | </Text>
         <Text color={autoTabEnabled ? 'blue' : undefined} dimColor={!autoTabEnabled}>
           [auto-tab:{autoTabEnabled ? 'on' : 'off'}]
+        </Text>
+        <Text dimColor> | </Text>
+        <Text color={wrapMode ? 'blue' : undefined} dimColor={!wrapMode}>
+          [wrap:{wrapMode ? 'on' : 'off'}]
         </Text>
       </Text>
 

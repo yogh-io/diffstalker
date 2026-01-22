@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { CommitInfo, getCommitHistory } from '../git/status.js';
 import { DiffResult } from '../git/diff.js';
-import { getHistoryDiffTotalRows, getHistoryTotalRows } from '../utils/rowCalculations.js';
+import {
+  buildHistoryDisplayRows,
+  getDisplayRowsLineNumWidth,
+  getWrappedRowCount,
+} from '../utils/displayRows.js';
 
 interface UseHistoryStateProps {
   repoPath: string;
@@ -9,12 +13,13 @@ interface UseHistoryStateProps {
   selectHistoryCommit: (commit: CommitInfo) => void;
   historyCommitDiff: DiffResult | null;
   historySelectedCommit: CommitInfo | null;
-  terminalWidth: number;
   topPaneHeight: number;
   historyScrollOffset: number;
   setHistoryScrollOffset: (offset: number) => void;
   setDiffScrollOffset: (offset: number) => void;
   status: unknown; // Trigger refresh when status changes
+  wrapMode: boolean;
+  terminalWidth: number;
 }
 
 export interface UseHistoryStateResult {
@@ -33,12 +38,13 @@ export function useHistoryState({
   selectHistoryCommit,
   historyCommitDiff,
   historySelectedCommit,
-  terminalWidth,
   topPaneHeight,
   historyScrollOffset,
   setHistoryScrollOffset,
   setDiffScrollOffset,
   status,
+  wrapMode,
+  terminalWidth,
 }: UseHistoryStateProps): UseHistoryStateResult {
   const [commits, setCommits] = useState<CommitInfo[]>([]);
   const [historySelectedIndex, setHistorySelectedIndex] = useState(0);
@@ -62,16 +68,18 @@ export function useHistoryState({
   }, [isActive, commits, historySelectedIndex, selectHistoryCommit, setDiffScrollOffset]);
 
   // Calculate history diff total rows for scrolling
-  const historyDiffTotalRows = useMemo(
-    () => getHistoryDiffTotalRows(historySelectedCommit, historyCommitDiff),
-    [historySelectedCommit, historyCommitDiff]
-  );
+  // When wrap mode is enabled, account for wrapped lines
+  const historyDiffTotalRows = useMemo(() => {
+    const displayRows = buildHistoryDisplayRows(historySelectedCommit, historyCommitDiff);
+    if (!wrapMode) return displayRows.length;
 
-  // Calculate total visual rows for scroll limits
-  const historyTotalRows = useMemo(
-    () => getHistoryTotalRows(commits, terminalWidth),
-    [commits, terminalWidth]
-  );
+    const lineNumWidth = getDisplayRowsLineNumWidth(displayRows);
+    const contentWidth = terminalWidth - lineNumWidth - 5;
+    return getWrappedRowCount(displayRows, contentWidth, true);
+  }, [historySelectedCommit, historyCommitDiff, wrapMode, terminalWidth]);
+
+  // Calculate total commits for scroll limits (1 commit = 1 row)
+  const historyTotalRows = useMemo(() => commits.length, [commits]);
 
   // Navigation handlers
   const navigateHistoryUp = useCallback(() => {

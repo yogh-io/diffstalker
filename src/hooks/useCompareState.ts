@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { CompareDiff } from '../git/diff.js';
 import { CompareListSelection } from '../components/CompareListView.js';
+import { getCompareItemIndexFromRow, getFileScrollOffset } from '../utils/rowCalculations.js';
 import {
-  getCompareItemIndexFromRow,
-  getFileScrollOffset,
-  getCompareDiffTotalRows,
-} from '../utils/rowCalculations.js';
+  buildCompareDisplayRows,
+  getDisplayRowsLineNumWidth,
+  getWrappedRowCount,
+} from '../utils/displayRows.js';
 
 interface UseCompareStateProps {
   repoPath: string;
@@ -20,6 +21,8 @@ interface UseCompareStateProps {
   setCompareScrollOffset: (offset: number) => void;
   setDiffScrollOffset: (offset: number) => void;
   status: unknown; // Trigger refresh when status changes
+  wrapMode: boolean;
+  terminalWidth: number;
 }
 
 export interface UseCompareStateResult {
@@ -61,6 +64,8 @@ export function useCompareState({
   setCompareScrollOffset,
   setDiffScrollOffset,
   status,
+  wrapMode,
+  terminalWidth,
 }: UseCompareStateProps): UseCompareStateResult {
   const [includeUncommitted, setIncludeUncommitted] = useState(true);
   const [compareListSelection, setCompareListSelection] = useState<CompareListSelection | null>(
@@ -119,7 +124,15 @@ export function useCompareState({
     return compareDiff.commits.length + compareDiff.files.length;
   }, [compareDiff]);
 
-  const compareDiffTotalRows = useMemo(() => getCompareDiffTotalRows(compareDiff), [compareDiff]);
+  // When wrap mode is enabled, account for wrapped lines
+  const compareDiffTotalRows = useMemo(() => {
+    const displayRows = buildCompareDisplayRows(compareDiff);
+    if (!wrapMode) return displayRows.length;
+
+    const lineNumWidth = getDisplayRowsLineNumWidth(displayRows);
+    const contentWidth = terminalWidth - lineNumWidth - 5;
+    return getWrappedRowCount(displayRows, contentWidth, true);
+  }, [compareDiff, wrapMode, terminalWidth]);
 
   // Handlers
   const toggleIncludeUncommitted = useCallback(() => {

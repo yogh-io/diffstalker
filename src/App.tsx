@@ -27,6 +27,11 @@ import { ThemePicker } from './components/ThemePicker.js';
 import { HotkeysModal } from './components/HotkeysModal.js';
 import { BaseBranchPicker } from './components/BaseBranchPicker.js';
 import { ThemeName } from './themes.js';
+import {
+  buildDiffDisplayRows,
+  getDisplayRowsLineNumWidth,
+  getWrappedRowCount,
+} from './utils/displayRows.js';
 
 type ModalType = 'theme' | 'hotkeys' | 'baseBranch' | null;
 
@@ -94,6 +99,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [currentTheme, setCurrentTheme] = useState<ThemeName>(config.theme);
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [autoTabEnabled, setAutoTabEnabled] = useState(false);
+  const [wrapMode, setWrapMode] = useState(false);
 
   // Header height calculation
   const headerHeight = getHeaderHeight(
@@ -136,6 +142,17 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     extraOverhead
   );
 
+  // Calculate display row counts for scroll calculations
+  // When wrap mode is enabled, account for wrapped lines
+  const diffTotalRows = useMemo(() => {
+    const displayRows = buildDiffDisplayRows(diff);
+    if (!wrapMode) return displayRows.length;
+
+    const lineNumWidth = getDisplayRowsLineNumWidth(displayRows);
+    const contentWidth = terminalWidth - lineNumWidth - 5;
+    return getWrappedRowCount(displayRows, contentWidth, true);
+  }, [diff, wrapMode, terminalWidth]);
+
   // History state
   const {
     commits,
@@ -151,12 +168,13 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     selectHistoryCommit,
     historyCommitDiff,
     historySelectedCommit,
-    terminalWidth,
     topPaneHeight,
     historyScrollOffset,
     setHistoryScrollOffset,
     setDiffScrollOffset,
     status,
+    wrapMode,
+    terminalWidth,
   });
 
   // Compare state
@@ -189,6 +207,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     setCompareScrollOffset,
     setDiffScrollOffset,
     status,
+    wrapMode,
+    terminalWidth,
   });
 
   // Keep a ref to paneBoundaries for use in callbacks
@@ -225,6 +245,11 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       setDiffScrollOffset(0);
     }
   }, [selectedIndex, bottomTab, setDiffScrollOffset]);
+
+  // Reset diff scroll when wrap mode changes
+  useEffect(() => {
+    setDiffScrollOffset(0);
+  }, [wrapMode, setDiffScrollOffset]);
 
   // Tab switching (defined early so handleMouseEvent can use it)
   const handleSwitchTab = useCallback((tab: BottomTab) => {
@@ -351,6 +376,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             maxRows = compareDiffTotalRows;
           } else if (bottomTab === 'history') {
             maxRows = historyDiffTotalRows;
+          } else if (bottomTab === 'diff') {
+            maxRows = diffTotalRows;
           }
           scrollDiff(direction, 3, maxRows);
         }
@@ -380,6 +407,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       getItemIndexFromRow,
       compareListSelection?.type,
       compareDiffTotalRows,
+      diffTotalRows,
       historyDiffTotalRows,
       historyTotalRows,
       activeModal,
@@ -423,10 +451,12 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     if (currentPane === 'files') {
       setSelectedIndex((prev) => Math.max(0, prev - 1));
     } else if (currentPane === 'diff') {
-      const maxRows =
-        bottomTab === 'compare' && compareListSelection?.type !== 'commit'
-          ? compareDiffTotalRows
-          : undefined;
+      let maxRows: number | undefined;
+      if (bottomTab === 'compare' && compareListSelection?.type !== 'commit') {
+        maxRows = compareDiffTotalRows;
+      } else if (bottomTab === 'diff') {
+        maxRows = diffTotalRows;
+      }
       scrollDiff('up', 3, maxRows);
     } else if (currentPane === 'history') {
       navigateHistoryUp();
@@ -438,6 +468,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     bottomTab,
     compareListSelection?.type,
     compareDiffTotalRows,
+    diffTotalRows,
     scrollDiff,
     navigateHistoryUp,
     navigateCompareUp,
@@ -447,10 +478,12 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     if (currentPane === 'files') {
       setSelectedIndex((prev) => Math.min(totalFiles - 1, prev + 1));
     } else if (currentPane === 'diff') {
-      const maxRows =
-        bottomTab === 'compare' && compareListSelection?.type !== 'commit'
-          ? compareDiffTotalRows
-          : undefined;
+      let maxRows: number | undefined;
+      if (bottomTab === 'compare' && compareListSelection?.type !== 'commit') {
+        maxRows = compareDiffTotalRows;
+      } else if (bottomTab === 'diff') {
+        maxRows = diffTotalRows;
+      }
       scrollDiff('down', 3, maxRows);
     } else if (currentPane === 'history') {
       navigateHistoryDown();
@@ -462,6 +495,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     bottomTab,
     compareListSelection?.type,
     compareDiffTotalRows,
+    diffTotalRows,
     totalFiles,
     scrollDiff,
     navigateHistoryDown,
@@ -533,6 +567,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       onToggleMouse: toggleMouse,
       onToggleFollow: () => setWatcherEnabled((prev) => !prev),
       onToggleAutoTab: () => setAutoTabEnabled((prev) => !prev),
+      onToggleWrap: () => setWrapMode((prev) => !prev),
     },
     currentPane,
     commitInputFocused || activeModal !== null || showBaseBranchPicker
@@ -616,6 +651,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         compareError={compareError}
         compareListSelection={compareListSelection}
         compareSelectionDiff={compareSelectionDiff}
+        wrapMode={wrapMode}
       />
 
       <Separator />
@@ -633,7 +669,12 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
           <Text dimColor>(y/n)</Text>
         </Box>
       ) : (
-        <Footer activeTab={bottomTab} mouseEnabled={mouseEnabled} autoTabEnabled={autoTabEnabled} />
+        <Footer
+          activeTab={bottomTab}
+          mouseEnabled={mouseEnabled}
+          autoTabEnabled={autoTabEnabled}
+          wrapMode={wrapMode}
+        />
       )}
 
       {/* Modals */}

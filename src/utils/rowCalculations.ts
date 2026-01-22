@@ -2,6 +2,7 @@ import { CommitInfo } from '../git/status.js';
 import { CompareDiff, DiffResult, DiffLine } from '../git/diff.js';
 import { isDisplayableDiffLine } from './diffFilters.js';
 import { formatDateAbsolute } from './formatDate.js';
+import { getDiffTotalRows, getDiffLineRowCount } from './diffRowCalculations.js';
 
 // ============================================================================
 // History View Row Calculations
@@ -109,13 +110,43 @@ export function buildHistoryDiffRows(
 }
 
 /**
+ * Get the visual row count for a single HistoryDiffRow.
+ * Headers, spacers, and commit messages are always 1 row.
+ * Diff lines may wrap based on terminal width.
+ */
+export function getHistoryDiffRowHeight(
+  row: HistoryDiffRow,
+  lineNumWidth: number,
+  terminalWidth: number
+): number {
+  if (row.type !== 'diff-line' || !row.diffLine) {
+    return 1; // Headers, spacers, commit messages don't wrap
+  }
+  return getDiffLineRowCount(row.diffLine, lineNumWidth, terminalWidth);
+}
+
+/**
  * Get total displayable rows for history diff scroll calculation.
+ * Uses getDiffTotalRows for the diff portion to account for line wrapping.
  */
 export function getHistoryDiffTotalRows(
   commit: CommitInfo | null,
-  diff: DiffResult | null
+  diff: DiffResult | null,
+  terminalWidth: number
 ): number {
-  return buildHistoryDiffRows(commit, diff).length;
+  // Count header rows (these don't wrap - they're short metadata)
+  let headerRows = 0;
+  if (commit) {
+    headerRows += 3; // hash, author, date
+    headerRows += 1; // spacer before message
+    headerRows += commit.message.split('\n').length; // message lines
+    headerRows += 1; // spacer after message
+  }
+
+  // Use getDiffTotalRows for diff portion (handles line wrapping)
+  const diffRows = getDiffTotalRows(diff, terminalWidth);
+
+  return headerRows + diffRows;
 }
 
 // ============================================================================

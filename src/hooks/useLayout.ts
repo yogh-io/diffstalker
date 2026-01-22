@@ -53,7 +53,7 @@ export interface UseLayoutResult {
   setCompareScrollOffset: React.Dispatch<React.SetStateAction<number>>;
 
   // Scroll helpers
-  scrollDiff: (direction: 'up' | 'down', amount?: number, maxRows?: number) => void;
+  scrollDiff: (direction: 'up' | 'down', amount?: number, totalRows?: number) => void;
   scrollFileList: (direction: 'up' | 'down', amount?: number) => void;
   scrollHistory: (direction: 'up' | 'down', amount?: number, totalItems?: number) => void;
   scrollCompare: (direction: 'up' | 'down', totalRows: number, amount?: number) => void;
@@ -156,10 +156,16 @@ export function useLayout(
 
   // Scroll helpers
   const scrollDiff = useCallback(
-    (direction: 'up' | 'down', amount: number = 3, maxRows?: number) => {
-      // Use provided maxRows or fall back to diff line count
-      const totalRows = maxRows ?? diff?.lines.length ?? 0;
-      const maxOffset = Math.max(0, totalRows - (bottomPaneHeight - 4));
+    (direction: 'up' | 'down', amount: number = 3, totalRows: number = 0) => {
+      // Simple: totalRows = displayRows.length (every row = 1 terminal row)
+      // Match ScrollableList's available height calculation:
+      // - DiffView receives maxHeight = bottomPaneHeight - 1 (BottomPane header)
+      // - ScrollableList reserves 2 rows for indicators when content needs scrolling
+      const diffViewMaxHeight = bottomPaneHeight - 1;
+      const needsScrolling = totalRows > diffViewMaxHeight;
+      const availableAtMaxScroll = needsScrolling ? diffViewMaxHeight - 2 : diffViewMaxHeight;
+      const maxOffset = Math.max(0, totalRows - availableAtMaxScroll);
+
       setDiffScrollOffset((prev) => {
         if (direction === 'up') {
           return Math.max(0, prev - amount);
@@ -168,7 +174,7 @@ export function useLayout(
         }
       });
     },
-    [diff?.lines.length, bottomPaneHeight]
+    [bottomPaneHeight]
   );
 
   const scrollFileList = useCallback(

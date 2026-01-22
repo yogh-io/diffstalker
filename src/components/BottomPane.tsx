@@ -1,15 +1,21 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { FileEntry, CommitInfo } from '../git/status.js';
 import { DiffResult, CompareDiff } from '../git/diff.js';
-import { DiffView } from './DiffView.js';
+import { UnifiedDiffView } from './UnifiedDiffView.js';
 import { CommitPanel } from './CommitPanel.js';
-import { HistoryDiffView } from './HistoryDiffView.js';
-import { CompareView } from './CompareView.js';
 import { CompareListSelection } from './CompareListView.js';
 import { BottomTab, Pane } from '../hooks/useKeymap.js';
 import { ThemeName } from '../themes.js';
 import { shortenPath } from '../utils/formatPath.js';
+import {
+  DisplayRow,
+  buildDiffDisplayRows,
+  buildHistoryDisplayRows,
+  buildCompareDisplayRows,
+  getDisplayRowsLineNumWidth,
+  wrapDisplayRows,
+} from '../utils/displayRows.js';
 
 interface BottomPaneProps {
   bottomTab: BottomTab;
@@ -40,6 +46,9 @@ interface BottomPaneProps {
   compareError: string | null;
   compareListSelection: CompareListSelection | null;
   compareSelectionDiff: DiffResult | null;
+
+  // Wrap mode
+  wrapMode: boolean;
 }
 
 export function BottomPane({
@@ -63,9 +72,51 @@ export function BottomPane({
   compareError,
   compareListSelection,
   compareSelectionDiff,
+  wrapMode,
 }: BottomPaneProps): React.ReactElement {
   const isDiffFocused =
     currentPane !== 'files' && currentPane !== 'history' && currentPane !== 'compare';
+
+  // Build display rows based on current tab
+  const displayRows: DisplayRow[] = useMemo(() => {
+    if (bottomTab === 'diff') {
+      return buildDiffDisplayRows(diff);
+    }
+
+    if (bottomTab === 'history') {
+      return buildHistoryDisplayRows(historySelectedCommit, historyCommitDiff);
+    }
+
+    if (bottomTab === 'compare') {
+      // If a specific commit is selected, show that commit's diff
+      if (compareListSelection?.type === 'commit' && compareSelectionDiff) {
+        return buildDiffDisplayRows(compareSelectionDiff);
+      }
+      // Otherwise show combined compare diff
+      return buildCompareDisplayRows(compareDiff);
+    }
+
+    return [];
+  }, [
+    bottomTab,
+    diff,
+    historySelectedCommit,
+    historyCommitDiff,
+    compareListSelection,
+    compareSelectionDiff,
+    compareDiff,
+  ]);
+
+  // Wrap display rows if wrap mode is enabled
+  const wrappedRows = useMemo(() => {
+    if (!wrapMode || displayRows.length === 0) return displayRows;
+
+    // Calculate content width: width - paddingX(1) - lineNum - space(1) - symbol(1) - space(1) - paddingX(1)
+    const lineNumWidth = getDisplayRowsLineNumWidth(displayRows);
+    const contentWidth = terminalWidth - lineNumWidth - 5;
+
+    return wrapDisplayRows(displayRows, contentWidth, wrapMode);
+  }, [displayRows, terminalWidth, wrapMode]);
 
   // Build header right-side content
   const renderHeaderRight = () => {
@@ -97,19 +148,7 @@ export function BottomPane({
 
   // Render content based on tab
   const renderContent = () => {
-    if (bottomTab === 'diff') {
-      return (
-        <DiffView
-          diff={diff}
-          filePath={selectedFile?.path}
-          maxHeight={bottomPaneHeight - 1}
-          scrollOffset={diffScrollOffset}
-          theme={currentTheme}
-          width={terminalWidth}
-        />
-      );
-    }
-
+    // Commit tab is special - not a diff view
     if (bottomTab === 'commit') {
       return (
         <CommitPanel
@@ -123,55 +162,33 @@ export function BottomPane({
       );
     }
 
-    if (bottomTab === 'history') {
-      return (
-        <HistoryDiffView
-          commit={historySelectedCommit}
-          diff={historyCommitDiff}
-          maxHeight={bottomPaneHeight - 1}
-          scrollOffset={diffScrollOffset}
-          theme={currentTheme}
-          width={terminalWidth}
-        />
-      );
+    // Compare tab loading/error states
+    if (bottomTab === 'compare') {
+      if (compareLoading) {
+        return <Text dimColor>Loading compare diff...</Text>;
+      }
+      if (compareError) {
+        return <Text color="red">{compareError}</Text>;
+      }
+      if (!compareDiff) {
+        return <Text dimColor>No base branch found (no origin/main or origin/master)</Text>;
+      }
+      if (compareDiff.files.length === 0) {
+        return <Text dimColor>No changes compared to {compareDiff.baseBranch}</Text>;
+      }
     }
 
-    // Compare tab
-    if (compareLoading) {
-      return <Text dimColor>Loading compare diff...</Text>;
-    }
-
-    if (compareError) {
-      return <Text color="red">{compareError}</Text>;
-    }
-
-    if (compareListSelection?.type === 'commit' && compareSelectionDiff) {
-      return (
-        <DiffView
-          diff={compareSelectionDiff}
-          maxHeight={bottomPaneHeight - 1}
-          scrollOffset={diffScrollOffset}
-          theme={currentTheme}
-          width={terminalWidth}
-        />
-      );
-    }
-
-    if (compareDiff) {
-      return (
-        <CompareView
-          compareDiff={compareDiff}
-          isLoading={false}
-          error={null}
-          scrollOffset={diffScrollOffset}
-          maxHeight={bottomPaneHeight - 1}
-          theme={currentTheme}
-          width={terminalWidth}
-        />
-      );
-    }
-
-    return <Text dimColor>No compare diff available</Text>;
+    // All diff views use UnifiedDiffView
+    return (
+      <UnifiedDiffView
+        rows={wrappedRows}
+        maxHeight={bottomPaneHeight - 1}
+        scrollOffset={diffScrollOffset}
+        theme={currentTheme}
+        width={terminalWidth}
+        wrapMode={wrapMode}
+      />
+    );
   };
 
   return (

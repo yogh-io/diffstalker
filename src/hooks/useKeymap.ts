@@ -25,6 +25,7 @@ export interface KeymapActions {
   onToggleMouse?: () => void;
   onToggleFollow?: () => void;
   onToggleAutoTab?: () => void;
+  onToggleWrap?: () => void;
 }
 
 export function useKeymap(
@@ -133,6 +134,12 @@ export function useKeymap(
     // Toggle auto-tab mode: a
     if (input === 'a' && actions.onToggleAutoTab) {
       actions.onToggleAutoTab();
+      return;
+    }
+
+    // Toggle wrap mode: w
+    if (input === 'w' && actions.onToggleWrap) {
+      actions.onToggleWrap();
       return;
     }
 
