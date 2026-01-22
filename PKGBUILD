@@ -7,7 +7,7 @@ arch=('any')
 url="https://github.com/yogh-io/diffstalker"
 license=('MIT')
 depends=('nodejs')
-makedepends=('npm' 'git')
+makedepends=('bun' 'git')
 provides=('diffstalker')
 conflicts=('diffstalker')
 source=("${pkgname}::git+${url}.git")
@@ -21,8 +21,8 @@ pkgver() {
 
 build() {
     cd "$pkgname"
-    npm ci --ignore-scripts
-    npm run bundle
+    bun install
+    bun run bundle
 }
 
 package() {

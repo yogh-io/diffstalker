@@ -16,14 +16,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: oven-sh/setup-bun@v2
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      - run: npm ci
-      - run: npm run build:prod
-      - run: npm test
+      - run: bun install
+      - run: bun run build:prod
+      - run: bun test
       - run: npm publish --access public
 
       - name: Create GitHub Release

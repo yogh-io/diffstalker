@@ -18,19 +18,19 @@
     "diffstalker": "bin/diffstalker"
   },
   "scripts": {
-    "dev": "tsx src/index.tsx",
+    "dev": "bun --watch src/index.tsx",
     "build": "tsc",
-    "build:prod": "tsc && node scripts/minify.js",
-    "bundle": "npm run build:prod && ncc build dist/index.js -o dist/bundle && node scripts/minify.js ../dist/bundle",
-    "start": "node dist/index.js",
-    "start:bundle": "node dist/bundle/index.js",
+    "build:prod": "tsc && bun build dist/index.js --outfile dist/index.js --minify --target node --packages external",
+    "bundle": "bun run build:prod && bun build dist/index.js --outdir dist/bundle --minify --target node --external react-devtools-core",
+    "start": "bun dist/index.js",
+    "start:bundle": "bun dist/bundle/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
-    "prepublishOnly": "npm run build:prod"
+    "prepublishOnly": "bun run build:prod"
   },
   "keywords": [
     "git",
@@ -56,13 +56,10 @@
     "@eslint/js": "^9.39.2",
     "@types/node": "^22.10.7",
     "@types/react": "^19.2.0",
-    "@vercel/ncc": "^0.38.4",
-    "esbuild": "^0.27.2",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.0.1",
     "prettier": "^3.8.0",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.53.1",
     "vitest": "^2.1.0"
