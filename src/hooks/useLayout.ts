@@ -9,6 +9,7 @@ import {
   getFileListTotalRows,
 } from '../utils/layoutCalculations.js';
 import { calculatePaneBoundaries, PaneBoundaries } from '../utils/mouseCoordinates.js';
+import { getMaxScrollOffset } from '../components/ScrollableList.js';
 
 // Layout constants (compact: single-line separators)
 // Header (1) + sep (1) + sep (1) + sep (1) + footer (1) = 5 lines overhead
@@ -197,8 +198,8 @@ export function useLayout(
 
   const scrollHistory = useCallback(
     (direction: 'up' | 'down', totalItems: number = 0, amount: number = 3) => {
-      // History is in top pane, so use topPaneHeight - 1 for visible area
-      const maxOffset = Math.max(0, totalItems - (topPaneHeight - 1));
+      // History is in top pane, maxHeight is topPaneHeight - 1 for "COMMITS" header
+      const maxOffset = getMaxScrollOffset(totalItems, topPaneHeight - 1);
       setHistoryScrollOffset((prev) => {
         if (direction === 'up') {
           return Math.max(0, prev - amount);
@@ -212,8 +213,8 @@ export function useLayout(
 
   const scrollCompare = useCallback(
     (direction: 'up' | 'down', totalRows: number, amount: number = 3) => {
-      // Compare list is in top pane, so use topPaneHeight - 1 for visible area
-      const maxOffset = Math.max(0, totalRows - (topPaneHeight - 1));
+      // Compare list is in top pane, maxHeight is topPaneHeight - 1 for "COMPARE" header
+      const maxOffset = getMaxScrollOffset(totalRows, topPaneHeight - 1);
       setCompareScrollOffset((prev) => {
         if (direction === 'up') {
           return Math.max(0, prev - amount);

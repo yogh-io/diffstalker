@@ -26,6 +26,9 @@ export interface KeymapActions {
   onToggleFollow?: () => void;
   onToggleAutoTab?: () => void;
   onToggleWrap?: () => void;
+  onToggleMiddleDots?: () => void;
+  onToggleHideHiddenFiles?: () => void;
+  onToggleHideGitignored?: () => void;
   onExplorerEnter?: () => void;
   onExplorerBack?: () => void;
 }
@@ -146,6 +149,24 @@ export function useKeymap(
     // Toggle wrap mode: w
     if (input === 'w' && actions.onToggleWrap) {
       actions.onToggleWrap();
+      return;
+    }
+
+    // Toggle middle-dots (indentation visualization): .
+    if (input === '.' && actions.onToggleMiddleDots) {
+      actions.onToggleMiddleDots();
+      return;
+    }
+
+    // Toggle hide hidden files: Ctrl+H
+    if (key.ctrl && input === 'h' && actions.onToggleHideHiddenFiles) {
+      actions.onToggleHideHiddenFiles();
+      return;
+    }
+
+    // Toggle hide gitignored files: Ctrl+G
+    if (key.ctrl && input === 'g' && actions.onToggleHideGitignored) {
+      actions.onToggleHideGitignored();
       return;
     }
 

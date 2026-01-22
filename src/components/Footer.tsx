@@ -6,6 +6,7 @@ interface FooterProps {
   mouseEnabled?: boolean;
   autoTabEnabled?: boolean;
   wrapMode?: boolean;
+  showMiddleDots?: boolean;
 }
 
 export function Footer({
@@ -13,9 +14,9 @@ export function Footer({
   mouseEnabled = true,
   autoTabEnabled = false,
   wrapMode = false,
+  showMiddleDots = false,
 }: FooterProps): React.ReactElement {
-  // Layout: "? [scroll] [auto] [wrap]" with spaces between
-  // Positions (1-indexed): ? at 1, [scroll]/[select] at 3-10, [auto] at 12-17, [wrap] at 19-24
+  // Layout: "? [scroll] [auto] [wrap] [dots]" with spaces between
   return (
     <Box justifyContent="space-between">
       <Text>
@@ -27,6 +28,14 @@ export function Footer({
         <Text color={wrapMode ? 'blue' : undefined} dimColor={!wrapMode}>
           [wrap]
         </Text>
+        {activeTab === 'explorer' && (
+          <>
+            {' '}
+            <Text color={showMiddleDots ? 'blue' : undefined} dimColor={!showMiddleDots}>
+              [dots]
+            </Text>
+          </>
+        )}
       </Text>
 
       <Text>

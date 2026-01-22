@@ -33,6 +33,8 @@ import {
   getDisplayRowsLineNumWidth,
   getWrappedRowCount,
 } from './utils/displayRows.js';
+import { getExplorerContentTotalRows } from './components/ExplorerContentView.js';
+import { getMaxScrollOffset } from './components/ScrollableList.js';
 
 type ModalType = 'theme' | 'hotkeys' | 'baseBranch' | null;
 
@@ -105,6 +107,11 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   // Explorer scroll state
   const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
   const [explorerFileScrollOffset, setExplorerFileScrollOffset] = useState(0);
+
+  // Explorer display options
+  const [showMiddleDots, setShowMiddleDots] = useState(false);
+  const [hideHiddenFiles, setHideHiddenFiles] = useState(true);
+  const [hideGitignored, setHideGitignored] = useState(true);
 
   // Header height calculation
   const headerHeight = getHeaderHeight(
@@ -238,7 +245,21 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     setExplorerScrollOffset,
     fileScrollOffset: explorerFileScrollOffset,
     setFileScrollOffset: setExplorerFileScrollOffset,
+    hideHiddenFiles,
+    hideGitignored,
   });
+
+  // Calculate explorer content total rows for scroll bounds
+  const explorerContentTotalRows = useMemo(() => {
+    if (!explorerSelectedFile) return 0;
+    return getExplorerContentTotalRows(
+      explorerSelectedFile.content,
+      explorerSelectedFile.path,
+      explorerSelectedFile.truncated ?? false,
+      terminalWidth,
+      wrapMode
+    );
+  }, [explorerSelectedFile, terminalWidth, wrapMode]);
 
   // Keep a ref to paneBoundaries for use in callbacks
   const paneBoundariesRef = useRef(paneBoundaries);
@@ -337,6 +358,13 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
 
         // Top pane clicks
         if (isInPane(y, stagingPaneStart + 1, fileListEnd)) {
+          // ScrollableList shows scroll indicators when content exceeds maxHeight.
+          // This takes 1 row at top, so we need to offset click calculations.
+          // FileList doesn't use ScrollableList, so no offset needed for diff/commit tabs.
+          const listMaxHeight = topPaneHeight - 1;
+          const getScrollIndicatorOffset = (itemCount: number) =>
+            itemCount > listMaxHeight ? 1 : 0;
+
           if (bottomTab === 'diff' || bottomTab === 'commit') {
             const clickedIndex = getClickedFileIndex(
               y,
@@ -363,7 +391,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
               return;
             }
           } else if (bottomTab === 'history') {
-            const visualRow = y - stagingPaneStart - 1;
+            const offset = getScrollIndicatorOffset(commits.length);
+            const visualRow = y - stagingPaneStart - 1 - offset;
             const clickedIndex = getCommitIndexFromRow(
               visualRow,
               commits,
@@ -377,7 +406,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
               return;
             }
           } else if (bottomTab === 'compare' && compareDiff) {
-            const visualRow = y - stagingPaneStart - 1 + compareScrollOffset;
+            const offset = getScrollIndicatorOffset(compareTotalItems);
+            const visualRow = y - stagingPaneStart - 1 - offset + compareScrollOffset;
             const itemIndex = getItemIndexFromRow(visualRow);
             if (itemIndex >= 0 && itemIndex < compareTotalItems) {
               markSelectionInitialized();
@@ -386,8 +416,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
               return;
             }
           } else if (bottomTab === 'explorer') {
-            // Calculate clicked item in explorer list
-            const visualRow = y - stagingPaneStart - 1 + explorerScrollOffset;
+            const offset = getScrollIndicatorOffset(explorerItems.length);
+            const visualRow = y - stagingPaneStart - 1 - offset + explorerScrollOffset;
             if (visualRow >= 0 && visualRow < explorerItems.length) {
               setExplorerSelectedIndex(visualRow);
               setCurrentPane('explorer');
@@ -411,20 +441,21 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
           } else if (bottomTab === 'compare') {
             scrollCompare(direction, compareTotalItems);
           } else if (bottomTab === 'explorer') {
-            // Scroll explorer list
+            // Scroll explorer list (maxHeight is topPaneHeight - 1 for "EXPLORER" header)
             const scrollAmount = direction === 'up' ? -3 : 3;
+            const maxOffset = getMaxScrollOffset(explorerTotalRows, topPaneHeight - 1);
             setExplorerScrollOffset((prev) =>
-              Math.max(
-                0,
-                Math.min(prev + scrollAmount, Math.max(0, explorerTotalRows - topPaneHeight + 2))
-              )
+              Math.max(0, Math.min(prev + scrollAmount, maxOffset))
             );
           }
         } else {
           if (bottomTab === 'explorer') {
-            // Scroll file content
+            // Scroll file content with proper bounds
             const scrollAmount = direction === 'up' ? -3 : 3;
-            setExplorerFileScrollOffset((prev) => Math.max(0, prev + scrollAmount));
+            const maxOffset = getMaxScrollOffset(explorerContentTotalRows, bottomPaneHeight - 1);
+            setExplorerFileScrollOffset((prev) =>
+              Math.max(0, Math.min(prev + scrollAmount, maxOffset))
+            );
           } else {
             let maxRows: number | undefined;
             if (bottomTab === 'compare' && compareListSelection?.type !== 'commit') {
@@ -470,7 +501,9 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       explorerItems,
       explorerScrollOffset,
       explorerTotalRows,
+      explorerContentTotalRows,
       topPaneHeight,
+      bottomPaneHeight,
       setExplorerSelectedIndex,
       setExplorerScrollOffset,
       setExplorerFileScrollOffset,
@@ -639,6 +672,12 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       onToggleFollow: () => setWatcherEnabled((prev) => !prev),
       onToggleAutoTab: () => setAutoTabEnabled((prev) => !prev),
       onToggleWrap: () => setWrapMode((prev) => !prev),
+      onToggleMiddleDots:
+        bottomTab === 'explorer' ? () => setShowMiddleDots((prev) => !prev) : undefined,
+      onToggleHideHiddenFiles:
+        bottomTab === 'explorer' ? () => setHideHiddenFiles((prev) => !prev) : undefined,
+      onToggleHideGitignored:
+        bottomTab === 'explorer' ? () => setHideGitignored((prev) => !prev) : undefined,
       onExplorerEnter: bottomTab === 'explorer' ? explorerEnterDirectory : undefined,
       onExplorerBack: bottomTab === 'explorer' ? explorerGoUp : undefined,
     },
@@ -704,6 +743,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         explorerScrollOffset={explorerScrollOffset}
         explorerIsLoading={explorerIsLoading}
         explorerError={explorerError}
+        hideHiddenFiles={hideHiddenFiles}
+        hideGitignored={hideGitignored}
       />
 
       <Separator />
@@ -733,6 +774,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         wrapMode={wrapMode}
         explorerSelectedFile={explorerSelectedFile}
         explorerFileScrollOffset={explorerFileScrollOffset}
+        showMiddleDots={showMiddleDots}
       />
 
       <Separator />
@@ -755,6 +797,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
           mouseEnabled={mouseEnabled}
           autoTabEnabled={autoTabEnabled}
           wrapMode={wrapMode}
+          showMiddleDots={showMiddleDots}
         />
       )}
 

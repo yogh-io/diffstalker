@@ -54,6 +54,7 @@ interface BottomPaneProps {
   // Explorer tab props
   explorerSelectedFile?: { path: string; content: string; truncated?: boolean } | null;
   explorerFileScrollOffset?: number;
+  showMiddleDots?: boolean;
 }
 
 export function BottomPane({
@@ -80,6 +81,7 @@ export function BottomPane({
   wrapMode,
   explorerSelectedFile = null,
   explorerFileScrollOffset = 0,
+  showMiddleDots = false,
 }: BottomPaneProps): React.ReactElement {
   const isDiffFocused =
     currentPane !== 'files' &&
@@ -227,6 +229,9 @@ export function BottomPane({
           maxHeight={bottomPaneHeight - 1}
           scrollOffset={explorerFileScrollOffset}
           truncated={explorerSelectedFile?.truncated}
+          wrapMode={wrapMode}
+          width={terminalWidth}
+          showMiddleDots={showMiddleDots}
         />
       </Box>
     );

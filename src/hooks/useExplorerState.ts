@@ -17,6 +17,8 @@ export interface UseExplorerStateProps {
   setExplorerScrollOffset: Dispatch<SetStateAction<number>>;
   fileScrollOffset: number;
   setFileScrollOffset: Dispatch<SetStateAction<number>>;
+  hideHiddenFiles: boolean;
+  hideGitignored: boolean;
 }
 
 export interface UseExplorerStateResult {
@@ -90,6 +92,8 @@ export function useExplorerState({
   setExplorerScrollOffset,
   fileScrollOffset,
   setFileScrollOffset,
+  hideHiddenFiles,
+  hideGitignored,
 }: UseExplorerStateProps): UseExplorerStateResult {
   const [currentPath, setCurrentPath] = useState('');
   const [items, setItems] = useState<ExplorerItem[]>([]);
@@ -121,15 +125,28 @@ export function useExplorerState({
           currentPath ? path.join(currentPath, e.name) : e.name
         );
 
-        // Get ignored files
-        const ignoredFiles = await getIgnoredFiles(repoPath, pathsToCheck);
+        // Get ignored files (only if we need to filter them)
+        const ignoredFiles = hideGitignored
+          ? await getIgnoredFiles(repoPath, pathsToCheck)
+          : new Set<string>();
 
         // Filter and map entries
         const explorerItems: ExplorerItem[] = entries
           .filter((entry) => {
-            const relativePath = currentPath ? path.join(currentPath, entry.name) : entry.name;
-            // Don't filter .git directory here - let gitignore handle it
-            return !ignoredFiles.has(relativePath);
+            // Filter dot-prefixed hidden files (e.g., .env, .gitignore)
+            if (hideHiddenFiles && entry.name.startsWith('.')) {
+              return false;
+            }
+
+            // Filter gitignored files
+            if (hideGitignored) {
+              const relativePath = currentPath ? path.join(currentPath, entry.name) : entry.name;
+              if (ignoredFiles.has(relativePath)) {
+                return false;
+              }
+            }
+
+            return true;
           })
           .map((entry) => ({
             name: entry.name,
@@ -165,7 +182,7 @@ export function useExplorerState({
     };
 
     loadDirectory();
-  }, [repoPath, currentPath, isActive, setExplorerScrollOffset]);
+  }, [repoPath, currentPath, isActive, setExplorerScrollOffset, hideHiddenFiles, hideGitignored]);
 
   // Load file content when selection changes to a file
   useEffect(() => {
@@ -249,6 +266,8 @@ export function useExplorerState({
   const navigateUp = useCallback(() => {
     setSelectedIndex((prev) => {
       const newIndex = Math.max(0, prev - 1);
+      // When scrolled, the top indicator takes a row, so first visible item is scrollOffset
+      // but we want to keep item visible above the indicator when scrolling up
       if (newIndex < explorerScrollOffset) {
         setExplorerScrollOffset(newIndex);
       }
@@ -259,7 +278,12 @@ export function useExplorerState({
   const navigateDown = useCallback(() => {
     setSelectedIndex((prev) => {
       const newIndex = Math.min(items.length - 1, prev + 1);
-      const visibleEnd = explorerScrollOffset + topPaneHeight - 2; // -2 for header
+      // Calculate visible area: topPaneHeight - 1 for "EXPLORER" header
+      // When content needs scrolling, ScrollableList reserves 2 more rows for indicators
+      const maxHeight = topPaneHeight - 1;
+      const needsScrolling = items.length > maxHeight;
+      const availableHeight = needsScrolling ? maxHeight - 2 : maxHeight;
+      const visibleEnd = explorerScrollOffset + availableHeight;
       if (newIndex >= visibleEnd) {
         setExplorerScrollOffset(explorerScrollOffset + 1);
       }

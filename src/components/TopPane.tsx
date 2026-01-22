@@ -43,6 +43,8 @@ interface TopPaneProps {
   explorerScrollOffset?: number;
   explorerIsLoading?: boolean;
   explorerError?: string | null;
+  hideHiddenFiles?: boolean;
+  hideGitignored?: boolean;
 }
 
 export function TopPane({
@@ -70,6 +72,8 @@ export function TopPane({
   explorerScrollOffset = 0,
   explorerIsLoading = false,
   explorerError = null,
+  hideHiddenFiles = true,
+  hideGitignored = true,
 }: TopPaneProps): React.ReactElement {
   const { modified, untracked } = categorizeFiles(files);
   const modifiedCount = modified.length;
@@ -160,19 +164,29 @@ export function TopPane({
       )}
       {bottomTab === 'explorer' && (
         <>
-          <Box>
-            <Text bold color={currentPane === 'explorer' ? 'cyan' : undefined}>
-              EXPLORER
-            </Text>
-            <Text dimColor> </Text>
-            {buildBreadcrumbs(explorerCurrentPath).map((segment, i, arr) => (
-              <React.Fragment key={i}>
-                <Text color="blue">{segment}</Text>
-                {i < arr.length - 1 && <Text dimColor> / </Text>}
-              </React.Fragment>
-            ))}
-            {explorerCurrentPath && <Text dimColor> /</Text>}
-            {!explorerCurrentPath && <Text dimColor>(root)</Text>}
+          <Box justifyContent="space-between" width={terminalWidth}>
+            <Box>
+              <Text bold color={currentPane === 'explorer' ? 'cyan' : undefined}>
+                EXPLORER
+              </Text>
+              <Text dimColor> </Text>
+              {buildBreadcrumbs(explorerCurrentPath).map((segment, i, arr) => (
+                <React.Fragment key={i}>
+                  <Text color="blue">{segment}</Text>
+                  {i < arr.length - 1 && <Text dimColor> / </Text>}
+                </React.Fragment>
+              ))}
+              {explorerCurrentPath && <Text dimColor> /</Text>}
+              {!explorerCurrentPath && <Text dimColor>(root)</Text>}
+            </Box>
+            <Box>
+              {(hideHiddenFiles || hideGitignored) && (
+                <Text dimColor>
+                  {hideHiddenFiles && 'H'}
+                  {hideGitignored && 'G'}
+                </Text>
+              )}
+            </Box>
           </Box>
           <ExplorerView
             currentPath={explorerCurrentPath}

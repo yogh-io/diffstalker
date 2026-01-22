@@ -59,13 +59,24 @@ const hotkeyGroups: HotkeyGroup[] = [
       { key: '2', description: 'Commit panel' },
       { key: '3', description: 'History view' },
       { key: '4', description: 'Compare view' },
+      { key: '5', description: 'Explorer view' },
       { key: 'a', description: 'Toggle auto-tab mode' },
+    ],
+  },
+  {
+    title: 'Explorer',
+    entries: [
+      { key: '.', description: 'Toggle middle-dots' },
+      { key: '^H', description: 'Toggle hidden files' },
+      { key: '^G', description: 'Toggle gitignored' },
+      { key: 'Enter', description: 'Enter directory' },
+      { key: 'Backspace/h', description: 'Go up' },
     ],
   },
   {
     title: 'Other',
     entries: [
-      { key: 'm', description: 'Toggle scroll/select mode' },
+      { key: 'm', description: 'Toggle scroll/select' },
       { key: 'f', description: 'Toggle follow mode' },
       { key: 'w', description: 'Toggle wrap mode' },
       { key: 't', description: 'Theme picker' },

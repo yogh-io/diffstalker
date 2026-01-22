@@ -1,6 +1,15 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { ScrollableList } from './ScrollableList.js';
+import {
+  WrappedExplorerContentRow,
+  buildExplorerContentRows,
+  wrapExplorerContentRows,
+  getExplorerContentRowCount,
+  getExplorerContentLineNumWidth,
+  applyMiddleDots,
+} from '../utils/explorerDisplayRows.js';
+import { truncateAnsi } from '../utils/ansiTruncate.js';
 
 interface ExplorerContentViewProps {
   filePath: string | null;
@@ -8,11 +17,9 @@ interface ExplorerContentViewProps {
   maxHeight: number;
   scrollOffset: number;
   truncated?: boolean;
-}
-
-interface ContentLine {
-  lineNum: number;
-  content: string;
+  wrapMode?: boolean;
+  width: number;
+  showMiddleDots?: boolean;
 }
 
 export function ExplorerContentView({
@@ -21,21 +28,28 @@ export function ExplorerContentView({
   maxHeight,
   scrollOffset,
   truncated = false,
+  wrapMode = false,
+  width,
+  showMiddleDots = false,
 }: ExplorerContentViewProps): React.ReactElement {
-  // Parse content into lines
-  const lines = useMemo((): ContentLine[] => {
-    if (!content) return [];
-    return content.split('\n').map((line, i) => ({
-      lineNum: i + 1,
-      content: line,
-    }));
-  }, [content]);
+  // Build base rows with syntax highlighting
+  const baseRows = useMemo(
+    () => buildExplorerContentRows(content, filePath, truncated),
+    [content, filePath, truncated]
+  );
 
   // Calculate line number width
-  const lineNumWidth = useMemo(() => {
-    const maxLineNum = lines.length;
-    return Math.max(3, String(maxLineNum).length);
-  }, [lines.length]);
+  const lineNumWidth = useMemo(() => getExplorerContentLineNumWidth(baseRows), [baseRows]);
+
+  // Calculate content width for wrapping
+  // Layout: paddingX(1) + lineNum + space(1) + content + paddingX(1)
+  const contentWidth = width - lineNumWidth - 3;
+
+  // Apply wrapping if enabled
+  const displayRows = useMemo(
+    () => wrapExplorerContentRows(baseRows, contentWidth, wrapMode),
+    [baseRows, contentWidth, wrapMode]
+  );
 
   if (!filePath) {
     return (
@@ -53,7 +67,7 @@ export function ExplorerContentView({
     );
   }
 
-  if (lines.length === 0) {
+  if (displayRows.length === 0) {
     return (
       <Box paddingX={1}>
         <Text dimColor>(empty file)</Text>
@@ -64,35 +78,93 @@ export function ExplorerContentView({
   return (
     <Box flexDirection="column" paddingX={1}>
       <ScrollableList
-        items={lines}
+        items={displayRows}
         maxHeight={maxHeight}
         scrollOffset={scrollOffset}
-        getKey={(line) => `${line.lineNum}`}
-        renderItem={(line) => {
-          const lineNumStr = String(line.lineNum).padStart(lineNumWidth, ' ');
+        getKey={(row, index) => `${index}`}
+        renderItem={(row: WrappedExplorerContentRow) => {
+          if (row.type === 'truncation') {
+            return (
+              <Box>
+                <Text color="yellow" dimColor>
+                  {row.content}
+                </Text>
+              </Box>
+            );
+          }
+
+          // Code row
+          const isContinuation = row.isContinuation ?? false;
+
+          // Line number display
+          let lineNumDisplay: string;
+          if (isContinuation) {
+            // Show continuation marker instead of line number
+            lineNumDisplay = '>>'.padStart(lineNumWidth, ' ');
+          } else {
+            lineNumDisplay = String(row.lineNum).padStart(lineNumWidth, ' ');
+          }
+
+          // Determine what content to display
+          const rawContent = row.content;
+          const shouldTruncate = !wrapMode && rawContent.length > contentWidth;
+
+          // Use highlighted content if available and not a continuation or middle-dots mode
+          const canUseHighlighting = row.highlighted && !isContinuation && !showMiddleDots;
+
+          let displayContent: string;
+          if (canUseHighlighting && row.highlighted) {
+            // Use ANSI-aware truncation to preserve syntax highlighting
+            displayContent = shouldTruncate
+              ? truncateAnsi(row.highlighted, contentWidth)
+              : row.highlighted;
+          } else {
+            // Plain content path
+            let content = rawContent;
+
+            // Apply middle-dots to raw content
+            if (showMiddleDots && !isContinuation) {
+              content = applyMiddleDots(content, true);
+            }
+
+            // Simple truncation for plain content
+            if (shouldTruncate) {
+              content = content.slice(0, Math.max(0, contentWidth - 1)) + '…';
+            }
+
+            displayContent = content;
+          }
+
           return (
             <Box>
-              <Text dimColor>{lineNumStr} </Text>
-              <Text>{line.content || ' '}</Text>
+              <Text dimColor={!isContinuation} color={isContinuation ? 'cyan' : undefined}>
+                {lineNumDisplay}{' '}
+              </Text>
+              <Text dimColor={showMiddleDots && !canUseHighlighting}>{displayContent || ' '}</Text>
             </Box>
           );
         }}
       />
-      {truncated && (
-        <Box>
-          <Text color="yellow" dimColor>
-            (file truncated)
-          </Text>
-        </Box>
-      )}
     </Box>
   );
 }
 
 /**
- * Get total lines in file content for scroll calculations.
+ * Get total rows for scroll calculations.
+ * Accounts for wrap mode when calculating.
  */
-export function getExplorerContentTotalRows(content: string | null): number {
+export function getExplorerContentTotalRows(
+  content: string | null,
+  filePath: string | null,
+  truncated: boolean,
+  width: number,
+  wrapMode: boolean
+): number {
   if (!content) return 0;
-  return content.split('\n').length;
+
+  const rows = buildExplorerContentRows(content, filePath, truncated);
+  const lineNumWidth = getExplorerContentLineNumWidth(rows);
+  const contentWidth = width - lineNumWidth - 3;
+
+  return getExplorerContentRowCount(rows, contentWidth, wrapMode);
 }
