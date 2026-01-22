@@ -129,14 +129,16 @@ export interface TabBoundaries {
   historyEnd: number;
   compareStart: number;
   compareEnd: number;
+  explorerStart: number;
+  explorerEnd: number;
 }
 
 /**
  * Calculate the x-coordinate boundaries for each tab in the footer.
- * Tab layout (right-aligned): [1]Diff [2]Commit [3]History [4]Compare (39 chars total)
+ * Tab layout (right-aligned): [1]Diff [2]Commit [3]History [4]Compare [5]Explorer (51 chars total)
  */
 export function getTabBoundaries(terminalWidth: number): TabBoundaries {
-  const tabsStart = terminalWidth - 39; // 1-indexed start of tabs section
+  const tabsStart = terminalWidth - 51; // 1-indexed start of tabs section
   return {
     diffStart: tabsStart,
     diffEnd: tabsStart + 6,
@@ -146,6 +148,8 @@ export function getTabBoundaries(terminalWidth: number): TabBoundaries {
     historyEnd: tabsStart + 27,
     compareStart: tabsStart + 29,
     compareEnd: tabsStart + 38,
+    explorerStart: tabsStart + 40,
+    explorerEnd: tabsStart + 50,
   };
 }
 
@@ -164,6 +168,8 @@ export function getClickedTab(x: number, terminalWidth: number): BottomTab | nul
     return 'history';
   } else if (x >= bounds.compareStart && x <= bounds.compareEnd) {
     return 'compare';
+  } else if (x >= bounds.explorerStart && x <= bounds.explorerEnd) {
+    return 'explorer';
   }
   return null;
 }
@@ -182,25 +188,29 @@ export function isInPane(y: number, paneStart: number, paneEnd: number): boolean
   return y >= paneStart && y <= paneEnd;
 }
 
-export type FooterLeftClick = 'hotkeys' | 'mouse-mode' | 'auto-tab' | null;
+export type FooterLeftClick = 'hotkeys' | 'mouse-mode' | 'auto-tab' | 'wrap' | null;
 
 /**
  * Given an x-coordinate in the footer row, determine which left indicator was clicked.
- * Layout: "? hotkeys | [scroll] | [auto-tab:on]"
- *         1         11        21
+ * Layout: "? [scroll] [auto] [wrap]"
+ *         1 3      10 12  17 19  24
  */
 export function getFooterLeftClick(x: number): FooterLeftClick {
-  // "?" and "hotkeys" area: columns 1-9
-  if (x >= 1 && x <= 9) {
+  // "?" area: column 1
+  if (x === 1) {
     return 'hotkeys';
   }
-  // "[scroll]" or "[select]" area: columns 13-20
-  if (x >= 13 && x <= 20) {
+  // "[scroll]" or "[select]" area: columns 3-10
+  if (x >= 3 && x <= 10) {
     return 'mouse-mode';
   }
-  // "[auto-tab:on/off]" area: columns 24-38
-  if (x >= 24 && x <= 38) {
+  // "[auto]" area: columns 12-17
+  if (x >= 12 && x <= 17) {
     return 'auto-tab';
+  }
+  // "[wrap]" area: columns 19-24
+  if (x >= 19 && x <= 24) {
+    return 'wrap';
   }
   return null;
 }

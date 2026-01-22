@@ -99,60 +99,69 @@ describe('getClickedFileIndex', () => {
 describe('getTabBoundaries', () => {
   it('calculates tab boundaries for standard width', () => {
     const result = getTabBoundaries(100);
-    // tabsStart = 100 - 39 = 61
-    expect(result.diffStart).toBe(61);
-    expect(result.diffEnd).toBe(67);
-    expect(result.commitStart).toBe(69);
-    expect(result.commitEnd).toBe(77);
-    expect(result.historyStart).toBe(79);
-    expect(result.historyEnd).toBe(88);
-    expect(result.compareStart).toBe(90);
-    expect(result.compareEnd).toBe(99);
+    // tabsStart = 100 - 51 = 49 (5 tabs: diff, commit, history, compare, explorer)
+    expect(result.diffStart).toBe(49);
+    expect(result.diffEnd).toBe(55);
+    expect(result.commitStart).toBe(57);
+    expect(result.commitEnd).toBe(65);
+    expect(result.historyStart).toBe(67);
+    expect(result.historyEnd).toBe(76);
+    expect(result.compareStart).toBe(78);
+    expect(result.compareEnd).toBe(87);
+    expect(result.explorerStart).toBe(89);
+    expect(result.explorerEnd).toBe(99);
   });
 
   it('handles narrow terminal', () => {
     const result = getTabBoundaries(50);
-    // tabsStart = 50 - 39 = 11
-    expect(result.diffStart).toBe(11);
+    // tabsStart = 50 - 51 = -1 (tabs may overlap with left side)
+    expect(result.diffStart).toBe(-1);
   });
 });
 
 describe('getClickedTab', () => {
   const terminalWidth = 100;
-  // tabsStart = 100 - 39 = 61
+  // tabsStart = 100 - 51 = 49
 
   it('returns diff for click in diff tab area', () => {
-    // diff: positions 0-6 relative to tabsStart = 61-67
-    expect(getClickedTab(61, terminalWidth)).toBe('diff');
-    expect(getClickedTab(64, terminalWidth)).toBe('diff');
-    expect(getClickedTab(67, terminalWidth)).toBe('diff');
+    // diff: positions 0-6 relative to tabsStart = 49-55
+    expect(getClickedTab(49, terminalWidth)).toBe('diff');
+    expect(getClickedTab(52, terminalWidth)).toBe('diff');
+    expect(getClickedTab(55, terminalWidth)).toBe('diff');
   });
 
   it('returns commit for click in commit tab area', () => {
-    // commit: positions 8-16 relative to tabsStart = 69-77
-    expect(getClickedTab(69, terminalWidth)).toBe('commit');
-    expect(getClickedTab(73, terminalWidth)).toBe('commit');
-    expect(getClickedTab(77, terminalWidth)).toBe('commit');
+    // commit: positions 8-16 relative to tabsStart = 57-65
+    expect(getClickedTab(57, terminalWidth)).toBe('commit');
+    expect(getClickedTab(61, terminalWidth)).toBe('commit');
+    expect(getClickedTab(65, terminalWidth)).toBe('commit');
   });
 
   it('returns history for click in history tab area', () => {
-    // history: positions 18-27 relative to tabsStart = 79-88
-    expect(getClickedTab(79, terminalWidth)).toBe('history');
-    expect(getClickedTab(83, terminalWidth)).toBe('history');
-    expect(getClickedTab(88, terminalWidth)).toBe('history');
+    // history: positions 18-27 relative to tabsStart = 67-76
+    expect(getClickedTab(67, terminalWidth)).toBe('history');
+    expect(getClickedTab(71, terminalWidth)).toBe('history');
+    expect(getClickedTab(76, terminalWidth)).toBe('history');
   });
 
   it('returns compare for click in compare tab area', () => {
-    // compare: positions 29-38 relative to tabsStart = 90-99
-    expect(getClickedTab(90, terminalWidth)).toBe('compare');
-    expect(getClickedTab(95, terminalWidth)).toBe('compare');
-    expect(getClickedTab(99, terminalWidth)).toBe('compare');
+    // compare: positions 29-38 relative to tabsStart = 78-87
+    expect(getClickedTab(78, terminalWidth)).toBe('compare');
+    expect(getClickedTab(83, terminalWidth)).toBe('compare');
+    expect(getClickedTab(87, terminalWidth)).toBe('compare');
+  });
+
+  it('returns explorer for click in explorer tab area', () => {
+    // explorer: positions 40-50 relative to tabsStart = 89-99
+    expect(getClickedTab(89, terminalWidth)).toBe('explorer');
+    expect(getClickedTab(94, terminalWidth)).toBe('explorer');
+    expect(getClickedTab(99, terminalWidth)).toBe('explorer');
   });
 
   it('returns null for click outside tab area', () => {
     expect(getClickedTab(10, terminalWidth)).toBeNull();
-    expect(getClickedTab(50, terminalWidth)).toBeNull();
-    expect(getClickedTab(60, terminalWidth)).toBeNull();
+    expect(getClickedTab(40, terminalWidth)).toBeNull();
+    expect(getClickedTab(48, terminalWidth)).toBeNull();
   });
 });
 

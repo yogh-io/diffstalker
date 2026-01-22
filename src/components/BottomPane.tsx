@@ -4,6 +4,7 @@ import { FileEntry, CommitInfo } from '../git/status.js';
 import { DiffResult, CompareDiff } from '../git/diff.js';
 import { UnifiedDiffView } from './UnifiedDiffView.js';
 import { CommitPanel } from './CommitPanel.js';
+import { ExplorerContentView } from './ExplorerContentView.js';
 import { CompareListSelection } from './CompareListView.js';
 import { BottomTab, Pane } from '../hooks/useKeymap.js';
 import { ThemeName } from '../themes.js';
@@ -49,6 +50,10 @@ interface BottomPaneProps {
 
   // Wrap mode
   wrapMode: boolean;
+
+  // Explorer tab props
+  explorerSelectedFile?: { path: string; content: string; truncated?: boolean } | null;
+  explorerFileScrollOffset?: number;
 }
 
 export function BottomPane({
@@ -73,9 +78,14 @@ export function BottomPane({
   compareListSelection,
   compareSelectionDiff,
   wrapMode,
+  explorerSelectedFile = null,
+  explorerFileScrollOffset = 0,
 }: BottomPaneProps): React.ReactElement {
   const isDiffFocused =
-    currentPane !== 'files' && currentPane !== 'history' && currentPane !== 'compare';
+    currentPane !== 'files' &&
+    currentPane !== 'history' &&
+    currentPane !== 'compare' &&
+    currentPane !== 'explorer';
 
   // Build display rows based on current tab
   const displayRows: DisplayRow[] = useMemo(() => {
@@ -143,6 +153,9 @@ export function BottomPane({
         return <Text dimColor>{shortenPath(path, terminalWidth - 10)}</Text>;
       }
     }
+    if (bottomTab === 'explorer' && explorerSelectedFile) {
+      return <Text dimColor>{shortenPath(explorerSelectedFile.path, terminalWidth - 10)}</Text>;
+    }
     return null;
   };
 
@@ -190,6 +203,34 @@ export function BottomPane({
       />
     );
   };
+
+  // Explorer tab content
+  if (bottomTab === 'explorer') {
+    return (
+      <Box
+        flexDirection="column"
+        height={bottomPaneHeight}
+        width={terminalWidth}
+        overflowY="hidden"
+      >
+        <Box width={terminalWidth}>
+          <Text bold color={isDiffFocused ? 'cyan' : undefined}>
+            FILE
+          </Text>
+          <Box flexGrow={1} justifyContent="flex-end">
+            {renderHeaderRight()}
+          </Box>
+        </Box>
+        <ExplorerContentView
+          filePath={explorerSelectedFile?.path ?? null}
+          content={explorerSelectedFile?.content ?? null}
+          maxHeight={bottomPaneHeight - 1}
+          scrollOffset={explorerFileScrollOffset}
+          truncated={explorerSelectedFile?.truncated}
+        />
+      </Box>
+    );
+  }
 
   return (
     <Box

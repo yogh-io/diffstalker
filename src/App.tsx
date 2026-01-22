@@ -15,6 +15,7 @@ import { useTerminalSize } from './hooks/useTerminalSize.js';
 import { useLayout, SPLIT_RATIO_STEP } from './hooks/useLayout.js';
 import { useHistoryState } from './hooks/useHistoryState.js';
 import { useCompareState } from './hooks/useCompareState.js';
+import { useExplorerState } from './hooks/useExplorerState.js';
 import {
   getClickedFileIndex,
   getClickedTab,
@@ -100,6 +101,10 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [autoTabEnabled, setAutoTabEnabled] = useState(false);
   const [wrapMode, setWrapMode] = useState(false);
+
+  // Explorer scroll state
+  const [explorerScrollOffset, setExplorerScrollOffset] = useState(0);
+  const [explorerFileScrollOffset, setExplorerFileScrollOffset] = useState(0);
 
   // Header height calculation
   const headerHeight = getHeaderHeight(
@@ -211,6 +216,30 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     terminalWidth,
   });
 
+  // Explorer state
+  const {
+    currentPath: explorerCurrentPath,
+    items: explorerItems,
+    selectedIndex: explorerSelectedIndex,
+    setSelectedIndex: setExplorerSelectedIndex,
+    selectedFile: explorerSelectedFile,
+    navigateUp: navigateExplorerUp,
+    navigateDown: navigateExplorerDown,
+    enterDirectory: explorerEnterDirectory,
+    goUp: explorerGoUp,
+    isLoading: explorerIsLoading,
+    error: explorerError,
+    explorerTotalRows,
+  } = useExplorerState({
+    repoPath,
+    isActive: bottomTab === 'explorer',
+    topPaneHeight,
+    explorerScrollOffset,
+    setExplorerScrollOffset,
+    fileScrollOffset: explorerFileScrollOffset,
+    setFileScrollOffset: setExplorerFileScrollOffset,
+  });
+
   // Keep a ref to paneBoundaries for use in callbacks
   const paneBoundariesRef = useRef(paneBoundaries);
   paneBoundariesRef.current = paneBoundaries;
@@ -259,6 +288,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       commit: 'commit',
       history: 'history',
       compare: 'compare',
+      explorer: 'explorer',
     };
     setCurrentPane(paneMap[tab]);
   }, []);
@@ -298,6 +328,9 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             return;
           } else if (leftClick === 'auto-tab') {
             setAutoTabEnabled((prev) => !prev);
+            return;
+          } else if (leftClick === 'wrap') {
+            setWrapMode((prev) => !prev);
             return;
           }
         }
@@ -352,6 +385,14 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
               setCurrentPane('compare');
               return;
             }
+          } else if (bottomTab === 'explorer') {
+            // Calculate clicked item in explorer list
+            const visualRow = y - stagingPaneStart - 1 + explorerScrollOffset;
+            if (visualRow >= 0 && visualRow < explorerItems.length) {
+              setExplorerSelectedIndex(visualRow);
+              setCurrentPane('explorer');
+              return;
+            }
           }
         }
 
@@ -369,17 +410,32 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
             scrollHistory(direction, historyTotalRows);
           } else if (bottomTab === 'compare') {
             scrollCompare(direction, compareTotalItems);
+          } else if (bottomTab === 'explorer') {
+            // Scroll explorer list
+            const scrollAmount = direction === 'up' ? -3 : 3;
+            setExplorerScrollOffset((prev) =>
+              Math.max(
+                0,
+                Math.min(prev + scrollAmount, Math.max(0, explorerTotalRows - topPaneHeight + 2))
+              )
+            );
           }
         } else {
-          let maxRows: number | undefined;
-          if (bottomTab === 'compare' && compareListSelection?.type !== 'commit') {
-            maxRows = compareDiffTotalRows;
-          } else if (bottomTab === 'history') {
-            maxRows = historyDiffTotalRows;
-          } else if (bottomTab === 'diff') {
-            maxRows = diffTotalRows;
+          if (bottomTab === 'explorer') {
+            // Scroll file content
+            const scrollAmount = direction === 'up' ? -3 : 3;
+            setExplorerFileScrollOffset((prev) => Math.max(0, prev + scrollAmount));
+          } else {
+            let maxRows: number | undefined;
+            if (bottomTab === 'compare' && compareListSelection?.type !== 'commit') {
+              maxRows = compareDiffTotalRows;
+            } else if (bottomTab === 'history') {
+              maxRows = historyDiffTotalRows;
+            } else if (bottomTab === 'diff') {
+              maxRows = diffTotalRows;
+            }
+            scrollDiff(direction, 3, maxRows);
           }
-          scrollDiff(direction, 3, maxRows);
         }
       }
     },
@@ -411,6 +467,13 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       historyDiffTotalRows,
       historyTotalRows,
       activeModal,
+      explorerItems,
+      explorerScrollOffset,
+      explorerTotalRows,
+      topPaneHeight,
+      setExplorerSelectedIndex,
+      setExplorerScrollOffset,
+      setExplorerFileScrollOffset,
     ]
   );
 
@@ -462,6 +525,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       navigateHistoryUp();
     } else if (currentPane === 'compare') {
       navigateCompareUp();
+    } else if (currentPane === 'explorer') {
+      navigateExplorerUp();
     }
   }, [
     currentPane,
@@ -472,6 +537,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     scrollDiff,
     navigateHistoryUp,
     navigateCompareUp,
+    navigateExplorerUp,
   ]);
 
   const handleNavigateDown = useCallback(() => {
@@ -489,6 +555,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       navigateHistoryDown();
     } else if (currentPane === 'compare') {
       navigateCompareDown();
+    } else if (currentPane === 'explorer') {
+      navigateExplorerDown();
     }
   }, [
     currentPane,
@@ -500,6 +568,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     scrollDiff,
     navigateHistoryDown,
     navigateCompareDown,
+    navigateExplorerDown,
   ]);
 
   const handleTogglePane = useCallback(() => {
@@ -509,6 +578,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       setCurrentPane((prev) => (prev === 'history' ? 'diff' : 'history'));
     } else if (bottomTab === 'compare') {
       setCurrentPane((prev) => (prev === 'compare' ? 'diff' : 'compare'));
+    } else if (bottomTab === 'explorer') {
+      setCurrentPane((prev) => (prev === 'explorer' ? 'diff' : 'explorer'));
     }
   }, [bottomTab]);
 
@@ -568,6 +639,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
       onToggleFollow: () => setWatcherEnabled((prev) => !prev),
       onToggleAutoTab: () => setAutoTabEnabled((prev) => !prev),
       onToggleWrap: () => setWrapMode((prev) => !prev),
+      onExplorerEnter: bottomTab === 'explorer' ? explorerEnterDirectory : undefined,
+      onExplorerBack: bottomTab === 'explorer' ? explorerGoUp : undefined,
     },
     currentPane,
     commitInputFocused || activeModal !== null || showBaseBranchPicker
@@ -625,6 +698,12 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         compareListSelection={compareListSelection}
         compareScrollOffset={compareScrollOffset}
         includeUncommitted={includeUncommitted}
+        explorerCurrentPath={explorerCurrentPath}
+        explorerItems={explorerItems}
+        explorerSelectedIndex={explorerSelectedIndex}
+        explorerScrollOffset={explorerScrollOffset}
+        explorerIsLoading={explorerIsLoading}
+        explorerError={explorerError}
       />
 
       <Separator />
@@ -652,6 +731,8 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
         compareListSelection={compareListSelection}
         compareSelectionDiff={compareSelectionDiff}
         wrapMode={wrapMode}
+        explorerSelectedFile={explorerSelectedFile}
+        explorerFileScrollOffset={explorerFileScrollOffset}
       />
 
       <Separator />
