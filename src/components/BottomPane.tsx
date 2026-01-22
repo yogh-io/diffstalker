@@ -105,6 +105,7 @@ export function BottomPane({
           maxHeight={bottomPaneHeight - 1}
           scrollOffset={diffScrollOffset}
           theme={currentTheme}
+          width={terminalWidth}
         />
       );
     }
@@ -130,6 +131,7 @@ export function BottomPane({
           maxHeight={bottomPaneHeight - 1}
           scrollOffset={diffScrollOffset}
           theme={currentTheme}
+          width={terminalWidth}
         />
       );
     }
@@ -150,6 +152,7 @@ export function BottomPane({
           maxHeight={bottomPaneHeight - 1}
           scrollOffset={diffScrollOffset}
           theme={currentTheme}
+          width={terminalWidth}
         />
       );
     }
@@ -163,6 +166,7 @@ export function BottomPane({
           scrollOffset={diffScrollOffset}
           maxHeight={bottomPaneHeight - 1}
           theme={currentTheme}
+          width={terminalWidth}
         />
       );
     }
@@ -171,7 +175,13 @@ export function BottomPane({
   };
 
   return (
-    <Box flexDirection="column" height={bottomPaneHeight} width={terminalWidth} overflowY="hidden">
+    <Box
+      flexDirection="column"
+      height={bottomPaneHeight}
+      width={terminalWidth}
+      overflowX="hidden"
+      overflowY="hidden"
+    >
       <Box width={terminalWidth}>
         <Text bold color={isDiffFocused ? 'cyan' : undefined}>
           {bottomTab === 'commit' ? 'COMMIT' : 'DIFF'}

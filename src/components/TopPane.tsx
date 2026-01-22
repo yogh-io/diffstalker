@@ -60,7 +60,13 @@ export function TopPane({
   const untrackedCount = untracked.length;
 
   return (
-    <Box flexDirection="column" height={topPaneHeight} width={terminalWidth} overflowY="hidden">
+    <Box
+      flexDirection="column"
+      height={topPaneHeight}
+      width={terminalWidth}
+      overflowX="hidden"
+      overflowY="hidden"
+    >
       {(bottomTab === 'diff' || bottomTab === 'commit') && (
         <>
           <Box>

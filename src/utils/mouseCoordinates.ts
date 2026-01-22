@@ -59,7 +59,8 @@ export function getClickedFileIndex(
   if (y < stagingPaneStart + 1 || y > fileListEnd) return -1;
 
   // Calculate which row in the list was clicked (0-indexed)
-  const listRow = y - 4 + scrollOffset;
+  // Use stagingPaneStart + 1 to account for the "STAGING AREA" header row
+  const listRow = y - (stagingPaneStart + 1) + scrollOffset;
 
   // Split files into 3 categories (same order as FileList)
   const {

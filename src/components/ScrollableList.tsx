@@ -73,13 +73,13 @@ export function ScrollableList<T>({
   const belowCount = totalItems - scrollOffset - visibleItems.length;
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" overflowX="hidden">
       {header}
 
       {showIndicators && hasPrevious && <Text dimColor>↑ {aboveCount} more above</Text>}
 
       {visibleItems.map((item, i) => (
-        <Box key={`${scrollOffset}-${i}-${getKey(item, scrollOffset + i)}`}>
+        <Box key={`${scrollOffset}-${i}-${getKey(item, scrollOffset + i)}`} overflowX="hidden">
           {renderItem(item, scrollOffset + i)}
         </Box>
       ))}

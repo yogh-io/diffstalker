@@ -19,6 +19,7 @@ interface CompareViewProps {
   scrollOffset: number;
   maxHeight: number;
   theme?: ThemeName;
+  width?: number;
 }
 
 export function CompareView({
@@ -28,6 +29,7 @@ export function CompareView({
   scrollOffset,
   maxHeight,
   theme = 'dark',
+  width,
 }: CompareViewProps): React.ReactElement {
   // Build combined diff for DiffView
   const combinedDiff = useMemo(() => buildCombinedCompareDiff(compareDiff), [compareDiff]);
@@ -66,6 +68,12 @@ export function CompareView({
 
   // Use DiffView for the actual diff rendering (word-level highlighting, themes, line numbers)
   return (
-    <DiffView diff={combinedDiff} maxHeight={maxHeight} scrollOffset={scrollOffset} theme={theme} />
+    <DiffView
+      diff={combinedDiff}
+      maxHeight={maxHeight}
+      scrollOffset={scrollOffset}
+      theme={theme}
+      width={width}
+    />
   );
 }

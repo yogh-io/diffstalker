@@ -77,6 +77,7 @@ function FileRow({ file, isSelected, isFocused, maxPathLength }: FileRowProps): 
   const actionButton = file.staged ? '[-]' : '[+]';
   const buttonColor = file.staged ? 'red' : 'green';
   const stats = formatStats(file.insertions, file.deletions);
+  const isHighlighted = isSelected && isFocused;
 
   // Calculate available space for path (account for stats if present)
   const statsLength = stats ? stats.length + 1 : 0;
@@ -85,19 +86,15 @@ function FileRow({ file, isSelected, isFocused, maxPathLength }: FileRowProps): 
 
   return (
     <Box>
-      {isSelected && isFocused ? (
-        <Text color="cyan" bold>
-          ▸{' '}
-        </Text>
-      ) : (
-        <Text> </Text>
-      )}
+      <Text color={isHighlighted ? 'cyan' : undefined} bold={isHighlighted}>
+        {isHighlighted ? '▸ ' : '  '}
+      </Text>
       <Text color={buttonColor}>{actionButton} </Text>
       <Text color={statusColor}>{statusChar} </Text>
-      <Text color={isSelected && isFocused ? 'cyan' : undefined}>
+      <Text color={isHighlighted ? 'cyan' : undefined} inverse={isHighlighted}>
         {displayPath}
-        {file.originalPath && <Text dimColor> ← {shortenPath(file.originalPath, 30)}</Text>}
       </Text>
+      {file.originalPath && <Text dimColor> ← {shortenPath(file.originalPath, 30)}</Text>}
       {stats && (
         <Text>
           <Text dimColor> </Text>

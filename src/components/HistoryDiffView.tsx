@@ -19,6 +19,7 @@ interface HistoryDiffViewProps {
   scrollOffset: number;
   maxHeight: number;
   theme?: ThemeName;
+  width?: number;
 }
 
 export function HistoryDiffView({
@@ -27,6 +28,7 @@ export function HistoryDiffView({
   scrollOffset,
   maxHeight,
   theme = 'dark',
+  width,
 }: HistoryDiffViewProps): React.ReactElement {
   // Build rows using shared function
   const allRows = useMemo(() => buildHistoryDiffRows(commit, diff), [commit, diff]);
@@ -103,6 +105,7 @@ export function HistoryDiffView({
         maxHeight={maxHeight}
         scrollOffset={scrollOffset - diffStartIndex}
         theme={theme}
+        width={width}
       />
     );
   }
@@ -112,7 +115,7 @@ export function HistoryDiffView({
   const diffRowsVisible = maxHeight - headerRowsToShow.length;
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" overflowX="hidden">
       {visibleRows.map((row, i) => {
         const key = `row-${scrollOffset + i}`;
 
@@ -148,6 +151,7 @@ export function HistoryDiffView({
           maxHeight={diffRowsVisible}
           scrollOffset={0}
           theme={theme}
+          width={width}
         />
       )}
     </Box>

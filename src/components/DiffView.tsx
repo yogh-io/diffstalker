@@ -10,12 +10,20 @@ import { isDisplayableDiffLine } from '../utils/diffFilters.js';
 // Create emphasize instance with common languages
 const emphasize = createEmphasize(common);
 
+// Truncate string to fit within maxWidth
+function truncateString(str: string, maxWidth: number): string {
+  if (maxWidth <= 0 || str.length <= maxWidth) return str;
+  if (maxWidth <= 1) return '…';
+  return str.slice(0, maxWidth - 1) + '…';
+}
+
 interface DiffViewProps {
   diff: DiffResult | null;
   filePath?: string;
   maxHeight?: number;
   scrollOffset?: number;
   theme?: ThemeName;
+  width?: number;
 }
 
 // Map common file extensions to highlight.js language names
@@ -251,26 +259,53 @@ function findModificationPairs(lines: DiffLine[]): Map<number, LinePair> {
   return pairs;
 }
 
+// Truncate segments to fit within maxWidth
+function truncateSegments(segments: DiffSegment[], maxWidth: number): DiffSegment[] {
+  const result: DiffSegment[] = [];
+  let remaining = maxWidth;
+
+  for (const segment of segments) {
+    if (remaining <= 0) break;
+
+    if (segment.text.length <= remaining) {
+      result.push(segment);
+      remaining -= segment.text.length;
+    } else {
+      // Truncate this segment and add ellipsis
+      const truncatedText = segment.text.slice(0, remaining - 1) + '…';
+      result.push({ ...segment, text: truncatedText });
+      break;
+    }
+  }
+
+  return result;
+}
+
 // Render content with word-level highlighting (Claude Code style)
 function WordDiffContent({
   segments,
   isAddition,
   theme,
+  maxWidth,
 }: {
   segments: DiffSegment[];
   isAddition: boolean;
   theme: Theme;
+  maxWidth?: number;
 }): React.ReactElement {
   const { colors } = theme;
   const baseBg = isAddition ? colors.addBg : colors.delBg;
   const highlightBg = isAddition ? colors.addHighlight : colors.delHighlight;
 
+  // Truncate segments if needed
+  const displaySegments = maxWidth ? truncateSegments(segments, maxWidth) : segments;
+
   // Wrap in parent Text to ensure inline rendering
   return (
     <Text backgroundColor={baseBg}>
-      {segments.map((segment, i) => (
+      {displaySegments.map((segment, i) => (
         <Text key={i} color={colors.text} backgroundColor={segment.isChange ? highlightBg : baseBg}>
-          {segment.text || (i === segments.length - 1 ? ' ' : '')}
+          {segment.text || (i === displaySegments.length - 1 ? ' ' : '')}
         </Text>
       ))}
     </Text>
@@ -283,14 +318,19 @@ function DiffLineComponent({
   language,
   wordDiffSegments,
   theme,
+  maxWidth,
 }: {
   line: DiffLine;
   lineNumWidth: number;
   language?: string;
   wordDiffSegments?: DiffSegment[];
   theme: Theme;
+  maxWidth?: number;
 }): React.ReactElement {
   const { colors } = theme;
+
+  // Calculate available width for headers (account for paddingX=1 on each side)
+  const headerWidth = maxWidth ? maxWidth - 2 : undefined;
 
   // Headers - simplify verbose lines (redundant headers pre-filtered in displayableLines)
   if (line.type === 'header') {
@@ -299,19 +339,23 @@ function DiffLineComponent({
     if (content.startsWith('diff --git')) {
       const match = content.match(/diff --git a\/.+ b\/(.+)$/);
       if (match) {
+        // Format: "── filename ──" - subtract 6 for the dashes and spaces
+        const maxPathLen = headerWidth ? headerWidth - 6 : undefined;
+        const path = maxPathLen ? truncateString(match[1], maxPathLen) : match[1];
         return (
           <Box>
             <Text color="cyan" bold>
-              ── {match[1]} ──
+              ── {path} ──
             </Text>
           </Box>
         );
       }
     }
     // Keep useful headers (new/deleted file, binary, rename info)
+    const truncatedContent = headerWidth ? truncateString(content, headerWidth) : content;
     return (
       <Box>
-        <Text dimColor>{content}</Text>
+        <Text dimColor>{truncatedContent}</Text>
       </Box>
     );
   }
@@ -333,18 +377,25 @@ function DiffLineComponent({
       const oldRange = oldCount === 1 ? `${oldStart}` : `${oldStart}-${oldEnd}`;
       const newRange = newCount === 1 ? `${newStart}` : `${newStart}-${newEnd}`;
 
+      // Calculate how much space is left for context
+      const rangeText = `Lines ${oldRange} → ${newRange}`;
+      const contextMaxLen = headerWidth ? headerWidth - rangeText.length - 1 : undefined;
+      const truncatedContext =
+        context && contextMaxLen && contextMaxLen > 3 ? truncateString(context, contextMaxLen) : '';
+
       return (
         <Box>
           <Text color="cyan" dimColor>
-            Lines {oldRange} → {newRange}
+            {rangeText}
           </Text>
-          {context && <Text color="gray"> {context}</Text>}
+          {truncatedContext && <Text color="gray"> {truncatedContext}</Text>}
         </Box>
       );
     }
+    const truncatedHunk = headerWidth ? truncateString(line.content, headerWidth) : line.content;
     return (
       <Text color="cyan" dimColor>
-        {line.content}
+        {truncatedHunk}
       </Text>
     );
   }
@@ -361,7 +412,12 @@ function DiffLineComponent({
     lineNum !== undefined ? String(lineNum).padStart(lineNumWidth, ' ') : ' '.repeat(lineNumWidth);
 
   // Content without the leading +/-/space
-  const content = getLineContent(line);
+  const rawContent = getLineContent(line);
+
+  // Calculate available width for content (subtract line num, space, symbol, paddingX)
+  // Format: "  123 + content" = lineNumWidth + 1 (space) + 2 (symbol + space) + 2 (paddingX)
+  const contentWidth = maxWidth ? maxWidth - lineNumWidth - 5 : undefined;
+  const content = contentWidth ? truncateString(rawContent, contentWidth) : rawContent;
 
   if (line.type === 'addition') {
     return (
@@ -373,7 +429,12 @@ function DiffLineComponent({
           +{' '}
         </Text>
         {wordDiffSegments ? (
-          <WordDiffContent segments={wordDiffSegments} isAddition={true} theme={theme} />
+          <WordDiffContent
+            segments={wordDiffSegments}
+            isAddition={true}
+            theme={theme}
+            maxWidth={contentWidth}
+          />
         ) : (
           <Text backgroundColor={colors.addBg} color={colors.text}>
             {content || ' '}
@@ -393,7 +454,12 @@ function DiffLineComponent({
           -{' '}
         </Text>
         {wordDiffSegments ? (
-          <WordDiffContent segments={wordDiffSegments} isAddition={false} theme={theme} />
+          <WordDiffContent
+            segments={wordDiffSegments}
+            isAddition={false}
+            theme={theme}
+            maxWidth={contentWidth}
+          />
         ) : (
           <Text backgroundColor={colors.delBg} color={colors.text}>
             {content || ' '}
@@ -419,6 +485,7 @@ export function DiffView({
   maxHeight = 20,
   scrollOffset = 0,
   theme: themeName = 'dark',
+  width,
 }: DiffViewProps): React.ReactElement {
   // Memoize theme and language detection
   const theme = useMemo(() => getTheme(themeName), [themeName]);
@@ -467,7 +534,7 @@ export function DiffView({
   const lineNumWidth = getLineNumWidth(displayableLines.map((d) => d.line));
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" paddingX={1} overflowX="hidden">
       <ScrollableList
         items={displayableLines}
         maxHeight={maxHeight}
@@ -482,6 +549,7 @@ export function DiffView({
               language={language}
               wordDiffSegments={wordDiffSegments}
               theme={theme}
+              maxWidth={width}
             />
           );
         }}

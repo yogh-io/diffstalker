@@ -555,7 +555,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
   const Separator = () => <Text dimColor>{'─'.repeat(terminalWidth)}</Text>;
 
   return (
-    <Box flexDirection="column" height={terminalHeight} width={terminalWidth}>
+    <Box flexDirection="column" height={terminalHeight} width={terminalWidth} overflowX="hidden">
       {/* Header */}
       <Box height={headerHeight} width={terminalWidth}>
         <Header
