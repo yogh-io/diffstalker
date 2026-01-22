@@ -19,7 +19,8 @@ export function Footer({
   return (
     <Box justifyContent="space-between">
       <Text>
-        <Text dimColor>?</Text> <Text color="yellow">[{mouseEnabled ? 'scroll' : 'select'}]</Text>{' '}
+        <Text dimColor>?</Text>{' '}
+        <Text color="yellow">{mouseEnabled ? '[scroll]' : 'm:[select]'}</Text>{' '}
         <Text color={autoTabEnabled ? 'blue' : undefined} dimColor={!autoTabEnabled}>
           [auto]
         </Text>{' '}
@@ -40,9 +41,6 @@ export function Footer({
         </Text>{' '}
         <Text color={activeTab === 'compare' ? 'cyan' : undefined} bold={activeTab === 'compare'}>
           [4]Compare
-        </Text>{' '}
-        <Text color={activeTab === 'explorer' ? 'cyan' : undefined} bold={activeTab === 'explorer'}>
-          [5]Explorer
         </Text>
       </Text>
     </Box>

@@ -192,8 +192,9 @@ export type FooterLeftClick = 'hotkeys' | 'mouse-mode' | 'auto-tab' | 'wrap' | n
 
 /**
  * Given an x-coordinate in the footer row, determine which left indicator was clicked.
- * Layout: "? [scroll] [auto] [wrap]"
- *         1 3      10 12  17 19  24
+ * Layout (scroll mode): "? [scroll] [auto] [wrap]"
+ *                        1 3      10 12  17 19  24
+ * (In select mode, mouse tracking is disabled so clicks don't register)
  */
 export function getFooterLeftClick(x: number): FooterLeftClick {
   // "?" area: column 1
