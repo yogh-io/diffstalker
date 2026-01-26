@@ -152,6 +152,9 @@ export class App {
     // Setup keyboard handlers
     this.setupKeyboardHandlers();
 
+    // Setup mouse handlers
+    this.setupMouseHandlers();
+
     // Setup state change listeners
     this.setupStateListeners();
 
@@ -277,6 +280,58 @@ export class App {
 
     // Follow toggle
     this.screen.key(['f'], () => this.toggleFollow());
+  }
+
+  private setupMouseHandlers(): void {
+    const SCROLL_AMOUNT = 3;
+
+    // Mouse wheel on top pane
+    this.layout.topPane.on('wheeldown', () => {
+      this.handleTopPaneScroll(SCROLL_AMOUNT);
+    });
+
+    this.layout.topPane.on('wheelup', () => {
+      this.handleTopPaneScroll(-SCROLL_AMOUNT);
+    });
+
+    // Mouse wheel on bottom pane
+    this.layout.bottomPane.on('wheeldown', () => {
+      this.handleBottomPaneScroll(SCROLL_AMOUNT);
+    });
+
+    this.layout.bottomPane.on('wheelup', () => {
+      this.handleBottomPaneScroll(-SCROLL_AMOUNT);
+    });
+  }
+
+  private handleTopPaneScroll(delta: number): void {
+    const state = this.uiState.state;
+
+    if (state.bottomTab === 'history') {
+      const newOffset = Math.max(0, state.historyScrollOffset + delta);
+      this.uiState.setHistoryScrollOffset(newOffset);
+    } else if (state.bottomTab === 'compare') {
+      const newOffset = Math.max(0, state.compareScrollOffset + delta);
+      this.uiState.setCompareScrollOffset(newOffset);
+    } else if (state.bottomTab === 'explorer') {
+      const newOffset = Math.max(0, state.explorerScrollOffset + delta);
+      this.uiState.setExplorerScrollOffset(newOffset);
+    } else {
+      const newOffset = Math.max(0, state.fileListScrollOffset + delta);
+      this.uiState.setFileListScrollOffset(newOffset);
+    }
+  }
+
+  private handleBottomPaneScroll(delta: number): void {
+    const state = this.uiState.state;
+
+    if (state.bottomTab === 'explorer') {
+      const newOffset = Math.max(0, state.explorerFileScrollOffset + delta);
+      this.uiState.setExplorerFileScrollOffset(newOffset);
+    } else {
+      const newOffset = Math.max(0, state.diffScrollOffset + delta);
+      this.uiState.setDiffScrollOffset(newOffset);
+    }
   }
 
   private setupStateListeners(): void {
