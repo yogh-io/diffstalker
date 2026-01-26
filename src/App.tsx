@@ -196,6 +196,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     baseBranchCandidates,
     showBaseBranchPicker,
     compareTotalItems,
+    compareListTotalRows,
     compareDiffTotalRows,
     setCompareSelectedIndex,
     toggleIncludeUncommitted,
@@ -406,7 +407,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
               return;
             }
           } else if (bottomTab === 'compare' && compareDiff) {
-            const offset = getScrollIndicatorOffset(compareTotalItems);
+            const offset = getScrollIndicatorOffset(compareListTotalRows);
             const visualRow = y - stagingPaneStart - 1 - offset + compareScrollOffset;
             const itemIndex = getItemIndexFromRow(visualRow);
             if (itemIndex >= 0 && itemIndex < compareTotalItems) {

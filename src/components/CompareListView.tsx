@@ -5,6 +5,7 @@ import { CompareFileDiff } from '../git/diff.js';
 import { shortenPath } from '../utils/formatPath.js';
 import { formatDate } from '../utils/formatDate.js';
 import { formatCommitDisplay } from '../utils/commitFormat.js';
+import { ScrollableList } from './ScrollableList.js';
 
 // Re-export from utils for backwards compatibility
 export { getCompareItemIndexFromRow } from '../utils/rowCalculations.js';
@@ -189,8 +190,6 @@ export function CompareListView({
     return result;
   }, [commits, files, commitsExpanded, filesExpanded]);
 
-  const visibleRows = rows.slice(scrollOffset, scrollOffset + maxHeight);
-
   if (commits.length === 0 && files.length === 0) {
     return (
       <Box flexDirection="column">
@@ -199,61 +198,57 @@ export function CompareListView({
     );
   }
 
+  const renderRow = (row: RowItem): React.ReactElement | null => {
+    if (row.type === 'section-header') {
+      const isCommits = row.sectionType === 'commits';
+      const expanded = isCommits ? commitsExpanded : filesExpanded;
+      const count = isCommits ? commits.length : files.length;
+      const label = isCommits ? 'Commits' : 'Files';
+
+      return (
+        <Box>
+          <Text bold color="cyan">
+            {expanded ? '▼' : '▶'} {label}
+          </Text>
+          <Text dimColor> ({count})</Text>
+        </Box>
+      );
+    }
+
+    if (row.type === 'spacer') {
+      return <Text> </Text>;
+    }
+
+    if (row.type === 'commit' && row.commit !== undefined && row.commitIndex !== undefined) {
+      const isSelected = selectedItem?.type === 'commit' && selectedItem.index === row.commitIndex;
+      return (
+        <CommitRow commit={row.commit} isSelected={isSelected} isActive={isActive} width={width} />
+      );
+    }
+
+    if (row.type === 'file' && row.file !== undefined && row.fileIndex !== undefined) {
+      const isSelected = selectedItem?.type === 'file' && selectedItem.index === row.fileIndex;
+      return (
+        <FileRow
+          file={row.file}
+          isSelected={isSelected}
+          isActive={isActive}
+          maxPathLength={width - 5}
+        />
+      );
+    }
+
+    return null;
+  };
+
   return (
-    <Box flexDirection="column">
-      {visibleRows.map((row, i) => {
-        const key = `row-${scrollOffset + i}`;
-
-        if (row.type === 'section-header') {
-          const isCommits = row.sectionType === 'commits';
-          const expanded = isCommits ? commitsExpanded : filesExpanded;
-          const count = isCommits ? commits.length : files.length;
-          const label = isCommits ? 'Commits' : 'Files';
-
-          return (
-            <Box key={key}>
-              <Text bold color="cyan">
-                {expanded ? '▼' : '▶'} {label}
-              </Text>
-              <Text dimColor> ({count})</Text>
-            </Box>
-          );
-        }
-
-        if (row.type === 'spacer') {
-          return <Text key={key}> </Text>;
-        }
-
-        if (row.type === 'commit' && row.commit !== undefined && row.commitIndex !== undefined) {
-          const isSelected =
-            selectedItem?.type === 'commit' && selectedItem.index === row.commitIndex;
-          return (
-            <CommitRow
-              key={key}
-              commit={row.commit}
-              isSelected={isSelected}
-              isActive={isActive}
-              width={width}
-            />
-          );
-        }
-
-        if (row.type === 'file' && row.file !== undefined && row.fileIndex !== undefined) {
-          const isSelected = selectedItem?.type === 'file' && selectedItem.index === row.fileIndex;
-          return (
-            <FileRow
-              key={key}
-              file={row.file}
-              isSelected={isSelected}
-              isActive={isActive}
-              maxPathLength={width - 5}
-            />
-          );
-        }
-
-        return null;
-      })}
-    </Box>
+    <ScrollableList
+      items={rows}
+      maxHeight={maxHeight}
+      scrollOffset={scrollOffset}
+      getKey={(_row, i) => `row-${i}`}
+      renderItem={(row) => renderRow(row)}
+    />
   );
 }
 

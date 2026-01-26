@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { CompareDiff } from '../git/diff.js';
-import { CompareListSelection } from '../components/CompareListView.js';
+import { CompareListSelection, getCompareListTotalRows } from '../components/CompareListView.js';
 import { getCompareItemIndexFromRow, getFileScrollOffset } from '../utils/rowCalculations.js';
 import {
   buildCompareDisplayRows,
@@ -33,6 +33,7 @@ export interface UseCompareStateResult {
   baseBranchCandidates: string[];
   showBaseBranchPicker: boolean;
   compareTotalItems: number;
+  compareListTotalRows: number;
   compareDiffTotalRows: number;
 
   // Setters
@@ -124,6 +125,12 @@ export function useCompareState({
     return compareDiff.commits.length + compareDiff.files.length;
   }, [compareDiff]);
 
+  // Total rows including headers and spacers (for scroll indicator offset calculation)
+  const compareListTotalRows = useMemo(() => {
+    if (!compareDiff) return 0;
+    return getCompareListTotalRows(compareDiff.commits, compareDiff.files);
+  }, [compareDiff]);
+
   // When wrap mode is enabled, account for wrapped lines
   const compareDiffTotalRows = useMemo(() => {
     const displayRows = buildCompareDisplayRows(compareDiff);
@@ -197,6 +204,7 @@ export function useCompareState({
     baseBranchCandidates,
     showBaseBranchPicker,
     compareTotalItems,
+    compareListTotalRows,
     compareDiffTotalRows,
     setCompareSelectedIndex,
     toggleIncludeUncommitted,
