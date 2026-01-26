@@ -408,30 +408,57 @@ export class App {
 
   private handleTopPaneScroll(delta: number): void {
     const state = this.uiState.state;
+    const visibleHeight = this.layout.dimensions.topPaneHeight;
 
     if (state.bottomTab === 'history') {
-      const newOffset = Math.max(0, state.historyScrollOffset + delta);
+      const totalRows = this.gitManager?.historyState.commits.length ?? 0;
+      const maxOffset = Math.max(0, totalRows - visibleHeight);
+      const newOffset = Math.min(maxOffset, Math.max(0, state.historyScrollOffset + delta));
       this.uiState.setHistoryScrollOffset(newOffset);
     } else if (state.bottomTab === 'compare') {
-      const newOffset = Math.max(0, state.compareScrollOffset + delta);
+      const compareState = this.gitManager?.compareState;
+      const totalRows = getCompareListTotalRows(
+        compareState?.compareDiff?.commits ?? [],
+        compareState?.compareDiff?.files ?? []
+      );
+      const maxOffset = Math.max(0, totalRows - visibleHeight);
+      const newOffset = Math.min(maxOffset, Math.max(0, state.compareScrollOffset + delta));
       this.uiState.setCompareScrollOffset(newOffset);
     } else if (state.bottomTab === 'explorer') {
-      const newOffset = Math.max(0, state.explorerScrollOffset + delta);
+      const totalRows = getExplorerTotalRows(this.explorerManager?.state.items ?? []);
+      const maxOffset = Math.max(0, totalRows - visibleHeight);
+      const newOffset = Math.min(maxOffset, Math.max(0, state.explorerScrollOffset + delta));
       this.uiState.setExplorerScrollOffset(newOffset);
     } else {
-      const newOffset = Math.max(0, state.fileListScrollOffset + delta);
+      const files = this.gitManager?.state.status?.files ?? [];
+      const totalRows = getFileListTotalRows(files);
+      const maxOffset = Math.max(0, totalRows - visibleHeight);
+      const newOffset = Math.min(maxOffset, Math.max(0, state.fileListScrollOffset + delta));
       this.uiState.setFileListScrollOffset(newOffset);
     }
   }
 
   private handleBottomPaneScroll(delta: number): void {
     const state = this.uiState.state;
+    const visibleHeight = this.layout.dimensions.bottomPaneHeight;
 
     if (state.bottomTab === 'explorer') {
-      const newOffset = Math.max(0, state.explorerFileScrollOffset + delta);
+      const selectedFile = this.explorerManager?.state.selectedFile;
+      const totalRows = getExplorerContentTotalRows(
+        selectedFile?.content ?? null,
+        selectedFile?.path ?? null,
+        selectedFile?.truncated ?? false,
+        (this.screen.width as number) || 80,
+        state.wrapMode
+      );
+      const maxOffset = Math.max(0, totalRows - visibleHeight);
+      const newOffset = Math.min(maxOffset, Math.max(0, state.explorerFileScrollOffset + delta));
       this.uiState.setExplorerFileScrollOffset(newOffset);
     } else {
-      const newOffset = Math.max(0, state.diffScrollOffset + delta);
+      const diff = this.gitManager?.state.diff ?? null;
+      const totalRows = getDiffTotalRows(diff, (this.screen.width as number) || 80, state.wrapMode);
+      const maxOffset = Math.max(0, totalRows - visibleHeight);
+      const newOffset = Math.min(maxOffset, Math.max(0, state.diffScrollOffset + delta));
       this.uiState.setDiffScrollOffset(newOffset);
     }
   }
