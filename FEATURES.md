@@ -1,129 +1,495 @@
-# Features
+# FEATURES.md
 
-A comprehensive list of diffstalker features organized by category.
+Exhaustive feature inventory for diffstalker. This document serves as a migration checklist for future framework changes.
+
+---
+
+## Table of Contents
+
+1. [Views](#views)
+2. [Keyboard Shortcuts](#keyboard-shortcuts)
+3. [Mouse Interactions](#mouse-interactions)
+4. [Scrolling Architecture](#scrolling-architecture)
+5. [Themes](#themes)
+6. [Edge Cases](#edge-cases)
+7. [Configuration](#configuration)
+
+---
 
 ## Views
 
-### Diff View (Tab 1)
-- File list organized by status: Modified, Untracked, Staged
-- Stage/unstage files with `[+]`/`[-]` buttons or keyboard shortcuts
-- Side-by-side diff display with word-level highlighting
-- Syntax-aware diff coloring based on selected theme
+### Tab 1: Diff View (Default)
 
-### Commit View (Tab 2)
-- Commit message input with vim-style `i` to enter edit mode
-- Toggle amend mode with `a` key
-- Shows count of staged files
+**Top Pane: File List**
+- Displays files grouped by status: Modified -> Untracked -> Staged
+- Each section has a colored header (Modified: yellow, Untracked: gray, Staged: green)
+- Sections separated by blank lines (spacers)
+- File row format: `[>] [+/-] S path (+insertions -deletions)`
+  - `>` = selection indicator (cyan when selected)
+  - `[+]` = stage button (green)
+  - `[-]` = unstage button (red)
+  - `S` = status char (M/A/D/?/R/C)
+  - Path is shortened if too long with middle ellipsis
+  - Stats show insertions (green) and deletions (red)
+- Renamed files show `<- original-path`
+- Selection indicator highlights entire row with inverse+cyan
 
-### History View (Tab 3)
-- Scrollable commit history for current branch
-- Shows commit hash, message, date, and refs
-- Select commit to view its diff in bottom pane
+**Bottom Pane: Diff Display**
+- Shows unified diff for selected file
+- Line number column (left-aligned, width adapts to max line)
+- Symbol column (+/-/space)
+- Content column with word-level diff highlighting
+- Line types:
+  - Addition: green background, `+` symbol
+  - Deletion: red background, `-` symbol
+  - Context: no background, space symbol
+  - Hunk header: `@@` prefix, dimmed
+  - File header: `diff --git` prefix
+- Word-level highlighting within add/del lines (darker highlight for changed words)
+- Optional line wrapping (toggle with `w`)
 
-### PR View (Tab 4)
-- Compare current branch against a configurable base branch
-- Shows list of commits and changed files
-- Toggle uncommitted changes inclusion with `u` key
-- Base branch picker with fuzzy text filtering (`b` key)
-- Base branch selection cached per repository
+### Tab 2: Commit Panel
 
-## Navigation
+**Top Pane: File List** (same as Diff View)
 
-### Keyboard
+**Bottom Pane: Commit Form**
+- Header: "COMMIT [X staged]" showing count
+- Text input field for commit message
+  - Multi-line support
+  - Placeholder: "Enter commit message..."
+- Amend checkbox: `[ ] Amend` (toggle with `a` when focused)
+  - When checked, loads previous commit message
+- Footer hints: Enter to commit, Esc to cancel, Tab to switch fields
+
+### Tab 3: History View
+
+**Top Pane: Commit List**
+- Each commit on one row: `hash message (date) refs`
+  - Short hash (7 chars, yellow)
+  - Message (truncated to fit, cyan when selected)
+  - Relative date in parentheses, dimmed
+  - Refs (branches/tags) in green
+- ScrollableList with scroll indicators
+
+**Bottom Pane: Commit Diff**
+- Commit metadata header:
+  - `commit <full-hash>`
+  - `Author: <name>`
+  - `Date: <absolute-date>`
+- Blank line
+- Commit message (indented with 4 spaces)
+- Blank line
+- Full diff content (same rendering as Diff View)
+
+### Tab 4: Compare View (PR View)
+
+**Top Pane: Compare List**
+- Two collapsible sections (currently always expanded):
+  - `V Commits (N)` header
+  - Commit rows (same format as History)
+  - Spacer
+  - `V Files (N)` header
+  - File rows showing: status char, path, (+additions -deletions)
+- Uncommitted files marked with `*` prefix and `[uncommitted]` suffix (magenta)
+- Base branch shown in header
+- Toggle uncommitted with `u`
+- Change base branch with `b`
+
+**Bottom Pane: Compare Diff**
+- When commit selected: shows that commit's diff
+- When file selected: scrolls to that file in combined diff
+- Combined diff of all files in the comparison
+
+### Tab 5: Explorer View
+
+**Top Pane: File Browser**
+- Directory listing sorted: directories first, then files
+- Directories shown with `/` suffix (blue)
+- Files shown with default color
+- Navigate with Enter/Backspace
+- Current path shown in header as breadcrumbs
+
+**Bottom Pane: File Content**
+- Syntax-highlighted file preview
+- Line numbers (yellow)
+- Binary files show "Binary file" message
+- Large files truncated with "File truncated..." message
+- Optional middle-dots for whitespace visualization (toggle with `.`)
+
+---
+
+## Keyboard Shortcuts
+
+### Navigation
+
+| Key | Action | Context |
+|-----|--------|---------|
+| `Up` / `k` | Move up | All views |
+| `Down` / `j` | Move down | All views |
+| `Tab` | Toggle pane focus | All views |
+| `1` | Switch to Diff tab | All views |
+| `2` | Switch to Commit tab | All views |
+| `3` | Switch to History tab | All views |
+| `4` | Switch to Compare tab | All views |
+| `5` | Switch to Explorer tab | All views |
+
+### Staging Operations
+
 | Key | Action |
 |-----|--------|
-| `↑` / `k` | Move up |
-| `↓` / `j` | Move down |
-| `Tab` | Toggle between panes |
-| `1` / `2` / `3` / `4` | Switch tabs |
-| `Space` / `Enter` | Toggle stage/unstage |
-| `?` | Show hotkeys modal |
+| `s` / `Ctrl+S` | Stage selected file |
+| `Shift+U` | Unstage selected file |
+| `Shift+A` | Stage all files |
+| `Shift+Z` | Unstage all files |
+| `Space` / `Enter` | Toggle stage/unstage for selected file |
 
-### Mouse
-| Action | Effect |
+### Actions
+
+| Key | Action |
+|-----|--------|
+| `c` | Open commit panel (switch to Tab 2) |
+| `r` / `Ctrl+R` | Refresh git status |
+| `q` / `Ctrl+C` | Quit application |
+
+### Pane Resize
+
+| Key | Action |
+|-----|--------|
+| `[` | Shrink top pane by 5% |
+| `]` | Grow top pane by 5% |
+
+### Compare View Specific
+
+| Key | Action |
+|-----|--------|
+| `u` | Toggle include uncommitted changes |
+| `b` | Open base branch picker modal |
+
+### Explorer View Specific
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Enter selected directory |
+| `Backspace` / `h` | Go up to parent directory |
+| `.` | Toggle middle-dots (whitespace visualization) |
+| `Ctrl+H` | Toggle show/hide hidden files |
+| `Ctrl+G` | Toggle show/hide gitignored files |
+
+### Display Options
+
+| Key | Action |
+|-----|--------|
+| `m` | Toggle mouse mode (scroll vs select) |
+| `f` | Toggle follow mode (watch target file) |
+| `a` | Toggle auto-tab mode |
+| `w` | Toggle line wrap mode |
+| `t` | Open theme picker modal |
+| `?` | Open hotkeys help modal |
+
+### Commit Panel Input
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Submit commit |
+| `Esc` | Cancel and return to Diff view |
+| `a` | Toggle amend mode |
+
+---
+
+## Mouse Interactions
+
+### Click Targets
+
+| Target | Action |
 |--------|--------|
-| Click file | Select file |
-| Click `[+]` / `[-]` | Stage / unstage file |
-| Right-click file | Discard changes (with confirmation) |
-| Scroll wheel | Navigate list or scroll diff |
-| Click footer tabs | Switch views |
+| File row | Select file |
+| `[+]`/`[-]` button area | Stage/unstage file |
+| Tab buttons (footer) | Switch to that tab |
+| `?` indicator | Open hotkeys modal |
+| `m:select`/`m:scroll` | Toggle mouse mode |
+| `auto-tab` | Toggle auto-tab mode |
+| `wrap` | Toggle wrap mode |
 
-### Mouse Modes
-- `m` - Toggle between scroll mode and select mode
-- Scroll mode: scrolling always scrolls, doesn't change selection
-- Select mode: scrolling changes selection in file list
+### Right-Click
 
-## Staging Operations
+| Target | Action |
+|--------|--------|
+| Modified file (not staged) | Open discard confirmation |
 
-| Key | Action |
-|-----|--------|
-| `Ctrl+S` | Stage selected file |
-| `Ctrl+U` | Unstage selected file |
-| `Ctrl+A` | Stage all files |
-| `Ctrl+Z` | Unstage all files |
+### Scroll Behavior
 
-## Layout
+| Pane | Scroll Action |
+|------|---------------|
+| Top pane (file list) | Scroll file list |
+| Top pane (history) | Scroll commit list |
+| Top pane (compare) | Scroll compare list |
+| Top pane (explorer) | Scroll directory listing |
+| Bottom pane (diff) | Scroll diff content |
+| Bottom pane (explorer) | Scroll file content |
 
-- `[` / `]` - Resize panes (shrink/grow top pane)
-- Split ratio persisted to config (range: 0.15 to 0.85)
-- Dynamic header height when follow mode indicator is shown
+### Mouse Mode Toggle
 
-## Appearance
+- `m:select` mode: clicks select items
+- `m:scroll` mode: scrolling works in focused pane
 
-- `t` - Open theme picker
-- 6 built-in themes:
-  - **Dark** - Default dark theme (sampled from Claude Code)
-  - **Light** - Light background variant
-  - **Dark (colorblind)** - Blue/red color scheme for deuteranopia
-  - **Light (colorblind)** - Blue/red on light background
-  - **Dark (ANSI)** - Uses terminal's native 16 ANSI colors
-  - **Light (ANSI)** - ANSI colors on light background
-- Theme preference persisted to config
+---
 
-## Follow Mode
+## Scrolling Architecture
 
-- `--follow` CLI flag to watch a file for repository paths
-- `f` - Toggle follow mode at runtime
-- Shows follow status in header when enabled
-- Header gracefully degrades if follow path is too long to display
-- Useful for integration with shell hooks (e.g., update on `cd`)
+### Core Concepts
 
-## Path Display
+**Item-based vs Row-based Counting:**
+- Some lists count items (files, commits)
+- Others count display rows (diff lines with headers)
+- Scroll offset is always row-based (terminal rows skipped)
 
-- Long file paths automatically shortened with ellipsis
-- Keeps first directory and filename visible
-- Applied throughout the UI: file list, diff headers, PR view
+**Available Height Calculation:**
+- `maxHeight - 2` when scroll indicators present
+- `maxHeight` when content fits without scrolling
+- ScrollableList auto-detects need for scroll indicators
+
+### Per-Pane Scrolling Details
+
+| Pane | Count Type | Scroll Variable | Max Calculation |
+|------|------------|-----------------|-----------------|
+| File List (top) | Rows (includes section headers) | `fileListScrollOffset` | `getFileListTotalRows()` |
+| Diff View (bottom) | Rows (DisplayRow[].length) | `diffScrollOffset` | `buildDiffDisplayRows().length` or wrapped count |
+| History List (top) | Items (commits) | `historyScrollOffset` | `commits.length` |
+| History Diff (bottom) | Rows | `diffScrollOffset` | `buildHistoryDisplayRows().length` |
+| Compare List (top) | Rows (commits + files + headers) | `compareScrollOffset` | `getCompareListTotalRows()` |
+| Compare Diff (bottom) | Rows | `diffScrollOffset` | `buildCompareDisplayRows().length` |
+| Explorer List (top) | Items (files/dirs) | `explorerScrollOffset` | `items.length` |
+| Explorer Content (bottom) | Rows | `explorerFileScrollOffset` | `getExplorerContentTotalRows()` |
+
+### Key Functions
+
+**Layout Calculations:**
+- `getMaxScrollOffset(totalItems, maxHeight)` - maximum valid scroll offset
+- `getRowForFileIndex(index, mod, untracked, staged)` - file index to display row
+- `getFileListTotalRows(files)` - total rows including headers/spacers
+- `calculateScrollOffset(selectedRow, currentOffset, visibleHeight)` - auto-scroll
+
+**Row Building (Single Source of Truth Pattern):**
+- `buildDiffDisplayRows(diff)` - unified DisplayRow[] for diff
+- `buildHistoryDisplayRows(commit, diff)` - commit + diff rows
+- `buildCompareDisplayRows(compareDiff)` - combined file diffs
+- `buildCompareListRows()` - commits + files + headers (in CompareListView)
+
+**Row Mapping:**
+- `getCommitIndexFromRow(row, commits, width, offset)` - history click -> commit
+- `getCompareItemIndexFromRow(row, commitCount, fileCount)` - compare click -> item
+- `getCompareRowFromItemIndex(index, commitCount, fileCount)` - item -> row for scrolling
+- `getFileScrollOffset(compareDiff, fileIndex)` - file -> diff scroll position
+
+### Wrap Mode
+
+When wrap mode is enabled (`w` toggle):
+- Long content lines break into continuation rows
+- `wrapDisplayRows(rows, contentWidth, enabled)` - expands rows
+- `getWrappedRowCount(rows, contentWidth, enabled)` - efficient count
+- Continuation rows have `isContinuation: true`, no line number
+- Only diff content lines wrap; headers/metadata truncate
+
+### Common Pitfalls
+
+1. **Item vs Row Confusion**: Using item count when row count needed (or vice versa). File list has section headers that add rows.
+
+2. **Forgetting Section Headers**: Section headers ("Modified:", "Commits:") and spacers add extra rows to total count.
+
+3. **Scroll Indicator Space**: When content needs scrolling, 2 rows are consumed by "^ above" and "v below" indicators.
+
+4. **Wrap Mode Multiplier**: When wrap mode enabled, row counts multiply significantly for long lines.
+
+5. **Inconsistent Row Counting**: Always use the same function for both rendering and scroll calculations.
+
+### Single Source of Truth Pattern
+
+Critical for avoiding scroll/render mismatches:
+
+```typescript
+// CORRECT: One function builds rows for both purposes
+const rows = buildCompareListRows(commits, files);
+// Rendering uses: rows.map(...)
+// Scroll max uses: rows.length
+
+// WRONG: Separate counting logic
+const renderRows = [...]; // Built one way
+const scrollMax = commits.length + files.length; // Counted differently
+```
+
+---
+
+## Themes
+
+### Available Themes
+
+| Theme Name | Description |
+|------------|-------------|
+| `dark` | Default dark theme (sampled from Claude Code) |
+| `light` | Light theme |
+| `dark-colorblind` | Dark daltonized (blue for additions) |
+| `light-colorblind` | Light daltonized |
+| `dark-ansi` | Dark using terminal's 16 ANSI colors |
+| `light-ansi` | Light using terminal's 16 ANSI colors |
+
+### Theme Color Properties
+
+Each theme defines `DiffColors`:
+- `addBg` - Background for addition lines
+- `delBg` - Background for deletion lines
+- `addHighlight` - Word-level highlight for added text
+- `delHighlight` - Word-level highlight for deleted text
+- `text` - Default text color
+- `addLineNum` - Line number color for additions
+- `delLineNum` - Line number color for deletions
+- `contextLineNum` - Line number color for context lines
+- `addSymbol` - Color for `+` symbol
+- `delSymbol` - Color for `-` symbol
+
+### Theme Persistence
+
+Selected theme is saved to `~/.config/diffstalker/config.json`.
+
+---
+
+## Edge Cases
+
+### Empty States
+
+| Condition | Display |
+|-----------|---------|
+| No changes | "No changes" in file list |
+| No commits | "No commits yet" in history |
+| No comparison | "No changes compared to base branch" |
+| Empty directory | "(empty directory)" in explorer |
+
+### Binary Files
+
+- Diff view shows "Binary file differs" or similar
+- Explorer shows "Binary file" message instead of content
+
+### Large Files
+
+- Explorer truncates file content at ~1MB
+- Shows "File truncated at 1MB for performance..." message
+
+### Unicode Filenames
+
+- Properly displayed and handled
+- Path shortening preserves Unicode characters
+
+### Long Paths
+
+- Paths shortened with middle ellipsis: `src/.../Component.tsx`
+- `shortenPath(path, maxLength)` utility handles this
+
+### Renamed Files
+
+- Status `R` with path and `<- original-path`
+- Both paths shown in file list
+
+### No Repository
+
+- Error shown in header if not in a git repo
+- Operations fail gracefully
+
+### Large Diffs
+
+- Scrollable with consistent performance
+- Row-based rendering (only visible rows rendered)
+
+---
 
 ## Configuration
 
-### Config File
-Location: `~/.config/diffstalker/config.json`
+### Config File Location
 
-| Option | Type | Description |
-|--------|------|-------------|
-| `theme` | string | Selected theme name |
-| `splitRatio` | number | Top/bottom pane split ratio |
-| `targetFile` | string | File to watch in follow mode |
+`~/.config/diffstalker/config.json`
 
-### Cache Directory
-Location: `~/.cache/diffstalker/`
+### Configurable Options
 
-| File | Purpose |
-|------|---------|
-| `target` | Default follow mode hook file |
-| `base-branches.json` | PR base branch cache per repository |
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `theme` | string | `"dark"` | Color theme name |
+| `splitRatio` | number | `0.4` | Top/bottom pane split (0.15-0.85) |
+| `watcherEnabled` | boolean | `false` | Follow mode enabled |
+| `targetFile` | string | `"~/.cache/diffstalker/target"` | File path to watch |
+| `debug` | boolean | `false` | Debug logging enabled |
 
-## Other Commands
+### CLI Arguments
 
-| Key | Action |
-|-----|--------|
-| `c` | Open commit panel |
-| `r` / `Ctrl+R` | Refresh git status |
-| `q` / `Ctrl+C` | Quit |
+| Argument | Description |
+|----------|-------------|
+| `[path]` | Fixed repository path |
+| `-f, --follow [FILE]` | Enable follow mode, optionally with custom file |
+| `--once` | Show status once and exit |
+| `-d, --debug` | Enable debug logging |
+| `-h, --help` | Show help message |
 
-## Technical Notes
+---
 
-- Mouse tracking uses SGR extended mode for accurate coordinates
-- Terminal cleanup on exit (mouse mode disabled, cursor restored)
-- Handles SIGINT, SIGTERM, and uncaught exceptions gracefully
-- Mouse tracking automatically disabled when text inputs are focused
+## Terminal Requirements
+
+- **Minimum size**: Layout requires minimum height for both panes
+- **Mouse support**: SGR extended mode (1006) for accurate coordinates
+- **True color**: Hex colors used in non-ANSI themes
+- **Unicode**: Box-drawing characters and symbols used
+
+---
+
+## Layout Constants
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `LAYOUT_OVERHEAD` | 5 | Lines used by header, separators, footer |
+| `SPLIT_RATIO_STEP` | 0.05 | Pane resize increment |
+| Min split ratio | 0.15 | Minimum top pane size |
+| Max split ratio | 0.85 | Maximum top pane size |
+
+### Default Split Ratios by Tab
+
+| Tab | Default Ratio |
+|-----|---------------|
+| Diff | 0.4 (40% top) |
+| Commit | 0.4 |
+| History | 0.5 |
+| Compare | 0.5 |
+| Explorer | 0.4 |
+
+---
+
+## Modals
+
+### Theme Picker Modal
+
+- Grid of theme options
+- Current theme highlighted
+- Navigate with arrows, select with Enter
+- Close with Esc
+
+### Hotkeys Modal
+
+- Comprehensive keyboard shortcut reference
+- Two-column layout on wide terminals
+- Close with Esc, Enter, or `?`
+
+### Base Branch Picker Modal
+
+- List of candidate base branches
+- Current branch highlighted
+- Text input for filtering (if many branches)
+- Close with Esc
+
+### Discard Confirmation
+
+- Inline prompt: "Discard changes to <file>? (y/n)"
+- `y` confirms, `n` or Esc cancels
+
+---
+
+## Auto-Tab Mode
+
+When enabled (`a` toggle):
+- Files appearing: auto-switch to Diff view
+- Files disappearing (commit): auto-switch to History view
+- Shows newest commit after commit

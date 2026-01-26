@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import { FileEntry } from './git/status.js';
 import { Header, getHeaderHeight } from './components/Header.js';
@@ -35,15 +35,27 @@ import {
 } from './utils/displayRows.js';
 import { getExplorerContentTotalRows } from './components/ExplorerContentView.js';
 import { getMaxScrollOffset } from './components/ScrollableList.js';
+import type { CommandServer, CommandHandler, AppState } from './ipc/CommandServer.js';
+import * as fs from 'fs';
+
+function debugLog(msg: string) {
+  if (process.env.DEBUG_IPC) {
+    fs.appendFileSync('/tmp/ipc-debug.log', msg + '\n');
+  }
+}
 
 type ModalType = 'theme' | 'hotkeys' | 'baseBranch' | null;
 
 interface AppProps {
   config: Config;
   initialPath?: string;
+  commandServer?: CommandServer | null;
 }
 
-export function App({ config, initialPath }: AppProps): React.ReactElement {
+export function App({ config, initialPath, commandServer }: AppProps): React.ReactElement {
+  // Debug: log at component start
+  debugLog(`[IPC] App component starting, commandServer: ${commandServer ? 'defined' : 'null'}`);
+
   const { exit } = useApp();
 
   // Terminal dimensions
@@ -685,6 +697,121 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
     currentPane,
     commitInputFocused || activeModal !== null || showBaseBranchPicker
   );
+
+  // Use refs to store current values for IPC handler
+  // This avoids stale closures since the handler is registered once
+  const handlerRef = useRef<{
+    navigateUp: () => void;
+    navigateDown: () => void;
+    switchTab: (tab: 'diff' | 'commit' | 'history' | 'compare' | 'explorer') => void;
+    togglePane: () => void;
+    stage: () => Promise<void>;
+    unstage: () => Promise<void>;
+    stageAll: () => Promise<void>;
+    unstageAll: () => Promise<void>;
+    commit: (message: string) => Promise<void>;
+    refresh: () => Promise<void>;
+    getState: () => AppState;
+    quit: () => void;
+  }>({
+    navigateUp: () => {},
+    navigateDown: () => {},
+    switchTab: () => {},
+    togglePane: () => {},
+    stage: async () => {},
+    unstage: async () => {},
+    stageAll: async () => {},
+    unstageAll: async () => {},
+    commit: async () => {},
+    refresh: async () => {},
+    getState: () => ({
+      currentTab: 'diff',
+      currentPane: 'files',
+      selectedIndex: 0,
+      totalFiles: 0,
+      stagedCount: 0,
+      files: [],
+      historySelectedIndex: 0,
+      historyCommitCount: 0,
+      compareSelectedIndex: 0,
+      compareTotalItems: 0,
+      includeUncommitted: false,
+      explorerPath: '',
+      explorerSelectedIndex: 0,
+      explorerItemCount: 0,
+      wrapMode: false,
+      mouseEnabled: false,
+      autoTabEnabled: false,
+    }),
+    quit: () => {},
+  });
+
+  // Update ref with current values on every render
+  handlerRef.current = {
+    navigateUp: handleNavigateUp,
+    navigateDown: handleNavigateDown,
+    switchTab: handleSwitchTab,
+    togglePane: handleTogglePane,
+    stage: handleStage,
+    unstage: handleUnstage,
+    stageAll,
+    unstageAll,
+    commit: async (message: string) => {
+      await commit(message);
+    },
+    refresh,
+    getState: (): AppState => ({
+      currentTab: bottomTab,
+      currentPane,
+      selectedIndex,
+      totalFiles,
+      stagedCount,
+      files: files.map((f) => ({
+        path: f.path,
+        status: f.status,
+        staged: f.staged,
+      })),
+      historySelectedIndex,
+      historyCommitCount: commits.length,
+      compareSelectedIndex: 0, // TODO: expose from useCompareState
+      compareTotalItems,
+      includeUncommitted,
+      explorerPath: explorerCurrentPath,
+      explorerSelectedIndex,
+      explorerItemCount: explorerItems.length,
+      wrapMode,
+      mouseEnabled,
+      autoTabEnabled,
+    }),
+    quit: exit,
+  };
+
+  // Register command handler with IPC server (only once)
+  useLayoutEffect(() => {
+    debugLog(`[IPC] useLayoutEffect running, commandServer: ${commandServer ? 'defined' : 'null'}`);
+    if (!commandServer) return;
+
+    debugLog('[IPC] Registering handler');
+    // Create handler that delegates to ref - always uses current values
+    const handler: CommandHandler = {
+      navigateUp: () => handlerRef.current.navigateUp(),
+      navigateDown: () => handlerRef.current.navigateDown(),
+      switchTab: (tab) => handlerRef.current.switchTab(tab),
+      togglePane: () => handlerRef.current.togglePane(),
+      stage: () => handlerRef.current.stage(),
+      unstage: () => handlerRef.current.unstage(),
+      stageAll: () => handlerRef.current.stageAll(),
+      unstageAll: () => handlerRef.current.unstageAll(),
+      commit: (message) => handlerRef.current.commit(message),
+      refresh: () => handlerRef.current.refresh(),
+      getState: () => handlerRef.current.getState(),
+      quit: () => handlerRef.current.quit(),
+    };
+
+    commandServer.setHandler(handler);
+    commandServer.notifyReady();
+    debugLog('[IPC] Handler registered and ready notified');
+  }, [commandServer]);
 
   // Discard confirmation
   useInput(
