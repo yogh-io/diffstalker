@@ -12,6 +12,7 @@ import {
   discardChanges as gitDiscardChanges,
   commit as gitCommit,
   getHeadMessage,
+  getCommitHistory,
   GitStatus,
   FileEntry,
   CommitInfo,
@@ -47,8 +48,10 @@ export interface CompareState {
 }
 
 export interface HistoryState {
+  commits: CommitInfo[];
   selectedCommit: CommitInfo | null;
   commitDiff: DiffResult | null;
+  isLoading: boolean;
 }
 
 export type CompareSelectionType = 'commit' | 'file';
@@ -95,8 +98,10 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   };
 
   private _historyState: HistoryState = {
+    commits: [],
     selectedCommit: null,
     commitDiff: null,
+    isLoading: false,
   };
 
   private _compareSelectionState: CompareSelectionState = {
@@ -480,6 +485,23 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     this.updateCompareState({ compareBaseBranch: branch });
     setCachedBaseBranch(this.repoPath, branch);
     await this.refreshCompareDiff(includeUncommitted);
+  }
+
+  /**
+   * Load commit history for the history view.
+   */
+  async loadHistory(count: number = 100): Promise<void> {
+    this.updateHistoryState({ isLoading: true });
+
+    try {
+      const commits = await this.queue.enqueue(() => getCommitHistory(this.repoPath, count));
+      this.updateHistoryState({ commits, isLoading: false });
+    } catch (err) {
+      this.updateHistoryState({ isLoading: false });
+      this.updateState({
+        error: `Failed to load history: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
   }
 
   /**

@@ -297,7 +297,9 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
 
     if (selected.isDirectory) {
       if (selected.name === '..') {
-        await this.loadDirectory(path.dirname(this._state.currentPath) || '');
+        const parent = path.dirname(this._state.currentPath);
+        // path.dirname returns "." for top-level paths, normalize to ""
+        await this.loadDirectory(parent === '.' ? '' : parent);
       } else {
         await this.loadDirectory(selected.path);
       }
@@ -310,7 +312,9 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
    */
   async goUp(): Promise<void> {
     if (this._state.currentPath) {
-      await this.loadDirectory(path.dirname(this._state.currentPath) || '');
+      const parent = path.dirname(this._state.currentPath);
+      // path.dirname returns "." for top-level paths, normalize to ""
+      await this.loadDirectory(parent === '.' ? '' : parent);
     }
   }
 

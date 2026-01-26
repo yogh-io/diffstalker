@@ -1,5 +1,5 @@
 import { FileEntry } from '../git/status.js';
-import { BottomTab } from '../hooks/useKeymap.js';
+import type { BottomTab } from '../types/tabs.js';
 import { categorizeFiles } from './fileCategories.js';
 
 export interface PaneBoundaries {
