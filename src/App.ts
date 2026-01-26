@@ -441,6 +441,7 @@ export class App {
   private handleBottomPaneScroll(delta: number): void {
     const state = this.uiState.state;
     const visibleHeight = this.layout.dimensions.bottomPaneHeight;
+    const width = (this.screen.width as number) || 80;
 
     if (state.bottomTab === 'explorer') {
       const selectedFile = this.explorerManager?.state.selectedFile;
@@ -448,15 +449,24 @@ export class App {
         selectedFile?.content ?? null,
         selectedFile?.path ?? null,
         selectedFile?.truncated ?? false,
-        (this.screen.width as number) || 80,
+        width,
         state.wrapMode
       );
       const maxOffset = Math.max(0, totalRows - visibleHeight);
       const newOffset = Math.min(maxOffset, Math.max(0, state.explorerFileScrollOffset + delta));
       this.uiState.setExplorerFileScrollOffset(newOffset);
     } else {
-      const diff = this.gitManager?.state.diff ?? null;
-      const totalRows = getDiffTotalRows(diff, (this.screen.width as number) || 80, state.wrapMode);
+      // Get the appropriate diff based on current tab
+      let diff;
+      if (state.bottomTab === 'history') {
+        diff = this.gitManager?.historyState.commitDiff ?? null;
+      } else if (state.bottomTab === 'compare') {
+        diff = this.gitManager?.compareSelectionState?.diff ?? null;
+      } else {
+        diff = this.gitManager?.state.diff ?? null;
+      }
+
+      const totalRows = getDiffTotalRows(diff, width, state.wrapMode);
       const maxOffset = Math.max(0, totalRows - visibleHeight);
       const newOffset = Math.min(maxOffset, Math.max(0, state.diffScrollOffset + delta));
       this.uiState.setDiffScrollOffset(newOffset);
