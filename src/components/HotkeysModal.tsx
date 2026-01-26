@@ -30,10 +30,10 @@ const hotkeyGroups: HotkeyGroup[] = [
   {
     title: 'Staging',
     entries: [
-      { key: '^S', description: 'Stage file' },
-      { key: '^U', description: 'Unstage file' },
-      { key: '^A', description: 'Stage all' },
-      { key: '^Z', description: 'Unstage all' },
+      { key: 's', description: 'Stage file' },
+      { key: 'Shift+u', description: 'Unstage file' },
+      { key: 'Shift+a', description: 'Stage all' },
+      { key: 'Shift+z', description: 'Unstage all' },
       { key: 'Space/Enter', description: 'Toggle stage' },
     ],
   },

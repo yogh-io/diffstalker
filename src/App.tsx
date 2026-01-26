@@ -440,7 +440,7 @@ export function App({ config, initialPath }: AppProps): React.ReactElement {
           } else if (bottomTab === 'history') {
             scrollHistory(direction, historyTotalRows);
           } else if (bottomTab === 'compare') {
-            scrollCompare(direction, compareTotalItems);
+            scrollCompare(direction, compareListTotalRows);
           } else if (bottomTab === 'explorer') {
             // Scroll explorer list (maxHeight is topPaneHeight - 1 for "EXPLORER" header)
             const scrollAmount = direction === 'up' ? -3 : 3;

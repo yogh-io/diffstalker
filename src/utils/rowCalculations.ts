@@ -275,3 +275,47 @@ export function getCompareItemIndexFromRow(
 
   return -1; // Out of bounds
 }
+
+/**
+ * Map an item index to its row position in CompareListView.
+ * This is the inverse of getCompareItemIndexFromRow.
+ *
+ * For itemIndex in 0..(commitCount-1): row = 1 + itemIndex
+ * For itemIndex in commitCount..(commitCount+fileCount-1): row = 1 + commitCount + 1 + 1 + (itemIndex - commitCount)
+ */
+export function getCompareRowFromItemIndex(
+  itemIndex: number,
+  commitCount: number,
+  fileCount: number,
+  commitsExpanded: boolean = true,
+  filesExpanded: boolean = true
+): number {
+  if (itemIndex < 0) return 0;
+
+  // Handle commit items
+  if (itemIndex < commitCount) {
+    // Row 0 is commits header, so commit i is at row 1 + i
+    return commitsExpanded ? 1 + itemIndex : 0;
+  }
+
+  // Handle file items
+  const fileIndex = itemIndex - commitCount;
+  if (fileIndex >= fileCount) return 0;
+
+  // Calculate row for file:
+  // - commits header (1 row if commits exist)
+  // - commits (commitCount rows if expanded)
+  // - spacer (1 row if commits exist)
+  // - files header (1 row)
+  // - file items
+  let row = 0;
+  if (commitCount > 0) {
+    row += 1; // commits header
+    if (commitsExpanded) row += commitCount;
+    row += 1; // spacer
+  }
+  row += 1; // files header
+  if (filesExpanded) row += fileIndex;
+
+  return row;
+}

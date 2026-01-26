@@ -1,7 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { CompareDiff } from '../git/diff.js';
 import { CompareListSelection, getCompareListTotalRows } from '../components/CompareListView.js';
-import { getCompareItemIndexFromRow, getFileScrollOffset } from '../utils/rowCalculations.js';
+import {
+  getCompareItemIndexFromRow,
+  getCompareRowFromItemIndex,
+  getFileScrollOffset,
+} from '../utils/rowCalculations.js';
 import {
   buildCompareDisplayRows,
   getDisplayRowsLineNumWidth,
@@ -170,20 +174,28 @@ export function useCompareState({
     compareSelectionInitialized.current = true;
     setCompareSelectedIndex((prev) => {
       const newIndex = Math.max(0, prev - 1);
-      if (newIndex < compareScrollOffset) setCompareScrollOffset(newIndex);
+      const commitCount = compareDiff?.commits.length ?? 0;
+      const fileCount = compareDiff?.files.length ?? 0;
+      const newRow = getCompareRowFromItemIndex(newIndex, commitCount, fileCount);
+      if (newRow < compareScrollOffset) setCompareScrollOffset(newRow);
       return newIndex;
     });
-  }, [compareScrollOffset, setCompareScrollOffset]);
+  }, [compareDiff, compareScrollOffset, setCompareScrollOffset]);
 
   const navigateCompareDown = useCallback(() => {
     compareSelectionInitialized.current = true;
     setCompareSelectedIndex((prev) => {
       const newIndex = Math.min(compareTotalItems - 1, prev + 1);
-      const visibleEnd = compareScrollOffset + topPaneHeight - 2;
-      if (newIndex >= visibleEnd) setCompareScrollOffset(compareScrollOffset + 1);
+      const commitCount = compareDiff?.commits.length ?? 0;
+      const fileCount = compareDiff?.files.length ?? 0;
+      const newRow = getCompareRowFromItemIndex(newIndex, commitCount, fileCount);
+      // Visible area: topPaneHeight - 1 (for "COMPARE" header) - 2 (for scroll indicators)
+      const visibleHeight = topPaneHeight - 3;
+      const visibleEnd = compareScrollOffset + visibleHeight;
+      if (newRow >= visibleEnd) setCompareScrollOffset(compareScrollOffset + 1);
       return newIndex;
     });
-  }, [compareTotalItems, compareScrollOffset, topPaneHeight, setCompareScrollOffset]);
+  }, [compareDiff, compareTotalItems, compareScrollOffset, topPaneHeight, setCompareScrollOffset]);
 
   const getItemIndexFromRow = useCallback(
     (visualRow: number) => {

@@ -87,10 +87,10 @@ Environment:
 
 Keyboard:
   j/k, ↑/↓    Navigate files / scroll diff
-  Ctrl+S      Stage selected file
-  Ctrl+U      Unstage selected file
-  Ctrl+A      Stage all files
-  Ctrl+Z      Unstage all files
+  s           Stage selected file
+  Shift+u     Unstage selected file
+  Shift+a     Stage all files
+  Shift+z     Unstage all files
   Enter/Space Toggle stage/unstage
   Tab         Switch between panes
   1/2         Switch bottom tab (Diff/Commit)

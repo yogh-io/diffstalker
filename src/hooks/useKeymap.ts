@@ -170,27 +170,26 @@ export function useKeymap(
       return;
     }
 
-    // Stage: Ctrl+S or Enter/Space on file
-    if (key.ctrl && input === 's') {
+    // Stage: s, Ctrl+S, or Enter/Space on file
+    if (input === 's' || (key.ctrl && input === 's')) {
       actions.onStage();
       return;
     }
 
-    // Unstage: Ctrl+U
-    if (key.ctrl && input === 'u') {
+    // Unstage: Shift+U (uppercase U)
+    if (input === 'U') {
       actions.onUnstage();
       return;
     }
 
-    // Stage all: Ctrl+A
-    if (key.ctrl && input === 'a') {
+    // Stage all: Shift+A (uppercase A)
+    if (input === 'A') {
       actions.onStageAll();
       return;
     }
 
-    // Unstage all: Ctrl+Shift+A (detected as Ctrl+A with shift, but terminal might not support)
-    // Use Ctrl+Z as alternative for unstage all
-    if (key.ctrl && input === 'z') {
+    // Unstage all: Shift+Z (uppercase Z)
+    if (input === 'Z') {
       actions.onUnstageAll();
       return;
     }
