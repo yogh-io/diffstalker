@@ -9,7 +9,7 @@ import {
   getFileListTotalRows,
   getFileIndexFromRow,
 } from './ui/widgets/FileList.js';
-import { formatDiff, formatHistoryDiff, getDiffTotalRows } from './ui/widgets/DiffView.js';
+import { formatDiff, formatHistoryDiff } from './ui/widgets/DiffView.js';
 import { formatCommitPanel, formatCommitPanelInactive } from './ui/widgets/CommitPanel.js';
 import {
   formatHistoryView,
@@ -87,6 +87,9 @@ export class App {
 
   // Active modals
   private activeModal: ThemePicker | HotkeysModal | null = null;
+
+  // Cached total rows for scroll bounds (single source of truth from render)
+  private bottomPaneTotalRows: number = 0;
 
   constructor(options: AppOptions) {
     this.config = options.config;
@@ -456,18 +459,8 @@ export class App {
       const newOffset = Math.min(maxOffset, Math.max(0, state.explorerFileScrollOffset + delta));
       this.uiState.setExplorerFileScrollOffset(newOffset);
     } else {
-      // Get the appropriate diff based on current tab
-      let diff;
-      if (state.bottomTab === 'history') {
-        diff = this.gitManager?.historyState.commitDiff ?? null;
-      } else if (state.bottomTab === 'compare') {
-        diff = this.gitManager?.compareSelectionState?.diff ?? null;
-      } else {
-        diff = this.gitManager?.state.diff ?? null;
-      }
-
-      const totalRows = getDiffTotalRows(diff, width, state.wrapMode);
-      const maxOffset = Math.max(0, totalRows - visibleHeight);
+      // Use cached totalRows from last render (single source of truth)
+      const maxOffset = Math.max(0, this.bottomPaneTotalRows - visibleHeight);
       const newOffset = Math.min(maxOffset, Math.max(0, state.diffScrollOffset + delta));
       this.uiState.setDiffScrollOffset(newOffset);
     }
@@ -1111,7 +1104,7 @@ export class App {
       const selectedCommit = historyState?.selectedCommit ?? null;
       const commitDiff = historyState?.commitDiff ?? null;
 
-      const content = formatHistoryDiff(
+      const { content, totalRows } = formatHistoryDiff(
         selectedCommit,
         commitDiff,
         width,
@@ -1121,6 +1114,7 @@ export class App {
         state.wrapMode
       );
 
+      this.bottomPaneTotalRows = totalRows;
       this.layout.bottomPane.setContent(content);
     } else if (state.bottomTab === 'compare') {
       // Hide commit textarea when not on commit tab
@@ -1132,7 +1126,7 @@ export class App {
       const compareDiff = compareSelectionState?.diff ?? null;
 
       if (compareDiff) {
-        const content = formatDiff(
+        const { content, totalRows } = formatDiff(
           compareDiff,
           width,
           state.diffScrollOffset,
@@ -1140,8 +1134,10 @@ export class App {
           this.currentTheme,
           state.wrapMode
         );
+        this.bottomPaneTotalRows = totalRows;
         this.layout.bottomPane.setContent(content);
       } else {
+        this.bottomPaneTotalRows = 0;
         this.layout.bottomPane.setContent(
           '{gray-fg}Select a commit or file to view diff{/gray-fg}'
         );
@@ -1166,6 +1162,7 @@ export class App {
         state.showMiddleDots
       );
 
+      // TODO: formatExplorerContent should also return totalRows
       this.layout.bottomPane.setContent(content);
     } else {
       // Hide commit textarea when not on commit tab
@@ -1173,7 +1170,7 @@ export class App {
         this.commitTextarea.hide();
       }
 
-      const content = formatDiff(
+      const { content, totalRows } = formatDiff(
         diff,
         width,
         state.diffScrollOffset,
@@ -1182,6 +1179,7 @@ export class App {
         state.wrapMode
       );
 
+      this.bottomPaneTotalRows = totalRows;
       this.layout.bottomPane.setContent(content);
     }
   }

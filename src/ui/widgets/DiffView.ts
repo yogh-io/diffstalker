@@ -147,8 +147,14 @@ function formatDisplayRow(
   }
 }
 
+export interface DiffRenderResult {
+  content: string;
+  totalRows: number;
+}
+
 /**
  * Format diff output as blessed-compatible tagged string.
+ * Returns both the content and total row count for scroll calculations.
  */
 export function formatDiff(
   diff: DiffResult | null,
@@ -157,11 +163,11 @@ export function formatDiff(
   maxHeight?: number,
   themeName: ThemeName = 'dark',
   wrapMode: boolean = false
-): string {
+): DiffRenderResult {
   const displayRows = buildDiffDisplayRows(diff);
 
   if (displayRows.length === 0) {
-    return '{gray-fg}No diff to display{/gray-fg}';
+    return { content: '{gray-fg}No diff to display{/gray-fg}', totalRows: 0 };
   }
 
   const theme = getTheme(themeName);
@@ -171,6 +177,7 @@ export function formatDiff(
 
   // Apply wrapping if enabled
   const wrappedRows = wrapDisplayRows(displayRows, contentWidth, wrapMode);
+  const totalRows = wrappedRows.length;
 
   // Apply scroll offset and max height
   const visibleRows = maxHeight
@@ -181,11 +188,12 @@ export function formatDiff(
     formatDisplayRow(row, lineNumWidth, contentWidth, headerWidth, theme, wrapMode)
   );
 
-  return lines.join('\n');
+  return { content: lines.join('\n'), totalRows };
 }
 
 /**
  * Format history diff (commit metadata + diff) as blessed-compatible tagged string.
+ * Returns both the content and total row count for scroll calculations.
  */
 export function formatHistoryDiff(
   commit: CommitInfo | null,
@@ -195,11 +203,11 @@ export function formatHistoryDiff(
   maxHeight?: number,
   themeName: ThemeName = 'dark',
   wrapMode: boolean = false
-): string {
+): DiffRenderResult {
   const displayRows = buildHistoryDisplayRows(commit, diff);
 
   if (displayRows.length === 0) {
-    return '{gray-fg}No commit selected{/gray-fg}';
+    return { content: '{gray-fg}No commit selected{/gray-fg}', totalRows: 0 };
   }
 
   const theme = getTheme(themeName);
@@ -208,6 +216,7 @@ export function formatHistoryDiff(
   const headerWidth = width - 2;
 
   const wrappedRows = wrapDisplayRows(displayRows, contentWidth, wrapMode);
+  const totalRows = wrappedRows.length;
 
   const visibleRows = maxHeight
     ? wrappedRows.slice(scrollOffset, scrollOffset + maxHeight)
@@ -217,21 +226,5 @@ export function formatHistoryDiff(
     formatDisplayRow(row, lineNumWidth, contentWidth, headerWidth, theme, wrapMode)
   );
 
-  return lines.join('\n');
-}
-
-/**
- * Get total row count for scroll calculation.
- */
-export function getDiffTotalRows(
-  diff: DiffResult | null,
-  width: number,
-  wrapMode: boolean = false
-): number {
-  const displayRows = buildDiffDisplayRows(diff);
-  if (!wrapMode) return displayRows.length;
-
-  const lineNumWidth = getDisplayRowsLineNumWidth(displayRows);
-  const contentWidth = width - lineNumWidth - 5;
-  return wrapDisplayRows(displayRows, contentWidth, wrapMode).length;
+  return { content: lines.join('\n'), totalRows };
 }
