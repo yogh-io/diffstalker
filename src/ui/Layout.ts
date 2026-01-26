@@ -271,4 +271,48 @@ export class LayoutManager {
       this._dimensions.bottomPaneHeight
     );
   }
+
+  /**
+   * Convert screen Y coordinate to content row within the top pane.
+   * Returns the 0-based row index of the content, or -1 if outside the pane.
+   */
+  screenYToTopPaneRow(screenY: number): number {
+    const paneTop = this._dimensions.headerHeight + 1; // header + separator
+    const paneBottom = paneTop + this._dimensions.topPaneHeight;
+
+    if (screenY < paneTop || screenY >= paneBottom) {
+      return -1;
+    }
+
+    return screenY - paneTop;
+  }
+
+  /**
+   * Convert screen Y coordinate to content row within the bottom pane.
+   * Returns the 0-based row index of the content, or -1 if outside the pane.
+   */
+  screenYToBottomPaneRow(screenY: number): number {
+    const paneTop = this._dimensions.headerHeight + 2 + this._dimensions.topPaneHeight; // header + 2 separators + top pane
+    const paneBottom = paneTop + this._dimensions.bottomPaneHeight;
+
+    if (screenY < paneTop || screenY >= paneBottom) {
+      return -1;
+    }
+
+    return screenY - paneTop;
+  }
+
+  /**
+   * Get the top position of the top pane (for reference).
+   */
+  get topPaneTop(): number {
+    return this._dimensions.headerHeight + 1;
+  }
+
+  /**
+   * Get the top position of the bottom pane (for reference).
+   */
+  get bottomPaneTop(): number {
+    return this._dimensions.headerHeight + 2 + this._dimensions.topPaneHeight;
+  }
 }

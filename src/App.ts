@@ -315,10 +315,12 @@ export class App {
     });
 
     // Click on top pane to select item
-    this.layout.topPane.on('click', (_mouse: { x: number; y: number }) => {
-      // y is relative to the pane, so it directly gives us the row index
-      const clickedRow = _mouse.y;
-      this.handleTopPaneClick(clickedRow);
+    this.layout.topPane.on('click', (mouse: { x: number; y: number }) => {
+      // Convert screen Y to pane-relative row (blessed click coords are screen-relative)
+      const clickedRow = this.layout.screenYToTopPaneRow(mouse.y);
+      if (clickedRow >= 0) {
+        this.handleTopPaneClick(clickedRow);
+      }
     });
 
     // Click on footer for tabs and toggles
