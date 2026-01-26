@@ -154,7 +154,6 @@ export async function getDiff(
 
     const raw = await git.diff(args);
     const lines = parseDiffWithLineNumbers(raw);
-
     return { raw, lines };
   } catch {
     return { raw: '', lines: [] };

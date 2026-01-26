@@ -68,7 +68,6 @@ function convertDiffLineToDisplayRow(line: DiffLine): DisplayRow {
  */
 export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
   if (!diff) return [];
-
   return diff.lines.filter(isDisplayableDiffLine).map(convertDiffLineToDisplayRow);
 }
 

@@ -128,7 +128,7 @@ export function ScrollableList<T>({
         (hasPrevious ? <Text dimColor>↑ {rowsAbove} more above</Text> : <Text> </Text>)}
 
       {visibleItems.map(({ item, index }) => (
-        <Box key={`${scrollOffset}-${index}-${getKey(item, index)}`}>{renderItem(item, index)}</Box>
+        <Box key={getKey(item, index)}>{renderItem(item, index)}</Box>
       ))}
 
       {showIndicators &&

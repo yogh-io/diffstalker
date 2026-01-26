@@ -33,8 +33,8 @@ export function buildExplorerContentRows(
 ): ExplorerContentRow[] {
   if (!content) return [];
 
-  const rows: ExplorerContentRow[] = [];
   const lines = content.split('\n');
+  const rows: ExplorerContentRow[] = [];
 
   // Detect language for highlighting
   const language = filePath ? getLanguageFromPath(filePath) : null;

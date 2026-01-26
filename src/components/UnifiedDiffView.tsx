@@ -25,7 +25,7 @@ interface DisplayRowRendererProps {
   wrapMode: boolean;
 }
 
-function DisplayRowRenderer({
+const DisplayRowRenderer = React.memo(function DisplayRowRenderer({
   row,
   lineNumWidth,
   width,
@@ -169,7 +169,7 @@ function DisplayRowRenderer({
     case 'spacer':
       return <Text> </Text>;
   }
-}
+});
 
 interface UnifiedDiffViewProps {
   rows: WrappedDisplayRow[];

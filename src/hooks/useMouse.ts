@@ -8,6 +8,9 @@ export interface MouseEvent {
   button: 'left' | 'middle' | 'right' | 'none';
 }
 
+// Throttle interval for scroll events (ms)
+const SCROLL_THROTTLE_MS = 32; // ~30fps max for scrolling
+
 export function useMouse(
   onEvent: (event: MouseEvent) => void,
   disabled: boolean = false
@@ -15,6 +18,8 @@ export function useMouse(
   const { stdin, setRawMode } = useStdin();
   const [mouseEnabled, setMouseEnabled] = useState(true);
   const onEventRef = useRef(onEvent);
+  const lastScrollTime = useRef(0);
+
   useEffect(() => {
     onEventRef.current = onEvent;
   });
@@ -60,8 +65,12 @@ export function useMouse(
         // Scroll wheel events (button codes 64-67) - only when in scroll mode
         if (buttonCode >= 64 && buttonCode < 96) {
           if (mouseEnabledRef.current) {
-            const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
-            onEventRef.current({ x, y, type, button: 'none' });
+            const now = Date.now();
+            if (now - lastScrollTime.current >= SCROLL_THROTTLE_MS) {
+              lastScrollTime.current = now;
+              const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
+              onEventRef.current({ x, y, type, button: 'none' });
+            }
           }
         }
         // Click events (button codes 0-2) - only on release to avoid double-firing
@@ -83,8 +92,12 @@ export function useMouse(
 
         if (buttonCode >= 64) {
           if (mouseEnabledRef.current) {
-            const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
-            onEventRef.current({ x, y, type, button: 'none' });
+            const now = Date.now();
+            if (now - lastScrollTime.current >= SCROLL_THROTTLE_MS) {
+              lastScrollTime.current = now;
+              const type = buttonCode === 64 ? 'scroll-up' : 'scroll-down';
+              onEventRef.current({ x, y, type, button: 'none' });
+            }
           }
         }
         // Legacy click events (button codes 0-2)
