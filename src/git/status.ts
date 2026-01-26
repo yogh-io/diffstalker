@@ -1,6 +1,8 @@
 import { simpleGit, SimpleGit, StatusResult } from 'simple-git';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { perfStart, perfEnd } from '../utils/perfLog.js';
+import { getIgnoredFiles } from './ignoreUtils.js';
 
 export type FileStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed' | 'copied';
 
@@ -27,47 +29,16 @@ export function parseNumstat(output: string): Map<string, FileStats> {
 
 // Count lines in a file (for untracked files which don't show in numstat)
 async function countFileLines(repoPath: string, filePath: string): Promise<number> {
+  perfStart('countFileLines');
   try {
     const fullPath = path.join(repoPath, filePath);
     const content = await fs.promises.readFile(fullPath, 'utf-8');
     // Count non-empty lines
+    perfEnd('countFileLines');
     return content.split('\n').filter((line) => line.length > 0).length;
   } catch {
+    perfEnd('countFileLines');
     return 0;
-  }
-}
-
-// Check which files from a list are ignored by git
-async function getIgnoredFiles(git: SimpleGit, files: string[]): Promise<Set<string>> {
-  if (files.length === 0) return new Set();
-
-  try {
-    // git check-ignore returns the list of ignored files (one per line)
-    // Pass files as arguments (limit batch size to avoid command line length issues)
-    const ignoredFiles = new Set<string>();
-    const batchSize = 100;
-
-    for (let i = 0; i < files.length; i += batchSize) {
-      const batch = files.slice(i, i + batchSize);
-      try {
-        const result = await git.raw(['check-ignore', ...batch]);
-        const ignored = result
-          .trim()
-          .split('\n')
-          .filter((f) => f.length > 0);
-        for (const f of ignored) {
-          ignoredFiles.add(f);
-        }
-      } catch {
-        // check-ignore exits with code 1 if no files are ignored, which throws
-        // Just continue to next batch
-      }
-    }
-
-    return ignoredFiles;
-  } catch {
-    // If check-ignore fails entirely, return empty set
-    return new Set();
   }
 }
 
@@ -113,11 +84,15 @@ export function parseStatusCode(code: string): FileStatus {
 }
 
 export async function getStatus(repoPath: string): Promise<GitStatus> {
+  perfStart('getStatus');
   const git: SimpleGit = simpleGit(repoPath);
 
   try {
+    perfStart('git.checkIsRepo');
     const isRepo = await git.checkIsRepo();
+    perfEnd('git.checkIsRepo');
     if (!isRepo) {
+      perfEnd('getStatus');
       return {
         files: [],
         branch: { current: '', ahead: 0, behind: 0 },
@@ -125,7 +100,9 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
       };
     }
 
+    perfStart('git.status');
     const status: StatusResult = await git.status();
+    perfEnd('git.status');
     const files: FileEntry[] = [];
 
     // Process staged files
@@ -187,7 +164,7 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
     const untrackedPaths = status.files.filter((f) => f.working_dir === '?').map((f) => f.path);
 
     // Get the set of ignored files
-    const ignoredFiles = await getIgnoredFiles(git, untrackedPaths);
+    const ignoredFiles = await getIgnoredFiles(repoPath, untrackedPaths);
 
     for (const file of status.files) {
       // Skip ignored files (marked with '!' in either column, or detected by check-ignore)
@@ -219,10 +196,12 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
     }
 
     // Fetch line stats for staged and unstaged files
+    perfStart('git.diff.numstat');
     const [stagedNumstat, unstagedNumstat] = await Promise.all([
       git.diff(['--cached', '--numstat']).catch(() => ''),
       git.diff(['--numstat']).catch(() => ''),
     ]);
+    perfEnd('git.diff.numstat');
 
     const stagedStats = parseNumstat(stagedNumstat);
     const unstagedStats = parseNumstat(unstagedNumstat);
@@ -239,6 +218,7 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
     // Count lines for untracked files (not in numstat output)
     const untrackedFiles = processedFiles.filter((f) => f.status === 'untracked');
     if (untrackedFiles.length > 0) {
+      perfStart('countUntrackedLines', { fileCount: untrackedFiles.length });
       const lineCounts = await Promise.all(
         untrackedFiles.map((f) => countFileLines(repoPath, f.path))
       );
@@ -246,8 +226,10 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
         untrackedFiles[i].insertions = lineCounts[i];
         untrackedFiles[i].deletions = 0;
       }
+      perfEnd('countUntrackedLines');
     }
 
+    perfEnd('getStatus');
     return {
       files: processedFiles,
       branch: {
@@ -259,6 +241,7 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
       isRepo: true,
     };
   } catch {
+    perfEnd('getStatus');
     return {
       files: [],
       branch: { current: '', ahead: 0, behind: 0 },

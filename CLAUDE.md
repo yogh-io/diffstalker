@@ -57,18 +57,22 @@ src/
 │   ├── useCommitFlow.ts # Commit panel state machine
 │   └── useTerminalSize.ts # Terminal resize handling
 ├── core/
-│   ├── GitStateManager.ts   # Git state management (non-React)
-│   └── GitOperationQueue.ts # Serializes git operations
+│   ├── GitStateManager.ts      # Git state management (non-React)
+│   ├── GitOperationQueue.ts    # Serializes git operations
+│   ├── FilePathWatcher.ts      # File watching (non-React)
+│   └── ExplorerStateManager.ts # Explorer state (non-React)
 ├── services/
 │   └── commitService.ts # Git commit execution
 ├── git/
 │   ├── status.ts       # Git status operations
-│   └── diff.ts         # Diff generation
+│   ├── diff.ts         # Diff generation
+│   └── ignoreUtils.ts  # Git ignore checking
 ├── utils/
-│   ├── baseBranchCache.ts  # Cache for PR base branch per repo
-│   ├── formatPath.ts       # Path shortening utility
+│   ├── baseBranchCache.ts    # Cache for PR base branch per repo
+│   ├── formatPath.ts         # Path shortening utility
 │   ├── layoutCalculations.ts # UI layout math
-│   └── mouseCoordinates.ts # Mouse position calculations
+│   ├── mouseCoordinates.ts   # Mouse position calculations
+│   └── pathUtils.ts          # Path expansion utilities
 ```
 
 ## Key Patterns
@@ -132,3 +136,48 @@ When building UI structures with rows (like diff views, file lists, PR views):
 - Example: `PRView.tsx` exports `buildPRDiffRows()` which is used by the component itself, `getFileScrollOffset()`, and `getPRDiffTotalRows()`
 
 This prevents subtle bugs where scroll limits don't match actual content, or click detection is off by N rows because header count changed.
+
+## Interactive Testing with tmux
+
+Claude can run and interact with the application headlessly using tmux. This enables real integration testing without requiring a TTY.
+
+### How Claude Tests
+
+```bash
+# Start the app in a detached tmux session
+tmux new-session -d -s difftest -x 100 -y 24 'bun run dev'
+
+# Wait for startup, then capture the screen
+sleep 2 && tmux capture-pane -t difftest -p
+
+# Send keystrokes (vim-style j/k work, or use Up/Down)
+tmux send-keys -t difftest j          # Move down
+tmux send-keys -t difftest k          # Move up
+tmux send-keys -t difftest Enter      # Select/enter
+tmux send-keys -t difftest '2'        # Switch to tab 2
+
+# Capture screen after interaction
+tmux capture-pane -t difftest -p
+
+# Clean up when done
+tmux kill-session -t difftest
+```
+
+### Developer: Observe Claude's Testing
+
+To watch Claude interact with the app in real-time, attach to the session:
+
+```bash
+tmux attach -t difftest
+```
+
+You'll see exactly what Claude sees and can watch keystrokes arrive. Detach with `Ctrl-b d`.
+
+### Session Naming Convention
+
+Claude uses `difftest` as the session name for testing. If you need to check for orphaned sessions:
+
+```bash
+tmux list-sessions
+tmux kill-session -t difftest  # Clean up if needed
+```

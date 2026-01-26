@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { BranchInfo } from '../git/status.js';
 import { abbreviateHomePath } from '../config.js';
-import { WatcherState } from '../hooks/useWatcher.js';
+import { UseWatcherState } from '../hooks/useWatcher.js';
 
 /**
  * Calculate the header height based on whether content needs to wrap.
@@ -11,7 +11,7 @@ import { WatcherState } from '../hooks/useWatcher.js';
 export function getHeaderHeight(
   repoPath: string | null,
   branch: BranchInfo | null,
-  watcherState: WatcherState | undefined,
+  watcherState: UseWatcherState | undefined,
   width: number,
   error: string | null = null,
   isLoading: boolean = false
@@ -60,7 +60,7 @@ interface HeaderProps {
   isLoading: boolean;
   error: string | null;
   debug?: boolean;
-  watcherState?: WatcherState;
+  watcherState?: UseWatcherState;
   width?: number;
 }
 
