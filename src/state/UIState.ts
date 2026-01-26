@@ -233,6 +233,14 @@ export class UIState extends EventEmitter<UIStateEventMap> {
     this.emit('modal-change', null);
   }
 
+  toggleModal(modal: 'theme' | 'hotkeys' | 'baseBranch'): void {
+    if (this._state.activeModal === modal) {
+      this.closeModal();
+    } else {
+      this.openModal(modal);
+    }
+  }
+
   // Discard confirmation
   setPendingDiscard(file: FileEntry | null): void {
     this.update({ pendingDiscard: file });

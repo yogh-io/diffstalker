@@ -3,7 +3,12 @@ import type { Widgets } from 'blessed';
 import { LayoutManager, SPLIT_RATIO_STEP } from './ui/Layout.js';
 import { formatHeader, getHeaderHeight, type WatcherState } from './ui/widgets/Header.js';
 import { formatFooter } from './ui/widgets/Footer.js';
-import { formatFileList, getFileAtIndex, getFileListTotalRows } from './ui/widgets/FileList.js';
+import {
+  formatFileList,
+  getFileAtIndex,
+  getFileListTotalRows,
+  getFileIndexFromRow,
+} from './ui/widgets/FileList.js';
 import { formatDiff, formatHistoryDiff, getDiffTotalRows } from './ui/widgets/DiffView.js';
 import { formatCommitPanel, formatCommitPanelInactive } from './ui/widgets/CommitPanel.js';
 import {
@@ -16,6 +21,7 @@ import {
   getCompareListTotalRows,
   getNextCompareSelection,
   getRowFromCompareSelection,
+  getCompareSelectionFromRow,
   type CompareListSelection,
 } from './ui/widgets/CompareListView.js';
 import {
@@ -103,6 +109,11 @@ export class App {
 
     // Create layout
     this.layout = new LayoutManager(this.screen, this.uiState.state.splitRatio);
+
+    // Handle screen resize - re-render content
+    this.screen.on('resize', () => {
+      this.render();
+    });
 
     // Initialize commit flow state
     this.commitFlowState = new CommitFlowState({
@@ -276,7 +287,7 @@ export class App {
     this.screen.key(['t'], () => this.uiState.openModal('theme'));
 
     // Hotkeys modal
-    this.screen.key(['?'], () => this.uiState.openModal('hotkeys'));
+    this.screen.key(['?'], () => this.uiState.toggleModal('hotkeys'));
 
     // Follow toggle
     this.screen.key(['f'], () => this.toggleFollow());
@@ -302,6 +313,95 @@ export class App {
     this.layout.bottomPane.on('wheelup', () => {
       this.handleBottomPaneScroll(-SCROLL_AMOUNT);
     });
+
+    // Click on top pane to select item
+    this.layout.topPane.on('click', (_mouse: { x: number; y: number }) => {
+      // y is relative to the pane, so it directly gives us the row index
+      const clickedRow = _mouse.y;
+      this.handleTopPaneClick(clickedRow);
+    });
+
+    // Click on footer for tabs and toggles
+    this.layout.footerBox.on('click', (mouse: { x: number; y: number }) => {
+      this.handleFooterClick(mouse.x);
+    });
+  }
+
+  private handleTopPaneClick(row: number): void {
+    const state = this.uiState.state;
+
+    if (state.bottomTab === 'history') {
+      const index = state.historyScrollOffset + row;
+      this.uiState.setHistorySelectedIndex(index);
+      this.selectHistoryCommitByIndex(index);
+    } else if (state.bottomTab === 'compare') {
+      // For compare view, need to map row to selection
+      const compareState = this.gitManager?.compareState;
+      const commits = compareState?.compareDiff?.commits ?? [];
+      const files = compareState?.compareDiff?.files ?? [];
+      const selection = getCompareSelectionFromRow(state.compareScrollOffset + row, commits, files);
+      if (selection) {
+        this.selectCompareItem(selection);
+      }
+    } else if (state.bottomTab === 'explorer') {
+      const index = state.explorerScrollOffset + row;
+      this.explorerManager?.selectIndex(index);
+      this.uiState.setExplorerSelectedIndex(index);
+    } else {
+      // Diff tab - select file
+      const files = this.gitManager?.state.status?.files ?? [];
+      // Account for section headers in file list
+      const fileIndex = getFileIndexFromRow(row + state.fileListScrollOffset, files);
+      if (fileIndex !== null && fileIndex >= 0) {
+        this.uiState.setSelectedIndex(fileIndex);
+        this.selectFileByIndex(fileIndex);
+      }
+    }
+  }
+
+  private handleFooterClick(x: number): void {
+    const width = (this.screen.width as number) || 80;
+
+    // Footer layout: left side has toggles, right side has tabs
+    // Tabs are right-aligned, so we calculate from the right
+    // Tab format: [1]Diff [2]Commit [3]History [4]Compare [5]Explorer
+    // Approximate positions from right edge
+    const tabPositions = [
+      { tab: 'explorer' as const, label: '[5]Explorer', width: 11 },
+      { tab: 'compare' as const, label: '[4]Compare', width: 10 },
+      { tab: 'history' as const, label: '[3]History', width: 10 },
+      { tab: 'commit' as const, label: '[2]Commit', width: 9 },
+      { tab: 'diff' as const, label: '[1]Diff', width: 7 },
+    ];
+
+    let rightEdge = width;
+    for (const { tab, width: tabWidth } of tabPositions) {
+      const leftEdge = rightEdge - tabWidth - 1; // -1 for space
+      if (x >= leftEdge && x < rightEdge) {
+        this.uiState.setTab(tab);
+        return;
+      }
+      rightEdge = leftEdge;
+    }
+
+    // Left side toggles (approximate positions)
+    // Format: ? [scroll] [auto] [wrap] [dots]
+    if (x >= 2 && x <= 9) {
+      // [scroll] or m:[select]
+      this.uiState.toggleMouse();
+    } else if (x >= 11 && x <= 16) {
+      // [auto]
+      this.uiState.toggleAutoTab();
+    } else if (x >= 18 && x <= 23) {
+      // [wrap]
+      this.uiState.toggleWrapMode();
+    } else if (x >= 25 && x <= 30 && this.uiState.state.bottomTab === 'explorer') {
+      // [dots] - only visible in explorer
+      this.uiState.toggleMiddleDots();
+    } else if (x === 0) {
+      // ? - open hotkeys
+      this.uiState.openModal('hotkeys');
+    }
   }
 
   private handleTopPaneScroll(delta: number): void {

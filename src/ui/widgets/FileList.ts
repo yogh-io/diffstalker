@@ -196,3 +196,16 @@ export function getFileAtIndex(files: FileEntry[], index: number): FileEntry | n
   const { ordered } = categorizeFiles(files);
   return ordered[index] ?? null;
 }
+
+/**
+ * Get the file index from a visual row (accounting for headers and spacers).
+ * Returns null if the row is a header or spacer.
+ */
+export function getFileIndexFromRow(row: number, files: FileEntry[]): number | null {
+  const rows = buildFileListRows(files);
+  const rowItem = rows[row];
+  if (rowItem?.type === 'file' && rowItem.fileIndex !== undefined) {
+    return rowItem.fileIndex;
+  }
+  return null;
+}

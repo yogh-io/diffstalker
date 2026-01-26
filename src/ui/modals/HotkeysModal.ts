@@ -139,6 +139,28 @@ export class HotkeysModal {
       this.close();
       this.onClose();
     });
+
+    // Close on click anywhere
+    this.box.on('click', () => {
+      this.close();
+      this.onClose();
+    });
+  }
+
+  /**
+   * Calculate the visible width of a string (excluding blessed tags).
+   */
+  private visibleWidth(str: string): number {
+    return str.replace(/\{[^}]+\}/g, '').length;
+  }
+
+  /**
+   * Pad a string with blessed tags to a visible width.
+   */
+  private padToVisible(str: string, targetWidth: number): string {
+    const visible = this.visibleWidth(str);
+    const padding = Math.max(0, targetWidth - visible);
+    return str + ' '.repeat(padding);
   }
 
   private render(useTwoColumns: boolean, width: number): void {
@@ -160,7 +182,7 @@ export class HotkeysModal {
 
       const maxLines = Math.max(leftLines.length, rightLines.length);
       for (let i = 0; i < maxLines; i++) {
-        const left = (leftLines[i] || '').padEnd(colWidth);
+        const left = this.padToVisible(leftLines[i] || '', colWidth);
         const right = rightLines[i] || '';
         lines.push(left + '  ' + right);
       }
