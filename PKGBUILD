@@ -21,16 +21,23 @@ pkgver() {
 
 build() {
     cd "$pkgname"
+    # Install all deps for building, then production-only for packaging
     bun install
-    bun run bundle
+    bun run build:prod
+    # Minified bundle with external packages (neo-blessed has dynamic requires)
+    bun build dist/index.js --outdir dist/bundle --minify --target node --packages external
+    # Reinstall production-only dependencies (~13MB vs ~117MB)
+    rm -rf node_modules
+    bun install --production
 }
 
 package() {
     cd "$pkgname"
 
-    # Install bundled files to /usr/lib/diffstalker
+    # Install to /usr/lib/diffstalker
     install -dm755 "$pkgdir/usr/lib/diffstalker"
-    cp -r dist/bundle/* "$pkgdir/usr/lib/diffstalker/"
+    cp dist/bundle/index.js "$pkgdir/usr/lib/diffstalker/"
+    cp -r node_modules "$pkgdir/usr/lib/diffstalker/"
 
     # Create wrapper script
     install -dm755 "$pkgdir/usr/bin"
