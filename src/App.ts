@@ -210,33 +210,66 @@ export class App {
       this.exit();
     });
 
-    // Navigation
+    // Navigation (skip if modal is open - modal handles its own keys)
     this.screen.key(['j', 'down'], () => {
+      if (this.activeModal) return;
       this.navigateDown();
     });
 
     this.screen.key(['k', 'up'], () => {
+      if (this.activeModal) return;
       this.navigateUp();
     });
 
-    // Tab switching
-    this.screen.key(['1'], () => this.uiState.setTab('diff'));
-    this.screen.key(['2'], () => this.uiState.setTab('commit'));
-    this.screen.key(['3'], () => this.uiState.setTab('history'));
-    this.screen.key(['4'], () => this.uiState.setTab('compare'));
-    this.screen.key(['5'], () => this.uiState.setTab('explorer'));
+    // Tab switching (skip if modal is open)
+    this.screen.key(['1'], () => {
+      if (this.activeModal) return;
+      this.uiState.setTab('diff');
+    });
+    this.screen.key(['2'], () => {
+      if (this.activeModal) return;
+      this.uiState.setTab('commit');
+    });
+    this.screen.key(['3'], () => {
+      if (this.activeModal) return;
+      this.uiState.setTab('history');
+    });
+    this.screen.key(['4'], () => {
+      if (this.activeModal) return;
+      this.uiState.setTab('compare');
+    });
+    this.screen.key(['5'], () => {
+      if (this.activeModal) return;
+      this.uiState.setTab('explorer');
+    });
 
-    // Pane toggle
-    this.screen.key(['tab'], () => this.uiState.togglePane());
+    // Pane toggle (skip if modal is open)
+    this.screen.key(['tab'], () => {
+      if (this.activeModal) return;
+      this.uiState.togglePane();
+    });
 
-    // Staging operations
-    this.screen.key(['s'], () => this.stageSelected());
-    this.screen.key(['S-u'], () => this.unstageSelected());
-    this.screen.key(['S-a'], () => this.stageAll());
-    this.screen.key(['S-z'], () => this.unstageAll());
+    // Staging operations (skip if modal is open)
+    this.screen.key(['s'], () => {
+      if (this.activeModal) return;
+      this.stageSelected();
+    });
+    this.screen.key(['S-u'], () => {
+      if (this.activeModal) return;
+      this.unstageSelected();
+    });
+    this.screen.key(['S-a'], () => {
+      if (this.activeModal) return;
+      this.stageAll();
+    });
+    this.screen.key(['S-z'], () => {
+      if (this.activeModal) return;
+      this.unstageAll();
+    });
 
-    // Select/toggle
+    // Select/toggle (skip if modal is open)
     this.screen.key(['enter', 'space'], () => {
+      if (this.activeModal) return;
       const state = this.uiState.state;
       if (state.bottomTab === 'explorer' && state.currentPane === 'explorer') {
         this.enterExplorerDirectory();
@@ -245,16 +278,20 @@ export class App {
       }
     });
 
-    // Explorer: go up directory
+    // Explorer: go up directory (skip if modal is open)
     this.screen.key(['backspace'], () => {
+      if (this.activeModal) return;
       const state = this.uiState.state;
       if (state.bottomTab === 'explorer' && state.currentPane === 'explorer') {
         this.goExplorerUp();
       }
     });
 
-    // Commit
-    this.screen.key(['c'], () => this.uiState.setTab('commit'));
+    // Commit (skip if modal is open)
+    this.screen.key(['c'], () => {
+      if (this.activeModal) return;
+      this.uiState.setTab('commit');
+    });
 
     // Commit panel specific keys (only when on commit tab)
     this.screen.key(['i'], () => {
