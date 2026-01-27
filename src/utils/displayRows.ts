@@ -131,6 +131,8 @@ export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
         // Save previous section if any
         if (currentSection) {
           fileSections.push(currentSection);
+          // Add spacer between files for visual separation
+          rows.push({ type: 'spacer' });
         }
         // Start new section
         currentSection = {

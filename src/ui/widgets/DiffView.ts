@@ -248,8 +248,9 @@ function formatDisplayRow(
 
     case 'diff-context': {
       const isCont = row.isContinuation;
-      const symbol = isCont ? '\u00bb ' : '  ';
+      const symbol = isCont ? '\u00bb' : ' ';
       const lineNum = formatLineNum(row.lineNum, lineNumWidth);
+      const prefix = `${lineNum} ${symbol}  `;
       const rawContent = row.content || '';
 
       // Use syntax highlighting if available (not for continuations)
@@ -258,14 +259,14 @@ function formatDisplayRow(
           ? row.highlighted
           : truncateAnsi(row.highlighted, contentWidth);
         const highlightedContent = ansiToBlessed(truncatedHighlight);
-        return `{gray-fg}${lineNum} ${symbol}{/gray-fg}${highlightedContent}`;
+        return `{gray-fg}${prefix}{/gray-fg}${highlightedContent}`;
       }
 
       const content = wrapMode
         ? escapeContent(rawContent)
         : escapeContent(truncate(rawContent, contentWidth));
 
-      return `{gray-fg}${lineNum} ${symbol}{/gray-fg}${content}`;
+      return `{gray-fg}${prefix}{/gray-fg}${content}`;
     }
 
     case 'commit-header':
