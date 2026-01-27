@@ -39,17 +39,20 @@ export type DisplayRow =
   | { type: 'spacer' };
 
 /**
- * Get the text content from a diff line (strip leading +/-/space)
+ * Get the text content from a diff line (strip leading +/-/space and trailing \r)
  */
 function getLineContent(line: DiffLine): string {
+  let content: string;
   if (line.type === 'addition' || line.type === 'deletion') {
-    return line.content.slice(1);
-  }
-  if (line.type === 'context') {
+    content = line.content.slice(1);
+  } else if (line.type === 'context') {
     // Context lines start with space
-    return line.content.startsWith(' ') ? line.content.slice(1) : line.content;
+    content = line.content.startsWith(' ') ? line.content.slice(1) : line.content;
+  } else {
+    content = line.content;
   }
-  return line.content;
+  // Strip carriage returns (from Windows CRLF) that cause rendering artifacts
+  return content.replace(/\r/g, '');
 }
 
 /**
