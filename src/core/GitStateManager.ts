@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { watch, FSWatcher } from 'chokidar';
 import { EventEmitter } from 'node:events';
+import ignore, { Ignore } from 'ignore';
 import { GitOperationQueue, getQueueForRepo, removeQueueForRepo } from './GitOperationQueue.js';
 import {
   getStatus,
@@ -79,6 +80,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   private queue: GitOperationQueue;
   private gitWatcher: FSWatcher | null = null;
   private workingDirWatcher: FSWatcher | null = null;
+  private ignorer: Ignore | null = null;
 
   // Current state
   private _state: GitState = {
@@ -153,17 +155,44 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   }
 
   /**
+   * Load gitignore patterns from .gitignore and .git/info/exclude.
+   * Returns an Ignore instance that can test paths.
+   */
+  private loadGitignore(): Ignore {
+    const ig = ignore();
+
+    // Always ignore .git directory (has its own dedicated watcher)
+    ig.add('.git');
+
+    // Load .gitignore if it exists
+    const gitignorePath = path.join(this.repoPath, '.gitignore');
+    if (fs.existsSync(gitignorePath)) {
+      ig.add(fs.readFileSync(gitignorePath, 'utf-8'));
+    }
+
+    // Load .git/info/exclude if it exists (repo-specific ignores)
+    const excludePath = path.join(this.repoPath, '.git', 'info', 'exclude');
+    if (fs.existsSync(excludePath)) {
+      ig.add(fs.readFileSync(excludePath, 'utf-8'));
+    }
+
+    return ig;
+  }
+
+  /**
    * Start watching for file changes.
    */
   startWatching(): void {
     const gitDir = path.join(this.repoPath, '.git');
     if (!fs.existsSync(gitDir)) return;
 
+    // --- Git internals watcher ---
     const indexFile = path.join(gitDir, 'index');
     const headFile = path.join(gitDir, 'HEAD');
     const refsDir = path.join(gitDir, 'refs');
+    const gitignorePath = path.join(this.repoPath, '.gitignore');
 
-    this.gitWatcher = watch([indexFile, headFile, refsDir], {
+    this.gitWatcher = watch([indexFile, headFile, refsDir, gitignorePath], {
       persistent: true,
       ignoreInitial: true,
       awaitWriteFinish: {
@@ -171,28 +200,39 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
         pollInterval: 50,
       },
     });
+
+    // --- Working directory watcher with gitignore support ---
+    this.ignorer = this.loadGitignore();
 
     this.workingDirWatcher = watch(this.repoPath, {
       persistent: true,
       ignoreInitial: true,
-      ignored: [
-        '**/node_modules/**',
-        '**/.git/**',
-        '**/dist/**',
-        '**/build/**',
-        '**/*.log',
-        '**/.DS_Store',
-      ],
+      ignored: (filePath: string) => {
+        // Get path relative to repo root
+        const relativePath = path.relative(this.repoPath, filePath);
+
+        // Don't ignore the repo root itself
+        if (!relativePath) return false;
+
+        // Check against gitignore patterns
+        // When this returns true for a directory, chokidar won't recurse into it
+        return this.ignorer?.ignores(relativePath) ?? false;
+      },
       awaitWriteFinish: {
         stabilityThreshold: 100,
         pollInterval: 50,
       },
-      depth: 10,
     });
 
     const scheduleRefresh = () => this.scheduleRefresh();
 
-    this.gitWatcher.on('change', scheduleRefresh);
+    this.gitWatcher.on('change', (filePath) => {
+      // Reload gitignore patterns if .gitignore changed
+      if (filePath === gitignorePath) {
+        this.ignorer = this.loadGitignore();
+      }
+      scheduleRefresh();
+    });
     this.gitWatcher.on('add', scheduleRefresh);
     this.gitWatcher.on('unlink', scheduleRefresh);
 

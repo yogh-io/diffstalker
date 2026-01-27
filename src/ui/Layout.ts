@@ -174,6 +174,7 @@ export class LayoutManager {
       tags: true,
       scrollable: true,
       alwaysScroll: true,
+      wrap: false, // Disable blessed's built-in wrapping - we handle wrapping ourselves
       scrollbar: {
         ch: ' ',
         track: {
@@ -196,6 +197,7 @@ export class LayoutManager {
       tags: true,
       scrollable: true,
       alwaysScroll: true,
+      wrap: false, // Disable blessed's built-in wrapping - we handle wrapping ourselves
       scrollbar: {
         ch: ' ',
         track: {
@@ -232,22 +234,27 @@ export class LayoutManager {
 
     // Update header
     this.headerBox.height = this._dimensions.headerHeight;
+    this.headerBox.width = width;
 
     // Update top separator
     this.topSeparator.top = this._dimensions.headerHeight;
+    this.topSeparator.width = width;
     this.topSeparator.setContent('\u2500'.repeat(width));
 
     // Update top pane
     this.topPane.top = this._dimensions.headerHeight + 1;
     this.topPane.height = this._dimensions.topPaneHeight;
+    this.topPane.width = width;
 
     // Update middle separator
     this.middleSeparator.top = this._dimensions.headerHeight + 1 + this._dimensions.topPaneHeight;
+    this.middleSeparator.width = width;
     this.middleSeparator.setContent('\u2500'.repeat(width));
 
     // Update bottom pane
     this.bottomPane.top = this._dimensions.headerHeight + 2 + this._dimensions.topPaneHeight;
     this.bottomPane.height = this._dimensions.bottomPaneHeight;
+    this.bottomPane.width = width;
 
     // Update bottom separator
     this.bottomSeparator.top =
@@ -255,10 +262,12 @@ export class LayoutManager {
       2 +
       this._dimensions.topPaneHeight +
       this._dimensions.bottomPaneHeight;
+    this.bottomSeparator.width = width;
     this.bottomSeparator.setContent('\u2500'.repeat(width));
 
     // Update footer
     this.footerBox.top = this._dimensions.footerRow;
+    this.footerBox.width = width;
   }
 
   /**
