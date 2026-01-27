@@ -40,6 +40,8 @@ import {
 } from './core/ExplorerStateManager.js';
 import { ThemePicker } from './ui/modals/ThemePicker.js';
 import { HotkeysModal } from './ui/modals/HotkeysModal.js';
+import { BaseBranchPicker } from './ui/modals/BaseBranchPicker.js';
+import { DiscardConfirm } from './ui/modals/DiscardConfirm.js';
 import { CommitFlowState } from './state/CommitFlowState.js';
 import { UIState, Pane } from './state/UIState.js';
 import {
@@ -52,6 +54,7 @@ import {
 } from './core/GitStateManager.js';
 import { FilePathWatcher, WatcherState as FileWatcherState } from './core/FilePathWatcher.js';
 import { Config, saveConfig } from './config.js';
+import type { FileEntry } from './git/status.js';
 import type { CommandServer, CommandHandler, AppState } from './ipc/CommandServer.js';
 import type { BottomTab } from './types/tabs.js';
 import type { ThemeName } from './themes.js';
@@ -86,7 +89,7 @@ export class App {
   private commitTextarea: Widgets.TextareaElement | null = null;
 
   // Active modals
-  private activeModal: ThemePicker | HotkeysModal | null = null;
+  private activeModal: ThemePicker | HotkeysModal | BaseBranchPicker | DiscardConfirm | null = null;
 
   // Cached total rows for scroll bounds (single source of truth from render)
   private bottomPaneTotalRows: number = 0;
@@ -306,6 +309,35 @@ export class App {
 
     // Follow toggle
     this.screen.key(['f'], () => this.toggleFollow());
+
+    // Compare view: base branch picker
+    this.screen.key(['b'], () => {
+      if (this.uiState.state.bottomTab === 'compare') {
+        this.uiState.openModal('baseBranch');
+      }
+    });
+
+    // Compare view: toggle uncommitted
+    this.screen.key(['u'], () => {
+      if (this.uiState.state.bottomTab === 'compare') {
+        this.uiState.toggleIncludeUncommitted();
+        const includeUncommitted = this.uiState.state.includeUncommitted;
+        this.gitManager?.refreshCompareDiff(includeUncommitted);
+      }
+    });
+
+    // Discard changes (with confirmation)
+    this.screen.key(['d'], () => {
+      if (this.uiState.state.bottomTab === 'diff') {
+        const files = this.gitManager?.state.status?.files ?? [];
+        const selectedIndex = this.uiState.state.selectedIndex;
+        const selectedFile = files[selectedIndex];
+        // Only allow discard for unstaged modified files
+        if (selectedFile && !selectedFile.staged && selectedFile.status !== 'untracked') {
+          this.showDiscardConfirm(selectedFile);
+        }
+      }
+    });
   }
 
   private setupMouseHandlers(): void {
@@ -529,6 +561,28 @@ export class App {
           this.uiState.closeModal();
         });
         this.activeModal.focus();
+      } else if (modal === 'baseBranch') {
+        // Load candidate branches and show picker
+        this.gitManager?.getCandidateBaseBranches().then((branches) => {
+          const currentBranch = this.gitManager?.compareState.compareBaseBranch ?? null;
+          this.activeModal = new BaseBranchPicker(
+            this.screen,
+            branches,
+            currentBranch,
+            (branch) => {
+              this.activeModal = null;
+              this.uiState.closeModal();
+              // Set base branch and refresh compare view
+              const includeUncommitted = this.uiState.state.includeUncommitted;
+              this.gitManager?.setCompareBaseBranch(branch, includeUncommitted);
+            },
+            () => {
+              this.activeModal = null;
+              this.uiState.closeModal();
+            }
+          );
+          this.activeModal.focus();
+        });
       }
     });
 
@@ -990,6 +1044,21 @@ export class App {
 
   private async unstageAll(): Promise<void> {
     await this.gitManager?.unstageAll();
+  }
+
+  private showDiscardConfirm(file: FileEntry): void {
+    this.activeModal = new DiscardConfirm(
+      this.screen,
+      file.path,
+      async () => {
+        this.activeModal = null;
+        await this.gitManager?.discard(file);
+      },
+      () => {
+        this.activeModal = null;
+      }
+    );
+    this.activeModal.focus();
   }
 
   private async commit(message: string): Promise<void> {

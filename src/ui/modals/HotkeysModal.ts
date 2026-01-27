@@ -71,6 +71,17 @@ const hotkeyGroups: HotkeyGroup[] = [
       { key: 'Backspace', description: 'Go up' },
     ],
   },
+  {
+    title: 'Compare',
+    entries: [
+      { key: 'b', description: 'Base branch picker' },
+      { key: 'u', description: 'Toggle uncommitted' },
+    ],
+  },
+  {
+    title: 'Diff',
+    entries: [{ key: 'd', description: 'Discard changes' }],
+  },
 ];
 
 /**
