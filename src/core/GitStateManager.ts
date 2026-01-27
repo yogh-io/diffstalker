@@ -235,15 +235,17 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     });
     this.gitWatcher.on('add', scheduleRefresh);
     this.gitWatcher.on('unlink', scheduleRefresh);
-    this.gitWatcher.on('error', (err) => {
-      this.emit('error', `Git watcher error: ${err.message}`);
+    this.gitWatcher.on('error', (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emit('error', `Git watcher error: ${message}`);
     });
 
     this.workingDirWatcher.on('change', scheduleRefresh);
     this.workingDirWatcher.on('add', scheduleRefresh);
     this.workingDirWatcher.on('unlink', scheduleRefresh);
-    this.workingDirWatcher.on('error', (err) => {
-      this.emit('error', `Working dir watcher error: ${err.message}`);
+    this.workingDirWatcher.on('error', (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emit('error', `Working dir watcher error: ${message}`);
     });
   }
 

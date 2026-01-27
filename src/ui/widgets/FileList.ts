@@ -209,3 +209,16 @@ export function getFileIndexFromRow(row: number, files: FileEntry[]): number | n
   }
   return null;
 }
+
+/**
+ * Get the visual row index for a file index.
+ */
+export function getRowFromFileIndex(fileIndex: number, files: FileEntry[]): number {
+  const rows = buildFileListRows(files);
+  for (let i = 0; i < rows.length; i++) {
+    if (rows[i].type === 'file' && rows[i].fileIndex === fileIndex) {
+      return i;
+    }
+  }
+  return 0;
+}

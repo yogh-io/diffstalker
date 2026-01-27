@@ -8,6 +8,7 @@ import {
   getFileAtIndex,
   getFileListTotalRows,
   getFileIndexFromRow,
+  getRowFromFileIndex,
 } from './ui/widgets/FileList.js';
 import { formatDiff, formatHistoryDiff } from './ui/widgets/DiffView.js';
 import { formatCommitPanel, formatCommitPanelInactive } from './ui/widgets/CommitPanel.js';
@@ -822,9 +823,16 @@ export class App {
     }
 
     if (state.currentPane === 'files') {
+      const files = this.gitManager?.state.status?.files ?? [];
       const newIndex = Math.max(0, state.selectedIndex - 1);
       this.uiState.setSelectedIndex(newIndex);
       this.selectFileByIndex(newIndex);
+
+      // Keep selection visible - scroll up if needed
+      const row = getRowFromFileIndex(newIndex, files);
+      if (row < state.fileListScrollOffset) {
+        this.uiState.setFileListScrollOffset(row);
+      }
     } else if (state.currentPane === 'diff') {
       this.uiState.setDiffScrollOffset(Math.max(0, state.diffScrollOffset - 3));
     }
@@ -865,6 +873,13 @@ export class App {
       const newIndex = Math.min(files.length - 1, state.selectedIndex + 1);
       this.uiState.setSelectedIndex(newIndex);
       this.selectFileByIndex(newIndex);
+
+      // Keep selection visible - scroll down if needed
+      const row = getRowFromFileIndex(newIndex, files);
+      const visibleEnd = state.fileListScrollOffset + this.layout.dimensions.topPaneHeight - 1;
+      if (row >= visibleEnd) {
+        this.uiState.setFileListScrollOffset(state.fileListScrollOffset + (row - visibleEnd + 1));
+      }
     } else if (state.currentPane === 'diff') {
       this.uiState.setDiffScrollOffset(state.diffScrollOffset + 3);
     }
@@ -925,6 +940,13 @@ export class App {
       (next.type !== this.compareSelection?.type || next.index !== this.compareSelection?.index)
     ) {
       this.selectCompareItem(next);
+
+      // Keep selection visible - scroll up if needed
+      const state = this.uiState.state;
+      const row = getRowFromCompareSelection(next, commits, files);
+      if (row < state.compareScrollOffset) {
+        this.uiState.setCompareScrollOffset(row);
+      }
     }
   }
 
@@ -952,6 +974,14 @@ export class App {
       (next.type !== this.compareSelection?.type || next.index !== this.compareSelection?.index)
     ) {
       this.selectCompareItem(next);
+
+      // Keep selection visible - scroll down if needed
+      const state = this.uiState.state;
+      const row = getRowFromCompareSelection(next, commits, files);
+      const visibleEnd = state.compareScrollOffset + this.layout.dimensions.topPaneHeight - 1;
+      if (row >= visibleEnd) {
+        this.uiState.setCompareScrollOffset(state.compareScrollOffset + (row - visibleEnd + 1));
+      }
     }
   }
 
