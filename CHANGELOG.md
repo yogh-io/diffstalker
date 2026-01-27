@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Window resize now properly updates all UI elements
 - Diff content no longer contains control characters
 - Improved diff line alignment and file separation
+- Modal key isolation - navigation keys no longer affect background list when modal is open
+- Auto-scroll keeps selection visible when navigating in all list views
+- Commit textarea focus no longer crashes the app
+- Terminal cleanup on startup clears leftover mouse mode from previous crashes
 
 ### Technical
 
