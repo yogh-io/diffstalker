@@ -9,6 +9,8 @@ import {
   getDisplayRowsLineNumWidth,
   wrapDisplayRows,
 } from '../../utils/displayRows.js';
+import { ansiToBlessed } from '../../utils/ansiToBlessed.js';
+import { truncateAnsi } from '../../utils/ansiTruncate.js';
 
 /**
  * Truncate string to fit within maxWidth, adding ellipsis if needed.
@@ -35,14 +37,26 @@ function escapeContent(content: string): string {
 }
 
 /**
- * Convert a hex color like #022800 to a blessed-compatible format.
- * blessed supports 256-color and truecolor via bgHex/fgHex style properties,
- * but for tags we need to use the closest named color or use escape codes directly.
+ * Build raw ANSI escape sequence for 24-bit RGB background.
  */
-function hexToAnsi(hex: string): string {
-  // For now, just use the hex value directly - blessed supports hex in style objects
-  return hex;
+function ansiBg(hex: string): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `\x1b[48;2;${r};${g};${b}m`;
 }
+
+/**
+ * Build raw ANSI escape sequence for 24-bit RGB foreground.
+ */
+function ansiFg(hex: string): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `\x1b[38;2;${r};${g};${b}m`;
+}
+
+const ANSI_RESET = '\x1b[0m';
 
 /**
  * Format a single display row as blessed-compatible tagged string.
@@ -99,39 +113,157 @@ function formatDisplayRow(
     case 'diff-add': {
       const isCont = row.isContinuation;
       const symbol = isCont ? '\u00bb' : '+';
-      const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
-      const content = ' ' + escapeContent(rawContent);
       const lineNum = formatLineNum(row.lineNum, lineNumWidth);
+      const prefix = `${lineNum} ${symbol}  `;
 
-      // Use simple ANSI colors for the background - blessed tags don't support hex well
-      // We'll use green-bg/red-bg for ANSI themes, or escape codes for hex themes
       if (theme.name.includes('ansi')) {
-        return `{green-bg}{black-fg}${lineNum} {/black-fg}{bold}${symbol}{/bold} ${content}{/green-bg}`;
+        // Basic ANSI theme - use blessed tags with 16-color palette
+        const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
+        const visibleContent = `${prefix}${rawContent}`;
+        const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+        return `{green-bg}{white-fg}${escapeContent(paddedContent)}{/white-fg}{/green-bg}`;
       }
-      // For hex themes, just use foreground colors (backgrounds need direct escape codes)
-      return `{green-fg}${lineNum} {bold}${symbol}{/bold}${content}{/green-fg}`;
+
+      // Use 24-bit RGB via {escape} tag
+      const bg = ansiBg(colors.addBg);
+      const highlightBg = ansiBg(colors.addHighlight);
+      const fg = ansiFg('#ffffff');
+
+      // Check for word-level diff segments (only in non-wrap mode or first row)
+      if (row.wordDiffSegments && !isCont) {
+        const rawContent = row.content || '';
+        // Check visible content length (not including escape codes)
+        if (!wrapMode && rawContent.length > contentWidth) {
+          // Content too long - fall back to simple truncation without word highlighting
+          const truncated = truncate(rawContent, contentWidth);
+          const visibleContent = `${prefix}${truncated}`;
+          const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+          return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
+        }
+
+        // Build content with word-level highlighting
+        let contentStr = '';
+        for (const seg of row.wordDiffSegments) {
+          if (seg.type === 'changed') {
+            contentStr += `${highlightBg}${seg.text}${bg}`;
+          } else {
+            contentStr += seg.text;
+          }
+        }
+        // Calculate padding based on visible width (prefix + rawContent)
+        const visibleWidth = prefix.length + rawContent.length;
+        const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
+        return `{escape}${bg}${fg}${prefix}${contentStr}${padding}${ANSI_RESET}{/escape}`;
+      }
+
+      // Check for syntax highlighting (when no word-diff)
+      if (row.highlighted && !isCont) {
+        const rawContent = row.content || '';
+        if (!wrapMode && rawContent.length > contentWidth) {
+          // Too long - fall back to plain truncation
+          const truncated = truncate(rawContent, contentWidth);
+          const visibleContent = `${prefix}${truncated}`;
+          const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+          return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
+        }
+        // Use highlighted content (already has foreground colors, bg preserved)
+        const visibleWidth = prefix.length + rawContent.length;
+        const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
+        return `{escape}${bg}${fg}${prefix}${row.highlighted}${padding}${ANSI_RESET}{/escape}`;
+      }
+
+      const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
+      const visibleContent = `${prefix}${rawContent}`;
+      const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+      return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
     }
 
     case 'diff-del': {
       const isCont = row.isContinuation;
       const symbol = isCont ? '\u00bb' : '-';
-      const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
-      const content = ' ' + escapeContent(rawContent);
       const lineNum = formatLineNum(row.lineNum, lineNumWidth);
+      const prefix = `${lineNum} ${symbol}  `;
 
       if (theme.name.includes('ansi')) {
-        return `{red-bg}{black-fg}${lineNum} {/black-fg}{bold}${symbol}{/bold} ${content}{/red-bg}`;
+        // Basic ANSI theme - use blessed tags with 16-color palette
+        const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
+        const visibleContent = `${prefix}${rawContent}`;
+        const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+        return `{red-bg}{white-fg}${escapeContent(paddedContent)}{/white-fg}{/red-bg}`;
       }
-      return `{red-fg}${lineNum} {bold}${symbol}{/bold}${content}{/red-fg}`;
+
+      // Use 24-bit RGB via {escape} tag
+      const bg = ansiBg(colors.delBg);
+      const highlightBg = ansiBg(colors.delHighlight);
+      const fg = ansiFg('#ffffff');
+
+      // Check for word-level diff segments (only in non-wrap mode or first row)
+      if (row.wordDiffSegments && !isCont) {
+        const rawContent = row.content || '';
+        // Check visible content length (not including escape codes)
+        if (!wrapMode && rawContent.length > contentWidth) {
+          // Content too long - fall back to simple truncation without word highlighting
+          const truncated = truncate(rawContent, contentWidth);
+          const visibleContent = `${prefix}${truncated}`;
+          const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+          return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
+        }
+
+        // Build content with word-level highlighting
+        let contentStr = '';
+        for (const seg of row.wordDiffSegments) {
+          if (seg.type === 'changed') {
+            contentStr += `${highlightBg}${seg.text}${bg}`;
+          } else {
+            contentStr += seg.text;
+          }
+        }
+        // Calculate padding based on visible width (prefix + rawContent)
+        const visibleWidth = prefix.length + rawContent.length;
+        const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
+        return `{escape}${bg}${fg}${prefix}${contentStr}${padding}${ANSI_RESET}{/escape}`;
+      }
+
+      // Check for syntax highlighting (when no word-diff)
+      if (row.highlighted && !isCont) {
+        const rawContent = row.content || '';
+        if (!wrapMode && rawContent.length > contentWidth) {
+          // Too long - fall back to plain truncation
+          const truncated = truncate(rawContent, contentWidth);
+          const visibleContent = `${prefix}${truncated}`;
+          const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+          return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
+        }
+        // Use highlighted content (already has foreground colors, bg preserved)
+        const visibleWidth = prefix.length + rawContent.length;
+        const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
+        return `{escape}${bg}${fg}${prefix}${row.highlighted}${padding}${ANSI_RESET}{/escape}`;
+      }
+
+      const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
+      const visibleContent = `${prefix}${rawContent}`;
+      const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+      return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
     }
 
     case 'diff-context': {
       const isCont = row.isContinuation;
       const symbol = isCont ? '\u00bb ' : '  ';
-      const content = wrapMode
-        ? escapeContent(row.content || '')
-        : escapeContent(truncate(row.content || '', contentWidth));
       const lineNum = formatLineNum(row.lineNum, lineNumWidth);
+      const rawContent = row.content || '';
+
+      // Use syntax highlighting if available (not for continuations)
+      if (row.highlighted && !isCont) {
+        const truncatedHighlight = wrapMode
+          ? row.highlighted
+          : truncateAnsi(row.highlighted, contentWidth);
+        const highlightedContent = ansiToBlessed(truncatedHighlight);
+        return `{gray-fg}${lineNum} ${symbol}{/gray-fg}${highlightedContent}`;
+      }
+
+      const content = wrapMode
+        ? escapeContent(rawContent)
+        : escapeContent(truncate(rawContent, contentWidth));
 
       return `{gray-fg}${lineNum} ${symbol}{/gray-fg}${content}`;
     }

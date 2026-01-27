@@ -120,7 +120,19 @@ export function formatHeader(
   const rightContent = branch ? formatBranch(branch) : '';
 
   if (rightContent) {
-    const leftLen = displayPath.length + (isLoading ? 2 : 0) + (error ? error.length + 3 : 0);
+    // Calculate visible text length for left side (excluding ANSI/tags)
+    let leftLen = displayPath.length;
+    if (isLoading) leftLen += 2; // " ⟳"
+    if (isNotGitRepo) {
+      leftLen += 24; // " (not a git repository)"
+    } else if (error) {
+      leftLen += error.length + 3; // " (error)"
+    }
+    if (watcherState?.enabled && watcherState.sourceFile) {
+      const followPath = abbreviateHomePath(watcherState.sourceFile);
+      leftLen += 10 + followPath.length; // " (follow: path)"
+    }
+
     const rightLen = branch
       ? branch.current.length +
         (branch.tracking ? 3 + branch.tracking.length : 0) +

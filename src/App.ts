@@ -108,7 +108,18 @@ export class App {
       fullUnicode: true,
       title: 'diffstalker',
       mouse: true,
+      terminal: 'xterm-256color',
     });
+
+    // Force 256-color support (terminfo detection can be unreliable)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const screenAny = this.screen as any;
+    if (screenAny.tput) {
+      screenAny.tput.colors = 256;
+    }
+    if (screenAny.program?.tput) {
+      screenAny.program.tput.colors = 256;
+    }
 
     // Create layout
     this.layout = new LayoutManager(this.screen, this.uiState.state.splitRatio);
@@ -270,7 +281,7 @@ export class App {
 
     // Display toggles
     this.screen.key(['w'], () => this.uiState.toggleWrapMode());
-    this.screen.key(['m'], () => this.uiState.toggleMouse());
+    this.screen.key(['m'], () => this.toggleMouseMode());
     this.screen.key(['S-t'], () => this.uiState.toggleAutoTab());
 
     // Split ratio adjustments
@@ -393,7 +404,7 @@ export class App {
     // Format: ? [scroll] [auto] [wrap] [dots]
     if (x >= 2 && x <= 9) {
       // [scroll] or m:[select]
-      this.uiState.toggleMouse();
+      this.toggleMouseMode();
     } else if (x >= 11 && x <= 16) {
       // [auto]
       this.uiState.toggleAutoTab();
@@ -547,6 +558,11 @@ export class App {
         this.initGitManager();
         this.render();
       }
+      // Navigate to the followed file if it's within the repo
+      if (state.rawContent) {
+        this.navigateToFile(state.rawContent);
+        this.render();
+      }
     });
 
     this.watcherState = {
@@ -555,6 +571,13 @@ export class App {
     };
 
     this.fileWatcher.start();
+
+    // Navigate to the initially followed file
+    const initialState = this.fileWatcher.state;
+    if (initialState.rawContent) {
+      this.watcherState.rawContent = initialState.rawContent;
+      this.navigateToFile(initialState.rawContent);
+    }
   }
 
   private initGitManager(): void {
@@ -906,6 +929,31 @@ export class App {
     }
   }
 
+  /**
+   * Navigate to a file given its absolute path.
+   * Extracts the relative path and finds the file in the current file list.
+   */
+  private navigateToFile(absolutePath: string): void {
+    if (!absolutePath || !this.repoPath) return;
+
+    // Check if the path is within the current repo
+    const repoPrefix = this.repoPath.endsWith('/') ? this.repoPath : this.repoPath + '/';
+    if (!absolutePath.startsWith(repoPrefix)) return;
+
+    // Extract relative path
+    const relativePath = absolutePath.slice(repoPrefix.length);
+    if (!relativePath) return;
+
+    // Find the file in the list
+    const files = this.gitManager?.state.status?.files ?? [];
+    const fileIndex = files.findIndex((f) => f.path === relativePath);
+
+    if (fileIndex >= 0) {
+      this.uiState.setSelectedIndex(fileIndex);
+      this.selectFileByIndex(fileIndex);
+    }
+  }
+
   // Git operations
   private async stageSelected(): Promise<void> {
     const files = this.gitManager?.state.status?.files ?? [];
@@ -949,6 +997,19 @@ export class App {
 
   private async refresh(): Promise<void> {
     await this.gitManager?.refresh();
+  }
+
+  private toggleMouseMode(): void {
+    const willEnable = !this.uiState.state.mouseEnabled;
+    this.uiState.toggleMouse();
+
+    // Access program for terminal mouse control (not on screen's TS types)
+    const program = (this.screen as any).program;
+    if (willEnable) {
+      program.enableMouse();
+    } else {
+      program.disableMouse();
+    }
   }
 
   private toggleFollow(): void {

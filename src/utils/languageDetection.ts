@@ -176,6 +176,7 @@ export function getLanguageFromPath(filePath: string): string | null {
  * Apply syntax highlighting to a line of code.
  * Returns the highlighted string with ANSI escape codes.
  * If highlighting fails, returns the original content.
+ * Skips highlighting for lines that look like comments (heuristic for multi-line context).
  */
 export function highlightLine(content: string, language: string): string {
   if (!content || !language) return content;
@@ -186,6 +187,61 @@ export function highlightLine(content: string, language: string): string {
   } catch {
     // If highlighting fails, return original content
     return content;
+  }
+}
+
+/**
+ * Apply syntax highlighting preserving background color.
+ * Replaces full ANSI resets with foreground-only resets so that
+ * the caller's background color is not cleared.
+ * Returns the highlighted string, or original content if highlighting fails.
+ */
+export function highlightLinePreserveBg(content: string, language: string): string {
+  if (!content || !language) return content;
+
+  try {
+    const result = emphasize.highlight(language, content);
+    // Replace full reset (\x1b[0m) with foreground-only reset (\x1b[39m)
+    // This preserves any background color set by the caller
+    return result.value.replace(/\x1b\[0m/g, '\x1b[39m');
+  } catch {
+    return content;
+  }
+}
+
+/**
+ * Highlight multiple lines as a block, preserving multi-line context
+ * (e.g., block comments, multi-line strings).
+ * Returns an array of highlighted lines.
+ */
+export function highlightBlock(lines: string[], language: string): string[] {
+  if (!language || lines.length === 0) return lines;
+
+  try {
+    // Join lines and highlight as one block to preserve state
+    const block = lines.join('\n');
+    const result = emphasize.highlight(language, block);
+    return result.value.split('\n');
+  } catch {
+    return lines;
+  }
+}
+
+/**
+ * Highlight multiple lines as a block, preserving background color.
+ * Returns an array of highlighted lines with foreground-only resets.
+ */
+export function highlightBlockPreserveBg(lines: string[], language: string): string[] {
+  if (!language || lines.length === 0) return lines;
+
+  try {
+    const block = lines.join('\n');
+    const result = emphasize.highlight(language, block);
+    // Replace full resets with foreground-only resets
+    const highlighted = result.value.replace(/\x1b\[0m/g, '\x1b[39m');
+    return highlighted.split('\n');
+  } catch {
+    return lines;
   }
 }
 

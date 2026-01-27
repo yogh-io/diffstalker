@@ -6,14 +6,34 @@ import { CommitInfo } from '../git/status.js';
 import { formatDateAbsolute } from './formatDate.js';
 import { isDisplayableDiffLine } from './diffFilters.js';
 import { breakLine, getLineRowCount } from './lineBreaking.js';
+import { computeWordDiff, areSimilarEnough, WordDiffSegment } from './wordDiff.js';
+import {
+  getLanguageFromPath,
+  highlightLine,
+  highlightBlockPreserveBg,
+} from './languageDetection.js';
+
+export type { WordDiffSegment } from './wordDiff.js';
 
 // Unified display row types - every type renders as exactly 1 terminal row
 export type DisplayRow =
   | { type: 'diff-header'; content: string }
   | { type: 'diff-hunk'; content: string }
-  | { type: 'diff-add'; lineNum?: number; content: string }
-  | { type: 'diff-del'; lineNum?: number; content: string }
-  | { type: 'diff-context'; lineNum?: number; content: string }
+  | {
+      type: 'diff-add';
+      lineNum?: number;
+      content: string;
+      wordDiffSegments?: WordDiffSegment[];
+      highlighted?: string;
+    }
+  | {
+      type: 'diff-del';
+      lineNum?: number;
+      content: string;
+      wordDiffSegments?: WordDiffSegment[];
+      highlighted?: string;
+    }
+  | { type: 'diff-context'; lineNum?: number; content: string; highlighted?: string }
   | { type: 'commit-header'; content: string }
   | { type: 'commit-message'; content: string }
   | { type: 'spacer' };
@@ -63,12 +83,224 @@ function convertDiffLineToDisplayRow(line: DiffLine): DisplayRow {
 }
 
 /**
+ * Extract file path from a diff --git header line.
+ */
+function extractFilePathFromHeader(content: string): string | null {
+  const match = content.match(/^diff --git a\/.+ b\/(.+)$/);
+  return match ? match[1] : null;
+}
+
+/**
  * Build display rows from a DiffResult.
  * Filters out non-displayable lines (index, ---, +++ headers).
+ * Pairs consecutive deletions/additions within hunks and computes word-level diffs.
+ * Applies block-based syntax highlighting to properly handle multi-line constructs.
  */
 export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
   if (!diff) return [];
-  return diff.lines.filter(isDisplayableDiffLine).map(convertDiffLineToDisplayRow);
+
+  const filteredLines = diff.lines.filter(isDisplayableDiffLine);
+  const rows: DisplayRow[] = [];
+
+  // Track file sections for block highlighting
+  // Each file section has: language, startRowIndex, and content streams
+  interface FileSection {
+    language: string | null;
+    startRowIndex: number;
+    // Old stream: context + deletions (for highlighting with old file context)
+    oldContent: string[];
+    oldRowIndices: number[]; // Maps oldContent index -> row index
+    // New stream: context + additions (for highlighting with new file context)
+    newContent: string[];
+    newRowIndices: number[]; // Maps newContent index -> row index
+  }
+
+  const fileSections: FileSection[] = [];
+  let currentSection: FileSection | null = null;
+
+  // Phase 1: Build display rows WITHOUT highlighting
+  // Also collect content for block highlighting
+  let i = 0;
+  while (i < filteredLines.length) {
+    const line = filteredLines[i];
+
+    // Headers - start new file section
+    if (line.type === 'header') {
+      const filePath = extractFilePathFromHeader(line.content);
+      if (filePath) {
+        // Save previous section if any
+        if (currentSection) {
+          fileSections.push(currentSection);
+        }
+        // Start new section
+        currentSection = {
+          language: getLanguageFromPath(filePath),
+          startRowIndex: rows.length,
+          oldContent: [],
+          oldRowIndices: [],
+          newContent: [],
+          newRowIndices: [],
+        };
+      }
+      rows.push(convertDiffLineToDisplayRow(line));
+      i++;
+      continue;
+    }
+
+    // Hunks - just convert (don't highlight)
+    if (line.type === 'hunk') {
+      rows.push(convertDiffLineToDisplayRow(line));
+      i++;
+      continue;
+    }
+
+    // Context lines - add to both streams
+    if (line.type === 'context') {
+      const content = getLineContent(line);
+      const rowIndex = rows.length;
+
+      rows.push({
+        type: 'diff-context',
+        lineNum: line.oldLineNum ?? line.newLineNum,
+        content,
+      });
+
+      // Context appears in both old and new streams
+      if (currentSection && currentSection.language) {
+        currentSection.oldContent.push(content);
+        currentSection.oldRowIndices.push(rowIndex);
+        currentSection.newContent.push(content);
+        currentSection.newRowIndices.push(rowIndex);
+      }
+
+      i++;
+      continue;
+    }
+
+    // Collect consecutive deletions
+    const deletions: DiffLine[] = [];
+    while (i < filteredLines.length && filteredLines[i].type === 'deletion') {
+      deletions.push(filteredLines[i]);
+      i++;
+    }
+
+    // Collect consecutive additions (immediately following deletions)
+    const additions: DiffLine[] = [];
+    while (i < filteredLines.length && filteredLines[i].type === 'addition') {
+      additions.push(filteredLines[i]);
+      i++;
+    }
+
+    // Build arrays to store word diff segments for paired lines
+    const delSegmentsMap: Map<number, WordDiffSegment[]> = new Map();
+    const addSegmentsMap: Map<number, WordDiffSegment[]> = new Map();
+
+    // Pair deletions with additions for word-level diff (only if similar enough)
+    const pairCount = Math.min(deletions.length, additions.length);
+
+    for (let j = 0; j < pairCount; j++) {
+      const delContent = getLineContent(deletions[j]);
+      const addContent = getLineContent(additions[j]);
+
+      // Only compute word diff if lines are similar enough
+      if (areSimilarEnough(delContent, addContent)) {
+        const { oldSegments, newSegments } = computeWordDiff(delContent, addContent);
+        delSegmentsMap.set(j, oldSegments);
+        addSegmentsMap.set(j, newSegments);
+      }
+    }
+
+    // Output deletions first (preserving original diff order)
+    for (let j = 0; j < deletions.length; j++) {
+      const delLine = deletions[j];
+      const delContent = getLineContent(delLine);
+      const segments = delSegmentsMap.get(j);
+      const rowIndex = rows.length;
+
+      rows.push({
+        type: 'diff-del',
+        lineNum: delLine.oldLineNum,
+        content: delContent,
+        ...(segments && { wordDiffSegments: segments }),
+      });
+
+      // Add to old stream (only if no word-diff, as word-diff takes priority)
+      if (currentSection && currentSection.language && !segments) {
+        currentSection.oldContent.push(delContent);
+        currentSection.oldRowIndices.push(rowIndex);
+      }
+    }
+
+    // Then output additions
+    for (let j = 0; j < additions.length; j++) {
+      const addLine = additions[j];
+      const addContent = getLineContent(addLine);
+      const segments = addSegmentsMap.get(j);
+      const rowIndex = rows.length;
+
+      rows.push({
+        type: 'diff-add',
+        lineNum: addLine.newLineNum,
+        content: addContent,
+        ...(segments && { wordDiffSegments: segments }),
+      });
+
+      // Add to new stream (only if no word-diff, as word-diff takes priority)
+      if (currentSection && currentSection.language && !segments) {
+        currentSection.newContent.push(addContent);
+        currentSection.newRowIndices.push(rowIndex);
+      }
+    }
+  }
+
+  // Save final section
+  if (currentSection) {
+    fileSections.push(currentSection);
+  }
+
+  // Phase 2: Apply block highlighting for each file section
+  for (const section of fileSections) {
+    if (!section.language) continue;
+
+    // Highlight old stream (context + deletions)
+    if (section.oldContent.length > 0) {
+      const oldHighlighted = highlightBlockPreserveBg(section.oldContent, section.language);
+      for (let j = 0; j < section.oldRowIndices.length; j++) {
+        const rowIndex = section.oldRowIndices[j];
+        const row = rows[rowIndex];
+        const highlighted = oldHighlighted[j];
+        // Only set highlighted if it's different from content
+        if (
+          highlighted &&
+          highlighted !== (row as { content: string }).content &&
+          (row.type === 'diff-del' || row.type === 'diff-context')
+        ) {
+          (row as { highlighted?: string }).highlighted = highlighted;
+        }
+      }
+    }
+
+    // Highlight new stream (context + additions)
+    if (section.newContent.length > 0) {
+      const newHighlighted = highlightBlockPreserveBg(section.newContent, section.language);
+      for (let j = 0; j < section.newRowIndices.length; j++) {
+        const rowIndex = section.newRowIndices[j];
+        const row = rows[rowIndex];
+        const highlighted = newHighlighted[j];
+        // Only set highlighted if it's different from content
+        // Note: context lines appear in both streams, but result should be same
+        if (
+          highlighted &&
+          highlighted !== (row as { content: string }).content &&
+          (row.type === 'diff-add' || row.type === 'diff-context')
+        ) {
+          (row as { highlighted?: string }).highlighted = highlighted;
+        }
+      }
+    }
+  }
+
+  return rows;
 }
 
 /**
