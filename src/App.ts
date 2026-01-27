@@ -157,11 +157,7 @@ export class App {
       hidden: true,
       style: {
         fg: 'white',
-        focus: {
-          border: {
-            fg: 'cyan',
-          },
-        },
+        bg: 'default',
       },
     });
 
