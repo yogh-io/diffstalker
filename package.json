@@ -21,7 +21,7 @@
     "dev": "bun --watch src/index.ts",
     "build": "tsc",
     "build:prod": "tsc && bun build dist/index.js --outfile dist/index.js --minify --target node --packages external",
-    "bundle": "bun run build:prod && bun build dist/index.js --outdir dist/bundle --minify --target node --packages external",
+    "bundle": "bun run build:prod && bun build dist/index.js --outdir dist/bundle --minify --target node --external neo-blessed",
     "start": "bun dist/index.js",
     "start:bundle": "bun dist/bundle/index.js",
     "test": "bun test src/*.test.ts src/**/*.test.ts",
