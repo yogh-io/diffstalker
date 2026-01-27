@@ -125,8 +125,9 @@ export class App {
     this.layout = new LayoutManager(this.screen, this.uiState.state.splitRatio);
 
     // Handle screen resize - re-render content
+    // Use setImmediate to ensure screen dimensions are fully updated
     this.screen.on('resize', () => {
-      this.render();
+      setImmediate(() => this.render());
     });
 
     // Initialize commit flow state

@@ -39,7 +39,7 @@ export type DisplayRow =
   | { type: 'spacer' };
 
 /**
- * Get the text content from a diff line (strip leading +/-/space and trailing \r)
+ * Get the text content from a diff line (strip leading +/-/space and control chars)
  */
 function getLineContent(line: DiffLine): string {
   let content: string;
@@ -51,8 +51,9 @@ function getLineContent(line: DiffLine): string {
   } else {
     content = line.content;
   }
-  // Strip carriage returns (from Windows CRLF) that cause rendering artifacts
-  return content.replace(/\r/g, '');
+  // Strip control characters that cause rendering artifacts
+  // and convert tabs to spaces for consistent width calculation
+  return content.replace(/[\x00-\x08\x0a-\x1f\x7f]/g, '').replace(/\t/g, '    ');
 }
 
 /**

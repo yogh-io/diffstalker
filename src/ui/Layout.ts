@@ -222,7 +222,8 @@ export class LayoutManager {
   private onResize(): void {
     this._dimensions = this.calculateDimensions();
     this.updateLayout();
-    this.screen.render();
+    // Don't call screen.render() here - App's resize handler will render
+    // with properly recalculated content
   }
 
   private updateLayout(): void {
