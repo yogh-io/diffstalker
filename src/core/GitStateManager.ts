@@ -192,13 +192,13 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     const refsDir = path.join(gitDir, 'refs');
     const gitignorePath = path.join(this.repoPath, '.gitignore');
 
+    // Git uses atomic writes (write to temp, then rename). We use polling
+    // for reliable detection of these atomic operations.
     this.gitWatcher = watch([indexFile, headFile, refsDir, gitignorePath], {
       persistent: true,
       ignoreInitial: true,
-      awaitWriteFinish: {
-        stabilityThreshold: 100,
-        pollInterval: 50,
-      },
+      usePolling: true,
+      interval: 100,
     });
 
     // --- Working directory watcher with gitignore support ---
