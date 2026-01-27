@@ -148,6 +148,7 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 | Key | Action |
 |-----|--------|
 | `c` | Open commit panel (switch to Tab 2) |
+| `d` | Discard changes (unstaged modified files only, with confirmation) |
 | `r` / `Ctrl+R` | Refresh git status |
 | `q` / `Ctrl+C` | Quit application |
 
