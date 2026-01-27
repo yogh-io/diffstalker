@@ -5,13 +5,25 @@ import { CommandServer } from './ipc/CommandServer.js';
 
 // Cleanup function to reset terminal state
 function cleanupTerminal(): void {
-  // Disable any mouse tracking
+  // Disable SGR extended mouse mode
   process.stdout.write('\x1b[?1006l');
+  // Disable button event mouse tracking
   process.stdout.write('\x1b[?1002l');
+  // Disable basic mouse tracking
   process.stdout.write('\x1b[?1000l');
+  // Disable any-event mouse tracking (in case it was enabled)
+  process.stdout.write('\x1b[?1003l');
   // Show cursor
   process.stdout.write('\x1b[?25h');
+  // Exit alternate screen buffer (in case it was left enabled)
+  process.stdout.write('\x1b[?1049l');
+  // Reset scroll region
+  process.stdout.write('\x1b[r');
 }
+
+// Clean up any leftover terminal state from previous crashes
+// (e.g., if the process was killed before cleanup could run)
+cleanupTerminal();
 
 // Ensure terminal is cleaned up on any exit
 process.on('exit', cleanupTerminal);
