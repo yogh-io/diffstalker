@@ -637,6 +637,7 @@ export class App {
 
     this.fileWatcher.on('path-change', (state: FileWatcherState) => {
       if (state.path && state.path !== this.repoPath) {
+        const oldRepoPath = this.repoPath;
         this.repoPath = state.path;
         this.watcherState = {
           enabled: true,
@@ -644,7 +645,7 @@ export class App {
           rawContent: state.rawContent ?? undefined,
           lastUpdate: state.lastUpdate ?? undefined,
         };
-        this.initGitManager();
+        this.initGitManager(oldRepoPath);
         this.render();
       }
       // Navigate to the followed file if it's within the repo
@@ -669,11 +670,12 @@ export class App {
     }
   }
 
-  private initGitManager(): void {
+  private initGitManager(oldRepoPath?: string): void {
     // Clean up existing manager
     if (this.gitManager) {
       this.gitManager.removeAllListeners();
-      removeManagerForRepo(this.repoPath);
+      // Use oldRepoPath if provided (when switching repos), otherwise use current path
+      removeManagerForRepo(oldRepoPath ?? this.repoPath);
     }
 
     // Get or create manager for this repo
