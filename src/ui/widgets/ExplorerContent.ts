@@ -7,14 +7,11 @@ import {
   applyMiddleDots,
 } from '../../utils/explorerDisplayRows.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
-import { ansiToBlessed } from '../../utils/ansiToBlessed.js';
 
-/**
- * Escape blessed tags in content.
- */
-function escapeContent(content: string): string {
-  return content.replace(/\{/g, '{{').replace(/\}/g, '}}');
-}
+const ANSI_RESET = '\x1b[0m';
+const ANSI_GRAY = '\x1b[90m';
+const ANSI_CYAN = '\x1b[36m';
+const ANSI_YELLOW = '\x1b[33m';
 
 /**
  * Format explorer file content as blessed-compatible tagged string.
@@ -63,7 +60,8 @@ export function formatExplorerContent(
 
   for (const row of visibleRows) {
     if (row.type === 'truncation') {
-      lines.push(`{yellow-fg}${escapeContent(row.content)}{/yellow-fg}`);
+      // Use {escape} with raw ANSI for consistency
+      lines.push(`{escape}${ANSI_YELLOW}${row.content}${ANSI_RESET}{/escape}`);
       continue;
     }
 
@@ -88,11 +86,9 @@ export function formatExplorerContent(
     let displayContent: string;
     if (canUseHighlighting && row.highlighted) {
       // Use ANSI-aware truncation to preserve syntax highlighting
-      const truncatedHighlight = shouldTruncate
+      displayContent = shouldTruncate
         ? truncateAnsi(row.highlighted, contentWidth)
         : row.highlighted;
-      // Convert ANSI to blessed tags
-      displayContent = ansiToBlessed(truncatedHighlight);
     } else {
       // Plain content path
       let plainContent = rawContent;
@@ -107,16 +103,12 @@ export function formatExplorerContent(
         plainContent = plainContent.slice(0, Math.max(0, contentWidth - 1)) + '...';
       }
 
-      displayContent = escapeContent(plainContent);
+      displayContent = plainContent;
     }
 
-    // Format line with line number
-    let line = '';
-    if (isContinuation) {
-      line = `{cyan-fg}${lineNumDisplay}{/cyan-fg} ${displayContent || ' '}`;
-    } else {
-      line = `{gray-fg}${lineNumDisplay}{/gray-fg} ${displayContent || ' '}`;
-    }
+    // Format line with line number using raw ANSI (avoids blessed escaping issues)
+    const lineNumColor = isContinuation ? ANSI_CYAN : ANSI_GRAY;
+    const line = `{escape}${lineNumColor}${lineNumDisplay}${ANSI_RESET} ${displayContent || ' '}{/escape}`;
 
     lines.push(line);
   }

@@ -9,8 +9,14 @@ import {
   getDisplayRowsLineNumWidth,
   wrapDisplayRows,
 } from '../../utils/displayRows.js';
-import { ansiToBlessed } from '../../utils/ansiToBlessed.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
+
+// ANSI escape codes for raw terminal output (avoids blessed tag escaping issues)
+const ANSI_RESET = '\x1b[0m';
+const ANSI_BOLD = '\x1b[1m';
+const ANSI_GRAY = '\x1b[90m';
+const ANSI_CYAN = '\x1b[36m';
+const ANSI_YELLOW = '\x1b[33m';
 
 /**
  * Truncate string to fit within maxWidth, adding ellipsis if needed.
@@ -56,8 +62,6 @@ function ansiFg(hex: string): string {
   return `\x1b[38;2;${r};${g};${b}m`;
 }
 
-const ANSI_RESET = '\x1b[0m';
-
 /**
  * Format a single display row as blessed-compatible tagged string.
  */
@@ -79,10 +83,10 @@ function formatDisplayRow(
         if (match) {
           const maxPathLen = headerWidth - 6;
           const path = truncate(match[1], maxPathLen);
-          return `{bold}{cyan-fg}\u2500\u2500 ${path} \u2500\u2500{/cyan-fg}{/bold}`;
+          return `{escape}${ANSI_BOLD}${ANSI_CYAN}\u2500\u2500 ${path} \u2500\u2500${ANSI_RESET}{/escape}`;
         }
       }
-      return `{gray-fg}${escapeContent(truncate(content, headerWidth))}{/gray-fg}`;
+      return `{escape}${ANSI_GRAY}${truncate(content, headerWidth)}${ANSI_RESET}{/escape}`;
     }
 
     case 'diff-hunk': {
@@ -105,9 +109,9 @@ function formatDisplayRow(
         const truncatedContext =
           context && contextMaxLen > 3 ? ' ' + truncate(context, contextMaxLen) : '';
 
-        return `{cyan-fg}${rangeText}{/cyan-fg}{gray-fg}${truncatedContext}{/gray-fg}`;
+        return `{escape}${ANSI_CYAN}${rangeText}${ANSI_GRAY}${truncatedContext}${ANSI_RESET}{/escape}`;
       }
-      return `{cyan-fg}${escapeContent(truncate(row.content, headerWidth))}{/cyan-fg}`;
+      return `{escape}${ANSI_CYAN}${truncate(row.content, headerWidth)}${ANSI_RESET}{/escape}`;
     }
 
     case 'diff-add': {
@@ -253,27 +257,25 @@ function formatDisplayRow(
       const prefix = `${lineNum} ${symbol}  `;
       const rawContent = row.content || '';
 
+      // Use {escape} for raw ANSI output (consistent with add/del lines)
+      // This avoids blessed's tag escaping issues with braces
+      const prefixAnsi = `\x1b[90m${prefix}\x1b[0m`; // gray prefix
+
       // Use syntax highlighting if available (not for continuations)
       if (row.highlighted && !isCont) {
-        const truncatedHighlight = wrapMode
-          ? row.highlighted
-          : truncateAnsi(row.highlighted, contentWidth);
-        const highlightedContent = ansiToBlessed(truncatedHighlight);
-        return `{gray-fg}${prefix}{/gray-fg}${highlightedContent}`;
+        const content = wrapMode ? row.highlighted : truncateAnsi(row.highlighted, contentWidth);
+        return `{escape}${prefixAnsi}${content}${ANSI_RESET}{/escape}`;
       }
 
-      const content = wrapMode
-        ? escapeContent(rawContent)
-        : escapeContent(truncate(rawContent, contentWidth));
-
-      return `{gray-fg}${prefix}{/gray-fg}${content}`;
+      const content = wrapMode ? rawContent : truncate(rawContent, contentWidth);
+      return `{escape}${prefixAnsi}${content}${ANSI_RESET}{/escape}`;
     }
 
     case 'commit-header':
-      return `{yellow-fg}${escapeContent(truncate(row.content, headerWidth))}{/yellow-fg}`;
+      return `{escape}${ANSI_YELLOW}${truncate(row.content, headerWidth)}${ANSI_RESET}{/escape}`;
 
     case 'commit-message':
-      return escapeContent(truncate(row.content, headerWidth));
+      return `{escape}${truncate(row.content, headerWidth)}${ANSI_RESET}{/escape}`;
 
     case 'spacer':
       return '';

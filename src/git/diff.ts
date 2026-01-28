@@ -373,6 +373,9 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
     refs: entry.refs || '',
   }));
 
+  // Sort files alphabetically by path
+  fileDiffs.sort((a, b) => a.path.localeCompare(b.path));
+
   return {
     baseBranch: baseRef,
     stats: {
@@ -545,6 +548,9 @@ export async function getCompareDiffWithUncommitted(
     totalAdditions += file.additions;
     totalDeletions += file.deletions;
   }
+
+  // Sort files alphabetically by path
+  mergedFiles.sort((a, b) => a.path.localeCompare(b.path));
 
   return {
     baseBranch: committedDiff.baseBranch,

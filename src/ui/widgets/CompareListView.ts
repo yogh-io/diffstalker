@@ -2,7 +2,7 @@ import type { CommitInfo } from '../../git/status.js';
 import type { CompareFileDiff } from '../../git/diff.js';
 import { formatDate } from '../../utils/formatDate.js';
 import { formatCommitDisplay } from '../../utils/commitFormat.js';
-import { shortenPath } from '../../utils/formatPath.js';
+import { buildFileTree, flattenTree, buildTreePrefix, TreeRowItem } from '../../utils/fileTree.js';
 
 export type CompareListSelectionType = 'commit' | 'file';
 
@@ -12,13 +12,26 @@ export interface CompareListSelection {
 }
 
 interface RowItem {
-  type: 'section-header' | 'commit' | 'file' | 'spacer';
+  type: 'section-header' | 'commit' | 'directory' | 'file' | 'spacer';
   sectionType?: 'commits' | 'files';
   commitIndex?: number;
   fileIndex?: number;
   commit?: CommitInfo;
   file?: CompareFileDiff;
+  treeRow?: TreeRowItem;
 }
+
+// ANSI escape codes for raw terminal output (avoids blessed tag escaping issues)
+const ANSI_RESET = '\x1b[0m';
+const ANSI_BOLD = '\x1b[1m';
+const ANSI_GRAY = '\x1b[90m';
+const ANSI_CYAN = '\x1b[36m';
+const ANSI_YELLOW = '\x1b[33m';
+const ANSI_GREEN = '\x1b[32m';
+const ANSI_RED = '\x1b[31m';
+const ANSI_BLUE = '\x1b[34m';
+const ANSI_MAGENTA = '\x1b[35m';
+const ANSI_INVERSE = '\x1b[7m';
 
 /**
  * Build the list of row items for the compare list view.
@@ -41,27 +54,29 @@ export function buildCompareListRows(
     }
   }
 
-  // Files section
+  // Files section with tree view
   if (files.length > 0) {
     if (commits.length > 0) {
       result.push({ type: 'spacer' });
     }
     result.push({ type: 'section-header', sectionType: 'files' });
     if (filesExpanded) {
-      files.forEach((file, i) => {
-        result.push({ type: 'file', fileIndex: i, file });
-      });
+      // Build tree from files
+      const tree = buildFileTree(files);
+      const treeRows = flattenTree(tree);
+
+      for (const treeRow of treeRows) {
+        if (treeRow.type === 'directory') {
+          result.push({ type: 'directory', treeRow });
+        } else {
+          const file = files[treeRow.fileIndex!];
+          result.push({ type: 'file', fileIndex: treeRow.fileIndex, file, treeRow });
+        }
+      }
     }
   }
 
   return result;
-}
-
-/**
- * Escape blessed tags in content.
- */
-function escapeContent(content: string): string {
-  return content.replace(/\{/g, '{{').replace(/\}/g, '}}');
 }
 
 /**
@@ -85,80 +100,103 @@ function formatCommitRow(
     remainingWidth
   );
 
-  let line = ' ';
-  line += `{yellow-fg}${commit.shortHash}{/yellow-fg} `;
+  let line = ` ${ANSI_YELLOW}${commit.shortHash}${ANSI_RESET} `;
 
   if (isHighlighted) {
-    line += `{cyan-fg}{inverse}${escapeContent(displayMessage)}{/inverse}{/cyan-fg}`;
+    line += `${ANSI_CYAN}${ANSI_INVERSE}${displayMessage}${ANSI_RESET}`;
   } else {
-    line += escapeContent(displayMessage);
+    line += displayMessage;
   }
 
-  line += ` {gray-fg}(${dateStr}){/gray-fg}`;
+  line += ` ${ANSI_GRAY}(${dateStr})${ANSI_RESET}`;
 
   if (displayRefs) {
-    line += ` {green-fg}${escapeContent(displayRefs)}{/green-fg}`;
+    line += ` ${ANSI_GREEN}${displayRefs}${ANSI_RESET}`;
   }
 
-  return line;
+  return `{escape}${line}{/escape}`;
 }
 
 /**
- * Format a file row.
+ * Format a directory row in tree view.
+ */
+function formatDirectoryRow(treeRow: TreeRowItem, width: number): string {
+  const prefix = buildTreePrefix(treeRow);
+  const icon = '▸ '; // Collapsed folder icon (we don't support expanding individual folders yet)
+
+  // Truncate name if needed
+  const maxNameLen = width - prefix.length - icon.length - 2;
+  let name = treeRow.name;
+  if (name.length > maxNameLen) {
+    name = name.slice(0, maxNameLen - 1) + '…';
+  }
+
+  const line = `${ANSI_GRAY}${prefix}${ANSI_RESET}${ANSI_BLUE}${icon}${name}${ANSI_RESET}`;
+  return `{escape}${line}{/escape}`;
+}
+
+/**
+ * Format a file row in tree view.
  */
 function formatFileRow(
   file: CompareFileDiff,
+  treeRow: TreeRowItem,
   isSelected: boolean,
   isFocused: boolean,
-  maxPathLength: number
+  width: number
 ): string {
   const isHighlighted = isSelected && isFocused;
   const isUncommitted = file.isUncommitted ?? false;
 
+  const prefix = buildTreePrefix(treeRow);
+
   const statusColors: Record<CompareFileDiff['status'], string> = {
-    added: 'green',
-    modified: 'yellow',
-    deleted: 'red',
-    renamed: 'blue',
+    added: ANSI_GREEN,
+    modified: ANSI_YELLOW,
+    deleted: ANSI_RED,
+    renamed: ANSI_BLUE,
   };
 
-  const statusChars: Record<CompareFileDiff['status'], string> = {
-    added: 'A',
-    modified: 'M',
-    deleted: 'D',
-    renamed: 'R',
+  // File icon based on status
+  const statusIcons: Record<CompareFileDiff['status'], string> = {
+    added: '+',
+    modified: '●',
+    deleted: '−',
+    renamed: '→',
   };
 
-  // Account for stats: " (+123 -456)" and possible "*" for uncommitted
-  const statsLength = 5 + String(file.additions).length + String(file.deletions).length;
-  const uncommittedLength = isUncommitted ? 14 : 0;
-  const availableForPath = Math.max(10, maxPathLength - statsLength - uncommittedLength);
+  const statusColor = isUncommitted ? ANSI_MAGENTA : statusColors[file.status];
+  const icon = statusIcons[file.status];
 
-  let line = ' ';
+  // Calculate available width for filename
+  const statsStr = `(+${file.additions} -${file.deletions})`;
+  const uncommittedStr = isUncommitted ? ' [uncommitted]' : '';
+  const fixedWidth = prefix.length + 2 + statsStr.length + uncommittedStr.length + 2;
+  const maxNameLen = Math.max(5, width - fixedWidth);
 
-  if (isUncommitted) {
-    line += '{magenta-fg}{bold}*{/bold}{/magenta-fg}';
+  let name = treeRow.name;
+  if (name.length > maxNameLen) {
+    name = name.slice(0, maxNameLen - 1) + '…';
   }
 
-  const statusColor = isUncommitted ? 'magenta' : statusColors[file.status];
-  line += `{${statusColor}-fg}{bold}${statusChars[file.status]}{/bold}{/${statusColor}-fg} `;
+  let line = `${ANSI_GRAY}${prefix}${ANSI_RESET}`;
+  line += `${statusColor}${icon}${ANSI_RESET} `;
 
-  const displayPath = shortenPath(file.path, availableForPath);
   if (isHighlighted) {
-    line += `{cyan-fg}{inverse}${escapeContent(displayPath)}{/inverse}{/cyan-fg}`;
+    line += `${ANSI_CYAN}${ANSI_INVERSE}${name}${ANSI_RESET}`;
   } else if (isUncommitted) {
-    line += `{magenta-fg}${escapeContent(displayPath)}{/magenta-fg}`;
+    line += `${ANSI_MAGENTA}${name}${ANSI_RESET}`;
   } else {
-    line += escapeContent(displayPath);
+    line += name;
   }
 
-  line += ` {gray-fg}({/gray-fg}{green-fg}+${file.additions}{/green-fg} {red-fg}-${file.deletions}{/red-fg}{gray-fg}){/gray-fg}`;
+  line += ` ${ANSI_GRAY}(${ANSI_GREEN}+${file.additions}${ANSI_RESET} ${ANSI_RED}-${file.deletions}${ANSI_GRAY})${ANSI_RESET}`;
 
   if (isUncommitted) {
-    line += ' {magenta-fg}[uncommitted]{/magenta-fg}';
+    line += ` ${ANSI_MAGENTA}[uncommitted]${ANSI_RESET}`;
   }
 
-  return line;
+  return `{escape}${line}{/escape}`;
 }
 
 /**
@@ -191,15 +229,19 @@ export function formatCompareListView(
       const isCommits = row.sectionType === 'commits';
       const count = isCommits ? commits.length : files.length;
       const label = isCommits ? 'Commits' : 'Files';
-      lines.push(`{cyan-fg}{bold}▼ ${label}{/bold}{/cyan-fg} {gray-fg}(${count}){/gray-fg}`);
+      lines.push(
+        `{escape}${ANSI_CYAN}${ANSI_BOLD}▼ ${label}${ANSI_RESET} ${ANSI_GRAY}(${count})${ANSI_RESET}{/escape}`
+      );
     } else if (row.type === 'spacer') {
       lines.push('');
     } else if (row.type === 'commit' && row.commit && row.commitIndex !== undefined) {
       const isSelected = selectedItem?.type === 'commit' && selectedItem.index === row.commitIndex;
       lines.push(formatCommitRow(row.commit, isSelected, isFocused, width));
-    } else if (row.type === 'file' && row.file && row.fileIndex !== undefined) {
+    } else if (row.type === 'directory' && row.treeRow) {
+      lines.push(formatDirectoryRow(row.treeRow, width));
+    } else if (row.type === 'file' && row.file && row.fileIndex !== undefined && row.treeRow) {
       const isSelected = selectedItem?.type === 'file' && selectedItem.index === row.fileIndex;
-      lines.push(formatFileRow(row.file, isSelected, isFocused, width - 5));
+      lines.push(formatFileRow(row.file, row.treeRow, isSelected, isFocused, width));
     }
   }
 
@@ -215,22 +257,12 @@ export function getCompareListTotalRows(
   commitsExpanded: boolean = true,
   filesExpanded: boolean = true
 ): number {
-  let count = 0;
-  if (commits.length > 0) {
-    count += 1; // header
-    if (commitsExpanded) count += commits.length;
-  }
-  if (files.length > 0) {
-    if (commits.length > 0) count += 1; // spacer
-    count += 1; // header
-    if (filesExpanded) count += files.length;
-  }
-  return count;
+  return buildCompareListRows(commits, files, commitsExpanded, filesExpanded).length;
 }
 
 /**
  * Map a row index to a selection.
- * Returns null if the row is a header or spacer.
+ * Returns null if the row is a header, spacer, or directory.
  */
 export function getCompareSelectionFromRow(
   rowIndex: number,
