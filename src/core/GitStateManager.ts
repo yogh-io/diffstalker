@@ -260,9 +260,22 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
 
   /**
    * Schedule a refresh (coalesced if one is already pending).
+   * Also refreshes history and compare data if they were previously loaded.
    */
   scheduleRefresh(): void {
-    this.queue.scheduleRefresh(() => this.doRefresh());
+    this.queue.scheduleRefresh(async () => {
+      await this.doRefresh();
+
+      // Also refresh history if it was loaded (has commits)
+      if (this._historyState.commits.length > 0) {
+        await this.doLoadHistory();
+      }
+
+      // Also refresh compare if it was loaded (has a base branch set)
+      if (this._compareState.compareBaseBranch) {
+        await this.doRefreshCompareDiff(false);
+      }
+    });
   }
 
   /**
@@ -490,30 +503,35 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     this.updateCompareState({ compareLoading: true, compareError: null });
 
     try {
-      await this.queue.enqueue(async () => {
-        let base = this._compareState.compareBaseBranch;
-        if (!base) {
-          // Try cached value first, then fall back to default detection
-          base = getCachedBaseBranch(this.repoPath) ?? (await getDefaultBaseBranch(this.repoPath));
-          this.updateCompareState({ compareBaseBranch: base });
-        }
-        if (base) {
-          const diff = includeUncommitted
-            ? await getCompareDiffWithUncommitted(this.repoPath, base)
-            : await getDiffBetweenRefs(this.repoPath, base);
-          this.updateCompareState({ compareDiff: diff, compareLoading: false });
-        } else {
-          this.updateCompareState({
-            compareDiff: null,
-            compareLoading: false,
-            compareError: 'No base branch found',
-          });
-        }
-      });
+      await this.queue.enqueue(() => this.doRefreshCompareDiff(includeUncommitted));
     } catch (err) {
       this.updateCompareState({
         compareLoading: false,
         compareError: `Failed to load compare diff: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  /**
+   * Internal: refresh compare diff (called within queue).
+   */
+  private async doRefreshCompareDiff(includeUncommitted: boolean): Promise<void> {
+    let base = this._compareState.compareBaseBranch;
+    if (!base) {
+      // Try cached value first, then fall back to default detection
+      base = getCachedBaseBranch(this.repoPath) ?? (await getDefaultBaseBranch(this.repoPath));
+      this.updateCompareState({ compareBaseBranch: base });
+    }
+    if (base) {
+      const diff = includeUncommitted
+        ? await getCompareDiffWithUncommitted(this.repoPath, base)
+        : await getDiffBetweenRefs(this.repoPath, base);
+      this.updateCompareState({ compareDiff: diff, compareLoading: false });
+    } else {
+      this.updateCompareState({
+        compareDiff: null,
+        compareLoading: false,
+        compareError: 'No base branch found',
       });
     }
   }
@@ -542,14 +560,21 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     this.updateHistoryState({ isLoading: true });
 
     try {
-      const commits = await this.queue.enqueue(() => getCommitHistory(this.repoPath, count));
-      this.updateHistoryState({ commits, isLoading: false });
+      await this.queue.enqueue(() => this.doLoadHistory(count));
     } catch (err) {
       this.updateHistoryState({ isLoading: false });
       this.updateState({
         error: `Failed to load history: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
+  }
+
+  /**
+   * Internal: load commit history (called within queue).
+   */
+  private async doLoadHistory(count: number = 100): Promise<void> {
+    const commits = await getCommitHistory(this.repoPath, count);
+    this.updateHistoryState({ commits, isLoading: false });
   }
 
   /**
