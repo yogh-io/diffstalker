@@ -400,7 +400,7 @@ export class App {
       // Convert screen Y to pane-relative row (blessed click coords are screen-relative)
       const clickedRow = this.layout.screenYToTopPaneRow(mouse.y);
       if (clickedRow >= 0) {
-        this.handleTopPaneClick(clickedRow);
+        this.handleTopPaneClick(clickedRow, mouse.x);
       }
     });
 
@@ -410,7 +410,7 @@ export class App {
     });
   }
 
-  private handleTopPaneClick(row: number): void {
+  private handleTopPaneClick(row: number, x?: number): void {
     const state = this.uiState.state;
 
     if (state.bottomTab === 'history') {
@@ -436,8 +436,29 @@ export class App {
       // Account for section headers in file list
       const fileIndex = getFileIndexFromRow(row + state.fileListScrollOffset, files);
       if (fileIndex !== null && fileIndex >= 0) {
-        this.uiState.setSelectedIndex(fileIndex);
-        this.selectFileByIndex(fileIndex);
+        // Check if click is on the action button [+] or [-] (columns 2-4)
+        // Layout: "  [+] M path" or "▸ [-] M path"
+        //          01234
+        if (x !== undefined && x >= 2 && x <= 4) {
+          // Toggle staging status
+          this.toggleFileByIndex(fileIndex);
+        } else {
+          // Select the file
+          this.uiState.setSelectedIndex(fileIndex);
+          this.selectFileByIndex(fileIndex);
+        }
+      }
+    }
+  }
+
+  private async toggleFileByIndex(index: number): Promise<void> {
+    const files = this.gitManager?.state.status?.files ?? [];
+    const file = getFileAtIndex(files, index);
+    if (file) {
+      if (file.staged) {
+        await this.gitManager?.unstage(file);
+      } else {
+        await this.gitManager?.stage(file);
       }
     }
   }
@@ -646,6 +667,8 @@ export class App {
           lastUpdate: state.lastUpdate ?? undefined,
         };
         this.initGitManager(oldRepoPath);
+        this.resetRepoSpecificState();
+        this.loadCurrentTabData();
         this.render();
       }
       // Navigate to the followed file if it's within the repo
@@ -733,6 +756,33 @@ export class App {
 
     // Load root directory
     this.explorerManager.loadDirectory('');
+  }
+
+  /**
+   * Reset UI state that's specific to a repository.
+   * Called when switching to a new repo via file watcher.
+   */
+  private resetRepoSpecificState(): void {
+    // Reset compare selection (App-level state)
+    this.compareSelection = null;
+
+    // Reset UI state scroll offsets and selections
+    this.uiState.resetForNewRepo();
+  }
+
+  /**
+   * Load data for the current tab.
+   * Called after switching repos to refresh tab-specific data.
+   */
+  private loadCurrentTabData(): void {
+    const tab = this.uiState.state.bottomTab;
+    if (tab === 'history') {
+      this.gitManager?.loadHistory();
+    } else if (tab === 'compare') {
+      this.gitManager?.refreshCompareDiff(this.uiState.state.includeUncommitted);
+    }
+    // Diff tab data is loaded by gitManager.refresh() in initGitManager
+    // Explorer data is loaded by initExplorerManager()
   }
 
   private setupCommandHandler(): void {

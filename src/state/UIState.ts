@@ -264,4 +264,22 @@ export class UIState extends EventEmitter<UIStateEventMap> {
       this.setPane(currentPane === 'explorer' ? 'diff' : 'explorer');
     }
   }
+
+  // Reset repo-specific state when switching repositories
+  resetForNewRepo(): void {
+    this._state = {
+      ...this._state,
+      selectedIndex: 0,
+      fileListScrollOffset: 0,
+      diffScrollOffset: 0,
+      historySelectedIndex: 0,
+      historyScrollOffset: 0,
+      compareSelectedIndex: 0,
+      compareScrollOffset: 0,
+      explorerSelectedIndex: 0,
+      explorerScrollOffset: 0,
+      explorerFileScrollOffset: 0,
+    };
+    this.emit('change', this._state);
+  }
 }
