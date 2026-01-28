@@ -1,60 +1,11 @@
-import blessed from 'neo-blessed';
-import type { Widgets } from 'blessed';
 import type { BranchInfo } from '../../git/status.js';
 import { abbreviateHomePath } from '../../config.js';
 
-export interface WatcherState {
-  enabled: boolean;
-  sourceFile?: string;
-  rawContent?: string;
-  lastUpdate?: Date;
-}
-
 /**
  * Calculate header height based on content.
+ * Currently always returns 1 (single line header).
  */
-export function getHeaderHeight(
-  repoPath: string | null,
-  branch: BranchInfo | null,
-  watcherState: WatcherState | undefined,
-  width: number,
-  error: string | null = null,
-  isLoading: boolean = false
-): number {
-  if (!repoPath) return 1;
-
-  const displayPath = abbreviateHomePath(repoPath);
-  const isNotGitRepo = error === 'Not a git repository';
-
-  // Calculate branch width
-  let branchWidth = 0;
-  if (branch) {
-    branchWidth = branch.current.length;
-    if (branch.tracking) branchWidth += 3 + branch.tracking.length;
-    if (branch.ahead > 0) branchWidth += 3 + String(branch.ahead).length;
-    if (branch.behind > 0) branchWidth += 3 + String(branch.behind).length;
-  }
-
-  // Calculate left side width
-  let leftWidth = displayPath.length;
-  if (isLoading) leftWidth += 2;
-  if (isNotGitRepo) leftWidth += 24;
-  if (error && !isNotGitRepo) leftWidth += error.length + 3;
-
-  // Check if follow indicator causes wrap
-  if (watcherState?.enabled && watcherState.sourceFile) {
-    const followPath = abbreviateHomePath(watcherState.sourceFile);
-    const fullFollow = ` (follow: ${followPath})`;
-    const availableOneLine = width - leftWidth - branchWidth - 4;
-
-    if (fullFollow.length > availableOneLine) {
-      const availableWithWrap = width - leftWidth - 2;
-      if (fullFollow.length <= availableWithWrap) {
-        return 2;
-      }
-    }
-  }
-
+export function getHeaderHeight(): number {
   return 1;
 }
 
@@ -87,7 +38,6 @@ export function formatHeader(
   branch: BranchInfo | null,
   isLoading: boolean,
   error: string | null,
-  watcherState: WatcherState | undefined,
   width: number
 ): string {
   if (!repoPath) {
@@ -110,12 +60,6 @@ export function formatHeader(
     leftContent += ` {red-fg}(${error}){/red-fg}`;
   }
 
-  // Add follow indicator if enabled
-  if (watcherState?.enabled && watcherState.sourceFile) {
-    const followPath = abbreviateHomePath(watcherState.sourceFile);
-    leftContent += ` {gray-fg}(follow: ${followPath}){/gray-fg}`;
-  }
-
   // Build right side content (branch info)
   const rightContent = branch ? formatBranch(branch) : '';
 
@@ -127,10 +71,6 @@ export function formatHeader(
       leftLen += 24; // " (not a git repository)"
     } else if (error) {
       leftLen += error.length + 3; // " (error)"
-    }
-    if (watcherState?.enabled && watcherState.sourceFile) {
-      const followPath = abbreviateHomePath(watcherState.sourceFile);
-      leftLen += 10 + followPath.length; // " (follow: path)"
     }
 
     const rightLen = branch

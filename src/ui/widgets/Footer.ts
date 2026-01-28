@@ -16,6 +16,7 @@ export function formatFooter(
   autoTabEnabled: boolean,
   wrapMode: boolean,
   showMiddleDots: boolean,
+  followEnabled: boolean,
   width: number
 ): string {
   // Left side: indicators
@@ -27,6 +28,8 @@ export function formatFooter(
   leftContent += autoTabEnabled ? '{blue-fg}[auto]{/blue-fg}' : '{gray-fg}[auto]{/gray-fg}';
   leftContent += ' ';
   leftContent += wrapMode ? '{blue-fg}[wrap]{/blue-fg}' : '{gray-fg}[wrap]{/gray-fg}';
+  leftContent += ' ';
+  leftContent += followEnabled ? '{blue-fg}[follow]{/blue-fg}' : '{gray-fg}[follow]{/gray-fg}';
 
   if (activeTab === 'explorer') {
     leftContent += ' ';

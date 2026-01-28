@@ -1,7 +1,14 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import { LayoutManager, SPLIT_RATIO_STEP } from './ui/Layout.js';
-import { formatHeader, getHeaderHeight, type WatcherState } from './ui/widgets/Header.js';
+import { formatHeader } from './ui/widgets/Header.js';
+
+interface WatcherState {
+  enabled: boolean;
+  sourceFile?: string;
+  rawContent?: string;
+  lastUpdate?: Date;
+}
 import { formatFooter } from './ui/widgets/Footer.js';
 import {
   formatFileList,
@@ -489,7 +496,7 @@ export class App {
     }
 
     // Left side toggles (approximate positions)
-    // Format: ? [scroll] [auto] [wrap] [dots]
+    // Format: ? [scroll] [auto] [wrap] [follow] [dots]
     if (x >= 2 && x <= 9) {
       // [scroll] or m:[select]
       this.toggleMouseMode();
@@ -499,7 +506,10 @@ export class App {
     } else if (x >= 18 && x <= 23) {
       // [wrap]
       this.uiState.toggleWrapMode();
-    } else if (x >= 25 && x <= 30 && this.uiState.state.bottomTab === 'explorer') {
+    } else if (x >= 25 && x <= 32) {
+      // [follow]
+      this.toggleFollow();
+    } else if (x >= 34 && x <= 39 && this.uiState.state.bottomTab === 'explorer') {
       // [dots] - only visible in explorer
       this.uiState.toggleMiddleDots();
     } else if (x === 0) {
@@ -1247,7 +1257,6 @@ export class App {
       gitState?.status?.branch ?? null,
       gitState?.isLoading ?? false,
       gitState?.error ?? null,
-      this.watcherState,
       width
     );
 
@@ -1440,6 +1449,7 @@ export class App {
       state.autoTabEnabled,
       state.wrapMode,
       state.showMiddleDots,
+      this.watcherState.enabled,
       width
     );
 
