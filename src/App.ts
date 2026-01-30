@@ -1,6 +1,7 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
-import { LayoutManager, SPLIT_RATIO_STEP } from './ui/Layout.js';
+import { LayoutManager } from './ui/Layout.js';
+import { setupKeyBindings } from './KeyBindings.js';
 import { formatHeader } from './ui/widgets/Header.js';
 
 interface WatcherState {
@@ -225,195 +226,42 @@ export class App {
   }
 
   private setupKeyboardHandlers(): void {
-    // Quit
-    this.screen.key(['q', 'C-c'], () => {
-      this.exit();
-    });
-
-    // Navigation (skip if modal is open - modal handles its own keys)
-    this.screen.key(['j', 'down'], () => {
-      if (this.activeModal) return;
-      this.navigateDown();
-    });
-
-    this.screen.key(['k', 'up'], () => {
-      if (this.activeModal) return;
-      this.navigateUp();
-    });
-
-    // Tab switching (skip if modal is open)
-    this.screen.key(['1'], () => {
-      if (this.activeModal) return;
-      this.uiState.setTab('diff');
-    });
-    this.screen.key(['2'], () => {
-      if (this.activeModal) return;
-      this.uiState.setTab('commit');
-    });
-    this.screen.key(['3'], () => {
-      if (this.activeModal) return;
-      this.uiState.setTab('history');
-    });
-    this.screen.key(['4'], () => {
-      if (this.activeModal) return;
-      this.uiState.setTab('compare');
-    });
-    this.screen.key(['5'], () => {
-      if (this.activeModal) return;
-      this.uiState.setTab('explorer');
-    });
-
-    // Pane toggle (skip if modal is open)
-    this.screen.key(['tab'], () => {
-      if (this.activeModal) return;
-      this.uiState.togglePane();
-    });
-
-    // Staging operations (skip if modal is open)
-    this.screen.key(['s'], () => {
-      if (this.activeModal) return;
-      this.stageSelected();
-    });
-    this.screen.key(['S-u'], () => {
-      if (this.activeModal) return;
-      this.unstageSelected();
-    });
-    this.screen.key(['S-a'], () => {
-      if (this.activeModal) return;
-      this.stageAll();
-    });
-    this.screen.key(['S-z'], () => {
-      if (this.activeModal) return;
-      this.unstageAll();
-    });
-
-    // Select/toggle (skip if modal is open)
-    this.screen.key(['enter', 'space'], () => {
-      if (this.activeModal) return;
-      const state = this.uiState.state;
-      if (state.bottomTab === 'explorer' && state.currentPane === 'explorer') {
-        this.enterExplorerDirectory();
-      } else {
-        this.toggleSelected();
+    setupKeyBindings(
+      this.screen,
+      {
+        exit: () => this.exit(),
+        navigateDown: () => this.navigateDown(),
+        navigateUp: () => this.navigateUp(),
+        stageSelected: () => this.stageSelected(),
+        unstageSelected: () => this.unstageSelected(),
+        stageAll: () => this.stageAll(),
+        unstageAll: () => this.unstageAll(),
+        toggleSelected: () => this.toggleSelected(),
+        enterExplorerDirectory: () => this.enterExplorerDirectory(),
+        goExplorerUp: () => this.goExplorerUp(),
+        openFileFinder: () => this.openFileFinder(),
+        focusCommitInput: () => this.focusCommitInput(),
+        unfocusCommitInput: () => this.unfocusCommitInput(),
+        refresh: () => this.refresh(),
+        toggleMouseMode: () => this.toggleMouseMode(),
+        toggleFollow: () => this.toggleFollow(),
+        showDiscardConfirm: (file) => this.showDiscardConfirm(file),
+        render: () => this.render(),
+      },
+      {
+        hasActiveModal: () => this.activeModal !== null,
+        getBottomTab: () => this.uiState.state.bottomTab,
+        getCurrentPane: () => this.uiState.state.currentPane,
+        isCommitInputFocused: () => this.commitFlowState.state.inputFocused,
+        getStatusFiles: () => this.gitManager?.state.status?.files ?? [],
+        getSelectedIndex: () => this.uiState.state.selectedIndex,
+        uiState: this.uiState,
+        explorerManager: this.explorerManager,
+        commitFlowState: this.commitFlowState,
+        gitManager: this.gitManager,
+        layout: this.layout,
       }
-    });
-
-    // Explorer: go up directory (skip if modal is open)
-    this.screen.key(['backspace'], () => {
-      if (this.activeModal) return;
-      const state = this.uiState.state;
-      if (state.bottomTab === 'explorer' && state.currentPane === 'explorer') {
-        this.goExplorerUp();
-      }
-    });
-
-    // Explorer: toggle show only changes filter
-    this.screen.key(['g'], () => {
-      if (this.activeModal) return;
-      const state = this.uiState.state;
-      if (state.bottomTab === 'explorer') {
-        this.explorerManager?.toggleShowOnlyChanges();
-      }
-    });
-
-    // Explorer: open file finder
-    this.screen.key(['/'], () => {
-      if (this.activeModal) return;
-      const state = this.uiState.state;
-      if (state.bottomTab === 'explorer') {
-        this.openFileFinder();
-      }
-    });
-
-    // Commit (skip if modal is open)
-    this.screen.key(['c'], () => {
-      if (this.activeModal) return;
-      this.uiState.setTab('commit');
-    });
-
-    // Commit panel specific keys (only when on commit tab)
-    this.screen.key(['i'], () => {
-      if (this.uiState.state.bottomTab === 'commit' && !this.commitFlowState.state.inputFocused) {
-        this.focusCommitInput();
-      }
-    });
-
-    this.screen.key(['a'], () => {
-      if (this.uiState.state.bottomTab === 'commit' && !this.commitFlowState.state.inputFocused) {
-        this.commitFlowState.toggleAmend();
-        this.render();
-      } else {
-        this.uiState.toggleAutoTab();
-      }
-    });
-
-    this.screen.key(['escape'], () => {
-      if (this.uiState.state.bottomTab === 'commit') {
-        if (this.commitFlowState.state.inputFocused) {
-          this.unfocusCommitInput();
-        } else {
-          this.uiState.setTab('diff');
-        }
-      }
-    });
-
-    // Refresh
-    this.screen.key(['r'], () => this.refresh());
-
-    // Display toggles
-    this.screen.key(['w'], () => this.uiState.toggleWrapMode());
-    this.screen.key(['m'], () => this.toggleMouseMode());
-    this.screen.key(['S-t'], () => this.uiState.toggleAutoTab());
-
-    // Split ratio adjustments
-    this.screen.key(['-', '_', '['], () => {
-      this.uiState.adjustSplitRatio(-SPLIT_RATIO_STEP);
-      this.layout.setSplitRatio(this.uiState.state.splitRatio);
-      this.render();
-    });
-
-    this.screen.key(['=', '+', ']'], () => {
-      this.uiState.adjustSplitRatio(SPLIT_RATIO_STEP);
-      this.layout.setSplitRatio(this.uiState.state.splitRatio);
-      this.render();
-    });
-
-    // Theme picker
-    this.screen.key(['t'], () => this.uiState.openModal('theme'));
-
-    // Hotkeys modal
-    this.screen.key(['?'], () => this.uiState.toggleModal('hotkeys'));
-
-    // Follow toggle
-    this.screen.key(['f'], () => this.toggleFollow());
-
-    // Compare view: base branch picker
-    this.screen.key(['b'], () => {
-      if (this.uiState.state.bottomTab === 'compare') {
-        this.uiState.openModal('baseBranch');
-      }
-    });
-
-    // Compare view: toggle uncommitted
-    this.screen.key(['u'], () => {
-      if (this.uiState.state.bottomTab === 'compare') {
-        this.uiState.toggleIncludeUncommitted();
-        const includeUncommitted = this.uiState.state.includeUncommitted;
-        this.gitManager?.refreshCompareDiff(includeUncommitted);
-      }
-    });
-
-    // Discard changes (with confirmation)
-    this.screen.key(['d'], () => {
-      if (this.uiState.state.bottomTab === 'diff') {
-        const files = this.gitManager?.state.status?.files ?? [];
-        const selectedFile = getFileAtIndex(files, this.uiState.state.selectedIndex);
-        // Only allow discard for unstaged modified files
-        if (selectedFile && !selectedFile.staged && selectedFile.status !== 'untracked') {
-          this.showDiscardConfirm(selectedFile);
-        }
-      }
-    });
+    );
   }
 
   private setupMouseHandlers(): void {
