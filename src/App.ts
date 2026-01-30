@@ -732,9 +732,21 @@ export class App {
 
     this.fileWatcher.start();
 
-    // Navigate to the initially followed file
+    // Switch to the repo described in the target file
     const initialState = this.fileWatcher.state;
-    if (initialState.rawContent) {
+    if (initialState.path && initialState.path !== this.repoPath) {
+      const oldRepoPath = this.repoPath;
+      this.repoPath = initialState.path;
+      this.watcherState = {
+        enabled: true,
+        sourceFile: initialState.sourceFile ?? this.config.targetFile,
+        rawContent: initialState.rawContent ?? undefined,
+        lastUpdate: initialState.lastUpdate ?? undefined,
+      };
+      this.initGitManager(oldRepoPath);
+      this.resetRepoSpecificState();
+      this.loadCurrentTabData();
+    } else if (initialState.rawContent) {
       this.watcherState.rawContent = initialState.rawContent;
       this.navigateToFile(initialState.rawContent);
     }
