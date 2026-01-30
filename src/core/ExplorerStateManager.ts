@@ -351,45 +351,25 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
   /**
    * Flatten tree into display rows.
    */
+  private shouldIncludeNode(node: ExplorerTreeNode): boolean {
+    if (!this.options.showOnlyChanges) return true;
+    if (node.isDirectory) return !!node.hasChangedChildren;
+    return !!node.gitStatus;
+  }
+
   private flattenTree(root: ExplorerTreeNode): ExplorerDisplayRow[] {
     const rows: ExplorerDisplayRow[] = [];
 
-    const traverse = (node: ExplorerTreeNode, depth: number, parentIsLast: boolean[]): void => {
-      // Skip root node in display (but process its children)
-      if (depth === 0) {
-        for (let i = 0; i < node.children.length; i++) {
-          const child = node.children[i];
-          const isLast = i === node.children.length - 1;
-
-          // Apply filter if showOnlyChanges is enabled
-          if (this.options.showOnlyChanges) {
-            if (child.isDirectory && !child.hasChangedChildren) continue;
-            if (!child.isDirectory && !child.gitStatus) continue;
-          }
-
-          rows.push({
-            node: child,
-            depth: 0,
-            isLast,
-            parentIsLast: [],
-          });
-
-          if (child.isDirectory && child.expanded) {
-            traverse(child, 1, [isLast]);
-          }
-        }
-        return;
-      }
-
+    const traverseChildren = (
+      node: ExplorerTreeNode,
+      depth: number,
+      parentIsLast: boolean[]
+    ): void => {
       for (let i = 0; i < node.children.length; i++) {
         const child = node.children[i];
         const isLast = i === node.children.length - 1;
 
-        // Apply filter if showOnlyChanges is enabled
-        if (this.options.showOnlyChanges) {
-          if (child.isDirectory && !child.hasChangedChildren) continue;
-          if (!child.isDirectory && !child.gitStatus) continue;
-        }
+        if (!this.shouldIncludeNode(child)) continue;
 
         rows.push({
           node: child,
@@ -399,12 +379,13 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
         });
 
         if (child.isDirectory && child.expanded) {
-          traverse(child, depth + 1, [...parentIsLast, isLast]);
+          traverseChildren(child, depth + 1, [...parentIsLast, isLast]);
         }
       }
     };
 
-    traverse(root, 0, []);
+    // Start from root's children at depth 0 (root itself is not displayed)
+    traverseChildren(root, 0, []);
     return rows;
   }
 
