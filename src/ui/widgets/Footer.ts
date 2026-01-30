@@ -15,8 +15,8 @@ export function formatFooter(
   mouseEnabled: boolean,
   autoTabEnabled: boolean,
   wrapMode: boolean,
-  showMiddleDots: boolean,
   followEnabled: boolean,
+  showOnlyChanges: boolean,
   width: number
 ): string {
   // Left side: indicators
@@ -33,7 +33,9 @@ export function formatFooter(
 
   if (activeTab === 'explorer') {
     leftContent += ' ';
-    leftContent += showMiddleDots ? '{blue-fg}[dots]{/blue-fg}' : '{gray-fg}[dots]{/gray-fg}';
+    leftContent += showOnlyChanges
+      ? '{blue-fg}[changes]{/blue-fg}'
+      : '{gray-fg}[changes]{/gray-fg}';
   }
 
   // Right side: tabs

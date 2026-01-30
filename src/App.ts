@@ -36,6 +36,7 @@ import {
   formatExplorerView,
   formatBreadcrumbs,
   getExplorerTotalRows,
+  type ExplorerDisplayRow,
 } from './ui/widgets/ExplorerView.js';
 import {
   formatExplorerContent,
@@ -45,11 +46,13 @@ import {
   ExplorerStateManager,
   ExplorerState,
   ExplorerOptions,
+  GitStatusMap,
 } from './core/ExplorerStateManager.js';
 import { ThemePicker } from './ui/modals/ThemePicker.js';
 import { HotkeysModal } from './ui/modals/HotkeysModal.js';
 import { BaseBranchPicker } from './ui/modals/BaseBranchPicker.js';
 import { DiscardConfirm } from './ui/modals/DiscardConfirm.js';
+import { FileFinder } from './ui/modals/FileFinder.js';
 import { CommitFlowState } from './state/CommitFlowState.js';
 import { UIState, Pane } from './state/UIState.js';
 import {
@@ -63,6 +66,11 @@ import {
 import { FilePathWatcher, WatcherState as FileWatcherState } from './core/FilePathWatcher.js';
 import { Config, saveConfig } from './config.js';
 import type { FileEntry } from './git/status.js';
+import {
+  getCategoryForIndex,
+  getIndexForCategoryPosition,
+  type CategoryName,
+} from './utils/fileCategories.js';
 import type { CommandServer, CommandHandler, AppState } from './ipc/CommandServer.js';
 import type { BottomTab } from './types/tabs.js';
 import type { ThemeName } from './themes.js';
@@ -97,10 +105,19 @@ export class App {
   private commitTextarea: Widgets.TextareaElement | null = null;
 
   // Active modals
-  private activeModal: ThemePicker | HotkeysModal | BaseBranchPicker | DiscardConfirm | null = null;
+  private activeModal:
+    | ThemePicker
+    | HotkeysModal
+    | BaseBranchPicker
+    | DiscardConfirm
+    | FileFinder
+    | null = null;
 
   // Cached total rows for scroll bounds (single source of truth from render)
   private bottomPaneTotalRows: number = 0;
+
+  // Selection anchor: remembers category + position before stage/unstage
+  private pendingSelectionAnchor: { category: CategoryName; categoryIndex: number } | null = null;
 
   constructor(options: AppOptions) {
     this.config = options.config;
@@ -291,6 +308,24 @@ export class App {
       }
     });
 
+    // Explorer: toggle show only changes filter
+    this.screen.key(['g'], () => {
+      if (this.activeModal) return;
+      const state = this.uiState.state;
+      if (state.bottomTab === 'explorer') {
+        this.explorerManager?.toggleShowOnlyChanges();
+      }
+    });
+
+    // Explorer: open file finder
+    this.screen.key(['/'], () => {
+      if (this.activeModal) return;
+      const state = this.uiState.state;
+      if (state.bottomTab === 'explorer') {
+        this.openFileFinder();
+      }
+    });
+
     // Commit (skip if modal is open)
     this.screen.key(['c'], () => {
       if (this.activeModal) return;
@@ -308,6 +343,8 @@ export class App {
       if (this.uiState.state.bottomTab === 'commit' && !this.commitFlowState.state.inputFocused) {
         this.commitFlowState.toggleAmend();
         this.render();
+      } else {
+        this.uiState.toggleAutoTab();
       }
     });
 
@@ -330,13 +367,13 @@ export class App {
     this.screen.key(['S-t'], () => this.uiState.toggleAutoTab());
 
     // Split ratio adjustments
-    this.screen.key(['-', '_'], () => {
+    this.screen.key(['-', '_', '['], () => {
       this.uiState.adjustSplitRatio(-SPLIT_RATIO_STEP);
       this.layout.setSplitRatio(this.uiState.state.splitRatio);
       this.render();
     });
 
-    this.screen.key(['=', '+'], () => {
+    this.screen.key(['=', '+', ']'], () => {
       this.uiState.adjustSplitRatio(SPLIT_RATIO_STEP);
       this.layout.setSplitRatio(this.uiState.state.splitRatio);
       this.render();
@@ -371,8 +408,7 @@ export class App {
     this.screen.key(['d'], () => {
       if (this.uiState.state.bottomTab === 'diff') {
         const files = this.gitManager?.state.status?.files ?? [];
-        const selectedIndex = this.uiState.state.selectedIndex;
-        const selectedFile = files[selectedIndex];
+        const selectedFile = getFileAtIndex(files, this.uiState.state.selectedIndex);
         // Only allow discard for unstaged modified files
         if (selectedFile && !selectedFile.staged && selectedFile.status !== 'untracked') {
           this.showDiscardConfirm(selectedFile);
@@ -462,6 +498,7 @@ export class App {
     const files = this.gitManager?.state.status?.files ?? [];
     const file = getFileAtIndex(files, index);
     if (file) {
+      this.pendingSelectionAnchor = getCategoryForIndex(files, this.uiState.state.selectedIndex);
       if (file.staged) {
         await this.gitManager?.unstage(file);
       } else {
@@ -496,7 +533,7 @@ export class App {
     }
 
     // Left side toggles (approximate positions)
-    // Format: ? [scroll] [auto] [wrap] [follow] [dots]
+    // Format: ? [scroll] [auto] [wrap] [follow] [changes]
     if (x >= 2 && x <= 9) {
       // [scroll] or m:[select]
       this.toggleMouseMode();
@@ -509,9 +546,9 @@ export class App {
     } else if (x >= 25 && x <= 32) {
       // [follow]
       this.toggleFollow();
-    } else if (x >= 34 && x <= 39 && this.uiState.state.bottomTab === 'explorer') {
-      // [dots] - only visible in explorer
-      this.uiState.toggleMiddleDots();
+    } else if (x >= 34 && x <= 43 && this.uiState.state.bottomTab === 'explorer') {
+      // [changes] - only visible in explorer
+      this.explorerManager?.toggleShowOnlyChanges();
     } else if (x === 0) {
       // ? - open hotkeys
       this.uiState.openModal('hotkeys');
@@ -537,7 +574,7 @@ export class App {
       const newOffset = Math.min(maxOffset, Math.max(0, state.compareScrollOffset + delta));
       this.uiState.setCompareScrollOffset(newOffset);
     } else if (state.bottomTab === 'explorer') {
-      const totalRows = getExplorerTotalRows(this.explorerManager?.state.items ?? []);
+      const totalRows = getExplorerTotalRows(this.explorerManager?.state.displayRows ?? []);
       const maxOffset = Math.max(0, totalRows - visibleHeight);
       const newOffset = Math.min(maxOffset, Math.max(0, state.explorerScrollOffset + delta));
       this.uiState.setExplorerScrollOffset(newOffset);
@@ -716,6 +753,25 @@ export class App {
 
     // Listen to state changes
     this.gitManager.on('state-change', () => {
+      const files = this.gitManager?.state.status?.files ?? [];
+
+      if (this.pendingSelectionAnchor) {
+        // Restore selection to same category + position after stage/unstage
+        const anchor = this.pendingSelectionAnchor;
+        this.pendingSelectionAnchor = null;
+        const newIndex = getIndexForCategoryPosition(files, anchor.category, anchor.categoryIndex);
+        this.uiState.setSelectedIndex(newIndex);
+        this.selectFileByIndex(newIndex);
+      } else if (files.length > 0) {
+        // Default: clamp selected index to valid range
+        const maxIndex = files.length - 1;
+        if (this.uiState.state.selectedIndex > maxIndex) {
+          this.uiState.setSelectedIndex(maxIndex);
+        }
+      }
+
+      // Update explorer git status when git state changes
+      this.updateExplorerGitStatus();
       this.render();
     });
 
@@ -753,9 +809,10 @@ export class App {
     }
 
     // Create new manager with options
-    const options: ExplorerOptions = {
+    const options: Partial<ExplorerOptions> = {
       hideHidden: true,
       hideGitignored: true,
+      showOnlyChanges: false,
     };
     this.explorerManager = new ExplorerStateManager(this.repoPath, options);
 
@@ -766,6 +823,38 @@ export class App {
 
     // Load root directory
     this.explorerManager.loadDirectory('');
+
+    // Update git status after tree is loaded
+    this.updateExplorerGitStatus();
+  }
+
+  /**
+   * Build git status map and update explorer.
+   */
+  private updateExplorerGitStatus(): void {
+    if (!this.explorerManager || !this.gitManager) return;
+
+    const files = this.gitManager.state.status?.files ?? [];
+    const statusMap: GitStatusMap = {
+      files: new Map(),
+      directories: new Set(),
+    };
+
+    for (const file of files) {
+      statusMap.files.set(file.path, { status: file.status, staged: file.staged });
+
+      // Mark all parent directories as having changed children
+      const parts = file.path.split('/');
+      let dirPath = '';
+      for (let i = 0; i < parts.length - 1; i++) {
+        dirPath = dirPath ? `${dirPath}/${parts[i]}` : parts[i];
+        statusMap.directories.add(dirPath);
+      }
+      // Also mark root as having changes
+      statusMap.directories.add('');
+    }
+
+    this.explorerManager.setGitStatus(statusMap);
   }
 
   /**
@@ -1087,16 +1176,18 @@ export class App {
 
   private async enterExplorerDirectory(): Promise<void> {
     await this.explorerManager?.enterDirectory();
-    this.uiState.setExplorerScrollOffset(0);
+    // Reset file content scroll when expanding/collapsing
     this.uiState.setExplorerFileScrollOffset(0);
-    this.uiState.setExplorerSelectedIndex(0);
+    // Sync selected index from explorer manager (it maintains selection by path)
+    this.uiState.setExplorerSelectedIndex(this.explorerManager?.state.selectedIndex ?? 0);
   }
 
   private async goExplorerUp(): Promise<void> {
     await this.explorerManager?.goUp();
-    this.uiState.setExplorerScrollOffset(0);
+    // Reset file content scroll when collapsing
     this.uiState.setExplorerFileScrollOffset(0);
-    this.uiState.setExplorerSelectedIndex(0);
+    // Sync selected index from explorer manager
+    this.uiState.setExplorerSelectedIndex(this.explorerManager?.state.selectedIndex ?? 0);
   }
 
   private selectFileByIndex(index: number): void {
@@ -1137,24 +1228,30 @@ export class App {
   // Git operations
   private async stageSelected(): Promise<void> {
     const files = this.gitManager?.state.status?.files ?? [];
-    const selectedFile = files[this.uiState.state.selectedIndex];
+    const index = this.uiState.state.selectedIndex;
+    const selectedFile = getFileAtIndex(files, index);
     if (selectedFile && !selectedFile.staged) {
+      this.pendingSelectionAnchor = getCategoryForIndex(files, index);
       await this.gitManager?.stage(selectedFile);
     }
   }
 
   private async unstageSelected(): Promise<void> {
     const files = this.gitManager?.state.status?.files ?? [];
-    const selectedFile = files[this.uiState.state.selectedIndex];
+    const index = this.uiState.state.selectedIndex;
+    const selectedFile = getFileAtIndex(files, index);
     if (selectedFile?.staged) {
+      this.pendingSelectionAnchor = getCategoryForIndex(files, index);
       await this.gitManager?.unstage(selectedFile);
     }
   }
 
   private async toggleSelected(): Promise<void> {
     const files = this.gitManager?.state.status?.files ?? [];
-    const selectedFile = files[this.uiState.state.selectedIndex];
+    const index = this.uiState.state.selectedIndex;
+    const selectedFile = getFileAtIndex(files, index);
     if (selectedFile) {
+      this.pendingSelectionAnchor = getCategoryForIndex(files, index);
       if (selectedFile.staged) {
         await this.gitManager?.unstage(selectedFile);
       } else {
@@ -1181,6 +1278,32 @@ export class App {
       },
       () => {
         this.activeModal = null;
+      }
+    );
+    this.activeModal.focus();
+  }
+
+  private async openFileFinder(): Promise<void> {
+    const allPaths = (await this.explorerManager?.getAllFilePaths()) ?? [];
+    if (allPaths.length === 0) return;
+
+    this.activeModal = new FileFinder(
+      this.screen,
+      allPaths,
+      async (selectedPath) => {
+        this.activeModal = null;
+        // Navigate to the selected file in explorer
+        const success = await this.explorerManager?.navigateToPath(selectedPath);
+        if (success) {
+          // Reset scroll to show selected file
+          this.uiState.setExplorerScrollOffset(0);
+          this.uiState.setExplorerFileScrollOffset(0);
+        }
+        this.render();
+      },
+      () => {
+        this.activeModal = null;
+        this.render();
       }
     );
     this.activeModal.focus();
@@ -1299,10 +1422,10 @@ export class App {
       );
     } else if (state.bottomTab === 'explorer') {
       const explorerState = this.explorerManager?.state;
-      const items = explorerState?.items ?? [];
+      const displayRows = explorerState?.displayRows ?? [];
 
       content = formatExplorerView(
-        items,
+        displayRows,
         state.explorerSelectedIndex,
         state.currentPane === 'explorer',
         width,
@@ -1448,8 +1571,8 @@ export class App {
       state.mouseEnabled,
       state.autoTabEnabled,
       state.wrapMode,
-      state.showMiddleDots,
       this.watcherState.enabled,
+      this.explorerManager?.showOnlyChanges ?? false,
       width
     );
 

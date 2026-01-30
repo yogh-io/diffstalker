@@ -44,3 +44,55 @@ export function getFileListSectionCounts(files: FileEntry[]): {
     stagedCount: staged.length,
   };
 }
+
+export type CategoryName = 'modified' | 'untracked' | 'staged';
+
+/**
+ * Which category does flat index `i` fall in, and what's the position within it?
+ * Flat order is: modified → untracked → staged.
+ */
+export function getCategoryForIndex(
+  files: FileEntry[],
+  index: number
+): { category: CategoryName; categoryIndex: number } {
+  const { modified, untracked } = categorizeFiles(files);
+  const modLen = modified.length;
+  const untLen = untracked.length;
+
+  if (index < modLen) {
+    return { category: 'modified', categoryIndex: index };
+  }
+  if (index < modLen + untLen) {
+    return { category: 'untracked', categoryIndex: index - modLen };
+  }
+  return { category: 'staged', categoryIndex: index - modLen - untLen };
+}
+
+/**
+ * Convert category + position back to a flat index (clamped).
+ * If the target category is empty, falls back to last file overall, or 0 if no files.
+ */
+export function getIndexForCategoryPosition(
+  files: FileEntry[],
+  category: CategoryName,
+  categoryIndex: number
+): number {
+  const { modified, untracked, staged, ordered } = categorizeFiles(files);
+  if (ordered.length === 0) return 0;
+
+  const categories = { modified, untracked, staged };
+  const catFiles = categories[category];
+
+  if (catFiles.length === 0) {
+    return ordered.length - 1;
+  }
+
+  const clampedIndex = Math.min(categoryIndex, catFiles.length - 1);
+  const offsets = {
+    modified: 0,
+    untracked: modified.length,
+    staged: modified.length + untracked.length,
+  };
+
+  return offsets[category] + clampedIndex;
+}
