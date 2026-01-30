@@ -87,6 +87,70 @@ function getStatusColor(status: FileStatus | undefined): string {
 }
 
 /**
+ * Format a single explorer row as a raw ANSI string.
+ */
+function formatExplorerRow(
+  row: ExplorerDisplayRow,
+  isSelected: boolean,
+  isFocused: boolean,
+  width: number
+): string {
+  const isHighlighted = isSelected && isFocused;
+  const node = row.node;
+
+  const prefix = buildTreePrefix(row);
+
+  let icon = '';
+  if (node.isDirectory) {
+    icon = node.expanded ? '▾ ' : '▸ ';
+  }
+
+  const statusMarker = getStatusMarker(node.gitStatus);
+  const statusColor = getStatusColor(node.gitStatus);
+  const statusDisplay = statusMarker ? `${statusColor}${statusMarker}${ANSI_RESET} ` : '';
+
+  const dirStatusDisplay =
+    node.isDirectory && node.hasChangedChildren ? `${ANSI_YELLOW}●${ANSI_RESET} ` : '';
+
+  const prefixLen =
+    prefix.length +
+    icon.length +
+    (statusMarker ? 2 : 0) +
+    (node.hasChangedChildren && node.isDirectory ? 2 : 0);
+  const maxNameLen = Math.max(5, width - prefixLen - 2);
+
+  let displayName = node.isDirectory ? `${node.name}/` : node.name;
+  if (displayName.length > maxNameLen) {
+    displayName = displayName.slice(0, maxNameLen - 1) + '…';
+  }
+
+  let line = `${ANSI_GRAY}${prefix}${ANSI_RESET}`;
+
+  if (node.isDirectory) {
+    line += `${ANSI_BLUE}${icon}${ANSI_RESET}`;
+    line += dirStatusDisplay;
+
+    if (isHighlighted) {
+      line += `${ANSI_CYAN}${ANSI_BOLD}${ANSI_INVERSE}${displayName}${ANSI_RESET}`;
+    } else {
+      line += `${ANSI_BLUE}${displayName}${ANSI_RESET}`;
+    }
+  } else {
+    line += statusDisplay;
+
+    if (isHighlighted) {
+      line += `${ANSI_CYAN}${ANSI_BOLD}${ANSI_INVERSE}${displayName}${ANSI_RESET}`;
+    } else if (node.gitStatus) {
+      line += `${statusColor}${displayName}${ANSI_RESET}`;
+    } else {
+      line += displayName;
+    }
+  }
+
+  return line;
+}
+
+/**
  * Format the explorer tree view as blessed-compatible tagged string.
  */
 export function formatExplorerView(
@@ -111,7 +175,6 @@ export function formatExplorerView(
     return '{gray-fg}(empty directory){/gray-fg}';
   }
 
-  // Apply scroll offset and max height
   const visibleRows = maxHeight
     ? displayRows.slice(scrollOffset, scrollOffset + maxHeight)
     : displayRows.slice(scrollOffset);
@@ -119,69 +182,8 @@ export function formatExplorerView(
   const lines: string[] = [];
 
   for (let i = 0; i < visibleRows.length; i++) {
-    const row = visibleRows[i];
     const actualIndex = scrollOffset + i;
-    const isSelected = actualIndex === selectedIndex;
-    const isHighlighted = isSelected && isFocused;
-    const node = row.node;
-
-    // Build tree prefix
-    const prefix = buildTreePrefix(row);
-
-    // Directory icon (▸ collapsed, ▾ expanded)
-    let icon = '';
-    if (node.isDirectory) {
-      icon = node.expanded ? '▾ ' : '▸ ';
-    }
-
-    // Git status indicator
-    const statusMarker = getStatusMarker(node.gitStatus);
-    const statusColor = getStatusColor(node.gitStatus);
-    const statusDisplay = statusMarker ? `${statusColor}${statusMarker}${ANSI_RESET} ` : '';
-
-    // Directory status indicator (dot if has changed children)
-    const dirStatusDisplay =
-      node.isDirectory && node.hasChangedChildren ? `${ANSI_YELLOW}●${ANSI_RESET} ` : '';
-
-    // Calculate available width for name
-    const prefixLen =
-      prefix.length +
-      icon.length +
-      (statusMarker ? 2 : 0) +
-      (node.hasChangedChildren && node.isDirectory ? 2 : 0);
-    const maxNameLen = Math.max(5, width - prefixLen - 2);
-
-    // Display name (with trailing / for directories)
-    let displayName = node.isDirectory ? `${node.name}/` : node.name;
-    if (displayName.length > maxNameLen) {
-      displayName = displayName.slice(0, maxNameLen - 1) + '…';
-    }
-
-    // Build the line
-    let line = `${ANSI_GRAY}${prefix}${ANSI_RESET}`;
-
-    if (node.isDirectory) {
-      line += `${ANSI_BLUE}${icon}${ANSI_RESET}`;
-      line += dirStatusDisplay;
-
-      if (isHighlighted) {
-        line += `${ANSI_CYAN}${ANSI_BOLD}${ANSI_INVERSE}${displayName}${ANSI_RESET}`;
-      } else {
-        line += `${ANSI_BLUE}${displayName}${ANSI_RESET}`;
-      }
-    } else {
-      // File
-      line += statusDisplay;
-
-      if (isHighlighted) {
-        line += `${ANSI_CYAN}${ANSI_BOLD}${ANSI_INVERSE}${displayName}${ANSI_RESET}`;
-      } else if (node.gitStatus) {
-        line += `${statusColor}${displayName}${ANSI_RESET}`;
-      } else {
-        line += displayName;
-      }
-    }
-
+    const line = formatExplorerRow(visibleRows[i], actualIndex === selectedIndex, isFocused, width);
     lines.push(`{escape}${line}{/escape}`);
   }
 
