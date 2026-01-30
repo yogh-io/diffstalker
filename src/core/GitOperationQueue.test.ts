@@ -54,8 +54,6 @@ describe('GitOperationQueue', () => {
     });
 
     test('continues processing after error', async () => {
-      const results: (string | Error)[] = [];
-
       const op1 = queue
         .enqueue(async () => {
           throw new Error('error');

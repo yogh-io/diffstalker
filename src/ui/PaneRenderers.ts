@@ -3,7 +3,7 @@ import type { CommitFlowStateData } from '../state/CommitFlowState.js';
 import type { FileEntry, CommitInfo } from '../git/status.js';
 import type { DiffResult, CompareDiff } from '../git/diff.js';
 import type { ExplorerState } from '../core/ExplorerStateManager.js';
-import type { HistoryState, CompareState, CompareSelectionState } from '../core/GitStateManager.js';
+import type { HistoryState, CompareSelectionState } from '../core/GitStateManager.js';
 import type { CompareListSelection } from './widgets/CompareListView.js';
 import type { ThemeName } from '../themes.js';
 import type { SelectedFile } from '../core/ExplorerStateManager.js';

@@ -9,7 +9,7 @@ import { formatHeader } from './ui/widgets/Header.js';
 
 import { formatFooter } from './ui/widgets/Footer.js';
 import { getFileAtIndex, getRowFromFileIndex } from './ui/widgets/FileList.js';
-import { getHistoryTotalRows, getCommitAtIndex } from './ui/widgets/HistoryView.js';
+import { getCommitAtIndex } from './ui/widgets/HistoryView.js';
 import {
   getNextCompareSelection,
   getRowFromCompareSelection,
@@ -17,7 +17,6 @@ import {
 } from './ui/widgets/CompareListView.js';
 import {
   ExplorerStateManager,
-  ExplorerState,
   ExplorerOptions,
   GitStatusMap,
 } from './core/ExplorerStateManager.js';
@@ -27,14 +26,11 @@ import { BaseBranchPicker } from './ui/modals/BaseBranchPicker.js';
 import { DiscardConfirm } from './ui/modals/DiscardConfirm.js';
 import { FileFinder } from './ui/modals/FileFinder.js';
 import { CommitFlowState } from './state/CommitFlowState.js';
-import { UIState, Pane } from './state/UIState.js';
+import { UIState } from './state/UIState.js';
 import {
   GitStateManager,
   getManagerForRepo,
   removeManagerForRepo,
-  HistoryState,
-  CompareState,
-  CompareSelectionState,
 } from './core/GitStateManager.js';
 import { Config, saveConfig } from './config.js';
 import type { FileEntry } from './git/status.js';

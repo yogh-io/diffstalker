@@ -7,11 +7,7 @@ import { formatDateAbsolute } from './formatDate.js';
 import { isDisplayableDiffLine } from './diffFilters.js';
 import { breakLine, getLineRowCount } from './lineBreaking.js';
 import { computeWordDiff, areSimilarEnough, WordDiffSegment } from './wordDiff.js';
-import {
-  getLanguageFromPath,
-  highlightLine,
-  highlightBlockPreserveBg,
-} from './languageDetection.js';
+import { getLanguageFromPath, highlightBlockPreserveBg } from './languageDetection.js';
 
 export type { WordDiffSegment } from './wordDiff.js';
 

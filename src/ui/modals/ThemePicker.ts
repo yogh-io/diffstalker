@@ -106,7 +106,6 @@ export class ThemePicker {
     lines.push('');
     lines.push('{gray-fg}Preview:{/gray-fg}');
 
-    const previewTheme = getTheme(themeOrder[this.selectedIndex]);
     // Simple preview - just show add/del colors
     lines.push(`  {green-fg}+ added line{/green-fg}`);
     lines.push(`  {red-fg}- deleted line{/red-fg}`);

@@ -97,7 +97,6 @@ export function truncateAnsi(str: string, maxVisualLength: number, suffix: strin
       } else {
         // Partial fit - truncate this segment
         result += segment.content.slice(0, remainingSpace);
-        currentVisualLength += remainingSpace;
         truncated = true;
         break;
       }

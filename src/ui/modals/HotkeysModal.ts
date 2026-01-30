@@ -216,7 +216,7 @@ export class HotkeysModal {
     this.screen.render();
   }
 
-  private renderGroups(groups: HotkeyGroup[], colWidth: number): string[] {
+  private renderGroups(groups: HotkeyGroup[], _colWidth: number): string[] {
     const lines: string[] = [];
     for (const group of groups) {
       lines.push(`{bold}{gray-fg}${group.title}{/gray-fg}{/bold}`);

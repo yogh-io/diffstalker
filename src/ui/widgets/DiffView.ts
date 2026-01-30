@@ -2,7 +2,6 @@ import type { DiffResult } from '../../git/diff.js';
 import type { CommitInfo } from '../../git/status.js';
 import { ThemeName, getTheme, Theme } from '../../themes.js';
 import {
-  DisplayRow,
   WrappedDisplayRow,
   buildDiffDisplayRows,
   buildHistoryDisplayRows,

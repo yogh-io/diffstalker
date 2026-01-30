@@ -1,4 +1,4 @@
-import type { ExplorerDisplayRow, ExplorerTreeNode } from '../../core/ExplorerStateManager.js';
+import type { ExplorerDisplayRow } from '../../core/ExplorerStateManager.js';
 import type { FileStatus } from '../../git/status.js';
 
 // ANSI escape codes

@@ -1,7 +1,6 @@
 import { EventEmitter } from 'node:events';
 import type { BottomTab } from '../types/tabs.js';
-import type { FileEntry, CommitInfo } from '../git/status.js';
-import type { CompareDiff, DiffResult } from '../git/diff.js';
+import type { FileEntry } from '../git/status.js';
 
 export type Pane = 'files' | 'diff' | 'commit' | 'history' | 'compare' | 'explorer';
 

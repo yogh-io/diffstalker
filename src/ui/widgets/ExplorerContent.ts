@@ -1,5 +1,4 @@
 import {
-  ExplorerContentRow,
   buildExplorerContentRows,
   wrapExplorerContentRows,
   getExplorerContentRowCount,

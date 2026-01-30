@@ -193,7 +193,7 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
    */
   private async buildTreeNode(
     relativePath: string,
-    depth: number
+    _depth: number
   ): Promise<ExplorerTreeNode | null> {
     try {
       const fullPath = path.join(this.repoPath, relativePath);
@@ -228,7 +228,7 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
       }
 
       return node;
-    } catch (err) {
+    } catch {
       return null;
     }
   }
@@ -297,7 +297,7 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
       this.collapseNode(node, children);
 
       node.childrenLoaded = true;
-    } catch (err) {
+    } catch {
       node.childrenLoaded = true;
       node.children = [];
     }
@@ -722,7 +722,7 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
             paths.push(entryPath);
           }
         }
-      } catch (err) {
+      } catch {
         // Ignore errors for individual directories
       }
     };

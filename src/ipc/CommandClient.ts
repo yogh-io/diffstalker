@@ -22,17 +22,16 @@ export class CommandClient {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(this.socketPath);
       let buffer = '';
-      let timeoutId: NodeJS.Timeout;
 
-      const cleanup = () => {
-        clearTimeout(timeoutId);
-        socket.destroy();
-      };
-
-      timeoutId = setTimeout(() => {
+      const timeoutId: NodeJS.Timeout = setTimeout(() => {
         cleanup();
         reject(new Error(`Command timed out after ${this.timeout}ms`));
       }, this.timeout);
+
+      function cleanup() {
+        clearTimeout(timeoutId);
+        socket.destroy();
+      }
 
       socket.on('connect', () => {
         socket.write(JSON.stringify(command) + '\n');
@@ -46,7 +45,7 @@ export class CommandClient {
           cleanup();
           try {
             resolve(JSON.parse(json) as CommandResult);
-          } catch (err) {
+          } catch {
             reject(new Error(`Invalid JSON response: ${json}`));
           }
         }
