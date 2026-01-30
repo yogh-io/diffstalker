@@ -33,7 +33,6 @@ export interface UIStateData {
   wrapMode: boolean;
   autoTabEnabled: boolean;
   mouseEnabled: boolean;
-  showMiddleDots: boolean;
   hideHiddenFiles: boolean;
   hideGitignored: boolean;
 
@@ -74,7 +73,6 @@ const DEFAULT_STATE: UIStateData = {
   wrapMode: false,
   autoTabEnabled: false,
   mouseEnabled: true,
-  showMiddleDots: false,
   hideHiddenFiles: true,
   hideGitignored: true,
   splitRatio: 0.4,
@@ -198,10 +196,6 @@ export class UIState extends EventEmitter<UIStateEventMap> {
 
   toggleMouse(): void {
     this.update({ mouseEnabled: !this._state.mouseEnabled });
-  }
-
-  toggleMiddleDots(): void {
-    this.update({ showMiddleDots: !this._state.showMiddleDots });
   }
 
   toggleHideHiddenFiles(): void {

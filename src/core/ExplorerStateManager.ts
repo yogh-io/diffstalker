@@ -4,12 +4,6 @@ import { EventEmitter } from 'node:events';
 import { getIgnoredFiles } from '../git/ignoreUtils.js';
 import type { FileStatus } from '../git/status.js';
 
-export interface ExplorerItem {
-  name: string;
-  path: string; // relative to repo root
-  isDirectory: boolean;
-}
-
 export interface SelectedFile {
   path: string;
   content: string;
@@ -42,7 +36,6 @@ export interface ExplorerDisplayRow {
 
 export interface ExplorerState {
   currentPath: string; // Root of the tree (usually '')
-  items: ExplorerItem[]; // Kept for backwards compatibility
   tree: ExplorerTreeNode | null;
   displayRows: ExplorerDisplayRow[];
   selectedIndex: number;
@@ -93,7 +86,6 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
 
   private _state: ExplorerState = {
     currentPath: '',
-    items: [],
     tree: null,
     displayRows: [],
     selectedIndex: 0,
@@ -171,17 +163,9 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
         this.applyGitStatusToTree(tree);
         const displayRows = this.flattenTree(tree);
 
-        // Build legacy items array for backwards compatibility
-        const items: ExplorerItem[] = displayRows.map((row) => ({
-          name: row.node.name,
-          path: row.node.path,
-          isDirectory: row.node.isDirectory,
-        }));
-
         this.updateState({
           tree,
           displayRows,
-          items,
           selectedIndex: 0,
           selectedFile: null,
           isLoading: false,
@@ -190,7 +174,6 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
         this.updateState({
           tree: null,
           displayRows: [],
-          items: [],
           isLoading: false,
           error: 'Failed to load directory',
         });
@@ -200,7 +183,6 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
         error: err instanceof Error ? err.message : 'Failed to read directory',
         tree: null,
         displayRows: [],
-        items: [],
         isLoading: false,
       });
     }
@@ -438,11 +420,6 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
       this._state.displayRows[this._state.selectedIndex]?.node.path ?? null;
 
     const displayRows = this.flattenTree(this._state.tree);
-    const items: ExplorerItem[] = displayRows.map((row) => ({
-      name: row.node.name,
-      path: row.node.path,
-      isDirectory: row.node.isDirectory,
-    }));
 
     // Find the same path in the new rows
     let selectedIndex = 0;
@@ -456,7 +433,7 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
     // Clamp to valid range
     selectedIndex = Math.min(selectedIndex, Math.max(0, displayRows.length - 1));
 
-    this.updateState({ displayRows, items, selectedIndex });
+    this.updateState({ displayRows, selectedIndex });
   }
 
   /**

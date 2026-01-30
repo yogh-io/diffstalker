@@ -4,7 +4,6 @@ import {
   wrapExplorerContentRows,
   getExplorerContentRowCount,
   getExplorerContentLineNumWidth,
-  applyMiddleDots,
 } from '../../utils/explorerDisplayRows.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
 
@@ -23,8 +22,7 @@ export function formatExplorerContent(
   scrollOffset: number = 0,
   maxHeight?: number,
   truncated: boolean = false,
-  wrapMode: boolean = false,
-  showMiddleDots: boolean = false
+  wrapMode: boolean = false
 ): string {
   if (!filePath) {
     return '{gray-fg}Select a file to view its contents{/gray-fg}';
@@ -80,8 +78,8 @@ export function formatExplorerContent(
     const rawContent = row.content;
     const shouldTruncate = !wrapMode && rawContent.length > contentWidth;
 
-    // Use highlighted content if available and not a continuation or middle-dots mode
-    const canUseHighlighting = row.highlighted && !isContinuation && !showMiddleDots;
+    // Use highlighted content if available and not a continuation
+    const canUseHighlighting = row.highlighted && !isContinuation;
 
     let displayContent: string;
     if (canUseHighlighting && row.highlighted) {
@@ -92,11 +90,6 @@ export function formatExplorerContent(
     } else {
       // Plain content path
       let plainContent = rawContent;
-
-      // Apply middle-dots to raw content
-      if (showMiddleDots && !isContinuation) {
-        plainContent = applyMiddleDots(plainContent, true);
-      }
 
       // Simple truncation for plain content
       if (shouldTruncate) {

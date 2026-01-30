@@ -36,7 +36,6 @@ import {
   formatExplorerView,
   formatBreadcrumbs,
   getExplorerTotalRows,
-  type ExplorerDisplayRow,
 } from './ui/widgets/ExplorerView.js';
 import {
   formatExplorerContent,
@@ -626,7 +625,7 @@ export class App {
         this.gitManager?.refreshCompareDiff(this.uiState.state.includeUncommitted);
       } else if (tab === 'explorer') {
         // Explorer is already loaded on init, but refresh if needed
-        if (!this.explorerManager?.state.items.length) {
+        if (!this.explorerManager?.state.displayRows.length) {
           this.explorerManager?.loadDirectory('');
         }
       }
@@ -1158,9 +1157,9 @@ export class App {
   // Explorer navigation
   private navigateExplorerUp(): void {
     const state = this.uiState.state;
-    const items = this.explorerManager?.state.items ?? [];
+    const rows = this.explorerManager?.state.displayRows ?? [];
 
-    if (items.length === 0) return;
+    if (rows.length === 0) return;
 
     const newScrollOffset = this.explorerManager?.navigateUp(state.explorerScrollOffset);
     if (newScrollOffset !== null && newScrollOffset !== undefined) {
@@ -1171,9 +1170,9 @@ export class App {
 
   private navigateExplorerDown(): void {
     const state = this.uiState.state;
-    const items = this.explorerManager?.state.items ?? [];
+    const rows = this.explorerManager?.state.displayRows ?? [];
 
-    if (items.length === 0) return;
+    if (rows.length === 0) return;
 
     const visibleHeight = this.layout.dimensions.topPaneHeight;
     const newScrollOffset = this.explorerManager?.navigateDown(
@@ -1548,8 +1547,7 @@ export class App {
         state.explorerFileScrollOffset,
         this.layout.dimensions.bottomPaneHeight,
         selectedFile?.truncated ?? false,
-        state.wrapMode,
-        state.showMiddleDots
+        state.wrapMode
       );
 
       // TODO: formatExplorerContent should also return totalRows
