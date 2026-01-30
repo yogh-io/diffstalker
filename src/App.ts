@@ -3,6 +3,7 @@ import type { Widgets } from 'blessed';
 import { LayoutManager } from './ui/Layout.js';
 import { setupKeyBindings } from './KeyBindings.js';
 import { renderTopPane, renderBottomPane } from './ui/PaneRenderers.js';
+import { setupMouseHandlers } from './MouseHandlers.js';
 import { formatHeader } from './ui/widgets/Header.js';
 
 interface WatcherState {
@@ -12,22 +13,13 @@ interface WatcherState {
   lastUpdate?: Date;
 }
 import { formatFooter } from './ui/widgets/Footer.js';
-import {
-  getFileAtIndex,
-  getFileListTotalRows,
-  getFileIndexFromRow,
-  getRowFromFileIndex,
-} from './ui/widgets/FileList.js';
+import { getFileAtIndex, getRowFromFileIndex } from './ui/widgets/FileList.js';
 import { getHistoryTotalRows, getCommitAtIndex } from './ui/widgets/HistoryView.js';
 import {
-  getCompareListTotalRows,
   getNextCompareSelection,
   getRowFromCompareSelection,
-  getCompareSelectionFromRow,
   type CompareListSelection,
 } from './ui/widgets/CompareListView.js';
-import { getExplorerTotalRows } from './ui/widgets/ExplorerView.js';
-import { getExplorerContentTotalRows } from './ui/widgets/ExplorerContent.js';
 import {
   ExplorerStateManager,
   ExplorerState,
@@ -189,7 +181,7 @@ export class App {
     this.setupKeyboardHandlers();
 
     // Setup mouse handlers
-    this.setupMouseHandlers();
+    this.setupMouseEventHandlers();
 
     // Setup state change listeners
     this.setupStateListeners();
@@ -250,81 +242,29 @@ export class App {
     );
   }
 
-  private setupMouseHandlers(): void {
-    const SCROLL_AMOUNT = 3;
-
-    // Mouse wheel on top pane
-    this.layout.topPane.on('wheeldown', () => {
-      this.handleTopPaneScroll(SCROLL_AMOUNT);
-    });
-
-    this.layout.topPane.on('wheelup', () => {
-      this.handleTopPaneScroll(-SCROLL_AMOUNT);
-    });
-
-    // Mouse wheel on bottom pane
-    this.layout.bottomPane.on('wheeldown', () => {
-      this.handleBottomPaneScroll(SCROLL_AMOUNT);
-    });
-
-    this.layout.bottomPane.on('wheelup', () => {
-      this.handleBottomPaneScroll(-SCROLL_AMOUNT);
-    });
-
-    // Click on top pane to select item
-    this.layout.topPane.on('click', (mouse: { x: number; y: number }) => {
-      // Convert screen Y to pane-relative row (blessed click coords are screen-relative)
-      const clickedRow = this.layout.screenYToTopPaneRow(mouse.y);
-      if (clickedRow >= 0) {
-        this.handleTopPaneClick(clickedRow, mouse.x);
+  private setupMouseEventHandlers(): void {
+    setupMouseHandlers(
+      this.layout,
+      {
+        selectHistoryCommitByIndex: (index) => this.selectHistoryCommitByIndex(index),
+        selectCompareItem: (selection) => this.selectCompareItem(selection),
+        selectFileByIndex: (index) => this.selectFileByIndex(index),
+        toggleFileByIndex: (index) => this.toggleFileByIndex(index),
+        toggleMouseMode: () => this.toggleMouseMode(),
+        toggleFollow: () => this.toggleFollow(),
+        render: () => this.render(),
+      },
+      {
+        uiState: this.uiState,
+        explorerManager: this.explorerManager,
+        getStatusFiles: () => this.gitManager?.state.status?.files ?? [],
+        getHistoryCommitCount: () => this.gitManager?.historyState.commits.length ?? 0,
+        getCompareCommits: () => this.gitManager?.compareState?.compareDiff?.commits ?? [],
+        getCompareFiles: () => this.gitManager?.compareState?.compareDiff?.files ?? [],
+        getBottomPaneTotalRows: () => this.bottomPaneTotalRows,
+        getScreenWidth: () => (this.screen.width as number) || 80,
       }
-    });
-
-    // Click on footer for tabs and toggles
-    this.layout.footerBox.on('click', (mouse: { x: number; y: number }) => {
-      this.handleFooterClick(mouse.x);
-    });
-  }
-
-  private handleTopPaneClick(row: number, x?: number): void {
-    const state = this.uiState.state;
-
-    if (state.bottomTab === 'history') {
-      const index = state.historyScrollOffset + row;
-      this.uiState.setHistorySelectedIndex(index);
-      this.selectHistoryCommitByIndex(index);
-    } else if (state.bottomTab === 'compare') {
-      // For compare view, need to map row to selection
-      const compareState = this.gitManager?.compareState;
-      const commits = compareState?.compareDiff?.commits ?? [];
-      const files = compareState?.compareDiff?.files ?? [];
-      const selection = getCompareSelectionFromRow(state.compareScrollOffset + row, commits, files);
-      if (selection) {
-        this.selectCompareItem(selection);
-      }
-    } else if (state.bottomTab === 'explorer') {
-      const index = state.explorerScrollOffset + row;
-      this.explorerManager?.selectIndex(index);
-      this.uiState.setExplorerSelectedIndex(index);
-    } else {
-      // Diff tab - select file
-      const files = this.gitManager?.state.status?.files ?? [];
-      // Account for section headers in file list
-      const fileIndex = getFileIndexFromRow(row + state.fileListScrollOffset, files);
-      if (fileIndex !== null && fileIndex >= 0) {
-        // Check if click is on the action button [+] or [-] (columns 2-4)
-        // Layout: "  [+] M path" or "▸ [-] M path"
-        //          01234
-        if (x !== undefined && x >= 2 && x <= 4) {
-          // Toggle staging status
-          this.toggleFileByIndex(fileIndex);
-        } else {
-          // Select the file
-          this.uiState.setSelectedIndex(fileIndex);
-          this.selectFileByIndex(fileIndex);
-        }
-      }
-    }
+    );
   }
 
   private async toggleFileByIndex(index: number): Promise<void> {
@@ -337,111 +277,6 @@ export class App {
       } else {
         await this.gitManager?.stage(file);
       }
-    }
-  }
-
-  private handleFooterClick(x: number): void {
-    const width = (this.screen.width as number) || 80;
-
-    // Footer layout: left side has toggles, right side has tabs
-    // Tabs are right-aligned, so we calculate from the right
-    // Tab format: [1]Diff [2]Commit [3]History [4]Compare [5]Explorer
-    // Approximate positions from right edge
-    const tabPositions = [
-      { tab: 'explorer' as const, label: '[5]Explorer', width: 11 },
-      { tab: 'compare' as const, label: '[4]Compare', width: 10 },
-      { tab: 'history' as const, label: '[3]History', width: 10 },
-      { tab: 'commit' as const, label: '[2]Commit', width: 9 },
-      { tab: 'diff' as const, label: '[1]Diff', width: 7 },
-    ];
-
-    let rightEdge = width;
-    for (const { tab, width: tabWidth } of tabPositions) {
-      const leftEdge = rightEdge - tabWidth - 1; // -1 for space
-      if (x >= leftEdge && x < rightEdge) {
-        this.uiState.setTab(tab);
-        return;
-      }
-      rightEdge = leftEdge;
-    }
-
-    // Left side toggles (approximate positions)
-    // Format: ? [scroll] [auto] [wrap] [follow] [changes]
-    if (x >= 2 && x <= 9) {
-      // [scroll] or m:[select]
-      this.toggleMouseMode();
-    } else if (x >= 11 && x <= 16) {
-      // [auto]
-      this.uiState.toggleAutoTab();
-    } else if (x >= 18 && x <= 23) {
-      // [wrap]
-      this.uiState.toggleWrapMode();
-    } else if (x >= 25 && x <= 32) {
-      // [follow]
-      this.toggleFollow();
-    } else if (x >= 34 && x <= 43 && this.uiState.state.bottomTab === 'explorer') {
-      // [changes] - only visible in explorer
-      this.explorerManager?.toggleShowOnlyChanges();
-    } else if (x === 0) {
-      // ? - open hotkeys
-      this.uiState.openModal('hotkeys');
-    }
-  }
-
-  private handleTopPaneScroll(delta: number): void {
-    const state = this.uiState.state;
-    const visibleHeight = this.layout.dimensions.topPaneHeight;
-
-    if (state.bottomTab === 'history') {
-      const totalRows = this.gitManager?.historyState.commits.length ?? 0;
-      const maxOffset = Math.max(0, totalRows - visibleHeight);
-      const newOffset = Math.min(maxOffset, Math.max(0, state.historyScrollOffset + delta));
-      this.uiState.setHistoryScrollOffset(newOffset);
-    } else if (state.bottomTab === 'compare') {
-      const compareState = this.gitManager?.compareState;
-      const totalRows = getCompareListTotalRows(
-        compareState?.compareDiff?.commits ?? [],
-        compareState?.compareDiff?.files ?? []
-      );
-      const maxOffset = Math.max(0, totalRows - visibleHeight);
-      const newOffset = Math.min(maxOffset, Math.max(0, state.compareScrollOffset + delta));
-      this.uiState.setCompareScrollOffset(newOffset);
-    } else if (state.bottomTab === 'explorer') {
-      const totalRows = getExplorerTotalRows(this.explorerManager?.state.displayRows ?? []);
-      const maxOffset = Math.max(0, totalRows - visibleHeight);
-      const newOffset = Math.min(maxOffset, Math.max(0, state.explorerScrollOffset + delta));
-      this.uiState.setExplorerScrollOffset(newOffset);
-    } else {
-      const files = this.gitManager?.state.status?.files ?? [];
-      const totalRows = getFileListTotalRows(files);
-      const maxOffset = Math.max(0, totalRows - visibleHeight);
-      const newOffset = Math.min(maxOffset, Math.max(0, state.fileListScrollOffset + delta));
-      this.uiState.setFileListScrollOffset(newOffset);
-    }
-  }
-
-  private handleBottomPaneScroll(delta: number): void {
-    const state = this.uiState.state;
-    const visibleHeight = this.layout.dimensions.bottomPaneHeight;
-    const width = (this.screen.width as number) || 80;
-
-    if (state.bottomTab === 'explorer') {
-      const selectedFile = this.explorerManager?.state.selectedFile;
-      const totalRows = getExplorerContentTotalRows(
-        selectedFile?.content ?? null,
-        selectedFile?.path ?? null,
-        selectedFile?.truncated ?? false,
-        width,
-        state.wrapMode
-      );
-      const maxOffset = Math.max(0, totalRows - visibleHeight);
-      const newOffset = Math.min(maxOffset, Math.max(0, state.explorerFileScrollOffset + delta));
-      this.uiState.setExplorerFileScrollOffset(newOffset);
-    } else {
-      // Use cached totalRows from last render (single source of truth)
-      const maxOffset = Math.max(0, this.bottomPaneTotalRows - visibleHeight);
-      const newOffset = Math.min(maxOffset, Math.max(0, state.diffScrollOffset + delta));
-      this.uiState.setDiffScrollOffset(newOffset);
     }
   }
 
