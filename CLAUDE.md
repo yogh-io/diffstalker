@@ -25,6 +25,8 @@ diffstalker is a terminal UI for git staging and committing, built with TypeScri
 npm run dev    # Run with tsx (development, hot reload)
 npm run build  # Compile TypeScript to dist/
 npm start      # Run compiled version
+npm run lint   # ESLint + dependency-cruiser
+npm run deps   # Dependency-cruiser only
 ```
 
 ## Project Structure
@@ -126,6 +128,28 @@ Ink doesn't have native modal support. Modals are implemented by:
 - Ink's flexbox can add padding if container height doesn't match content; keep `LAYOUT_OVERHEAD` accurate
 
 ## Code Quality Guidelines
+
+### Pre-commit Hook
+
+A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated automatically via the `prepare` script in `package.json` after `npm install`/`bun install`.
+
+### Architecture Layering (dependency-cruiser)
+
+`.dependency-cruiser.cjs` enforces that lower layers do not import higher layers:
+
+```
+index.ts
+  ↓
+App.ts, KeyBindings.ts, MouseHandlers.ts, FollowMode.ts
+  ↓
+ui/
+  ↓
+state/              core/
+  ↓                   ↓
+git/  utils/  services/  types/  themes.ts  config.ts
+```
+
+Circular dependencies are also forbidden. Run `npm run deps` to check, or `npm run lint` which includes it.
 
 ### Single Source of Truth for Layout/Row Calculations
 When building UI structures with rows (like diff views, file lists, PR views):

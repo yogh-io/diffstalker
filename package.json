@@ -19,6 +19,7 @@
   },
   "scripts": {
     "postinstall": "node scripts/patch-neo-blessed.cjs",
+    "prepare": "git config core.hooksPath .githooks",
     "dev": "bun --watch src/index.ts",
     "build": "tsc",
     "build:prod": "tsc && bun build dist/index.js --outfile dist/index.js --minify --target node --packages external",
@@ -27,10 +28,11 @@
     "start:bundle": "bun dist/bundle/index.js",
     "test": "bun test src/*.test.ts src/**/*.test.ts",
     "test:watch": "bun test --watch src/*.test.ts src/**/*.test.ts",
-    "lint": "eslint src/",
+    "lint": "eslint src/ && depcruise src/ --config .dependency-cruiser.cjs",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
+    "deps": "depcruise src/ --config .dependency-cruiser.cjs",
     "metrics": "bun scripts/collect-metrics.ts",
     "metrics:snapshot": "bun scripts/collect-metrics.ts --save",
     "prepublishOnly": "bun run build:prod"
@@ -58,6 +60,7 @@
     "@eslint/js": "^9.39.2",
     "@types/blessed": "^0.1.27",
     "@types/node": "^22.10.7",
+    "dependency-cruiser": "^17.3.7",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-sonarjs": "^3.0.6",
