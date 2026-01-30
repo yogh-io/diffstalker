@@ -4,14 +4,9 @@ import { LayoutManager } from './ui/Layout.js';
 import { setupKeyBindings } from './KeyBindings.js';
 import { renderTopPane, renderBottomPane } from './ui/PaneRenderers.js';
 import { setupMouseHandlers } from './MouseHandlers.js';
+import { FollowMode, FollowModeWatcherState } from './FollowMode.js';
 import { formatHeader } from './ui/widgets/Header.js';
 
-interface WatcherState {
-  enabled: boolean;
-  sourceFile?: string;
-  rawContent?: string;
-  lastUpdate?: Date;
-}
 import { formatFooter } from './ui/widgets/Footer.js';
 import { getFileAtIndex, getRowFromFileIndex } from './ui/widgets/FileList.js';
 import { getHistoryTotalRows, getCommitAtIndex } from './ui/widgets/HistoryView.js';
@@ -41,7 +36,6 @@ import {
   CompareState,
   CompareSelectionState,
 } from './core/GitStateManager.js';
-import { FilePathWatcher, WatcherState as FileWatcherState } from './core/FilePathWatcher.js';
 import { Config, saveConfig } from './config.js';
 import type { FileEntry } from './git/status.js';
 import {
@@ -68,14 +62,13 @@ export class App {
   private layout: LayoutManager;
   private uiState: UIState;
   private gitManager: GitStateManager | null = null;
-  private fileWatcher: FilePathWatcher | null = null;
+  private followMode: FollowMode | null = null;
   private explorerManager: ExplorerStateManager | null = null;
   private config: Config;
   private commandServer: CommandServer | null;
 
   // Current state
   private repoPath: string;
-  private watcherState: WatcherState = { enabled: false };
   private currentTheme: ThemeName;
 
   // Commit flow state
@@ -186,9 +179,13 @@ export class App {
     // Setup state change listeners
     this.setupStateListeners();
 
-    // Setup file watcher if enabled
+    // Setup follow mode if enabled
     if (this.config.watcherEnabled) {
-      this.setupFileWatcher();
+      this.followMode = new FollowMode(this.config.targetFile, () => this.repoPath, {
+        onRepoChange: (newPath, state) => this.handleFollowRepoChange(newPath, state),
+        onFileNavigate: (rawContent) => this.handleFollowFileNavigate(rawContent),
+      });
+      this.followMode.start();
     }
 
     // Setup IPC command handler if command server provided
@@ -368,56 +365,18 @@ export class App {
     });
   }
 
-  private setupFileWatcher(): void {
-    this.fileWatcher = new FilePathWatcher(this.config.targetFile);
+  private handleFollowRepoChange(newPath: string, _state: FollowModeWatcherState): void {
+    const oldRepoPath = this.repoPath;
+    this.repoPath = newPath;
+    this.initGitManager(oldRepoPath);
+    this.resetRepoSpecificState();
+    this.loadCurrentTabData();
+    this.render();
+  }
 
-    this.fileWatcher.on('path-change', (state: FileWatcherState) => {
-      if (state.path && state.path !== this.repoPath) {
-        const oldRepoPath = this.repoPath;
-        this.repoPath = state.path;
-        this.watcherState = {
-          enabled: true,
-          sourceFile: state.sourceFile ?? this.config.targetFile,
-          rawContent: state.rawContent ?? undefined,
-          lastUpdate: state.lastUpdate ?? undefined,
-        };
-        this.initGitManager(oldRepoPath);
-        this.resetRepoSpecificState();
-        this.loadCurrentTabData();
-        this.render();
-      }
-      // Navigate to the followed file if it's within the repo
-      if (state.rawContent) {
-        this.navigateToFile(state.rawContent);
-        this.render();
-      }
-    });
-
-    this.watcherState = {
-      enabled: true,
-      sourceFile: this.config.targetFile,
-    };
-
-    this.fileWatcher.start();
-
-    // Switch to the repo described in the target file
-    const initialState = this.fileWatcher.state;
-    if (initialState.path && initialState.path !== this.repoPath) {
-      const oldRepoPath = this.repoPath;
-      this.repoPath = initialState.path;
-      this.watcherState = {
-        enabled: true,
-        sourceFile: initialState.sourceFile ?? this.config.targetFile,
-        rawContent: initialState.rawContent ?? undefined,
-        lastUpdate: initialState.lastUpdate ?? undefined,
-      };
-      this.initGitManager(oldRepoPath);
-      this.resetRepoSpecificState();
-      this.loadCurrentTabData();
-    } else if (initialState.rawContent) {
-      this.watcherState.rawContent = initialState.rawContent;
-      this.navigateToFile(initialState.rawContent);
-    }
+  private handleFollowFileNavigate(rawContent: string): void {
+    this.navigateToFile(rawContent);
+    this.render();
   }
 
   private initGitManager(oldRepoPath?: string): void {
@@ -1011,13 +970,13 @@ export class App {
   }
 
   private toggleFollow(): void {
-    if (this.fileWatcher) {
-      this.fileWatcher.stop();
-      this.fileWatcher = null;
-      this.watcherState = { enabled: false };
-    } else {
-      this.setupFileWatcher();
+    if (!this.followMode) {
+      this.followMode = new FollowMode(this.config.targetFile, () => this.repoPath, {
+        onRepoChange: (newPath, state) => this.handleFollowRepoChange(newPath, state),
+        onFileNavigate: (rawContent) => this.handleFollowFileNavigate(rawContent),
+      });
     }
+    this.followMode.toggle();
     this.render();
   }
 
@@ -1128,7 +1087,7 @@ export class App {
       state.mouseEnabled,
       state.autoTabEnabled,
       state.wrapMode,
-      this.watcherState.enabled,
+      this.followMode?.isEnabled ?? false,
       this.explorerManager?.showOnlyChanges ?? false,
       width
     );
@@ -1147,8 +1106,8 @@ export class App {
     if (this.explorerManager) {
       this.explorerManager.dispose();
     }
-    if (this.fileWatcher) {
-      this.fileWatcher.stop();
+    if (this.followMode) {
+      this.followMode.stop();
     }
     if (this.commandServer) {
       this.commandServer.stop();
