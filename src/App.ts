@@ -227,9 +227,9 @@ export class App {
         getStatusFiles: () => this.gitManager?.state.status?.files ?? [],
         getSelectedIndex: () => this.uiState.state.selectedIndex,
         uiState: this.uiState,
-        explorerManager: this.explorerManager,
+        getExplorerManager: () => this.explorerManager,
         commitFlowState: this.commitFlowState,
-        gitManager: this.gitManager,
+        getGitManager: () => this.gitManager,
         layout: this.layout,
       }
     );
@@ -243,13 +243,14 @@ export class App {
         selectCompareItem: (selection) => this.selectCompareItem(selection),
         selectFileByIndex: (index) => this.selectFileByIndex(index),
         toggleFileByIndex: (index) => this.toggleFileByIndex(index),
+        enterExplorerDirectory: () => this.enterExplorerDirectory(),
         toggleMouseMode: () => this.toggleMouseMode(),
         toggleFollow: () => this.toggleFollow(),
         render: () => this.render(),
       },
       {
         uiState: this.uiState,
-        explorerManager: this.explorerManager,
+        getExplorerManager: () => this.explorerManager,
         getStatusFiles: () => this.gitManager?.state.status?.files ?? [],
         getHistoryCommitCount: () => this.gitManager?.historyState.commits.length ?? 0,
         getCompareCommits: () => this.gitManager?.compareState?.compareDiff?.commits ?? [],
@@ -927,12 +928,24 @@ export class App {
       allPaths,
       async (selectedPath) => {
         this.activeModal = null;
+        // Switch to explorer tab if not already there
+        if (this.uiState.state.bottomTab !== 'explorer') {
+          this.uiState.setTab('explorer');
+        }
         // Navigate to the selected file in explorer
         const success = await this.explorerManager?.navigateToPath(selectedPath);
         if (success) {
-          // Reset scroll to show selected file
-          this.uiState.setExplorerScrollOffset(0);
+          // Sync selected index from explorer manager
+          const selectedIndex = this.explorerManager?.state.selectedIndex ?? 0;
+          this.uiState.setExplorerSelectedIndex(selectedIndex);
           this.uiState.setExplorerFileScrollOffset(0);
+          // Scroll to make selected file visible
+          const visibleHeight = this.layout.dimensions.topPaneHeight;
+          if (selectedIndex >= visibleHeight) {
+            this.uiState.setExplorerScrollOffset(selectedIndex - Math.floor(visibleHeight / 2));
+          } else {
+            this.uiState.setExplorerScrollOffset(0);
+          }
         }
         this.render();
       },

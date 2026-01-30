@@ -187,6 +187,7 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 | `Enter` | Expand/collapse directory |
 | `Backspace` | Go up to parent directory (and collapse the one left) |
 | `/` | Open file finder modal |
+| `Ctrl+P` | Open file finder modal (works from any tab) |
 | `g` | Toggle show only changed files |
 
 ### File Finder Modal
@@ -227,6 +228,7 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 | Target | Action |
 |--------|--------|
 | File row | Select file |
+| Explorer folder (already selected) | Toggle expand/collapse |
 | `[+]`/`[-]` button area | Stage/unstage file |
 | Tab buttons (footer) | Switch to that tab |
 | `?` indicator | Open hotkeys modal |

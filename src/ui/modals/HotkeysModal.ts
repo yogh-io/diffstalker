@@ -69,6 +69,9 @@ const hotkeyGroups: HotkeyGroup[] = [
     entries: [
       { key: 'Enter', description: 'Enter directory' },
       { key: 'Backspace', description: 'Go up' },
+      { key: '/', description: 'Find file' },
+      { key: 'Ctrl+P', description: 'Find file (any tab)' },
+      { key: 'g', description: 'Show changes only' },
     ],
   },
   {

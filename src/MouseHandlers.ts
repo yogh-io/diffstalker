@@ -22,6 +22,7 @@ export interface MouseActions {
   selectCompareItem(selection: CompareListSelection): void;
   selectFileByIndex(index: number): void;
   toggleFileByIndex(index: number): void;
+  enterExplorerDirectory(): void;
   toggleMouseMode(): void;
   toggleFollow(): void;
   render(): void;
@@ -32,7 +33,7 @@ export interface MouseActions {
  */
 export interface MouseContext {
   uiState: UIState;
-  explorerManager: ExplorerStateManager | null;
+  getExplorerManager(): ExplorerStateManager | null;
   getStatusFiles(): FileEntry[];
   getHistoryCommitCount(): number;
   getCompareCommits(): CommitInfo[];
@@ -102,8 +103,15 @@ function handleTopPaneClick(
     }
   } else if (state.bottomTab === 'explorer') {
     const index = state.explorerScrollOffset + row;
-    ctx.explorerManager?.selectIndex(index);
-    ctx.uiState.setExplorerSelectedIndex(index);
+    const explorerManager = ctx.getExplorerManager();
+    const isAlreadySelected = explorerManager?.state.selectedIndex === index;
+    const displayRow = explorerManager?.state.displayRows[index];
+    if (isAlreadySelected && displayRow?.node.isDirectory) {
+      actions.enterExplorerDirectory();
+    } else {
+      explorerManager?.selectIndex(index);
+      ctx.uiState.setExplorerSelectedIndex(index);
+    }
   } else {
     // Diff tab - select file
     const files = ctx.getStatusFiles();
@@ -152,7 +160,7 @@ function handleFooterClick(x: number, actions: MouseActions, ctx: MouseContext):
   } else if (x >= 25 && x <= 32) {
     actions.toggleFollow();
   } else if (x >= 34 && x <= 43 && ctx.uiState.state.bottomTab === 'explorer') {
-    ctx.explorerManager?.toggleShowOnlyChanges();
+    ctx.getExplorerManager()?.toggleShowOnlyChanges();
   } else if (x === 0) {
     ctx.uiState.openModal('hotkeys');
   }
@@ -173,7 +181,7 @@ function handleTopPaneScroll(delta: number, layout: LayoutManager, ctx: MouseCon
     const newOffset = Math.min(maxOffset, Math.max(0, state.compareScrollOffset + delta));
     ctx.uiState.setCompareScrollOffset(newOffset);
   } else if (state.bottomTab === 'explorer') {
-    const totalRows = getExplorerTotalRows(ctx.explorerManager?.state.displayRows ?? []);
+    const totalRows = getExplorerTotalRows(ctx.getExplorerManager()?.state.displayRows ?? []);
     const maxOffset = Math.max(0, totalRows - visibleHeight);
     const newOffset = Math.min(maxOffset, Math.max(0, state.explorerScrollOffset + delta));
     ctx.uiState.setExplorerScrollOffset(newOffset);
@@ -192,7 +200,7 @@ function handleBottomPaneScroll(delta: number, layout: LayoutManager, ctx: Mouse
   const width = ctx.getScreenWidth();
 
   if (state.bottomTab === 'explorer') {
-    const selectedFile = ctx.explorerManager?.state.selectedFile;
+    const selectedFile = ctx.getExplorerManager()?.state.selectedFile;
     const totalRows = getExplorerContentTotalRows(
       selectedFile?.content ?? null,
       selectedFile?.path ?? null,

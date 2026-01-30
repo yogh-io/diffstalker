@@ -1,74 +1,24 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
+import { Fzf, type FzfResultItem } from 'fzf';
 
 const MAX_RESULTS = 15;
 
 /**
- * Simple fuzzy match scoring.
- * Returns -1 if no match, otherwise a score (higher is better).
+ * Highlight matched characters in a display path using fzf position data.
+ * The positions set refers to indices in the original full path,
+ * so we need an offset when the display path is truncated.
  */
-function fuzzyScore(query: string, target: string): number {
-  const lowerQuery = query.toLowerCase();
-  const lowerTarget = target.toLowerCase();
-
-  // Must contain all query characters in order
-  let queryIndex = 0;
-  let score = 0;
-  let lastMatchIndex = -1;
-
-  for (let i = 0; i < lowerTarget.length && queryIndex < lowerQuery.length; i++) {
-    if (lowerTarget[i] === lowerQuery[queryIndex]) {
-      // Bonus for consecutive matches
-      if (lastMatchIndex === i - 1) {
-        score += 10;
-      }
-      // Bonus for matching at start of word
-      if (i === 0 || lowerTarget[i - 1] === '/' || lowerTarget[i - 1] === '.') {
-        score += 5;
-      }
-      score += 1;
-      lastMatchIndex = i;
-      queryIndex++;
-    }
-  }
-
-  // All query characters must match
-  if (queryIndex < lowerQuery.length) {
-    return -1;
-  }
-
-  // Bonus for shorter paths (more specific)
-  score += Math.max(0, 50 - target.length);
-
-  return score;
-}
-
-/**
- * Highlight matched characters in path.
- */
-function highlightMatch(query: string, path: string): string {
-  if (!query) return path;
-
-  const lowerQuery = query.toLowerCase();
-  const lowerPath = path.toLowerCase();
+function highlightMatch(displayPath: string, positions: Set<number>, offset: number): string {
   let result = '';
-  let queryIndex = 0;
-
-  for (let i = 0; i < path.length; i++) {
-    if (queryIndex < lowerQuery.length && lowerPath[i] === lowerQuery[queryIndex]) {
-      result += `{yellow-fg}${path[i]}{/yellow-fg}`;
-      queryIndex++;
+  for (let i = 0; i < displayPath.length; i++) {
+    if (positions.has(i + offset)) {
+      result += `{yellow-fg}${displayPath[i]}{/yellow-fg}`;
     } else {
-      result += path[i];
+      result += displayPath[i];
     }
   }
-
   return result;
-}
-
-interface SearchResult {
-  path: string;
-  score: number;
 }
 
 /**
@@ -78,8 +28,9 @@ export class FileFinder {
   private box: Widgets.BoxElement;
   private textbox: Widgets.TextareaElement;
   private screen: Widgets.Screen;
+  private fzf: Fzf<string[]>;
   private allPaths: string[];
-  private results: SearchResult[] = [];
+  private results: FzfResultItem<string>[] = [];
   private selectedIndex: number = 0;
   private query: string = '';
   private onSelect: (path: string) => void;
@@ -93,6 +44,7 @@ export class FileFinder {
   ) {
     this.screen = screen;
     this.allPaths = allPaths;
+    this.fzf = new Fzf(allPaths, { limit: MAX_RESULTS, forward: false });
     this.onSelect = onSelect;
     this.onCancel = onCancel;
 
@@ -152,7 +104,7 @@ export class FileFinder {
       if (this.results.length > 0) {
         const selected = this.results[this.selectedIndex];
         this.close();
-        this.onSelect(selected.path);
+        this.onSelect(selected.item);
       }
     });
 
@@ -197,25 +149,14 @@ export class FileFinder {
 
   private updateResults(): void {
     if (!this.query) {
-      // Show first N files when no query
-      this.results = this.allPaths.slice(0, MAX_RESULTS).map((path) => ({ path, score: 0 }));
+      // fzf returns nothing for empty query, show first N files
+      this.results = this.allPaths
+        .slice(0, MAX_RESULTS)
+        .map((item) => ({ item, positions: new Set<number>(), start: 0, end: 0, score: 0 }));
       return;
     }
 
-    // Fuzzy match all paths
-    const scored: SearchResult[] = [];
-    for (const path of this.allPaths) {
-      const score = fuzzyScore(this.query, path);
-      if (score >= 0) {
-        scored.push({ path, score });
-      }
-    }
-
-    // Sort by score (descending)
-    scored.sort((a, b) => b.score - a.score);
-
-    // Take top results
-    this.results = scored.slice(0, MAX_RESULTS);
+    this.results = this.fzf.find(this.query);
   }
 
   private render(): void {
@@ -236,14 +177,19 @@ export class FileFinder {
         const isSelected = i === this.selectedIndex;
 
         // Truncate path if needed
-        let displayPath = result.path;
+        const fullPath = result.item;
         const maxLen = width - 4;
+        let displayPath = fullPath;
+        let offset = 0;
         if (displayPath.length > maxLen) {
-          displayPath = '…' + displayPath.slice(-(maxLen - 1));
+          offset = displayPath.length - (maxLen - 1);
+          displayPath = '…' + displayPath.slice(offset);
+          // Account for the '…' prefix: display index 0 is '…', actual content starts at 1
+          offset = offset - 1;
         }
 
-        // Highlight matched characters
-        const highlighted = highlightMatch(this.query, displayPath);
+        // Highlight matched characters using fzf positions
+        const highlighted = highlightMatch(displayPath, result.positions, offset);
 
         if (isSelected) {
           lines.push(`{cyan-fg}{bold}> ${highlighted}{/bold}{/cyan-fg}`);

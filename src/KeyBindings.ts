@@ -41,9 +41,9 @@ export interface KeyBindingContext {
   getStatusFiles(): FileEntry[];
   getSelectedIndex(): number;
   uiState: UIState;
-  explorerManager: { toggleShowOnlyChanges(): Promise<void> } | null;
+  getExplorerManager(): { toggleShowOnlyChanges(): Promise<void> } | null;
   commitFlowState: { toggleAmend(): void };
-  gitManager: { refreshCompareDiff(includeUncommitted: boolean): void } | null;
+  getGitManager(): { refreshCompareDiff(includeUncommitted: boolean): void } | null;
   layout: { setSplitRatio(ratio: number): void };
 }
 
@@ -132,7 +132,7 @@ export function setupKeyBindings(
   screen.key(['g'], () => {
     if (ctx.hasActiveModal()) return;
     if (ctx.getBottomTab() === 'explorer') {
-      ctx.explorerManager?.toggleShowOnlyChanges();
+      ctx.getExplorerManager()?.toggleShowOnlyChanges();
     }
   });
 
@@ -142,6 +142,12 @@ export function setupKeyBindings(
     if (ctx.getBottomTab() === 'explorer') {
       actions.openFileFinder();
     }
+  });
+
+  // Ctrl+P: open file finder from any tab
+  screen.key(['C-p'], () => {
+    if (ctx.hasActiveModal()) return;
+    actions.openFileFinder();
   });
 
   // Commit (skip if modal is open)
@@ -218,7 +224,7 @@ export function setupKeyBindings(
     if (ctx.getBottomTab() === 'compare') {
       ctx.uiState.toggleIncludeUncommitted();
       const includeUncommitted = ctx.uiState.state.includeUncommitted;
-      ctx.gitManager?.refreshCompareDiff(includeUncommitted);
+      ctx.getGitManager()?.refreshCompareDiff(includeUncommitted);
     }
   });
 
