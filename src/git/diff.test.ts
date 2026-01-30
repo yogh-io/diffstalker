@@ -1,5 +1,24 @@
-import { describe, it, expect } from 'vitest';
-import { parseDiffLine, parseHunkHeader, parseDiffWithLineNumbers } from './diff.js';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import {
+  parseDiffLine,
+  parseHunkHeader,
+  parseDiffWithLineNumbers,
+  getDiff,
+  getDiffForUntracked,
+  getStagedDiff,
+  getCommitDiff,
+  getCandidateBaseBranches,
+  getDefaultBaseBranch,
+  getDiffBetweenRefs,
+} from './diff.js';
+import {
+  createFixtureRepo,
+  removeFixtureRepo,
+  writeFixtureFile,
+  gitExec,
+  createRepoWithRemote,
+  removeRepoWithRemote,
+} from './test-helpers.js';
 
 describe('parseDiffLine', () => {
   it('parses diff --git header', () => {
@@ -200,5 +219,142 @@ rename to new.ts`;
     const secondHunkIdx = result.findIndex((l) => l.content === '@@ -10,2 +10,2 @@');
     expect(result[secondHunkIdx + 1].oldLineNum).toBe(10);
     expect(result[secondHunkIdx + 1].newLineNum).toBe(10);
+  });
+});
+
+describe('getDiff / getDiffForUntracked / getStagedDiff (fixture)', () => {
+  const REPO_NAME = 'diff-ops-test';
+  let repoPath: string;
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    writeFixtureFile(repoPath, 'file.txt', 'line1\nline2\nline3\n');
+    gitExec(repoPath, 'add file.txt');
+    gitExec(repoPath, 'commit -m "initial"');
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  function resetRepo(): void {
+    gitExec(repoPath, 'checkout -- .');
+    gitExec(repoPath, 'reset HEAD');
+    gitExec(repoPath, 'clean -fd');
+  }
+
+  it('getDiff returns diff for unstaged changes', async () => {
+    writeFixtureFile(repoPath, 'file.txt', 'line1\nmodified\nline3\n');
+    const diff = await getDiff(repoPath, 'file.txt');
+    expect(diff.lines.length).toBeGreaterThan(0);
+    expect(diff.lines.some((l) => l.type === 'addition')).toBe(true);
+    expect(diff.lines.some((l) => l.type === 'deletion')).toBe(true);
+    resetRepo();
+  });
+
+  it('getDiff returns empty raw for clean file', async () => {
+    const diff = await getDiff(repoPath, 'file.txt');
+    expect(diff.raw).toBe('');
+  });
+
+  it('getStagedDiff returns diff for staged changes', async () => {
+    writeFixtureFile(repoPath, 'file.txt', 'staged change\n');
+    gitExec(repoPath, 'add file.txt');
+    const diff = await getStagedDiff(repoPath);
+    expect(diff.lines.length).toBeGreaterThan(0);
+    expect(diff.lines.some((l) => l.type === 'addition')).toBe(true);
+    resetRepo();
+  });
+
+  it('getDiffForUntracked shows entire file as additions', async () => {
+    writeFixtureFile(repoPath, 'untracked.txt', 'hello\nworld\n');
+    const diff = await getDiffForUntracked(repoPath, 'untracked.txt');
+    expect(diff.lines.some((l) => l.type === 'header')).toBe(true);
+    expect(diff.lines.some((l) => l.type === 'hunk')).toBe(true);
+    const additions = diff.lines.filter((l) => l.type === 'addition');
+    expect(additions.length).toBeGreaterThanOrEqual(2);
+    resetRepo();
+  });
+});
+
+describe('getCommitDiff (fixture)', () => {
+  const REPO_NAME = 'commit-diff-test';
+  let repoPath: string;
+  let commitHash: string;
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    writeFixtureFile(repoPath, 'file.txt', 'original\n');
+    gitExec(repoPath, 'add file.txt');
+    gitExec(repoPath, 'commit -m "first"');
+
+    writeFixtureFile(repoPath, 'file.txt', 'changed\n');
+    gitExec(repoPath, 'add file.txt');
+    gitExec(repoPath, 'commit -m "second"');
+
+    commitHash = gitExec(repoPath, 'rev-parse HEAD').trim();
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  it('returns diff for a specific commit', async () => {
+    const diff = await getCommitDiff(repoPath, commitHash);
+    expect(diff.lines.length).toBeGreaterThan(0);
+    expect(diff.lines.some((l) => l.type === 'addition')).toBe(true);
+    expect(diff.lines.some((l) => l.type === 'deletion')).toBe(true);
+  });
+
+  it('returns empty diff for invalid hash', async () => {
+    const diff = await getCommitDiff(repoPath, 'deadbeef000000');
+    expect(diff.raw).toBe('');
+    expect(diff.lines).toEqual([]);
+  });
+});
+
+describe('getCandidateBaseBranches / getDefaultBaseBranch / getDiffBetweenRefs (fixture)', () => {
+  const REPO_NAME = 'branch-diff-test';
+  let repoPath: string;
+
+  beforeAll(() => {
+    const result = createRepoWithRemote(REPO_NAME);
+    repoPath = result.repoPath;
+
+    // Create initial commit on main
+    writeFixtureFile(repoPath, 'base.txt', 'base content\n');
+    gitExec(repoPath, 'add base.txt');
+    gitExec(repoPath, 'commit -m "base commit"');
+    gitExec(repoPath, 'push -u origin main');
+
+    // Create feature branch with changes
+    gitExec(repoPath, 'checkout -b feature');
+    writeFixtureFile(repoPath, 'feature.txt', 'feature content\n');
+    gitExec(repoPath, 'add feature.txt');
+    gitExec(repoPath, 'commit -m "feature commit"');
+  });
+
+  afterAll(() => {
+    removeRepoWithRemote(REPO_NAME);
+  });
+
+  it('getCandidateBaseBranches returns remote branches', async () => {
+    const candidates = await getCandidateBaseBranches(repoPath);
+    expect(candidates.some((c) => c.includes('main'))).toBe(true);
+  });
+
+  it('getDefaultBaseBranch returns a branch', async () => {
+    const defaultBranch = await getDefaultBaseBranch(repoPath);
+    expect(defaultBranch).toBeTruthy();
+    expect(defaultBranch).toContain('main');
+  });
+
+  it('getDiffBetweenRefs returns diff between feature and main', async () => {
+    const diff = await getDiffBetweenRefs(repoPath, 'origin/main');
+    expect(diff.baseBranch).toBe('origin/main');
+    expect(diff.stats.filesChanged).toBeGreaterThanOrEqual(1);
+    expect(diff.files.some((f) => f.path === 'feature.txt')).toBe(true);
+    expect(diff.commits.length).toBeGreaterThanOrEqual(1);
+    expect(diff.commits.some((c) => c.message === 'feature commit')).toBe(true);
   });
 });
