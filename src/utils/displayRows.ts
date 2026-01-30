@@ -90,36 +90,32 @@ function extractFilePathFromHeader(content: string): string | null {
   return match ? match[1] : null;
 }
 
+// Track file sections for block highlighting
+// Each file section has: language, startRowIndex, and content streams
+interface FileSection {
+  language: string | null;
+  startRowIndex: number;
+  // Old stream: context + deletions (for highlighting with old file context)
+  oldContent: string[];
+  oldRowIndices: number[]; // Maps oldContent index -> row index
+  // New stream: context + additions (for highlighting with new file context)
+  newContent: string[];
+  newRowIndices: number[]; // Maps newContent index -> row index
+}
+
 /**
- * Build display rows from a DiffResult.
- * Filters out non-displayable lines (index, ---, +++ headers).
+ * Phase 1: Build display rows from filtered diff lines.
  * Pairs consecutive deletions/additions within hunks and computes word-level diffs.
- * Applies block-based syntax highlighting to properly handle multi-line constructs.
+ * Also collects content streams per file section for block highlighting.
  */
-export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
-  if (!diff) return [];
-
-  const filteredLines = diff.lines.filter(isDisplayableDiffLine);
+function buildRowsFromFilteredLines(filteredLines: DiffLine[]): {
+  rows: DisplayRow[];
+  fileSections: FileSection[];
+} {
   const rows: DisplayRow[] = [];
-
-  // Track file sections for block highlighting
-  // Each file section has: language, startRowIndex, and content streams
-  interface FileSection {
-    language: string | null;
-    startRowIndex: number;
-    // Old stream: context + deletions (for highlighting with old file context)
-    oldContent: string[];
-    oldRowIndices: number[]; // Maps oldContent index -> row index
-    // New stream: context + additions (for highlighting with new file context)
-    newContent: string[];
-    newRowIndices: number[]; // Maps newContent index -> row index
-  }
-
   const fileSections: FileSection[] = [];
   let currentSection: FileSection | null = null;
 
-  // Phase 1: Build display rows WITHOUT highlighting
-  // Also collect content for block highlighting
   let i = 0;
   while (i < filteredLines.length) {
     const line = filteredLines[i];
@@ -260,7 +256,14 @@ export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
     fileSections.push(currentSection);
   }
 
-  // Phase 2: Apply block highlighting for each file section
+  return { rows, fileSections };
+}
+
+/**
+ * Phase 2: Apply block-based syntax highlighting to display rows.
+ * Processes each file section, highlighting old (context+del) and new (context+add) streams.
+ */
+function applyBlockHighlighting(rows: DisplayRow[], fileSections: FileSection[]): void {
   for (const section of fileSections) {
     if (!section.language) continue;
 
@@ -301,7 +304,20 @@ export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
       }
     }
   }
+}
 
+/**
+ * Build display rows from a DiffResult.
+ * Filters out non-displayable lines (index, ---, +++ headers).
+ * Pairs consecutive deletions/additions within hunks and computes word-level diffs.
+ * Applies block-based syntax highlighting to properly handle multi-line constructs.
+ */
+export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
+  if (!diff) return [];
+
+  const filteredLines = diff.lines.filter(isDisplayableDiffLine);
+  const { rows, fileSections } = buildRowsFromFilteredLines(filteredLines);
+  applyBlockHighlighting(rows, fileSections);
   return rows;
 }
 
