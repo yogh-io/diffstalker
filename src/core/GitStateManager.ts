@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { watch, FSWatcher } from 'chokidar';
 import { EventEmitter } from 'node:events';
 import ignore, { Ignore } from 'ignore';
@@ -35,7 +36,6 @@ import { getCachedBaseBranch, setCachedBaseBranch } from '../utils/baseBranchCac
 export interface GitState {
   status: GitStatus | null;
   diff: DiffResult | null;
-  stagedDiff: string;
   selectedFile: FileEntry | null;
   isLoading: boolean;
   error: string | null;
@@ -80,13 +80,13 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   private queue: GitOperationQueue;
   private gitWatcher: FSWatcher | null = null;
   private workingDirWatcher: FSWatcher | null = null;
-  private ignorer: Ignore | null = null;
+  private ignorers: Map<string, Ignore> = new Map();
+  private diffDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Current state
   private _state: GitState = {
     status: null,
     diff: null,
-    stagedDiff: '',
     selectedFile: null,
     isLoading: false,
     error: null,
@@ -155,28 +155,58 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   }
 
   /**
-   * Load gitignore patterns from .gitignore and .git/info/exclude.
-   * Returns an Ignore instance that can test paths.
+   * Load gitignore patterns from all .gitignore files and .git/info/exclude.
+   * Returns a Map of directory → Ignore instance, where each instance handles
+   * patterns relative to its own directory (matching how git scopes .gitignore files).
    */
-  private loadGitignore(): Ignore {
-    const ig = ignore();
+  private loadGitignores(): Map<string, Ignore> {
+    const ignorers = new Map<string, Ignore>();
 
-    // Always ignore .git directory (has its own dedicated watcher)
-    ig.add('.git');
+    // Root ignorer: .git dir + root .gitignore + .git/info/exclude
+    const rootIg = ignore();
+    rootIg.add('.git');
 
-    // Load .gitignore if it exists
-    const gitignorePath = path.join(this.repoPath, '.gitignore');
-    if (fs.existsSync(gitignorePath)) {
-      ig.add(fs.readFileSync(gitignorePath, 'utf-8'));
+    const rootGitignorePath = path.join(this.repoPath, '.gitignore');
+    if (fs.existsSync(rootGitignorePath)) {
+      rootIg.add(fs.readFileSync(rootGitignorePath, 'utf-8'));
     }
 
-    // Load .git/info/exclude if it exists (repo-specific ignores)
     const excludePath = path.join(this.repoPath, '.git', 'info', 'exclude');
     if (fs.existsSync(excludePath)) {
-      ig.add(fs.readFileSync(excludePath, 'utf-8'));
+      rootIg.add(fs.readFileSync(excludePath, 'utf-8'));
     }
 
-    return ig;
+    ignorers.set('', rootIg);
+
+    // Find all nested .gitignore files using git ls-files
+    try {
+      const output = execFileSync(
+        'git',
+        ['ls-files', '-z', '--cached', '--others', '**/.gitignore'],
+        { cwd: this.repoPath, encoding: 'utf-8' }
+      );
+
+      for (const entry of output.split('\0')) {
+        if (!entry || entry === '.gitignore') continue;
+        if (!entry.endsWith('.gitignore')) continue;
+
+        const dir = path.dirname(entry);
+        const absPath = path.join(this.repoPath, entry);
+
+        try {
+          const content = fs.readFileSync(absPath, 'utf-8');
+          const ig = ignore();
+          ig.add(content);
+          ignorers.set(dir, ig);
+        } catch {
+          // Skip unreadable files
+        }
+      }
+    } catch {
+      // git ls-files failed — we still have the root ignorer
+    }
+
+    return ignorers;
   }
 
   /**
@@ -202,21 +232,26 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     });
 
     // --- Working directory watcher with gitignore support ---
-    this.ignorer = this.loadGitignore();
+    this.ignorers = this.loadGitignores();
 
     this.workingDirWatcher = watch(this.repoPath, {
       persistent: true,
       ignoreInitial: true,
       ignored: (filePath: string) => {
-        // Get path relative to repo root
         const relativePath = path.relative(this.repoPath, filePath);
-
-        // Don't ignore the repo root itself
         if (!relativePath) return false;
 
-        // Check against gitignore patterns
-        // When this returns true for a directory, chokidar won't recurse into it
-        return this.ignorer?.ignores(relativePath) ?? false;
+        // Walk ancestor directories from root to parent, checking each ignorer
+        const parts = relativePath.split('/');
+        for (let depth = 0; depth < parts.length; depth++) {
+          const dir = depth === 0 ? '' : parts.slice(0, depth).join('/');
+          const ig = this.ignorers.get(dir);
+          if (ig) {
+            const relToDir = depth === 0 ? relativePath : parts.slice(depth).join('/');
+            if (ig.ignores(relToDir)) return true;
+          }
+        }
+        return false;
       },
       awaitWriteFinish: {
         stabilityThreshold: 100,
@@ -229,7 +264,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     this.gitWatcher.on('change', (filePath) => {
       // Reload gitignore patterns if .gitignore changed
       if (filePath === gitignorePath) {
-        this.ignorer = this.loadGitignore();
+        this.ignorers = this.loadGitignores();
       }
       scheduleRefresh();
     });
@@ -253,6 +288,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
    * Stop watching and clean up resources.
    */
   dispose(): void {
+    if (this.diffDebounceTimer) clearTimeout(this.diffDebounceTimer);
     this.gitWatcher?.close();
     this.workingDirWatcher?.close();
     removeQueueForRepo(this.repoPath);
@@ -279,6 +315,26 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   }
 
   /**
+   * Schedule a lightweight status-only refresh (no diff fetching).
+   * Used after stage/unstage where the diff view updates on file selection.
+   */
+  scheduleStatusRefresh(): void {
+    this.queue.scheduleRefresh(async () => {
+      const newStatus = await getStatus(this.repoPath);
+      if (!newStatus.isRepo) {
+        this.updateState({
+          status: newStatus,
+          diff: null,
+          isLoading: false,
+          error: 'Not a git repository',
+        });
+        return;
+      }
+      this.updateState({ status: newStatus, isLoading: false });
+    });
+  }
+
+  /**
    * Immediately refresh git state.
    */
   async refresh(): Promise<void> {
@@ -295,18 +351,17 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
         this.updateState({
           status: newStatus,
           diff: null,
-          stagedDiff: '',
           isLoading: false,
           error: 'Not a git repository',
         });
         return;
       }
 
-      // Fetch all diffs atomically
-      const [allStagedDiff, allUnstagedDiff] = await Promise.all([
-        getStagedDiff(this.repoPath),
-        getDiff(this.repoPath, undefined, false),
-      ]);
+      // Emit status immediately so the file list updates after a single git spawn
+      this.updateState({ status: newStatus });
+
+      // Fetch unstaged diff (updates diff view once complete)
+      const allUnstagedDiff = await getDiff(this.repoPath, undefined, false);
 
       // Determine display diff based on selected file
       let displayDiff: DiffResult;
@@ -323,24 +378,16 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
             displayDiff = await getDiff(this.repoPath, currentFile.path, currentFile.staged);
           }
         } else {
-          // File no longer exists - clear selection
-          displayDiff = allUnstagedDiff.raw ? allUnstagedDiff : allStagedDiff;
+          // File no longer exists - clear selection, show unstaged diff
+          displayDiff = allUnstagedDiff;
           this.updateState({ selectedFile: null });
         }
       } else {
-        if (allUnstagedDiff.raw) {
-          displayDiff = allUnstagedDiff;
-        } else if (allStagedDiff.raw) {
-          displayDiff = allStagedDiff;
-        } else {
-          displayDiff = { raw: '', lines: [] };
-        }
+        displayDiff = allUnstagedDiff;
       }
 
       this.updateState({
-        status: newStatus,
         diff: displayDiff,
-        stagedDiff: allStagedDiff.raw,
         isLoading: false,
       });
     } catch (err) {
@@ -353,48 +400,69 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
 
   /**
    * Select a file and update the diff display.
+   * The selection highlight updates immediately; the diff fetch is debounced
+   * so rapid arrow-key presses only spawn one git process for the final file.
    */
-  async selectFile(file: FileEntry | null): Promise<void> {
+  selectFile(file: FileEntry | null): void {
     this.updateState({ selectedFile: file });
 
     if (!this._state.status?.isRepo) return;
 
-    await this.queue.enqueue(async () => {
-      if (file) {
-        let fileDiff: DiffResult;
-        if (file.status === 'untracked') {
-          fileDiff = await getDiffForUntracked(this.repoPath, file.path);
+    if (this.diffDebounceTimer) {
+      // Already cooling down — reset the timer and fetch when it expires
+      clearTimeout(this.diffDebounceTimer);
+      this.diffDebounceTimer = setTimeout(() => {
+        this.diffDebounceTimer = null;
+        this.fetchDiffForSelection();
+      }, 20);
+    } else {
+      // First call — fetch immediately, then start cooldown
+      this.fetchDiffForSelection();
+      this.diffDebounceTimer = setTimeout(() => {
+        this.diffDebounceTimer = null;
+      }, 20);
+    }
+  }
+
+  private fetchDiffForSelection(): void {
+    const file = this._state.selectedFile;
+
+    this.queue
+      .enqueue(async () => {
+        // Selection changed while queued — skip stale fetch
+        if (file !== this._state.selectedFile) return;
+
+        if (file) {
+          let fileDiff: DiffResult;
+          if (file.status === 'untracked') {
+            fileDiff = await getDiffForUntracked(this.repoPath, file.path);
+          } else {
+            fileDiff = await getDiff(this.repoPath, file.path, file.staged);
+          }
+          if (file === this._state.selectedFile) {
+            this.updateState({ diff: fileDiff });
+          }
         } else {
-          fileDiff = await getDiff(this.repoPath, file.path, file.staged);
+          const allDiff = await getStagedDiff(this.repoPath);
+          if (this._state.selectedFile === null) {
+            this.updateState({ diff: allDiff });
+          }
         }
-        this.updateState({ diff: fileDiff });
-      } else {
-        const allDiff = await getStagedDiff(this.repoPath);
-        this.updateState({ diff: allDiff });
-      }
-    });
+      })
+      .catch((err) => {
+        this.updateState({
+          error: `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      });
   }
 
   /**
-   * Stage a file with optimistic update.
+   * Stage a file.
    */
   async stage(file: FileEntry): Promise<void> {
-    // Optimistic update
-    const currentStatus = this._state.status;
-    if (currentStatus) {
-      this.updateState({
-        status: {
-          ...currentStatus,
-          files: currentStatus.files.map((f) =>
-            f.path === file.path && !f.staged ? { ...f, staged: true } : f
-          ),
-        },
-      });
-    }
-
     try {
       await this.queue.enqueueMutation(() => stageFile(this.repoPath, file.path));
-      this.scheduleRefresh();
+      this.scheduleStatusRefresh();
     } catch (err) {
       await this.refresh();
       this.updateState({
@@ -404,25 +472,12 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   }
 
   /**
-   * Unstage a file with optimistic update.
+   * Unstage a file.
    */
   async unstage(file: FileEntry): Promise<void> {
-    // Optimistic update
-    const currentStatus = this._state.status;
-    if (currentStatus) {
-      this.updateState({
-        status: {
-          ...currentStatus,
-          files: currentStatus.files.map((f) =>
-            f.path === file.path && f.staged ? { ...f, staged: false } : f
-          ),
-        },
-      });
-    }
-
     try {
       await this.queue.enqueueMutation(() => unstageFile(this.repoPath, file.path));
-      this.scheduleRefresh();
+      this.scheduleStatusRefresh();
     } catch (err) {
       await this.refresh();
       this.updateState({
