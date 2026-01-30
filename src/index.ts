@@ -60,7 +60,8 @@ function parseArgs(args: string[]): ParsedArgs {
     if (arg === '--follow' || arg === '-f') {
       result.follow = true;
       if (args[i + 1] && !args[i + 1].startsWith('-')) {
-        result.followFile = args[++i];
+        i++;
+        result.followFile = args[i];
       }
     } else if (arg === '--once') {
       result.once = true;
@@ -68,7 +69,8 @@ function parseArgs(args: string[]): ParsedArgs {
       result.debug = true;
     } else if (arg === '--socket' || arg === '-s') {
       if (args[i + 1] && !args[i + 1].startsWith('-')) {
-        result.socket = args[++i];
+        i++;
+        result.socket = args[i];
       } else {
         console.error('Error: --socket requires a path argument');
         process.exit(1);

@@ -30,6 +30,20 @@ function formatBranch(branch: BranchInfo): string {
   return result;
 }
 
+function computeBranchVisibleLength(branch: BranchInfo): number {
+  let len = branch.current.length;
+  if (branch.tracking) {
+    len += 3 + branch.tracking.length;
+  }
+  if (branch.ahead > 0) {
+    len += 3 + String(branch.ahead).length;
+  }
+  if (branch.behind > 0) {
+    len += 3 + String(branch.behind).length;
+  }
+  return len;
+}
+
 /**
  * Format header content as blessed-compatible tagged string.
  */
@@ -73,12 +87,7 @@ export function formatHeader(
       leftLen += error.length + 3; // " (error)"
     }
 
-    const rightLen = branch
-      ? branch.current.length +
-        (branch.tracking ? 3 + branch.tracking.length : 0) +
-        (branch.ahead > 0 ? 3 + String(branch.ahead).length : 0) +
-        (branch.behind > 0 ? 3 + String(branch.behind).length : 0)
-      : 0;
+    const rightLen = branch ? computeBranchVisibleLength(branch) : 0;
 
     const padding = Math.max(1, width - leftLen - rightLen - 2);
     return leftContent + ' '.repeat(padding) + rightContent;

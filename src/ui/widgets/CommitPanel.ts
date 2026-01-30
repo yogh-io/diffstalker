@@ -19,7 +19,7 @@ export function formatCommitPanel(
   lines.push('');
 
   // Message input area
-  const borderChar = state.inputFocused ? '\u2502' : '\u2502';
+  const borderChar = '\u2502';
   const borderColor = state.inputFocused ? 'cyan' : 'gray';
 
   // Top border
