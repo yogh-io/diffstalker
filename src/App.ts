@@ -2,6 +2,7 @@ import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import { LayoutManager } from './ui/Layout.js';
 import { setupKeyBindings } from './KeyBindings.js';
+import { renderTopPane, renderBottomPane } from './ui/PaneRenderers.js';
 import { formatHeader } from './ui/widgets/Header.js';
 
 interface WatcherState {
@@ -12,36 +13,21 @@ interface WatcherState {
 }
 import { formatFooter } from './ui/widgets/Footer.js';
 import {
-  formatFileList,
   getFileAtIndex,
   getFileListTotalRows,
   getFileIndexFromRow,
   getRowFromFileIndex,
 } from './ui/widgets/FileList.js';
-import { formatDiff, formatHistoryDiff } from './ui/widgets/DiffView.js';
-import { formatCommitPanel, formatCommitPanelInactive } from './ui/widgets/CommitPanel.js';
+import { getHistoryTotalRows, getCommitAtIndex } from './ui/widgets/HistoryView.js';
 import {
-  formatHistoryView,
-  getHistoryTotalRows,
-  getCommitAtIndex,
-} from './ui/widgets/HistoryView.js';
-import {
-  formatCompareListView,
   getCompareListTotalRows,
   getNextCompareSelection,
   getRowFromCompareSelection,
   getCompareSelectionFromRow,
   type CompareListSelection,
 } from './ui/widgets/CompareListView.js';
-import {
-  formatExplorerView,
-  formatBreadcrumbs,
-  getExplorerTotalRows,
-} from './ui/widgets/ExplorerView.js';
-import {
-  formatExplorerContent,
-  getExplorerContentTotalRows,
-} from './ui/widgets/ExplorerContent.js';
+import { getExplorerTotalRows } from './ui/widgets/ExplorerView.js';
+import { getExplorerContentTotalRows } from './ui/widgets/ExplorerContent.js';
 import {
   ExplorerStateManager,
   ExplorerState,
@@ -1246,177 +1232,55 @@ export class App {
   }
 
   private updateTopPane(): void {
-    const gitState = this.gitManager?.state;
-    const historyState = this.gitManager?.historyState;
-    const compareState = this.gitManager?.compareState;
-    const files = gitState?.status?.files ?? [];
     const state = this.uiState.state;
     const width = (this.screen.width as number) || 80;
 
-    let content: string;
-
-    if (state.bottomTab === 'history') {
-      const commits = historyState?.commits ?? [];
-      content = formatHistoryView(
-        commits,
-        state.historySelectedIndex,
-        state.currentPane === 'history',
-        width,
-        state.historyScrollOffset,
-        this.layout.dimensions.topPaneHeight
-      );
-    } else if (state.bottomTab === 'compare') {
-      const compareDiff = compareState?.compareDiff;
-      const commits = compareDiff?.commits ?? [];
-      const compareFiles = compareDiff?.files ?? [];
-
-      content = formatCompareListView(
-        commits,
-        compareFiles,
-        this.compareSelection,
-        state.currentPane === 'compare',
-        width,
-        state.compareScrollOffset,
-        this.layout.dimensions.topPaneHeight
-      );
-    } else if (state.bottomTab === 'explorer') {
-      const explorerState = this.explorerManager?.state;
-      const displayRows = explorerState?.displayRows ?? [];
-
-      content = formatExplorerView(
-        displayRows,
-        state.explorerSelectedIndex,
-        state.currentPane === 'explorer',
-        width,
-        state.explorerScrollOffset,
-        this.layout.dimensions.topPaneHeight,
-        explorerState?.isLoading ?? false,
-        explorerState?.error ?? null
-      );
-    } else {
-      content = formatFileList(
-        files,
-        state.selectedIndex,
-        state.currentPane === 'files',
-        width,
-        state.fileListScrollOffset,
-        this.layout.dimensions.topPaneHeight
-      );
-    }
+    const content = renderTopPane(
+      state,
+      this.gitManager?.state.status?.files ?? [],
+      this.gitManager?.historyState?.commits ?? [],
+      this.gitManager?.compareState?.compareDiff ?? null,
+      this.compareSelection,
+      this.explorerManager?.state,
+      width,
+      this.layout.dimensions.topPaneHeight
+    );
 
     this.layout.topPane.setContent(content);
   }
 
   private updateBottomPane(): void {
-    const gitState = this.gitManager?.state;
-    const historyState = this.gitManager?.historyState;
-    const diff = gitState?.diff ?? null;
     const state = this.uiState.state;
     const width = (this.screen.width as number) || 80;
-    const files = gitState?.status?.files ?? [];
+    const files = this.gitManager?.state.status?.files ?? [];
     const stagedCount = files.filter((f) => f.staged).length;
 
     // Update staged count for commit validation
     this.commitFlowState.setStagedCount(stagedCount);
 
-    // Show appropriate content based on tab
-    if (state.bottomTab === 'commit') {
-      const commitContent = formatCommitPanel(this.commitFlowState.state, stagedCount, width);
-      this.layout.bottomPane.setContent(commitContent);
+    const { content, totalRows } = renderBottomPane(
+      state,
+      this.gitManager?.state.diff ?? null,
+      this.gitManager?.historyState,
+      this.gitManager?.compareSelectionState,
+      this.explorerManager?.state?.selectedFile ?? null,
+      this.commitFlowState.state,
+      stagedCount,
+      this.currentTheme,
+      width,
+      this.layout.dimensions.bottomPaneHeight
+    );
 
-      // Show/hide textarea based on focus
-      if (this.commitTextarea) {
-        if (this.commitFlowState.state.inputFocused) {
-          this.commitTextarea.show();
-        } else {
-          this.commitTextarea.hide();
-        }
-      }
-    } else if (state.bottomTab === 'history') {
-      // Hide commit textarea when not on commit tab
-      if (this.commitTextarea) {
-        this.commitTextarea.hide();
-      }
+    this.bottomPaneTotalRows = totalRows;
+    this.layout.bottomPane.setContent(content);
 
-      const selectedCommit = historyState?.selectedCommit ?? null;
-      const commitDiff = historyState?.commitDiff ?? null;
-
-      const { content, totalRows } = formatHistoryDiff(
-        selectedCommit,
-        commitDiff,
-        width,
-        state.diffScrollOffset,
-        this.layout.dimensions.bottomPaneHeight,
-        this.currentTheme,
-        state.wrapMode
-      );
-
-      this.bottomPaneTotalRows = totalRows;
-      this.layout.bottomPane.setContent(content);
-    } else if (state.bottomTab === 'compare') {
-      // Hide commit textarea when not on commit tab
-      if (this.commitTextarea) {
-        this.commitTextarea.hide();
-      }
-
-      const compareSelectionState = this.gitManager?.compareSelectionState;
-      const compareDiff = compareSelectionState?.diff ?? null;
-
-      if (compareDiff) {
-        const { content, totalRows } = formatDiff(
-          compareDiff,
-          width,
-          state.diffScrollOffset,
-          this.layout.dimensions.bottomPaneHeight,
-          this.currentTheme,
-          state.wrapMode
-        );
-        this.bottomPaneTotalRows = totalRows;
-        this.layout.bottomPane.setContent(content);
+    // Manage commit textarea visibility
+    if (this.commitTextarea) {
+      if (state.bottomTab === 'commit' && this.commitFlowState.state.inputFocused) {
+        this.commitTextarea.show();
       } else {
-        this.bottomPaneTotalRows = 0;
-        this.layout.bottomPane.setContent(
-          '{gray-fg}Select a commit or file to view diff{/gray-fg}'
-        );
-      }
-    } else if (state.bottomTab === 'explorer') {
-      // Hide commit textarea when not on commit tab
-      if (this.commitTextarea) {
         this.commitTextarea.hide();
       }
-
-      const explorerState = this.explorerManager?.state;
-      const selectedFile = explorerState?.selectedFile ?? null;
-
-      const content = formatExplorerContent(
-        selectedFile?.path ?? null,
-        selectedFile?.content ?? null,
-        width,
-        state.explorerFileScrollOffset,
-        this.layout.dimensions.bottomPaneHeight,
-        selectedFile?.truncated ?? false,
-        state.wrapMode
-      );
-
-      // TODO: formatExplorerContent should also return totalRows
-      this.layout.bottomPane.setContent(content);
-    } else {
-      // Hide commit textarea when not on commit tab
-      if (this.commitTextarea) {
-        this.commitTextarea.hide();
-      }
-
-      const { content, totalRows } = formatDiff(
-        diff,
-        width,
-        state.diffScrollOffset,
-        this.layout.dimensions.bottomPaneHeight,
-        this.currentTheme,
-        state.wrapMode
-      );
-
-      this.bottomPaneTotalRows = totalRows;
-      this.layout.bottomPane.setContent(content);
     }
   }
 
