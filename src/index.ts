@@ -54,7 +54,8 @@ interface ParsedArgs {
 function parseArgs(args: string[]): ParsedArgs {
   const result: ParsedArgs = {};
 
-  for (let i = 0; i < args.length; i++) {
+  let i = 0;
+  while (i < args.length) {
     const arg = args[i];
 
     if (arg === '--follow' || arg === '-f') {
@@ -122,6 +123,7 @@ Mouse:
     } else if (!arg.startsWith('-')) {
       result.initialPath = arg;
     }
+    i++;
   }
 
   return result;
