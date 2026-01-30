@@ -179,8 +179,8 @@ async function main() {
       } else if (msg.ruleId === 'max-lines-per-function') {
         // This rule fires per function, use it to count functions
         functionCount++;
-      } else if (msg.ruleId !== 'max-depth') {
-        // Everything else that isn't our metrics probes is a smell
+      } else {
+        // Everything else is a smell
         totalSmells++;
         smellsByRule[msg.ruleId] = (smellsByRule[msg.ruleId] ?? 0) + 1;
         fileSmells.set(relPath, (fileSmells.get(relPath) ?? 0) + 1);

@@ -22,12 +22,15 @@ export default tseslint.config(
       'sonarjs/no-control-regex': 'off',
       // Tracked via metrics, not a lint gate
       'sonarjs/cognitive-complexity': 'warn',
-      'sonarjs/slow-regex': 'warn',
-      'sonarjs/no-ignored-exceptions': 'warn',
+      // Only simple utility patterns (blessed tag stripping, ANSI); no user input
+      'sonarjs/slow-regex': 'off',
+      // Intentional empty catches for graceful fallbacks (file reads, git ops)
+      'sonarjs/no-ignored-exceptions': 'off',
       // Standard loop idiom (args[++i]) is clear; rule is too strict
       'sonarjs/updated-loop-counter': 'off',
-      'sonarjs/no-dead-store': 'warn',
-      'sonarjs/no-all-duplicated-branches': 'warn',
+      // These catch real bugs — enforce as errors, not tracked warnings
+      'sonarjs/no-dead-store': 'error',
+      'sonarjs/no-all-duplicated-branches': 'error',
       'sonarjs/no-nested-conditional': 'warn',
     },
   },

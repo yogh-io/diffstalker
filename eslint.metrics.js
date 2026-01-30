@@ -9,7 +9,6 @@ export default [
     rules: {
       complexity: ['warn', { max: 1 }],
       'sonarjs/cognitive-complexity': ['warn', 1],
-      'max-depth': ['warn', { max: 1 }],
       'max-lines-per-function': ['warn', { max: 1 }],
     },
   },

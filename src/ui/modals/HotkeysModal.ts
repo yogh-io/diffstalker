@@ -162,7 +162,6 @@ export class HotkeysModal {
    * Calculate the visible width of a string (excluding blessed tags).
    */
   private visibleWidth(str: string): number {
-    // eslint-disable-next-line sonarjs/slow-regex
     return str.replace(/\{[^}]+\}/g, '').length;
   }
 
