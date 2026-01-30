@@ -7,6 +7,7 @@ import {
   buildHistoryDisplayRows,
   getDisplayRowsLineNumWidth,
   wrapDisplayRows,
+  type WordDiffSegment,
 } from '../../utils/displayRows.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
 
@@ -62,6 +63,129 @@ function ansiFg(hex: string): string {
 }
 
 /**
+ * Format a diff file header row (e.g. "── path/to/file ──").
+ */
+function formatDiffHeader(content: string, headerWidth: number): string {
+  if (content.startsWith('diff --git')) {
+    const match = content.match(/diff --git a\/.+ b\/(.+)$/);
+    if (match) {
+      const maxPathLen = headerWidth - 6;
+      const path = truncate(match[1], maxPathLen);
+      return `{escape}${ANSI_BOLD}${ANSI_CYAN}\u2500\u2500 ${path} \u2500\u2500${ANSI_RESET}{/escape}`;
+    }
+  }
+  return `{escape}${ANSI_GRAY}${truncate(content, headerWidth)}${ANSI_RESET}{/escape}`;
+}
+
+/**
+ * Format a diff hunk header row (e.g. "Lines 10-20 → 15-25 functionName").
+ */
+function formatDiffHunk(content: string, headerWidth: number): string {
+  const match = content.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/);
+  if (match) {
+    const oldStart = parseInt(match[1], 10);
+    const oldCount = match[2] ? parseInt(match[2], 10) : 1;
+    const newStart = parseInt(match[3], 10);
+    const newCount = match[4] ? parseInt(match[4], 10) : 1;
+    const context = match[5].trim();
+
+    const oldEnd = oldStart + oldCount - 1;
+    const newEnd = newStart + newCount - 1;
+
+    const oldRange = oldCount === 1 ? `${oldStart}` : `${oldStart}-${oldEnd}`;
+    const newRange = newCount === 1 ? `${newStart}` : `${newStart}-${newEnd}`;
+
+    const rangeText = `Lines ${oldRange} \u2192 ${newRange}`;
+    const contextMaxLen = headerWidth - rangeText.length - 1;
+    const truncatedContext =
+      context && contextMaxLen > 3 ? ' ' + truncate(context, contextMaxLen) : '';
+
+    return `{escape}${ANSI_CYAN}${rangeText}${ANSI_GRAY}${truncatedContext}${ANSI_RESET}{/escape}`;
+  }
+  return `{escape}${ANSI_CYAN}${truncate(content, headerWidth)}${ANSI_RESET}{/escape}`;
+}
+
+interface DiffContentRow {
+  content: string;
+  lineNum?: number;
+  wordDiffSegments?: WordDiffSegment[];
+  highlighted?: string;
+  isContinuation?: boolean;
+}
+
+/**
+ * Format an add or delete content line, parameterized by line type.
+ */
+function formatDiffContentLine(
+  row: DiffContentRow,
+  lineNumWidth: number,
+  contentWidth: number,
+  headerWidth: number,
+  theme: Theme,
+  wrapMode: boolean,
+  lineType: 'add' | 'del'
+): string {
+  const { colors } = theme;
+  const isCont = row.isContinuation;
+  const typeSymbol = lineType === 'add' ? '+' : '-';
+  const symbol = isCont ? '\u00bb' : typeSymbol;
+  const lineNum = formatLineNum(row.lineNum, lineNumWidth);
+  const prefix = `${lineNum} ${symbol}  `;
+
+  if (theme.name.includes('ansi')) {
+    const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
+    const visibleContent = `${prefix}${rawContent}`;
+    const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+    const bgTag = lineType === 'add' ? 'green' : 'red';
+    return `{${bgTag}-bg}{white-fg}${escapeContent(paddedContent)}{/white-fg}{/${bgTag}-bg}`;
+  }
+
+  const bg = ansiBg(lineType === 'add' ? colors.addBg : colors.delBg);
+  const highlightBg = ansiBg(lineType === 'add' ? colors.addHighlight : colors.delHighlight);
+  const fg = ansiFg('#ffffff');
+
+  if (row.wordDiffSegments && !isCont) {
+    const rawContent = row.content || '';
+    if (!wrapMode && rawContent.length > contentWidth) {
+      const truncated = truncate(rawContent, contentWidth);
+      const visibleContent = `${prefix}${truncated}`;
+      const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+      return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
+    }
+
+    let contentStr = '';
+    for (const seg of row.wordDiffSegments) {
+      if (seg.type === 'changed') {
+        contentStr += `${highlightBg}${seg.text}${bg}`;
+      } else {
+        contentStr += seg.text;
+      }
+    }
+    const visibleWidth = prefix.length + rawContent.length;
+    const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
+    return `{escape}${bg}${fg}${prefix}${contentStr}${padding}${ANSI_RESET}{/escape}`;
+  }
+
+  if (row.highlighted && !isCont) {
+    const rawContent = row.content || '';
+    if (!wrapMode && rawContent.length > contentWidth) {
+      const truncated = truncate(rawContent, contentWidth);
+      const visibleContent = `${prefix}${truncated}`;
+      const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+      return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
+    }
+    const visibleWidth = prefix.length + rawContent.length;
+    const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
+    return `{escape}${bg}${fg}${prefix}${row.highlighted}${padding}${ANSI_RESET}{/escape}`;
+  }
+
+  const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
+  const visibleContent = `${prefix}${rawContent}`;
+  const paddedContent = visibleContent.padEnd(headerWidth, ' ');
+  return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
+}
+
+/**
  * Format a single display row as blessed-compatible tagged string.
  */
 function formatDisplayRow(
@@ -72,182 +196,34 @@ function formatDisplayRow(
   theme: Theme,
   wrapMode: boolean
 ): string {
-  const { colors } = theme;
-
   switch (row.type) {
-    case 'diff-header': {
-      const content = row.content;
-      if (content.startsWith('diff --git')) {
-        const match = content.match(/diff --git a\/.+ b\/(.+)$/);
-        if (match) {
-          const maxPathLen = headerWidth - 6;
-          const path = truncate(match[1], maxPathLen);
-          return `{escape}${ANSI_BOLD}${ANSI_CYAN}\u2500\u2500 ${path} \u2500\u2500${ANSI_RESET}{/escape}`;
-        }
-      }
-      return `{escape}${ANSI_GRAY}${truncate(content, headerWidth)}${ANSI_RESET}{/escape}`;
-    }
+    case 'diff-header':
+      return formatDiffHeader(row.content, headerWidth);
 
-    case 'diff-hunk': {
-      const match = row.content.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/);
-      if (match) {
-        const oldStart = parseInt(match[1], 10);
-        const oldCount = match[2] ? parseInt(match[2], 10) : 1;
-        const newStart = parseInt(match[3], 10);
-        const newCount = match[4] ? parseInt(match[4], 10) : 1;
-        const context = match[5].trim();
+    case 'diff-hunk':
+      return formatDiffHunk(row.content, headerWidth);
 
-        const oldEnd = oldStart + oldCount - 1;
-        const newEnd = newStart + newCount - 1;
+    case 'diff-add':
+      return formatDiffContentLine(
+        row,
+        lineNumWidth,
+        contentWidth,
+        headerWidth,
+        theme,
+        wrapMode,
+        'add'
+      );
 
-        const oldRange = oldCount === 1 ? `${oldStart}` : `${oldStart}-${oldEnd}`;
-        const newRange = newCount === 1 ? `${newStart}` : `${newStart}-${newEnd}`;
-
-        const rangeText = `Lines ${oldRange} \u2192 ${newRange}`;
-        const contextMaxLen = headerWidth - rangeText.length - 1;
-        const truncatedContext =
-          context && contextMaxLen > 3 ? ' ' + truncate(context, contextMaxLen) : '';
-
-        return `{escape}${ANSI_CYAN}${rangeText}${ANSI_GRAY}${truncatedContext}${ANSI_RESET}{/escape}`;
-      }
-      return `{escape}${ANSI_CYAN}${truncate(row.content, headerWidth)}${ANSI_RESET}{/escape}`;
-    }
-
-    case 'diff-add': {
-      const isCont = row.isContinuation;
-      const symbol = isCont ? '\u00bb' : '+';
-      const lineNum = formatLineNum(row.lineNum, lineNumWidth);
-      const prefix = `${lineNum} ${symbol}  `;
-
-      if (theme.name.includes('ansi')) {
-        // Basic ANSI theme - use blessed tags with 16-color palette
-        const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
-        const visibleContent = `${prefix}${rawContent}`;
-        const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-        return `{green-bg}{white-fg}${escapeContent(paddedContent)}{/white-fg}{/green-bg}`;
-      }
-
-      // Use 24-bit RGB via {escape} tag
-      const bg = ansiBg(colors.addBg);
-      const highlightBg = ansiBg(colors.addHighlight);
-      const fg = ansiFg('#ffffff');
-
-      // Check for word-level diff segments (only in non-wrap mode or first row)
-      if (row.wordDiffSegments && !isCont) {
-        const rawContent = row.content || '';
-        // Check visible content length (not including escape codes)
-        if (!wrapMode && rawContent.length > contentWidth) {
-          // Content too long - fall back to simple truncation without word highlighting
-          const truncated = truncate(rawContent, contentWidth);
-          const visibleContent = `${prefix}${truncated}`;
-          const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-          return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
-        }
-
-        // Build content with word-level highlighting
-        let contentStr = '';
-        for (const seg of row.wordDiffSegments) {
-          if (seg.type === 'changed') {
-            contentStr += `${highlightBg}${seg.text}${bg}`;
-          } else {
-            contentStr += seg.text;
-          }
-        }
-        // Calculate padding based on visible width (prefix + rawContent)
-        const visibleWidth = prefix.length + rawContent.length;
-        const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
-        return `{escape}${bg}${fg}${prefix}${contentStr}${padding}${ANSI_RESET}{/escape}`;
-      }
-
-      // Check for syntax highlighting (when no word-diff)
-      if (row.highlighted && !isCont) {
-        const rawContent = row.content || '';
-        if (!wrapMode && rawContent.length > contentWidth) {
-          // Too long - fall back to plain truncation
-          const truncated = truncate(rawContent, contentWidth);
-          const visibleContent = `${prefix}${truncated}`;
-          const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-          return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
-        }
-        // Use highlighted content (already has foreground colors, bg preserved)
-        const visibleWidth = prefix.length + rawContent.length;
-        const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
-        return `{escape}${bg}${fg}${prefix}${row.highlighted}${padding}${ANSI_RESET}{/escape}`;
-      }
-
-      const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
-      const visibleContent = `${prefix}${rawContent}`;
-      const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-      return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
-    }
-
-    case 'diff-del': {
-      const isCont = row.isContinuation;
-      const symbol = isCont ? '\u00bb' : '-';
-      const lineNum = formatLineNum(row.lineNum, lineNumWidth);
-      const prefix = `${lineNum} ${symbol}  `;
-
-      if (theme.name.includes('ansi')) {
-        // Basic ANSI theme - use blessed tags with 16-color palette
-        const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
-        const visibleContent = `${prefix}${rawContent}`;
-        const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-        return `{red-bg}{white-fg}${escapeContent(paddedContent)}{/white-fg}{/red-bg}`;
-      }
-
-      // Use 24-bit RGB via {escape} tag
-      const bg = ansiBg(colors.delBg);
-      const highlightBg = ansiBg(colors.delHighlight);
-      const fg = ansiFg('#ffffff');
-
-      // Check for word-level diff segments (only in non-wrap mode or first row)
-      if (row.wordDiffSegments && !isCont) {
-        const rawContent = row.content || '';
-        // Check visible content length (not including escape codes)
-        if (!wrapMode && rawContent.length > contentWidth) {
-          // Content too long - fall back to simple truncation without word highlighting
-          const truncated = truncate(rawContent, contentWidth);
-          const visibleContent = `${prefix}${truncated}`;
-          const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-          return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
-        }
-
-        // Build content with word-level highlighting
-        let contentStr = '';
-        for (const seg of row.wordDiffSegments) {
-          if (seg.type === 'changed') {
-            contentStr += `${highlightBg}${seg.text}${bg}`;
-          } else {
-            contentStr += seg.text;
-          }
-        }
-        // Calculate padding based on visible width (prefix + rawContent)
-        const visibleWidth = prefix.length + rawContent.length;
-        const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
-        return `{escape}${bg}${fg}${prefix}${contentStr}${padding}${ANSI_RESET}{/escape}`;
-      }
-
-      // Check for syntax highlighting (when no word-diff)
-      if (row.highlighted && !isCont) {
-        const rawContent = row.content || '';
-        if (!wrapMode && rawContent.length > contentWidth) {
-          // Too long - fall back to plain truncation
-          const truncated = truncate(rawContent, contentWidth);
-          const visibleContent = `${prefix}${truncated}`;
-          const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-          return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
-        }
-        // Use highlighted content (already has foreground colors, bg preserved)
-        const visibleWidth = prefix.length + rawContent.length;
-        const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
-        return `{escape}${bg}${fg}${prefix}${row.highlighted}${padding}${ANSI_RESET}{/escape}`;
-      }
-
-      const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
-      const visibleContent = `${prefix}${rawContent}`;
-      const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-      return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
-    }
+    case 'diff-del':
+      return formatDiffContentLine(
+        row,
+        lineNumWidth,
+        contentWidth,
+        headerWidth,
+        theme,
+        wrapMode,
+        'del'
+      );
 
     case 'diff-context': {
       const isCont = row.isContinuation;
@@ -255,12 +231,8 @@ function formatDisplayRow(
       const lineNum = formatLineNum(row.lineNum, lineNumWidth);
       const prefix = `${lineNum} ${symbol}  `;
       const rawContent = row.content || '';
+      const prefixAnsi = `\x1b[90m${prefix}\x1b[0m`;
 
-      // Use {escape} for raw ANSI output (consistent with add/del lines)
-      // This avoids blessed's tag escaping issues with braces
-      const prefixAnsi = `\x1b[90m${prefix}\x1b[0m`; // gray prefix
-
-      // Use syntax highlighting if available (not for continuations)
       if (row.highlighted && !isCont) {
         const content = wrapMode ? row.highlighted : truncateAnsi(row.highlighted, contentWidth);
         return `{escape}${prefixAnsi}${content}${ANSI_RESET}{/escape}`;
