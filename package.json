@@ -31,6 +31,8 @@
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
+    "metrics": "bun scripts/collect-metrics.ts",
+    "metrics:snapshot": "bun scripts/collect-metrics.ts --save",
     "prepublishOnly": "bun run build:prod"
   },
   "keywords": [
@@ -58,6 +60,7 @@
     "@types/node": "^22.10.7",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-sonarjs": "^3.0.6",
     "patch-package": "^8.0.1",
     "prettier": "^3.8.0",
     "typescript": "^5.7.3",
