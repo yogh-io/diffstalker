@@ -1,6 +1,6 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
-import { ThemeName, themes, themeOrder, getTheme } from '../../themes.js';
+import { ThemeName, themes, themeOrder } from '../../themes.js';
 
 /**
  * ThemePicker modal for selecting diff themes.

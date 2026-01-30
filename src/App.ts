@@ -957,6 +957,7 @@ export class App {
     this.uiState.toggleMouse();
 
     // Access program for terminal mouse control (not on screen's TS types)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const program = (this.screen as any).program;
     if (willEnable) {
       program.enableMouse();
