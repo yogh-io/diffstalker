@@ -102,19 +102,33 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 
 ### Tab 5: Explorer View
 
-**Top Pane: File Browser**
-- Directory listing sorted: directories first, then files
-- Directories shown with `/` suffix (blue)
-- Files shown with default color
-- Navigate with Enter/Backspace
-- Current path shown in header as breadcrumbs
+**Top Pane: File Tree**
+- Collapsible tree view with directory hierarchy
+- Tree lines (├ └ │) for visual hierarchy
+- Directories with expand/collapse icons (▸ collapsed, ▾ expanded)
+- Single-child directory chains collapsed (e.g., `src/main/java/` shown as one node)
+- Git status indicators on files:
+  - `M` Modified (yellow)
+  - `A` Added (green)
+  - `D` Deleted (red)
+  - `?` Untracked (gray)
+  - `R` Renamed (blue)
+- Directory status indicator: `●` (yellow) if contains changed files
+- Filter to show only changed files (toggle with `g`)
 
 **Bottom Pane: File Content**
 - Syntax-highlighted file preview
-- Line numbers (yellow)
+- Line numbers (gray)
 - Binary files show "Binary file" message
 - Large files truncated with "File truncated..." message
-- Optional middle-dots for whitespace visualization (toggle with `.`)
+
+**File Finder Modal**
+- Open with `/` key
+- Fuzzy search across all files in repo
+- Real-time filtering as you type
+- Navigate results with Ctrl+j/k or Up/Down arrows
+- Select with Enter, cancel with Escape
+- Matched characters highlighted in yellow
 
 ---
 
@@ -170,11 +184,20 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Enter selected directory |
-| `Backspace` / `h` | Go up to parent directory |
-| `.` | Toggle middle-dots (whitespace visualization) |
-| `Ctrl+H` | Toggle show/hide hidden files |
-| `Ctrl+G` | Toggle show/hide gitignored files |
+| `Enter` | Expand/collapse directory |
+| `Backspace` | Go up to parent directory (and collapse the one left) |
+| `/` | Open file finder modal |
+| `g` | Toggle show only changed files |
+
+### File Finder Modal
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Select highlighted file |
+| `Escape` | Cancel and close modal |
+| `Ctrl+j` / `Down` | Navigate to next result |
+| `Ctrl+k` / `Up` | Navigate to previous result |
+| `Tab` | Cycle through results |
 
 ### Display Options
 
@@ -485,6 +508,15 @@ Selected theme is saved to `~/.config/diffstalker/config.json`.
 
 - Inline prompt: "Discard changes to <file>? (y/n)"
 - `y` confirms, `n` or Esc cancels
+
+### File Finder Modal
+
+- Fuzzy file search across entire repository
+- Text input for search query
+- Top 15 results shown with match highlighting
+- Navigate with Ctrl+j/k, Up/Down, or Tab
+- Select with Enter, cancel with Escape
+- Automatically expands tree to show selected file
 
 ---
 
