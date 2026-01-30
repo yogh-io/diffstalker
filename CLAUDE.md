@@ -71,7 +71,6 @@ src/
 │   ├── baseBranchCache.ts    # Cache for PR base branch per repo
 │   ├── formatPath.ts         # Path shortening utility
 │   ├── layoutCalculations.ts # UI layout math
-│   ├── mouseCoordinates.ts   # Mouse position calculations
 │   └── pathUtils.ts          # Path expansion utilities
 ```
 
