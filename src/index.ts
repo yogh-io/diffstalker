@@ -3,7 +3,7 @@ import { App } from './App.js';
 import { loadConfig } from './config.js';
 import { CommandServer } from './ipc/CommandServer.js';
 
-// Cleanup function to reset terminal state
+// Cleanup function to reset terminal state on exit
 function cleanupTerminal(): void {
   // Disable SGR extended mouse mode
   process.stdout.write('\x1b[?1006l');
@@ -15,14 +15,9 @@ function cleanupTerminal(): void {
   process.stdout.write('\x1b[?1003l');
   // Show cursor
   process.stdout.write('\x1b[?25h');
-  // Exit alternate screen buffer (in case it was left enabled)
-  process.stdout.write('\x1b[?1049l');
-  // Reset scroll region
-  process.stdout.write('\x1b[r');
 }
 
-// Clean up any leftover terminal state from previous crashes
-// (e.g., if the process was killed before cleanup could run)
+// Clean up any leftover mouse state from previous crashes
 cleanupTerminal();
 
 // Ensure terminal is cleaned up on any exit
