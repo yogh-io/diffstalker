@@ -407,161 +407,6 @@ export async function getCommitDiff(repoPath: string, hash: string): Promise<Dif
   }
 }
 
-interface UncommittedFileStats {
-  additions: number;
-  deletions: number;
-  staged: boolean;
-  unstaged: boolean;
-}
-
-/**
- * Parse staged and unstaged --numstat output into per-file stats.
- */
-function parseUncommittedFileStats(
-  stagedNumstat: string,
-  unstagedNumstat: string
-): Map<string, UncommittedFileStats> {
-  const files: Map<string, UncommittedFileStats> = new Map();
-
-  for (const line of stagedNumstat
-    .trim()
-    .split('\n')
-    .filter((l) => l)) {
-    const parts = line.split('\t');
-    if (parts.length >= 3) {
-      const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
-      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-      const filepath = parts.slice(2).join('\t');
-      files.set(filepath, { additions, deletions, staged: true, unstaged: false });
-    }
-  }
-
-  for (const line of unstagedNumstat
-    .trim()
-    .split('\n')
-    .filter((l) => l)) {
-    const parts = line.split('\t');
-    if (parts.length >= 3) {
-      const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
-      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-      const filepath = parts.slice(2).join('\t');
-      const existing = files.get(filepath);
-      if (existing) {
-        existing.additions += additions;
-        existing.deletions += deletions;
-        existing.unstaged = true;
-      } else {
-        files.set(filepath, { additions, deletions, staged: false, unstaged: true });
-      }
-    }
-  }
-
-  return files;
-}
-
-/**
- * Build a status map from git status files.
- */
-function buildUncommittedStatusMap(
-  statusFiles: { index: string; working_dir: string; path: string }[]
-): Map<string, CompareFileDiff['status']> {
-  const statusMap: Map<string, CompareFileDiff['status']> = new Map();
-  for (const file of statusFiles) {
-    if (file.index === 'A' || file.working_dir === '?') {
-      statusMap.set(file.path, 'added');
-    } else if (file.index === 'D' || file.working_dir === 'D') {
-      statusMap.set(file.path, 'deleted');
-    } else if (file.index === 'R') {
-      statusMap.set(file.path, 'renamed');
-    } else {
-      statusMap.set(file.path, 'modified');
-    }
-  }
-  return statusMap;
-}
-
-/**
- * Split combined diff output into per-file CompareFileDiff entries.
- */
-function buildUncommittedFileDiffs(
-  combinedDiff: string,
-  fileStats: Map<string, UncommittedFileStats>,
-  statusMap: Map<string, CompareFileDiff['status']>
-): CompareFileDiff[] {
-  const diffs: CompareFileDiff[] = [];
-  const chunks = combinedDiff.split(/(?=^diff --git )/m).filter((chunk) => chunk.trim());
-  const processedFiles = new Set<string>();
-
-  for (const chunk of chunks) {
-    const match = chunk.match(/^diff --git a\/.+ b\/(.+)$/m);
-    if (!match) continue;
-
-    const filepath = match[1];
-    if (processedFiles.has(filepath)) continue;
-    processedFiles.add(filepath);
-
-    const lines = parseDiffWithLineNumbers(chunk);
-    const stats = fileStats.get(filepath) || { additions: 0, deletions: 0 };
-    const fileStatus = statusMap.get(filepath) || 'modified';
-
-    diffs.push({
-      path: filepath,
-      status: fileStatus,
-      additions: stats.additions,
-      deletions: stats.deletions,
-      diff: { raw: chunk, lines },
-      isUncommitted: true,
-    });
-  }
-
-  return diffs;
-}
-
-/**
- * Merge committed and uncommitted file diffs, compute totals, and sort.
- */
-function mergeCommittedAndUncommitted(
-  committedFiles: CompareFileDiff[],
-  uncommittedFiles: CompareFileDiff[]
-): { files: CompareFileDiff[]; filesChanged: number; additions: number; deletions: number } {
-  const committedPaths = new Set(committedFiles.map((f) => f.path));
-  const merged: CompareFileDiff[] = [];
-
-  for (const file of committedFiles) {
-    const uncommitted = uncommittedFiles.find((f) => f.path === file.path);
-    if (uncommitted) {
-      merged.push(file);
-      merged.push(uncommitted);
-    } else {
-      merged.push(file);
-    }
-  }
-
-  for (const file of uncommittedFiles) {
-    if (!committedPaths.has(file.path)) {
-      merged.push(file);
-    }
-  }
-
-  let totalAdditions = 0;
-  let totalDeletions = 0;
-  const seenPaths = new Set<string>();
-  for (const file of merged) {
-    seenPaths.add(file.path);
-    totalAdditions += file.additions;
-    totalDeletions += file.deletions;
-  }
-
-  merged.sort((a, b) => a.path.localeCompare(b.path));
-
-  return {
-    files: merged,
-    filesChanged: seenPaths.size,
-    additions: totalAdditions,
-    deletions: totalDeletions,
-  };
-}
-
 /**
  * Get PR diff that includes uncommitted changes (staged + unstaged).
  * Merges committed diff with working tree changes.
@@ -579,26 +424,128 @@ export async function getCompareDiffWithUncommitted(
   const stagedDiff = await git.diff(['--cached']);
   const unstagedDiff = await git.diff([]);
 
-  const fileStats = parseUncommittedFileStats(stagedRaw, unstagedRaw);
+  // Parse uncommitted file stats from numstat output
+  const uncommittedFiles: Map<
+    string,
+    { additions: number; deletions: number; staged: boolean; unstaged: boolean }
+  > = new Map();
 
+  for (const line of stagedRaw
+    .trim()
+    .split('\n')
+    .filter((l) => l)) {
+    const parts = line.split('\t');
+    if (parts.length >= 3) {
+      const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
+      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
+      const filepath = parts.slice(2).join('\t');
+      uncommittedFiles.set(filepath, { additions, deletions, staged: true, unstaged: false });
+    }
+  }
+
+  for (const line of unstagedRaw
+    .trim()
+    .split('\n')
+    .filter((l) => l)) {
+    const parts = line.split('\t');
+    if (parts.length >= 3) {
+      const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
+      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
+      const filepath = parts.slice(2).join('\t');
+      const existing = uncommittedFiles.get(filepath);
+      if (existing) {
+        existing.additions += additions;
+        existing.deletions += deletions;
+        existing.unstaged = true;
+      } else {
+        uncommittedFiles.set(filepath, { additions, deletions, staged: false, unstaged: true });
+      }
+    }
+  }
+
+  // Build status map from git status
   const status = await git.status();
-  const statusMap = buildUncommittedStatusMap(status.files);
+  const statusMap: Map<string, CompareFileDiff['status']> = new Map();
+  for (const file of status.files) {
+    if (file.index === 'A' || file.working_dir === '?') {
+      statusMap.set(file.path, 'added');
+    } else if (file.index === 'D' || file.working_dir === 'D') {
+      statusMap.set(file.path, 'deleted');
+    } else if (file.index === 'R') {
+      statusMap.set(file.path, 'renamed');
+    } else {
+      statusMap.set(file.path, 'modified');
+    }
+  }
 
-  const uncommittedFileDiffs = buildUncommittedFileDiffs(
-    stagedDiff + unstagedDiff,
-    fileStats,
-    statusMap
-  );
+  // Split uncommitted diffs by file
+  const uncommittedFileDiffs: CompareFileDiff[] = [];
+  const combinedDiff = stagedDiff + unstagedDiff;
+  const diffChunks = combinedDiff.split(/(?=^diff --git )/m).filter((chunk) => chunk.trim());
+  const processedFiles = new Set<string>();
 
-  const { files, filesChanged, additions, deletions } = mergeCommittedAndUncommitted(
-    committedDiff.files,
-    uncommittedFileDiffs
-  );
+  for (const chunk of diffChunks) {
+    const match = chunk.match(/^diff --git a\/.+ b\/(.+)$/m);
+    if (!match) continue;
+
+    const filepath = match[1];
+    if (processedFiles.has(filepath)) continue;
+    processedFiles.add(filepath);
+
+    const lines = parseDiffWithLineNumbers(chunk);
+    const fileStats = uncommittedFiles.get(filepath) || { additions: 0, deletions: 0 };
+    const fileStatus = statusMap.get(filepath) || 'modified';
+
+    uncommittedFileDiffs.push({
+      path: filepath,
+      status: fileStatus,
+      additions: fileStats.additions,
+      deletions: fileStats.deletions,
+      diff: { raw: chunk, lines },
+      isUncommitted: true,
+    });
+  }
+
+  // Merge: keep committed files, add/replace with uncommitted
+  const committedFilePaths = new Set(committedDiff.files.map((f) => f.path));
+  const mergedFiles: CompareFileDiff[] = [];
+
+  for (const file of committedDiff.files) {
+    const uncommittedFile = uncommittedFileDiffs.find((f) => f.path === file.path);
+    if (uncommittedFile) {
+      mergedFiles.push(file);
+      mergedFiles.push(uncommittedFile);
+    } else {
+      mergedFiles.push(file);
+    }
+  }
+
+  for (const file of uncommittedFileDiffs) {
+    if (!committedFilePaths.has(file.path)) {
+      mergedFiles.push(file);
+    }
+  }
+
+  // Calculate totals
+  let totalAdditions = 0;
+  let totalDeletions = 0;
+  const seenPaths = new Set<string>();
+  for (const file of mergedFiles) {
+    seenPaths.add(file.path);
+    totalAdditions += file.additions;
+    totalDeletions += file.deletions;
+  }
+
+  mergedFiles.sort((a, b) => a.path.localeCompare(b.path));
 
   return {
     baseBranch: committedDiff.baseBranch,
-    stats: { filesChanged, additions, deletions },
-    files,
+    stats: {
+      filesChanged: seenPaths.size,
+      additions: totalAdditions,
+      deletions: totalDeletions,
+    },
+    files: mergedFiles,
     commits: committedDiff.commits,
     uncommittedCount: committedDiff.uncommittedCount,
   };

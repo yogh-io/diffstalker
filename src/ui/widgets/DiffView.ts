@@ -7,7 +7,6 @@ import {
   buildHistoryDisplayRows,
   getDisplayRowsLineNumWidth,
   wrapDisplayRows,
-  type WordDiffSegment,
 } from '../../utils/displayRows.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
 
@@ -105,13 +104,7 @@ function formatDiffHunk(content: string, headerWidth: number): string {
   return `{escape}${ANSI_CYAN}${truncate(content, headerWidth)}${ANSI_RESET}{/escape}`;
 }
 
-interface DiffContentRow {
-  content: string;
-  lineNum?: number;
-  wordDiffSegments?: WordDiffSegment[];
-  highlighted?: string;
-  isContinuation?: boolean;
-}
+type DiffContentRow = Extract<WrappedDisplayRow, { type: 'diff-add' | 'diff-del' }>;
 
 /**
  * Format an add or delete content line, parameterized by line type.

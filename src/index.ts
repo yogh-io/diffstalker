@@ -54,15 +54,13 @@ interface ParsedArgs {
 function parseArgs(args: string[]): ParsedArgs {
   const result: ParsedArgs = {};
 
-  let i = 0;
-  while (i < args.length) {
+  for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
     if (arg === '--follow' || arg === '-f') {
       result.follow = true;
       if (args[i + 1] && !args[i + 1].startsWith('-')) {
-        i++;
-        result.followFile = args[i];
+        result.followFile = args[++i];
       }
     } else if (arg === '--once') {
       result.once = true;
@@ -70,8 +68,7 @@ function parseArgs(args: string[]): ParsedArgs {
       result.debug = true;
     } else if (arg === '--socket' || arg === '-s') {
       if (args[i + 1] && !args[i + 1].startsWith('-')) {
-        i++;
-        result.socket = args[i];
+        result.socket = args[++i];
       } else {
         console.error('Error: --socket requires a path argument');
         process.exit(1);
@@ -123,7 +120,6 @@ Mouse:
     } else if (!arg.startsWith('-')) {
       result.initialPath = arg;
     }
-    i++;
   }
 
   return result;

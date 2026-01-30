@@ -24,7 +24,8 @@ export default tseslint.config(
       'sonarjs/cognitive-complexity': 'warn',
       'sonarjs/slow-regex': 'warn',
       'sonarjs/no-ignored-exceptions': 'warn',
-      'sonarjs/updated-loop-counter': 'warn',
+      // Standard loop idiom (args[++i]) is clear; rule is too strict
+      'sonarjs/updated-loop-counter': 'off',
       'sonarjs/no-dead-store': 'warn',
       'sonarjs/no-all-duplicated-branches': 'warn',
       'sonarjs/no-nested-conditional': 'warn',
