@@ -18,6 +18,7 @@ export default tseslint.config(
       'sonarjs/os-command': 'off',
       'sonarjs/no-os-command-from-path': 'off',
       // We intentionally process ANSI escape sequences
+      'no-control-regex': 'off',
       'sonarjs/no-control-regex': 'off',
       // Tracked via metrics, not a lint gate
       'sonarjs/cognitive-complexity': 'warn',

@@ -4,6 +4,7 @@ import type { BottomTab } from '../../types/tabs.js';
  * Calculate visible length by stripping blessed tags.
  */
 function calculateVisibleLength(content: string): number {
+  // eslint-disable-next-line sonarjs/slow-regex
   return content.replace(/\{[^}]+\}/g, '').length;
 }
 

@@ -204,6 +204,7 @@ export async function getCandidateBaseBranches(repoPath: string): Promise<string
     const logOutput = await git.raw(['log', '--oneline', '--decorate=short', '--all', '-n', '200']);
 
     // Extract remote branch refs from decorations like (origin/main, upstream/feature)
+    // eslint-disable-next-line sonarjs/slow-regex
     const refPattern = /\(([^)]+)\)/g;
     for (const line of logOutput.split('\n')) {
       const match = refPattern.exec(line);

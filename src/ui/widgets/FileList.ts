@@ -140,6 +140,7 @@ export function formatFileList(
 
       // Calculate available space for path
       const stats = formatStats(file.insertions, file.deletions);
+      // eslint-disable-next-line sonarjs/slow-regex
       const statsLength = stats.replace(/\{[^}]+\}/g, '').length;
       const availableForPath = maxPathLength - statsLength;
       const displayPath = shortenPath(file.path, availableForPath);
