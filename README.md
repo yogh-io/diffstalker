@@ -1,6 +1,6 @@
 # diffstalker
 
-Keep your changes visible. A terminal-based git UI designed to run on a secondary monitor, automatically tracking whichever repository you're working in.
+A terminal git UI that lives on your second monitor. It watches your repositories in real time, follows you as you switch projects, and shows word-level diffs so you always know exactly what changed.
 
 ![diffstalker diff view](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/diff.png)
 *Stage files and review changes with word-level diff highlighting.*
@@ -12,20 +12,25 @@ Keep your changes visible. A terminal-based git UI designed to run on a secondar
 
 **Keep up with AI.** When AI assistants edit your code, changes happen fast. diffstalker gives you a live view of what's being modified, so you can review changes as they happen rather than piecing things together afterward.
 
-**Always-on visibility.** Put diffstalker on your second monitor and forget about it. As you switch between projects, it follows along - showing your current changes, staged files, and diffs without you ever needing to alt-tab or type `git status`.
+**Always-on visibility.** Put it on your second monitor and forget about it. As you switch between projects, diffstalker follows along - showing your current changes, staged files, and diffs without you ever needing to alt-tab or type `git status`.
 
 **Dead-simple integration.** Follow mode watches a plain text file for paths. Any script, hook, or tool can write to it. Add two lines to your shell config and every `cd` into a git repo updates the display automatically.
 
-**Everything at a glance.** Auto-tab mode ensures there's always something useful on screen - uncommitted changes when you have them, recent commits when you don't. Word-level diff highlighting shows exactly what changed, not just which lines.
+**Everything at a glance.** Auto-tab mode ensures there's always something useful on screen - uncommitted changes when you have them, recent commits when you don't.
 
 ## Features
 
-- **Follow mode** - Automatically tracks repos via a simple file-based hook
-- **Auto-tab** - Always shows relevant content (changes → history → PR diff)
-- **Word-level diffs** - See precise changes within each line
-- **Four views** - Diff, Commit, History, and PR comparison
-- **Mouse & keyboard** - Click, scroll, or use vim-style navigation
-- **6 themes** - Including colorblind-friendly and ANSI-only variants
+- **Five views** - Staging, Commit, History, PR comparison, and a file Explorer with syntax-highlighted preview
+- **Word-level diffs** - See exactly which words changed within each line, not just which lines differ
+- **Follow mode** - Automatically tracks whichever repo you're working in via a simple file-based hook
+- **Auto-tab** - Intelligently switches views based on context (changes → history → PR diff)
+- **Fuzzy file finder** - `Ctrl+P` to jump to any file in the repo
+- **PR review** - Compare your branch against any base branch with per-file and per-commit diffs
+- **Mouse & keyboard** - Click to stage, scroll through diffs, or use vim-style `j`/`k` navigation
+- **Right-click to discard** - Quickly throw away unwanted changes with confirmation
+- **Resizable panes** - `[` and `]` to adjust the split between file list and diff
+- **Line wrapping** - Toggle with `w` for long lines
+- **6 themes** - Dark, light, colorblind-friendly (blue/red palette), and ANSI-only variants that use your terminal's colors
 
 ## Installation
 
@@ -43,18 +48,13 @@ npm link
 
 ## Quick Start
 
-**Basic usage:**
 ```bash
 diffstalker              # current directory
 diffstalker /path/to/repo
+diffstalker --follow     # watch for repo changes (recommended for second monitor)
 ```
 
-**Follow mode** (recommended for secondary monitor):
-```bash
-diffstalker --follow
-```
-
-Follow mode watches `~/.cache/diffstalker/target` for repository paths. Write or append to this file - diffstalker reads the last non-empty line, so both styles work:
+Follow mode watches `~/.cache/diffstalker/target` for repository paths. Write or append to this file - diffstalker reads the last non-empty line, so both styles work.
 
 ### Integration Examples
 
@@ -87,47 +87,55 @@ vim.api.nvim_create_autocmd({"BufEnter"}, {
 })
 ```
 
-**Any script** - write or append:
+**Any script:**
 ```bash
 echo "/path/to/repo" > ~/.cache/diffstalker/target   # overwrite
 echo "/path/to/repo" >> ~/.cache/diffstalker/target  # append (also works)
 ```
 
-The file-based approach is intentionally simple. IDE plugins, window manager hooks, project switchers, git hooks - if it can write to a file, it can drive diffstalker. Get creative.
+The file-based approach is intentionally simple. IDE plugins, window manager hooks, project switchers, git hooks - if it can write to a file, it can drive diffstalker.
 
 ## Views
 
-| View | Key | Purpose |
-|------|-----|---------|
-| **Diff** | `1` | Stage/unstage files, review changes |
-| **Commit** | `2` | Write commit messages |
-| **History** | `3` | Browse recent commits and their diffs |
-| **PR** | `4` | Compare branch against base (main/master) |
+| Key | View | What it does |
+|-----|------|--------------|
+| `1` | **Diff** | Stage/unstage files, review word-level diffs |
+| `2` | **Commit** | Write commit messages, amend previous commits |
+| `3` | **History** | Browse recent commits and inspect their diffs |
+| `4` | **PR** | Compare branch against a base branch with per-file navigation |
+| `5` | **Explorer** | Browse the file tree with syntax-highlighted preview and fuzzy finder |
 
 ## Keybindings
 
-**Navigation:** `↑↓` or `jk` to move, `Tab` to switch panes, `1-4` for views
-
-**Staging:** `Space` toggle, `Ctrl+A` stage all, `Ctrl+Z` unstage all
-
-**Other:** `t` themes, `?` help, `q` quit
+| Action | Keys |
+|--------|------|
+| Navigate | `↑`/`↓` or `j`/`k` |
+| Switch panes | `Tab` |
+| Switch views | `1`-`5` |
+| Toggle stage | `Space` or `Enter` |
+| Stage/unstage all | `Shift+A` / `Shift+Z` |
+| Discard changes | `d` (with confirmation) |
+| Fuzzy file finder | `Ctrl+P` or `/` in Explorer |
+| Resize panes | `[` / `]` |
+| Toggle line wrap | `w` |
+| Themes | `t` |
+| Help | `?` |
 
 Full keybinding reference available with `?` in the app.
 
 ## Themes
 
-Six built-in themes (`t` to switch):
+Six built-in themes - press `t` to switch:
 
 | Theme | Description |
 |-------|-------------|
-| Dark | Default |
-| Light | Light background |
-| Dark/Light (colorblind) | Blue/red palette |
-| Dark/Light (ANSI) | Terminal's 16 colors |
+| Dark / Light | Default palettes |
+| Dark / Light (colorblind) | Blue/red palette for color vision deficiency |
+| Dark / Light (ANSI) | Uses your terminal's 16 colors for full consistency |
 
 ## Configuration
 
-Config: `~/.config/diffstalker/config.json`
+Config file: `~/.config/diffstalker/config.json`
 
 ```json
 {
