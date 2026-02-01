@@ -10,7 +10,7 @@ const FIXTURES_DIR = path.resolve(import.meta.dirname, '../../test-fixtures');
 export function createFixtureRepo(name: string): string {
   const repoPath = path.join(FIXTURES_DIR, name);
   fs.mkdirSync(repoPath, { recursive: true });
-  gitExec(repoPath, 'init');
+  gitExec(repoPath, 'init --initial-branch=main');
   gitExec(repoPath, 'config user.email "test@test.com"');
   gitExec(repoPath, 'config user.name "Test User"');
   return repoPath;
@@ -54,7 +54,7 @@ export function createRepoWithRemote(name: string): { remotePath: string; repoPa
 
   // Create bare remote
   fs.mkdirSync(remotePath, { recursive: true });
-  gitExec(remotePath, 'init --bare');
+  gitExec(remotePath, 'init --bare --initial-branch=main');
 
   // Clone it
   execSync(`git clone "${remotePath}" "${repoPath}"`, {
