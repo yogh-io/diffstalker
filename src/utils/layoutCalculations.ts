@@ -44,15 +44,18 @@ export function getFileListTotalRows(files: FileEntry[]): number {
  *
  * The top pane grows to fit files up to 40% of content height.
  * The bottom pane gets the remaining space.
+ *
+ * When flatRowCount is provided (flat view mode), uses that directly instead
+ * of computing row count from categorized file list.
  */
 export function calculatePaneHeights(
   files: FileEntry[],
   contentHeight: number,
-  maxTopRatio: number = 0.4
+  maxTopRatio: number = 0.4,
+  flatRowCount?: number
 ): PaneHeights {
   // Calculate content rows needed for staging area
-  // Uses getFileListTotalRows for consistency with FileList rendering
-  const neededRows = getFileListTotalRows(files);
+  const neededRows = flatRowCount !== undefined ? flatRowCount : getFileListTotalRows(files);
 
   // Minimum height of 3 (header + 2 lines for empty state)
   const minHeight = 3;

@@ -4,7 +4,9 @@ import type { FileEntry, CommitInfo } from './git/status.js';
 import type { CompareFileDiff } from './git/diff.js';
 import type { CompareListSelection } from './ui/widgets/CompareListView.js';
 import type { ExplorerStateManager } from './core/ExplorerStateManager.js';
+import type { FlatFileEntry } from './utils/flatFileList.js';
 import { getFileListTotalRows, getFileIndexFromRow } from './ui/widgets/FileList.js';
+import { getFlatFileListTotalRows } from './ui/widgets/FlatFileList.js';
 import {
   getCompareListTotalRows,
   getCompareSelectionFromRow,
@@ -41,6 +43,7 @@ export interface MouseContext {
   getCompareFiles(): CompareFileDiff[];
   getBottomPaneTotalRows(): number;
   getScreenWidth(): number;
+  getCachedFlatFiles(): FlatFileEntry[];
 }
 
 /**
@@ -98,16 +101,31 @@ function handleFileListClick(
   ctx: MouseContext
 ): void {
   const state = ctx.uiState.state;
-  const files = ctx.getStatusFiles();
-  const fileIndex = getFileIndexFromRow(row + state.fileListScrollOffset, files);
-  if (fileIndex === null || fileIndex < 0) return;
 
-  // Check if click is on the action button [+] or [-] (columns 2-4)
-  if (x !== undefined && x >= 2 && x <= 4) {
-    actions.toggleFileByIndex(fileIndex);
+  if (state.flatViewMode) {
+    // Flat mode: row 0 is header, files start at row 1
+    const absoluteRow = row + state.fileListScrollOffset;
+    const fileIndex = absoluteRow - 1; // subtract header row
+    const flatFiles = ctx.getCachedFlatFiles();
+    if (fileIndex < 0 || fileIndex >= flatFiles.length) return;
+
+    if (x !== undefined && x >= 2 && x <= 4) {
+      actions.toggleFileByIndex(fileIndex);
+    } else {
+      ctx.uiState.setSelectedIndex(fileIndex);
+      actions.selectFileByIndex(fileIndex);
+    }
   } else {
-    ctx.uiState.setSelectedIndex(fileIndex);
-    actions.selectFileByIndex(fileIndex);
+    const files = ctx.getStatusFiles();
+    const fileIndex = getFileIndexFromRow(row + state.fileListScrollOffset, files);
+    if (fileIndex === null || fileIndex < 0) return;
+
+    if (x !== undefined && x >= 2 && x <= 4) {
+      actions.toggleFileByIndex(fileIndex);
+    } else {
+      ctx.uiState.setSelectedIndex(fileIndex);
+      actions.selectFileByIndex(fileIndex);
+    }
   }
 }
 
@@ -204,8 +222,9 @@ function handleTopPaneScroll(delta: number, layout: LayoutManager, ctx: MouseCon
     const newOffset = Math.min(maxOffset, Math.max(0, state.explorerScrollOffset + delta));
     ctx.uiState.setExplorerScrollOffset(newOffset);
   } else {
-    const files = ctx.getStatusFiles();
-    const totalRows = getFileListTotalRows(files);
+    const totalRows = state.flatViewMode
+      ? getFlatFileListTotalRows(ctx.getCachedFlatFiles())
+      : getFileListTotalRows(ctx.getStatusFiles());
     const maxOffset = Math.max(0, totalRows - visibleHeight);
     const newOffset = Math.min(maxOffset, Math.max(0, state.fileListScrollOffset + delta));
     ctx.uiState.setFileListScrollOffset(newOffset);

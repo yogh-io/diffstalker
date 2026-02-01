@@ -39,11 +39,17 @@ import {
   getIndexForCategoryPosition,
   type CategoryName,
 } from './utils/fileCategories.js';
+import {
+  buildFlatFileList,
+  getFlatFileAtIndex,
+  getFlatFileIndexByPath,
+  type FlatFileEntry,
+} from './utils/flatFileList.js';
 import type { CommandServer, CommandHandler, AppState } from './ipc/CommandServer.js';
 import type { BottomTab } from './types/tabs.js';
 import type { ThemeName } from './themes.js';
 import { extractHunkPatch } from './git/diff.js';
-import type { HunkBoundary } from './utils/displayRows.js';
+import type { HunkBoundary, CombinedHunkInfo } from './utils/displayRows.js';
 
 export interface AppOptions {
   config: Config;
@@ -89,6 +95,11 @@ export class App {
 
   // Selection anchor: remembers category + position before stage/unstage
   private pendingSelectionAnchor: { category: CategoryName; categoryIndex: number } | null = null;
+
+  // Flat view mode state
+  private cachedFlatFiles: FlatFileEntry[] = [];
+  private pendingFlatSelectionPath: string | null = null;
+  private combinedHunkMapping: CombinedHunkInfo[] = [];
 
   constructor(options: AppOptions) {
     this.config = options.config;
@@ -238,6 +249,7 @@ export class App {
         commitFlowState: this.commitFlowState,
         getGitManager: () => this.gitManager,
         layout: this.layout,
+        getCachedFlatFiles: () => this.cachedFlatFiles,
       }
     );
   }
@@ -265,19 +277,37 @@ export class App {
         getCompareFiles: () => this.gitManager?.compareState?.compareDiff?.files ?? [],
         getBottomPaneTotalRows: () => this.bottomPaneTotalRows,
         getScreenWidth: () => (this.screen.width as number) || 80,
+        getCachedFlatFiles: () => this.cachedFlatFiles,
       }
     );
   }
 
+  /**
+   * Toggle staging for a flat file entry (stage if unstaged/partial, unstage if fully staged).
+   */
+  private async toggleFlatEntry(entry: FlatFileEntry): Promise<void> {
+    this.pendingFlatSelectionPath = entry.path;
+    if (entry.stagingState === 'staged') {
+      if (entry.stagedEntry) await this.gitManager?.unstage(entry.stagedEntry);
+    } else {
+      if (entry.unstagedEntry) await this.gitManager?.stage(entry.unstagedEntry);
+    }
+  }
+
   private async toggleFileByIndex(index: number): Promise<void> {
-    const files = this.gitManager?.state.status?.files ?? [];
-    const file = getFileAtIndex(files, index);
-    if (file) {
-      this.pendingSelectionAnchor = getCategoryForIndex(files, this.uiState.state.selectedIndex);
-      if (file.staged) {
-        await this.gitManager?.unstage(file);
-      } else {
-        await this.gitManager?.stage(file);
+    if (this.uiState.state.flatViewMode) {
+      const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, index);
+      if (flatEntry) await this.toggleFlatEntry(flatEntry);
+    } else {
+      const files = this.gitManager?.state.status?.files ?? [];
+      const file = getFileAtIndex(files, index);
+      if (file) {
+        this.pendingSelectionAnchor = getCategoryForIndex(files, this.uiState.state.selectedIndex);
+        if (file.staged) {
+          await this.gitManager?.unstage(file);
+        } else {
+          await this.gitManager?.stage(file);
+        }
       }
     }
   }
@@ -401,24 +431,11 @@ export class App {
 
     // Listen to state changes
     this.gitManager.on('state-change', () => {
-      const files = this.gitManager?.state.status?.files ?? [];
-
-      if (this.pendingSelectionAnchor) {
-        // Restore selection to same category + position after stage/unstage
-        const anchor = this.pendingSelectionAnchor;
-        this.pendingSelectionAnchor = null;
-        const newIndex = getIndexForCategoryPosition(files, anchor.category, anchor.categoryIndex);
-        this.uiState.setSelectedIndex(newIndex);
-        this.selectFileByIndex(newIndex);
-      } else if (files.length > 0) {
-        // Default: clamp selected index to valid range
-        const maxIndex = files.length - 1;
-        if (this.uiState.state.selectedIndex > maxIndex) {
-          this.uiState.setSelectedIndex(maxIndex);
-        }
+      // Skip reconciliation while loading — the pending anchor must wait
+      // for the new status to arrive before being consumed
+      if (!this.gitManager?.state.isLoading) {
+        this.reconcileSelectionAfterStateChange();
       }
-
-      // Update explorer git status when git state changes
       this.updateExplorerGitStatus();
       this.render();
     });
@@ -448,6 +465,53 @@ export class App {
 
     // Initialize explorer manager
     this.initExplorerManager();
+  }
+
+  /**
+   * After git state changes, reconcile the selected file index.
+   * Handles both flat mode (path-based anchoring) and categorized mode (category-based anchoring).
+   */
+  private reconcileSelectionAfterStateChange(): void {
+    const files = this.gitManager?.state.status?.files ?? [];
+
+    if (this.uiState.state.flatViewMode && this.pendingFlatSelectionPath) {
+      const flatFiles = buildFlatFileList(files, this.gitManager?.state.hunkCounts ?? null);
+      const targetPath = this.pendingFlatSelectionPath;
+      this.pendingFlatSelectionPath = null;
+      const newIndex = getFlatFileIndexByPath(flatFiles, targetPath);
+      if (newIndex >= 0) {
+        this.uiState.setSelectedIndex(newIndex);
+        this.selectFileByIndex(newIndex);
+      } else if (flatFiles.length > 0) {
+        const clamped = Math.min(this.uiState.state.selectedIndex, flatFiles.length - 1);
+        this.uiState.setSelectedIndex(clamped);
+        this.selectFileByIndex(clamped);
+      }
+      return;
+    }
+
+    if (this.pendingSelectionAnchor) {
+      const anchor = this.pendingSelectionAnchor;
+      this.pendingSelectionAnchor = null;
+      const newIndex = getIndexForCategoryPosition(files, anchor.category, anchor.categoryIndex);
+      this.uiState.setSelectedIndex(newIndex);
+      this.selectFileByIndex(newIndex);
+      return;
+    }
+
+    // No pending anchor — just clamp to valid range
+    if (this.uiState.state.flatViewMode) {
+      const flatFiles = buildFlatFileList(files, this.gitManager?.state.hunkCounts ?? null);
+      const maxIndex = flatFiles.length - 1;
+      if (maxIndex >= 0 && this.uiState.state.selectedIndex > maxIndex) {
+        this.uiState.setSelectedIndex(maxIndex);
+      }
+    } else if (files.length > 0) {
+      const maxIndex = files.length - 1;
+      if (this.uiState.state.selectedIndex > maxIndex) {
+        this.uiState.setSelectedIndex(maxIndex);
+      }
+    }
   }
 
   private initExplorerManager(): void {
@@ -608,21 +672,33 @@ export class App {
   private navigateFileList(direction: -1 | 1): void {
     const state = this.uiState.state;
     const files = this.gitManager?.state.status?.files ?? [];
+
+    // Determine max index based on view mode
+    const maxIndex = state.flatViewMode ? this.cachedFlatFiles.length - 1 : files.length - 1;
+    if (maxIndex < 0) return;
+
     const newIndex =
       direction === -1
         ? Math.max(0, state.selectedIndex - 1)
-        : Math.min(files.length - 1, state.selectedIndex + 1);
+        : Math.min(maxIndex, state.selectedIndex + 1);
     this.uiState.setSelectedIndex(newIndex);
     this.selectFileByIndex(newIndex);
 
-    // Keep selection visible
-    const row = getRowFromFileIndex(newIndex, files);
-    if (direction === -1 && row < state.fileListScrollOffset) {
+    // In flat mode row === index + 1 (header row); in categorized mode account for headers/spacers
+    const row = state.flatViewMode ? newIndex + 1 : getRowFromFileIndex(newIndex, files);
+    this.scrollToKeepRowVisible(row, direction, state.fileListScrollOffset);
+  }
+
+  /**
+   * Scroll the file list to keep a given row visible.
+   */
+  private scrollToKeepRowVisible(row: number, direction: -1 | 1, currentOffset: number): void {
+    if (direction === -1 && row < currentOffset) {
       this.uiState.setFileListScrollOffset(row);
     } else if (direction === 1) {
-      const visibleEnd = state.fileListScrollOffset + this.layout.dimensions.topPaneHeight - 1;
+      const visibleEnd = currentOffset + this.layout.dimensions.topPaneHeight - 1;
       if (row >= visibleEnd) {
-        this.uiState.setFileListScrollOffset(state.fileListScrollOffset + (row - visibleEnd + 1));
+        this.uiState.setFileListScrollOffset(currentOffset + (row - visibleEnd + 1));
       }
     }
   }
@@ -828,13 +904,25 @@ export class App {
   }
 
   private selectFileByIndex(index: number): void {
-    const files = this.gitManager?.state.status?.files ?? [];
-    const file = getFileAtIndex(files, index);
-    if (file) {
-      // Reset diff scroll and hunk selection when changing files
-      this.uiState.setDiffScrollOffset(0);
-      this.uiState.setSelectedHunkIndex(0);
-      this.gitManager?.selectFile(file);
+    if (this.uiState.state.flatViewMode) {
+      const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, index);
+      if (flatEntry) {
+        // Prefer unstaged entry (shows unstaged diff for partial files), fallback to staged
+        const file = flatEntry.unstagedEntry ?? flatEntry.stagedEntry;
+        if (file) {
+          this.uiState.setDiffScrollOffset(0);
+          this.uiState.setSelectedHunkIndex(0);
+          this.gitManager?.selectFile(file);
+        }
+      }
+    } else {
+      const files = this.gitManager?.state.status?.files ?? [];
+      const file = getFileAtIndex(files, index);
+      if (file) {
+        this.uiState.setDiffScrollOffset(0);
+        this.uiState.setSelectedHunkIndex(0);
+        this.gitManager?.selectFile(file);
+      }
     }
   }
 
@@ -867,33 +955,62 @@ export class App {
   private async stageSelected(): Promise<void> {
     const files = this.gitManager?.state.status?.files ?? [];
     const index = this.uiState.state.selectedIndex;
-    const selectedFile = getFileAtIndex(files, index);
-    if (selectedFile && !selectedFile.staged) {
-      this.pendingSelectionAnchor = getCategoryForIndex(files, index);
-      await this.gitManager?.stage(selectedFile);
+
+    if (this.uiState.state.flatViewMode) {
+      const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, index);
+      if (!flatEntry) return;
+      // Stage: operate on the unstaged entry if available
+      const file = flatEntry.unstagedEntry;
+      if (file) {
+        this.pendingFlatSelectionPath = flatEntry.path;
+        await this.gitManager?.stage(file);
+      }
+    } else {
+      const selectedFile = getFileAtIndex(files, index);
+      if (selectedFile && !selectedFile.staged) {
+        this.pendingSelectionAnchor = getCategoryForIndex(files, index);
+        await this.gitManager?.stage(selectedFile);
+      }
     }
   }
 
   private async unstageSelected(): Promise<void> {
     const files = this.gitManager?.state.status?.files ?? [];
     const index = this.uiState.state.selectedIndex;
-    const selectedFile = getFileAtIndex(files, index);
-    if (selectedFile?.staged) {
-      this.pendingSelectionAnchor = getCategoryForIndex(files, index);
-      await this.gitManager?.unstage(selectedFile);
+
+    if (this.uiState.state.flatViewMode) {
+      const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, index);
+      if (!flatEntry) return;
+      const file = flatEntry.stagedEntry;
+      if (file) {
+        this.pendingFlatSelectionPath = flatEntry.path;
+        await this.gitManager?.unstage(file);
+      }
+    } else {
+      const selectedFile = getFileAtIndex(files, index);
+      if (selectedFile?.staged) {
+        this.pendingSelectionAnchor = getCategoryForIndex(files, index);
+        await this.gitManager?.unstage(selectedFile);
+      }
     }
   }
 
   private async toggleSelected(): Promise<void> {
-    const files = this.gitManager?.state.status?.files ?? [];
     const index = this.uiState.state.selectedIndex;
-    const selectedFile = getFileAtIndex(files, index);
-    if (selectedFile) {
-      this.pendingSelectionAnchor = getCategoryForIndex(files, index);
-      if (selectedFile.staged) {
-        await this.gitManager?.unstage(selectedFile);
-      } else {
-        await this.gitManager?.stage(selectedFile);
+
+    if (this.uiState.state.flatViewMode) {
+      const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, index);
+      if (flatEntry) await this.toggleFlatEntry(flatEntry);
+    } else {
+      const files = this.gitManager?.state.status?.files ?? [];
+      const selectedFile = getFileAtIndex(files, index);
+      if (selectedFile) {
+        this.pendingSelectionAnchor = getCategoryForIndex(files, index);
+        if (selectedFile.staged) {
+          await this.gitManager?.unstage(selectedFile);
+        } else {
+          await this.gitManager?.stage(selectedFile);
+        }
       }
     }
   }
@@ -955,19 +1072,45 @@ export class App {
   }
 
   private async toggleCurrentHunk(): Promise<void> {
-    const files = this.gitManager?.state.status?.files ?? [];
     const selectedFile = this.gitManager?.state.selectedFile;
-    if (!selectedFile) return;
-    // Untracked files have no hunks to toggle
-    if (selectedFile.status === 'untracked') return;
+    if (!selectedFile || selectedFile.status === 'untracked') return;
 
+    if (this.uiState.state.flatViewMode) {
+      await this.toggleCurrentHunkFlat();
+    } else {
+      await this.toggleCurrentHunkCategorized(selectedFile);
+    }
+  }
+
+  private async toggleCurrentHunkFlat(): Promise<void> {
+    const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, this.uiState.state.selectedIndex);
+    if (flatEntry) this.pendingFlatSelectionPath = flatEntry.path;
+
+    const mapping = this.combinedHunkMapping[this.uiState.state.selectedHunkIndex];
+    if (!mapping) return;
+
+    const combined = this.gitManager?.state.combinedFileDiffs;
+    if (!combined) return;
+
+    const rawDiff = mapping.source === 'unstaged' ? combined.unstaged.raw : combined.staged.raw;
+    const patch = extractHunkPatch(rawDiff, mapping.hunkIndex);
+    if (!patch) return;
+
+    if (mapping.source === 'staged') {
+      await this.gitManager?.unstageHunk(patch);
+    } else {
+      await this.gitManager?.stageHunk(patch);
+    }
+  }
+
+  private async toggleCurrentHunkCategorized(selectedFile: FileEntry): Promise<void> {
     const rawDiff = this.gitManager?.state.diff?.raw;
     if (!rawDiff) return;
 
     const patch = extractHunkPatch(rawDiff, this.uiState.state.selectedHunkIndex);
     if (!patch) return;
 
-    // Set anchor so state-change handler reselects the correct file after refresh
+    const files = this.gitManager?.state.status?.files ?? [];
     this.pendingSelectionAnchor = getCategoryForIndex(files, this.uiState.state.selectedIndex);
 
     if (selectedFile.staged) {
@@ -1096,17 +1239,24 @@ export class App {
   private updateTopPane(): void {
     const state = this.uiState.state;
     const width = (this.screen.width as number) || 80;
+    const files = this.gitManager?.state.status?.files ?? [];
+
+    // Build and cache flat file list when in flat mode
+    if (state.flatViewMode) {
+      this.cachedFlatFiles = buildFlatFileList(files, this.gitManager?.state.hunkCounts ?? null);
+    }
 
     const content = renderTopPane(
       state,
-      this.gitManager?.state.status?.files ?? [],
+      files,
       this.gitManager?.historyState?.commits ?? [],
       this.gitManager?.compareState?.compareDiff ?? null,
       this.compareSelection,
       this.explorerManager?.state,
       width,
       this.layout.dimensions.topPaneHeight,
-      this.gitManager?.state.hunkCounts
+      this.gitManager?.state.hunkCounts,
+      state.flatViewMode ? this.cachedFlatFiles : undefined
     );
 
     this.layout.topPane.setContent(content);
@@ -1126,7 +1276,7 @@ export class App {
     const hunkIndex = diffPaneFocused ? state.selectedHunkIndex : undefined;
     const isFileStaged = diffPaneFocused ? this.gitManager?.state.selectedFile?.staged : undefined;
 
-    const { content, totalRows, hunkCount, hunkBoundaries } = renderBottomPane(
+    const { content, totalRows, hunkCount, hunkBoundaries, hunkMapping } = renderBottomPane(
       state,
       this.gitManager?.state.diff ?? null,
       this.gitManager?.historyState,
@@ -1138,12 +1288,14 @@ export class App {
       width,
       this.layout.dimensions.bottomPaneHeight,
       hunkIndex,
-      isFileStaged
+      isFileStaged,
+      state.flatViewMode ? this.gitManager?.state.combinedFileDiffs : undefined
     );
 
     this.bottomPaneTotalRows = totalRows;
     this.bottomPaneHunkCount = hunkCount;
     this.bottomPaneHunkBoundaries = hunkBoundaries;
+    this.combinedHunkMapping = hunkMapping ?? [];
 
     // Silently clamp hunk index to actual count (handles async refresh after hunk staging)
     this.uiState.clampSelectedHunkIndex(hunkCount);

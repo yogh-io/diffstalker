@@ -37,6 +37,7 @@ export interface UIStateData {
   mouseEnabled: boolean;
   hideHiddenFiles: boolean;
   hideGitignored: boolean;
+  flatViewMode: boolean;
 
   // Split ratio
   splitRatio: number;
@@ -78,6 +79,7 @@ const DEFAULT_STATE: UIStateData = {
   mouseEnabled: true,
   hideHiddenFiles: true,
   hideGitignored: true,
+  flatViewMode: false,
   splitRatio: 0.4,
   activeModal: null,
   pendingDiscard: null,
@@ -224,6 +226,10 @@ export class UIState extends EventEmitter<UIStateEventMap> {
 
   toggleHideGitignored(): void {
     this.update({ hideGitignored: !this._state.hideGitignored });
+  }
+
+  toggleFlatViewMode(): void {
+    this.update({ flatViewMode: !this._state.flatViewMode, fileListScrollOffset: 0 });
   }
 
   // Split ratio

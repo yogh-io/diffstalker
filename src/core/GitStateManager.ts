@@ -33,17 +33,21 @@ import {
   countHunksPerFile,
   DiffResult,
   CompareDiff,
+  FileHunkCounts,
 } from '../git/diff.js';
 import { getCachedBaseBranch, setCachedBaseBranch } from '../utils/baseBranchCache.js';
 
-export interface FileHunkCounts {
-  staged: Map<string, number>;
-  unstaged: Map<string, number>;
+export type { FileHunkCounts } from '../git/diff.js';
+
+export interface CombinedFileDiffs {
+  unstaged: DiffResult;
+  staged: DiffResult;
 }
 
 export interface GitState {
   status: GitStatus | null;
   diff: DiffResult | null;
+  combinedFileDiffs: CombinedFileDiffs | null;
   selectedFile: FileEntry | null;
   isLoading: boolean;
   error: string | null;
@@ -96,6 +100,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
   private _state: GitState = {
     status: null,
     diff: null,
+    combinedFileDiffs: null,
     selectedFile: null,
     isLoading: false,
     error: null,
@@ -383,30 +388,14 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
       };
 
       // Determine display diff based on selected file
-      let displayDiff: DiffResult;
-      const currentSelectedFile = this._state.selectedFile;
-
-      if (currentSelectedFile) {
-        const currentFile = newStatus.files.find(
-          (f) => f.path === currentSelectedFile.path && f.staged === currentSelectedFile.staged
-        );
-        if (currentFile) {
-          if (currentFile.status === 'untracked') {
-            displayDiff = await getDiffForUntracked(this.repoPath, currentFile.path);
-          } else {
-            displayDiff = await getDiff(this.repoPath, currentFile.path, currentFile.staged);
-          }
-        } else {
-          // File no longer exists - clear selection, show unstaged diff
-          displayDiff = allUnstagedDiff;
-          this.updateState({ selectedFile: null });
-        }
-      } else {
-        displayDiff = allUnstagedDiff;
-      }
+      const { displayDiff, combinedFileDiffs } = await this.resolveFileDiffs(
+        newStatus,
+        allUnstagedDiff
+      );
 
       this.updateState({
         diff: displayDiff,
+        combinedFileDiffs,
         hunkCounts,
         isLoading: false,
       });
@@ -416,6 +405,45 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
         error: err instanceof Error ? err.message : 'Unknown error',
       });
     }
+  }
+
+  /**
+   * Resolve display diff and combined diffs for the currently selected file.
+   */
+  private async resolveFileDiffs(
+    newStatus: GitStatus,
+    fallbackDiff: DiffResult
+  ): Promise<{ displayDiff: DiffResult; combinedFileDiffs: CombinedFileDiffs | null }> {
+    const currentSelectedFile = this._state.selectedFile;
+    if (!currentSelectedFile) {
+      return { displayDiff: fallbackDiff, combinedFileDiffs: null };
+    }
+
+    const currentFile = newStatus.files.find(
+      (f) => f.path === currentSelectedFile.path && f.staged === currentSelectedFile.staged
+    );
+    if (!currentFile) {
+      this.updateState({ selectedFile: null });
+      return { displayDiff: fallbackDiff, combinedFileDiffs: null };
+    }
+
+    if (currentFile.status === 'untracked') {
+      const displayDiff = await getDiffForUntracked(this.repoPath, currentFile.path);
+      return {
+        displayDiff,
+        combinedFileDiffs: { unstaged: displayDiff, staged: { raw: '', lines: [] } },
+      };
+    }
+
+    const [unstagedFileDiff, stagedFileDiff] = await Promise.all([
+      getDiff(this.repoPath, currentFile.path, false),
+      getDiff(this.repoPath, currentFile.path, true),
+    ]);
+    const displayDiff = currentFile.staged ? stagedFileDiff : unstagedFileDiff;
+    return {
+      displayDiff,
+      combinedFileDiffs: { unstaged: unstagedFileDiff, staged: stagedFileDiff },
+    };
   }
 
   /**
@@ -449,31 +477,47 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
 
     this.queue
       .enqueue(async () => {
-        // Selection changed while queued — skip stale fetch
         if (file !== this._state.selectedFile) return;
-
-        if (file) {
-          let fileDiff: DiffResult;
-          if (file.status === 'untracked') {
-            fileDiff = await getDiffForUntracked(this.repoPath, file.path);
-          } else {
-            fileDiff = await getDiff(this.repoPath, file.path, file.staged);
-          }
-          if (file === this._state.selectedFile) {
-            this.updateState({ diff: fileDiff });
-          }
-        } else {
-          const allDiff = await getStagedDiff(this.repoPath);
-          if (this._state.selectedFile === null) {
-            this.updateState({ diff: allDiff });
-          }
-        }
+        await this.doFetchDiffForFile(file);
       })
       .catch((err) => {
         this.updateState({
           error: `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`,
         });
       });
+  }
+
+  private async doFetchDiffForFile(file: FileEntry | null): Promise<void> {
+    if (!file) {
+      const allDiff = await getStagedDiff(this.repoPath);
+      if (this._state.selectedFile === null) {
+        this.updateState({ diff: allDiff, combinedFileDiffs: null });
+      }
+      return;
+    }
+
+    if (file.status === 'untracked') {
+      const fileDiff = await getDiffForUntracked(this.repoPath, file.path);
+      if (file === this._state.selectedFile) {
+        this.updateState({
+          diff: fileDiff,
+          combinedFileDiffs: { unstaged: fileDiff, staged: { raw: '', lines: [] } },
+        });
+      }
+      return;
+    }
+
+    const [unstagedDiff, stagedDiff] = await Promise.all([
+      getDiff(this.repoPath, file.path, false),
+      getDiff(this.repoPath, file.path, true),
+    ]);
+    if (file === this._state.selectedFile) {
+      const displayDiff = file.staged ? stagedDiff : unstagedDiff;
+      this.updateState({
+        diff: displayDiff,
+        combinedFileDiffs: { unstaged: unstagedDiff, staged: stagedDiff },
+      });
+    }
   }
 
   /**

@@ -33,6 +33,19 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
   - Stats show insertions (green) and deletions (red)
 - Renamed files show `<- original-path`
 - Selection indicator highlights entire row with inverse+cyan
+- First category header shows `(h:flat)` hint for toggling to flat view
+- **Flat View Mode** (toggle with `h`): Shows all files in a single alphabetically sorted list
+  - Header row: `All files (h):` — press `h` to toggle back to categorized
+  - Each unique file path appears once, even if partially staged
+  - Staging state shown via button: `[+]` green (unstaged), `[-]` red (staged), `[~]` yellow (partial)
+  - Hunk indicator: `@2/4` = 2 staged out of 4 total hunks (always shows staged/total)
+  - Stage/unstage: `s`/`Space`/`Enter` stage if unstaged, unstage if staged, complete staging if partial
+  - **Combined diff**: Diff pane shows all hunks for the file in a single view with section headers
+    - `── Unstaged changes ──` (cyan) followed by unstaged hunks
+    - `── Staged changes ──` (green) followed by staged hunks
+    - Hunks never disappear when staged/unstaged — they move between sections
+    - Hunk gutter indicator: cyan for unstaged hunks, green for staged hunks
+    - `s`/`u` in diff pane stages/unstages the hunk under cursor based on its section
 
 **Bottom Pane: Diff Display**
 - Shows unified diff for selected file
@@ -214,6 +227,7 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 
 | Key | Action |
 |-----|--------|
+| `h` | Toggle flat file view (diff/commit tab) |
 | `m` | Toggle mouse mode (scroll vs select) |
 | `f` | Toggle follow mode (watch target file) |
 | `a` | Toggle auto-tab mode |
@@ -307,6 +321,7 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 
 **Row Building (Single Source of Truth Pattern):**
 - `buildDiffDisplayRows(diff)` - unified DisplayRow[] for diff
+- `buildCombinedDiffDisplayRows(unstaged, staged)` - combined unstaged+staged rows with section headers and hunk mapping
 - `buildHistoryDisplayRows(commit, diff)` - commit + diff rows
 - `buildCompareDisplayRows(compareDiff)` - combined file diffs
 - `buildCompareListRows()` - commits + files + headers (in CompareListView)

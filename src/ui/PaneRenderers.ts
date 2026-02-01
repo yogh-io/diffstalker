@@ -2,23 +2,23 @@ import type { UIStateData } from '../state/UIState.js';
 import type { CommitFlowStateData } from '../state/CommitFlowState.js';
 import type { FileEntry, CommitInfo } from '../git/status.js';
 import type { DiffResult, CompareDiff } from '../git/diff.js';
+import type { CombinedFileDiffs } from '../core/GitStateManager.js';
 import type { ExplorerState } from '../core/ExplorerStateManager.js';
-import type {
-  HistoryState,
-  CompareSelectionState,
-  FileHunkCounts,
-} from '../core/GitStateManager.js';
+import type { HistoryState, CompareSelectionState } from '../core/GitStateManager.js';
+import type { FileHunkCounts } from '../git/diff.js';
 import type { CompareListSelection } from './widgets/CompareListView.js';
 import type { ThemeName } from '../themes.js';
 import type { SelectedFile } from '../core/ExplorerStateManager.js';
 
 import { formatFileList } from './widgets/FileList.js';
+import { formatFlatFileList } from './widgets/FlatFileList.js';
 import { formatHistoryView } from './widgets/HistoryView.js';
 import { formatCompareListView } from './widgets/CompareListView.js';
 import { formatExplorerView } from './widgets/ExplorerView.js';
-import { formatDiff, formatHistoryDiff } from './widgets/DiffView.js';
+import { formatDiff, formatCombinedDiff, formatHistoryDiff } from './widgets/DiffView.js';
 import { formatCommitPanel } from './widgets/CommitPanel.js';
 import { formatExplorerContent } from './widgets/ExplorerContent.js';
+import type { FlatFileEntry } from '../utils/flatFileList.js';
 
 /**
  * Render the top pane content for the current tab.
@@ -32,7 +32,8 @@ export function renderTopPane(
   explorerState: ExplorerState | undefined,
   width: number,
   topPaneHeight: number,
-  hunkCounts?: FileHunkCounts | null
+  hunkCounts?: FileHunkCounts | null,
+  flatFiles?: FlatFileEntry[]
 ): string {
   if (state.bottomTab === 'history') {
     return formatHistoryView(
@@ -75,7 +76,18 @@ export function renderTopPane(
     );
   }
 
-  // Default: diff tab file list (also used for commit tab)
+  // Default: diff/commit tab file list
+  if (state.flatViewMode && flatFiles) {
+    return formatFlatFileList(
+      flatFiles,
+      state.selectedIndex,
+      state.currentPane === 'files',
+      width,
+      state.fileListScrollOffset,
+      topPaneHeight
+    );
+  }
+
   return formatFileList(
     files,
     state.selectedIndex,
@@ -87,13 +99,14 @@ export function renderTopPane(
   );
 }
 
-import type { HunkBoundary } from '../utils/displayRows.js';
+import type { HunkBoundary, CombinedHunkInfo } from '../utils/displayRows.js';
 
 export interface BottomPaneResult {
   content: string;
   totalRows: number;
   hunkCount: number;
   hunkBoundaries: HunkBoundary[];
+  hunkMapping?: CombinedHunkInfo[];
 }
 
 /**
@@ -111,7 +124,8 @@ export function renderBottomPane(
   width: number,
   bottomPaneHeight: number,
   selectedHunkIndex?: number,
-  isFileStaged?: boolean
+  isFileStaged?: boolean,
+  combinedFileDiffs?: CombinedFileDiffs | null
 ): BottomPaneResult {
   if (state.bottomTab === 'commit') {
     const content = formatCommitPanel(commitFlowState, stagedCount, width);
@@ -170,6 +184,27 @@ export function renderBottomPane(
     );
 
     return { content, totalRows: 0, hunkCount: 0, hunkBoundaries: [] };
+  }
+
+  // Flat mode: show combined unstaged+staged diff with section headers
+  if (state.flatViewMode && combinedFileDiffs) {
+    const result = formatCombinedDiff(
+      combinedFileDiffs.unstaged,
+      combinedFileDiffs.staged,
+      width,
+      state.diffScrollOffset,
+      bottomPaneHeight,
+      currentTheme,
+      state.wrapMode,
+      selectedHunkIndex
+    );
+    return {
+      content: result.content,
+      totalRows: result.totalRows,
+      hunkCount: result.hunkCount,
+      hunkBoundaries: result.hunkBoundaries,
+      hunkMapping: result.hunkMapping,
+    };
   }
 
   // Default: diff tab — pass selectedHunkIndex for hunk gutter

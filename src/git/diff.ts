@@ -39,6 +39,11 @@ export interface CompareDiff {
   uncommittedCount: number;
 }
 
+export interface FileHunkCounts {
+  staged: Map<string, number>;
+  unstaged: Map<string, number>;
+}
+
 export function parseDiffLine(line: string): DiffLine {
   if (
     line.startsWith('diff --git') ||

@@ -4,11 +4,13 @@ import { ThemeName, getTheme, Theme } from '../../themes.js';
 import {
   WrappedDisplayRow,
   buildDiffDisplayRows,
+  buildCombinedDiffDisplayRows,
   buildHistoryDisplayRows,
   getDisplayRowsLineNumWidth,
   wrapDisplayRows,
   getHunkBoundaries,
   type HunkBoundary,
+  type CombinedHunkInfo,
 } from '../../utils/displayRows.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
 
@@ -266,6 +268,13 @@ function formatDisplayRow(
       return `{escape}${prefixAnsi}${content}${ANSI_RESET}{/escape}`;
     }
 
+    case 'section-header': {
+      const color = row.staged ? ANSI_GREEN : ANSI_CYAN;
+      const maxLen = headerWidth - 6;
+      const label = truncate(row.content, maxLen);
+      return `{escape}${ANSI_BOLD}${color}\u2500\u2500 ${label} \u2500\u2500${ANSI_RESET}{/escape}`;
+    }
+
     case 'commit-header':
       return `{escape}${ANSI_YELLOW}${truncate(row.content, headerWidth)}${ANSI_RESET}{/escape}`;
 
@@ -403,4 +412,84 @@ export function formatHistoryDiff(
   );
 
   return { content: lines.join('\n'), totalRows, hunkCount: 0, hunkBoundaries: [] };
+}
+
+export interface CombinedDiffRenderResult extends DiffRenderResult {
+  hunkMapping: CombinedHunkInfo[];
+}
+
+/**
+ * Format combined (unstaged + staged) diff for a single file.
+ * Each section is labelled and hunks are colour-coded in the gutter.
+ */
+export function formatCombinedDiff(
+  unstaged: DiffResult | null,
+  staged: DiffResult | null,
+  width: number,
+  scrollOffset: number = 0,
+  maxHeight?: number,
+  themeName: ThemeName = 'dark',
+  wrapMode: boolean = false,
+  selectedHunkIndex?: number
+): CombinedDiffRenderResult {
+  const { rows: displayRows, hunkMapping } = buildCombinedDiffDisplayRows(unstaged, staged);
+
+  if (displayRows.length === 0) {
+    return {
+      content: '{gray-fg}No diff to display{/gray-fg}',
+      totalRows: 0,
+      hunkCount: 0,
+      hunkBoundaries: [],
+      hunkMapping: [],
+    };
+  }
+
+  const hunkActive = selectedHunkIndex !== undefined && selectedHunkIndex >= 0;
+  const theme = getTheme(themeName);
+  const lineNumWidth = getDisplayRowsLineNumWidth(displayRows);
+  const gutterWidth = hunkActive ? 1 : 0;
+  const contentWidth = width - lineNumWidth - 5 - gutterWidth;
+  const headerWidth = width - 2;
+
+  const wrappedRows = wrapDisplayRows(displayRows, contentWidth, wrapMode);
+  const totalRows = wrappedRows.length;
+
+  const hunkBoundaries = getHunkBoundaries(wrappedRows);
+  const hunkCount = hunkBoundaries.length;
+
+  const clampedHunkIndex = Math.min(selectedHunkIndex ?? 0, hunkCount - 1);
+  const selectedBoundary = hunkActive && hunkCount > 0 ? hunkBoundaries[clampedHunkIndex] : null;
+
+  // Determine gutter colour per-hunk: cyan for unstaged, green for staged
+  const selectedHunkStaged = hunkActive && hunkMapping[clampedHunkIndex]?.source === 'staged';
+
+  const startIdx = scrollOffset;
+  const visibleRows = maxHeight
+    ? wrappedRows.slice(startIdx, startIdx + maxHeight)
+    : wrappedRows.slice(startIdx);
+
+  const lines = visibleRows.map((row, i) => {
+    const absoluteIdx = startIdx + i;
+    const formatted = formatDisplayRow(
+      row,
+      lineNumWidth,
+      contentWidth,
+      headerWidth,
+      theme,
+      wrapMode
+    );
+
+    if (!hunkActive) return formatted;
+
+    const inSelectedHunk =
+      selectedBoundary &&
+      absoluteIdx >= selectedBoundary.startRow &&
+      absoluteIdx < selectedBoundary.endRow;
+    const gutterColor = selectedHunkStaged ? ANSI_GREEN : ANSI_CYAN;
+    const gutter = inSelectedHunk ? `{escape}${gutterColor}\u258c${ANSI_RESET}{/escape}` : ' ';
+
+    return gutter + formatted;
+  });
+
+  return { content: lines.join('\n'), totalRows, hunkCount, hunkBoundaries, hunkMapping };
 }

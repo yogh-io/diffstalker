@@ -1,57 +1,14 @@
-import type { FileEntry, FileStatus } from '../../git/status.js';
-import type { FileHunkCounts } from '../../core/GitStateManager.js';
+import type { FileEntry } from '../../git/status.js';
+import type { FileHunkCounts } from '../../git/diff.js';
 import { categorizeFiles } from '../../utils/fileCategories.js';
-import { shortenPath } from '../../utils/formatPath.js';
-
-function getStatusChar(status: FileStatus): string {
-  switch (status) {
-    case 'modified':
-      return 'M';
-    case 'added':
-      return 'A';
-    case 'deleted':
-      return 'D';
-    case 'untracked':
-      return '?';
-    case 'renamed':
-      return 'R';
-    case 'copied':
-      return 'C';
-    default:
-      return ' ';
-  }
-}
-
-function getStatusColor(status: FileStatus): string {
-  switch (status) {
-    case 'modified':
-      return 'yellow';
-    case 'added':
-      return 'green';
-    case 'deleted':
-      return 'red';
-    case 'untracked':
-      return 'gray';
-    case 'renamed':
-      return 'blue';
-    case 'copied':
-      return 'cyan';
-    default:
-      return 'white';
-  }
-}
-
-function formatStats(insertions?: number, deletions?: number): string {
-  if (insertions === undefined && deletions === undefined) return '';
-  const parts: string[] = [];
-  if (insertions !== undefined && insertions > 0) {
-    parts.push(`{green-fg}+${insertions}{/green-fg}`);
-  }
-  if (deletions !== undefined && deletions > 0) {
-    parts.push(`{red-fg}-${deletions}{/red-fg}`);
-  }
-  return parts.length > 0 ? ' ' + parts.join(' ') : '';
-}
+import {
+  getStatusChar,
+  getStatusColor,
+  formatStats,
+  formatSelectionIndicator,
+  formatFilePath,
+  formatOriginalPath,
+} from './fileRowFormatters.js';
 
 interface RowItem {
   type: 'header' | 'file' | 'spacer';
@@ -143,34 +100,12 @@ function formatFileRow(
   const statsLength = stats.replace(/\{[^}]+\}/g, '').length;
   const hunkLength = hunkIndicator.replace(/\{[^}]+\}/g, '').length;
   const availableForPath = maxPathLength - statsLength - hunkLength;
-  const displayPath = shortenPath(file.path, availableForPath);
 
-  // Build the line — always show indicator for selected file, bright when focused
-  let indicator: string;
-  if (isSelected && isFocused) {
-    indicator = '{cyan-fg}{bold}\u25b8 {/bold}{/cyan-fg}';
-  } else if (isSelected) {
-    indicator = '{gray-fg}\u25b8 {/gray-fg}';
-  } else {
-    indicator = '  ';
-  }
-
-  let line = indicator;
+  let line = formatSelectionIndicator(isSelected, isFocused);
   line += `{${buttonColor}-fg}${actionButton}{/${buttonColor}-fg} `;
   line += `{${statusColor}-fg}${statusChar}{/${statusColor}-fg} `;
-
-  if (isSelected && isFocused) {
-    line += `{cyan-fg}{inverse}${displayPath}{/inverse}{/cyan-fg}`;
-  } else if (isSelected) {
-    line += `{cyan-fg}${displayPath}{/cyan-fg}`;
-  } else {
-    line += displayPath;
-  }
-
-  if (file.originalPath) {
-    line += ` {gray-fg}\u2190 ${shortenPath(file.originalPath, 30)}{/gray-fg}`;
-  }
-
+  line += formatFilePath(file.path, isSelected, isFocused, availableForPath);
+  line += formatOriginalPath(file.originalPath);
   line += stats;
   line += hunkIndicator;
   return line;
@@ -201,12 +136,19 @@ export function formatFileList(
     : rows.slice(scrollOffset);
 
   const lines: string[] = [];
+  let seenFirstHeader = false;
 
   for (const row of visibleRows) {
     switch (row.type) {
-      case 'header':
-        lines.push(`{bold}{${row.headerColor}-fg}${row.content}{/${row.headerColor}-fg}{/bold}`);
+      case 'header': {
+        let headerLine = `{bold}{${row.headerColor}-fg}${row.content}{/${row.headerColor}-fg}{/bold}`;
+        if (!seenFirstHeader) {
+          seenFirstHeader = true;
+          headerLine += ' {gray-fg}(h:flat){/gray-fg}';
+        }
+        lines.push(headerLine);
         break;
+      }
       case 'spacer':
         lines.push('');
         break;

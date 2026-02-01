@@ -57,6 +57,7 @@ const hotkeyGroups: HotkeyGroup[] = [
   {
     title: 'Toggles',
     entries: [
+      { key: 'h', description: 'Flat file view' },
       { key: 'm', description: 'Mouse mode' },
       { key: 'w', description: 'Wrap mode' },
       { key: 'f', description: 'Follow mode' },

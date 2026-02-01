@@ -30,6 +30,7 @@ export type DisplayRow =
       highlighted?: string;
     }
   | { type: 'diff-context'; lineNum?: number; content: string; highlighted?: string }
+  | { type: 'section-header'; content: string; staged: boolean }
   | { type: 'commit-header'; content: string }
   | { type: 'commit-message'; content: string }
   | { type: 'spacer' };
@@ -422,7 +423,7 @@ export function getHunkBoundaries(rows: (DisplayRow | WrappedDisplayRow)[]): Hun
         boundaries.push({ startRow: currentStart, endRow: i });
       }
       currentStart = i;
-    } else if (type === 'diff-header' || type === 'spacer') {
+    } else if (type === 'diff-header' || type === 'section-header' || type === 'spacer') {
       if (currentStart !== -1) {
         boundaries.push({ startRow: currentStart, endRow: i });
         currentStart = -1;
@@ -466,4 +467,60 @@ export function getWrappedRowCount(
   }
 
   return count;
+}
+
+/**
+ * Info about which source a hunk in the combined view came from.
+ */
+export interface CombinedHunkInfo {
+  source: 'unstaged' | 'staged';
+  hunkIndex: number;
+}
+
+/**
+ * Build combined display rows from unstaged and staged diffs for the same file.
+ * Returns display rows with section headers and a mapping from combined hunk index
+ * to source (unstaged/staged) and original hunk index.
+ */
+export function buildCombinedDiffDisplayRows(
+  unstaged: DiffResult | null,
+  staged: DiffResult | null
+): { rows: DisplayRow[]; hunkMapping: CombinedHunkInfo[] } {
+  const unstagedRows = buildDiffDisplayRows(unstaged);
+  const stagedRows = buildDiffDisplayRows(staged);
+
+  // Strip file-level headers (diff --git, new file, deleted file, rename, Binary)
+  const stripFileHeaders = (rows: DisplayRow[]): DisplayRow[] =>
+    rows.filter((r) => r.type !== 'diff-header');
+
+  const unstagedContent = stripFileHeaders(unstagedRows);
+  const stagedContent = stripFileHeaders(stagedRows);
+
+  const rows: DisplayRow[] = [];
+  const hunkMapping: CombinedHunkInfo[] = [];
+
+  if (unstagedContent.length > 0) {
+    rows.push({ type: 'section-header', content: 'Unstaged changes', staged: false });
+    let hunkIdx = 0;
+    for (const row of unstagedContent) {
+      if (row.type === 'diff-hunk') {
+        hunkMapping.push({ source: 'unstaged', hunkIndex: hunkIdx++ });
+      }
+      rows.push(row);
+    }
+  }
+
+  if (stagedContent.length > 0) {
+    if (rows.length > 0) rows.push({ type: 'spacer' });
+    rows.push({ type: 'section-header', content: 'Staged changes', staged: true });
+    let hunkIdx = 0;
+    for (const row of stagedContent) {
+      if (row.type === 'diff-hunk') {
+        hunkMapping.push({ source: 'staged', hunkIndex: hunkIdx++ });
+      }
+      rows.push(row);
+    }
+  }
+
+  return { rows, hunkMapping };
 }
