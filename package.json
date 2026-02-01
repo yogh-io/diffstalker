@@ -35,7 +35,10 @@
     "deps": "depcruise src/ --config .dependency-cruiser.cjs",
     "metrics": "bun scripts/collect-metrics.ts",
     "metrics:snapshot": "bun scripts/collect-metrics.ts --save",
-    "prepublishOnly": "bun run build:prod"
+    "prepublishOnly": "bun run build:prod",
+    "release": "scripts/release.sh",
+    "release:minor": "scripts/release.sh minor",
+    "release:major": "scripts/release.sh major"
   },
   "keywords": [
     "git",

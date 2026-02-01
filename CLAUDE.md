@@ -29,6 +29,18 @@ npm run lint   # ESLint + dependency-cruiser
 npm run deps   # Dependency-cruiser only
 ```
 
+## Releasing
+
+Use `bun run release` to publish a new version. This bumps `package.json`, commits, tags, and pushes. The pre-push hook runs the full test suite before the tag push is allowed through. CI then builds, tests again, and publishes to npm.
+
+```bash
+bun run release         # patch bump (0.2.2 → 0.2.3)
+bun run release:minor   # minor bump (0.2.3 → 0.3.0)
+bun run release:major   # major bump (0.3.0 → 1.0.0)
+```
+
+The working tree must be clean before releasing. Never bump `package.json` or create version tags manually — always use the script so the version and tag stay in sync.
+
 ## Project Structure
 
 ```
