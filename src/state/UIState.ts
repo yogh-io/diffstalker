@@ -28,6 +28,9 @@ export interface UIStateData {
   // Explorer state
   explorerSelectedIndex: number;
 
+  // Hunk selection (diff pane)
+  selectedHunkIndex: number;
+
   // Display options
   wrapMode: boolean;
   autoTabEnabled: boolean;
@@ -69,6 +72,7 @@ const DEFAULT_STATE: UIStateData = {
   compareSelectedIndex: 0,
   includeUncommitted: false,
   explorerSelectedIndex: 0,
+  selectedHunkIndex: 0,
   wrapMode: false,
   autoTabEnabled: false,
   mouseEnabled: true,
@@ -184,6 +188,23 @@ export class UIState extends EventEmitter<UIStateEventMap> {
     this.update({ explorerSelectedIndex: Math.max(0, index) });
   }
 
+  // Hunk selection
+  setSelectedHunkIndex(index: number): void {
+    this.update({ selectedHunkIndex: Math.max(0, index) });
+  }
+
+  /**
+   * Silently clamp selectedHunkIndex to valid range without emitting events.
+   * Called during render to sync state with actual hunk count.
+   */
+  clampSelectedHunkIndex(hunkCount: number): void {
+    if (hunkCount <= 0) {
+      this._state.selectedHunkIndex = 0;
+    } else if (this._state.selectedHunkIndex >= hunkCount) {
+      this._state.selectedHunkIndex = hunkCount - 1;
+    }
+  }
+
   // Display toggles
   toggleWrapMode(): void {
     this.update({ wrapMode: !this._state.wrapMode, diffScrollOffset: 0 });
@@ -272,6 +293,7 @@ export class UIState extends EventEmitter<UIStateEventMap> {
       explorerSelectedIndex: 0,
       explorerScrollOffset: 0,
       explorerFileScrollOffset: 0,
+      selectedHunkIndex: 0,
     };
     this.emit('change', this._state);
   }

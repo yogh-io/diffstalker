@@ -28,6 +28,9 @@ export interface KeyBindingActions {
   toggleFollow(): void;
   showDiscardConfirm(file: FileEntry): void;
   render(): void;
+  toggleCurrentHunk(): void;
+  navigateNextHunk(): void;
+  navigatePrevHunk(): void;
 }
 
 /**
@@ -93,9 +96,14 @@ export function setupKeyBindings(
   });
 
   // Staging operations (skip if modal is open)
+  // Context-aware: hunk staging when diff pane is focused on diff tab
   screen.key(['s'], () => {
     if (ctx.hasActiveModal()) return;
-    actions.stageSelected();
+    if (ctx.getBottomTab() === 'diff' && ctx.getCurrentPane() === 'diff') {
+      actions.toggleCurrentHunk();
+    } else {
+      actions.stageSelected();
+    }
   });
   screen.key(['S-u'], () => {
     if (ctx.hasActiveModal()) return;
@@ -219,8 +227,9 @@ export function setupKeyBindings(
     }
   });
 
-  // Compare view: toggle uncommitted
+  // u: toggle uncommitted in compare view
   screen.key(['u'], () => {
+    if (ctx.hasActiveModal()) return;
     if (ctx.getBottomTab() === 'compare') {
       ctx.uiState.toggleIncludeUncommitted();
       const includeUncommitted = ctx.uiState.state.includeUncommitted;
@@ -237,6 +246,21 @@ export function setupKeyBindings(
       if (selectedFile && !selectedFile.staged && selectedFile.status !== 'untracked') {
         actions.showDiscardConfirm(selectedFile);
       }
+    }
+  });
+
+  // Hunk navigation (only when diff pane focused on diff tab)
+  screen.key(['n'], () => {
+    if (ctx.hasActiveModal()) return;
+    if (ctx.getBottomTab() === 'diff' && ctx.getCurrentPane() === 'diff') {
+      actions.navigateNextHunk();
+    }
+  });
+
+  screen.key(['S-n'], () => {
+    if (ctx.hasActiveModal()) return;
+    if (ctx.getBottomTab() === 'diff' && ctx.getCurrentPane() === 'diff') {
+      actions.navigatePrevHunk();
     }
   });
 }

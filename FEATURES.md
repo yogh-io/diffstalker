@@ -47,6 +47,7 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
   - File header: `diff --git` prefix
 - Word-level highlighting within add/del lines (darker highlight for changed words)
 - Optional line wrapping (toggle with `w`)
+- **Hunk Staging**: When diff pane is focused (via `Tab`), a cyan gutter indicator (`▎`) marks the selected hunk. Footer shows `hunk 1/3` position. Use `n`/`N` to navigate between hunks and `s`/`u` to stage/unstage individual hunks instead of entire files. Disabled for untracked files and binary files.
 
 ### Tab 2: Commit Panel
 
@@ -151,11 +152,20 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 
 | Key | Action |
 |-----|--------|
-| `s` / `Ctrl+S` | Stage selected file |
-| `Shift+U` | Unstage selected file |
+| `s` | Stage selected file (or current hunk when diff pane focused) |
+| `Shift+U` | Unstage selected file (or current hunk when diff pane focused) |
 | `Shift+A` | Stage all files |
 | `Shift+Z` | Unstage all files |
 | `Space` / `Enter` | Toggle stage/unstage for selected file |
+
+### Hunk Staging (Diff Pane Focused)
+
+| Key | Action |
+|-----|--------|
+| `n` | Jump to next hunk |
+| `N` (Shift+N) | Jump to previous hunk |
+| `s` | Stage current hunk (unstaged files only) |
+| `u` | Unstage current hunk (staged files only) |
 
 ### Actions
 

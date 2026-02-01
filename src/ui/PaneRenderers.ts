@@ -3,7 +3,11 @@ import type { CommitFlowStateData } from '../state/CommitFlowState.js';
 import type { FileEntry, CommitInfo } from '../git/status.js';
 import type { DiffResult, CompareDiff } from '../git/diff.js';
 import type { ExplorerState } from '../core/ExplorerStateManager.js';
-import type { HistoryState, CompareSelectionState } from '../core/GitStateManager.js';
+import type {
+  HistoryState,
+  CompareSelectionState,
+  FileHunkCounts,
+} from '../core/GitStateManager.js';
 import type { CompareListSelection } from './widgets/CompareListView.js';
 import type { ThemeName } from '../themes.js';
 import type { SelectedFile } from '../core/ExplorerStateManager.js';
@@ -27,7 +31,8 @@ export function renderTopPane(
   compareSelection: CompareListSelection | null,
   explorerState: ExplorerState | undefined,
   width: number,
-  topPaneHeight: number
+  topPaneHeight: number,
+  hunkCounts?: FileHunkCounts | null
 ): string {
   if (state.bottomTab === 'history') {
     return formatHistoryView(
@@ -70,20 +75,25 @@ export function renderTopPane(
     );
   }
 
-  // Default: diff tab file list
+  // Default: diff tab file list (also used for commit tab)
   return formatFileList(
     files,
     state.selectedIndex,
     state.currentPane === 'files',
     width,
     state.fileListScrollOffset,
-    topPaneHeight
+    topPaneHeight,
+    hunkCounts
   );
 }
+
+import type { HunkBoundary } from '../utils/displayRows.js';
 
 export interface BottomPaneResult {
   content: string;
   totalRows: number;
+  hunkCount: number;
+  hunkBoundaries: HunkBoundary[];
 }
 
 /**
@@ -99,11 +109,13 @@ export function renderBottomPane(
   stagedCount: number,
   currentTheme: ThemeName,
   width: number,
-  bottomPaneHeight: number
+  bottomPaneHeight: number,
+  selectedHunkIndex?: number,
+  isFileStaged?: boolean
 ): BottomPaneResult {
   if (state.bottomTab === 'commit') {
     const content = formatCommitPanel(commitFlowState, stagedCount, width);
-    return { content, totalRows: 0 };
+    return { content, totalRows: 0, hunkCount: 0, hunkBoundaries: [] };
   }
 
   if (state.bottomTab === 'history') {
@@ -120,7 +132,7 @@ export function renderBottomPane(
       state.wrapMode
     );
 
-    return { content, totalRows };
+    return { content, totalRows, hunkCount: 0, hunkBoundaries: [] };
   }
 
   if (state.bottomTab === 'compare') {
@@ -135,10 +147,15 @@ export function renderBottomPane(
         currentTheme,
         state.wrapMode
       );
-      return { content, totalRows };
+      return { content, totalRows, hunkCount: 0, hunkBoundaries: [] };
     }
 
-    return { content: '{gray-fg}Select a commit or file to view diff{/gray-fg}', totalRows: 0 };
+    return {
+      content: '{gray-fg}Select a commit or file to view diff{/gray-fg}',
+      totalRows: 0,
+      hunkCount: 0,
+      hunkBoundaries: [],
+    };
   }
 
   if (state.bottomTab === 'explorer') {
@@ -152,18 +169,20 @@ export function renderBottomPane(
       state.wrapMode
     );
 
-    return { content, totalRows: 0 };
+    return { content, totalRows: 0, hunkCount: 0, hunkBoundaries: [] };
   }
 
-  // Default: diff tab
-  const { content, totalRows } = formatDiff(
+  // Default: diff tab — pass selectedHunkIndex for hunk gutter
+  const { content, totalRows, hunkCount, hunkBoundaries } = formatDiff(
     diff,
     width,
     state.diffScrollOffset,
     bottomPaneHeight,
     currentTheme,
-    state.wrapMode
+    state.wrapMode,
+    selectedHunkIndex,
+    isFileStaged
   );
 
-  return { content, totalRows };
+  return { content, totalRows, hunkCount, hunkBoundaries };
 }

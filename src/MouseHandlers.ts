@@ -25,6 +25,7 @@ export interface MouseActions {
   enterExplorerDirectory(): void;
   toggleMouseMode(): void;
   toggleFollow(): void;
+  selectHunkAtRow(visualRow: number): void;
   render(): void;
 }
 
@@ -73,6 +74,14 @@ export function setupMouseHandlers(
     const clickedRow = layout.screenYToTopPaneRow(mouse.y);
     if (clickedRow >= 0) {
       handleTopPaneClick(clickedRow, mouse.x, actions, ctx);
+    }
+  });
+
+  // Click on bottom pane to select hunk (diff tab)
+  layout.bottomPane.on('click', (mouse: { x: number; y: number }) => {
+    const clickedRow = layout.screenYToBottomPaneRow(mouse.y);
+    if (clickedRow >= 0) {
+      actions.selectHunkAtRow(clickedRow);
     }
   });
 

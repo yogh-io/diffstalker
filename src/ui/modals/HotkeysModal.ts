@@ -82,8 +82,13 @@ const hotkeyGroups: HotkeyGroup[] = [
     ],
   },
   {
-    title: 'Diff',
-    entries: [{ key: 'd', description: 'Discard changes' }],
+    title: 'Diff (pane focus)',
+    entries: [
+      { key: 'n', description: 'Next hunk' },
+      { key: 'N', description: 'Previous hunk' },
+      { key: 's', description: 'Toggle hunk staged/unstaged' },
+      { key: 'd', description: 'Discard changes' },
+    ],
   },
 ];
 

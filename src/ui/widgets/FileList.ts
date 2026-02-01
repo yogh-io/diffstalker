@@ -1,4 +1,5 @@
 import type { FileEntry, FileStatus } from '../../git/status.js';
+import type { FileHunkCounts } from '../../core/GitStateManager.js';
 import { categorizeFiles } from '../../utils/fileCategories.js';
 import { shortenPath } from '../../utils/formatPath.js';
 
@@ -101,14 +102,35 @@ export function buildFileListRows(files: FileEntry[]): RowItem[] {
 /**
  * Format a single file row as blessed-compatible tagged string.
  */
+/**
+ * Format hunk count indicator for a file, e.g. "@2/3".
+ * Returns empty string if not applicable.
+ */
+function formatHunkIndicator(file: FileEntry, hunkCounts: FileHunkCounts | null): string {
+  if (!hunkCounts) return '';
+
+  const stagedHunks = hunkCounts.staged.get(file.path) ?? 0;
+  const unstagedHunks = hunkCounts.unstaged.get(file.path) ?? 0;
+  const total = stagedHunks + unstagedHunks;
+
+  if (total === 0) return '';
+
+  const thisCount = file.staged ? stagedHunks : unstagedHunks;
+  // Show just @total when all hunks are in this state, otherwise @n/total
+  if (thisCount === total) return ` {cyan-fg}@${total}{/cyan-fg}`;
+
+  return ` {cyan-fg}@${thisCount}/${total}{/cyan-fg}`;
+}
+
 function formatFileRow(
   file: FileEntry,
   fileIndex: number,
   selectedIndex: number,
   isFocused: boolean,
-  maxPathLength: number
+  maxPathLength: number,
+  hunkCounts: FileHunkCounts | null
 ): string {
-  const isHighlighted = fileIndex === selectedIndex && isFocused;
+  const isSelected = fileIndex === selectedIndex;
 
   const statusChar = getStatusChar(file.status);
   const statusColor = getStatusColor(file.status);
@@ -117,18 +139,30 @@ function formatFileRow(
 
   // Calculate available space for path
   const stats = formatStats(file.insertions, file.deletions);
+  const hunkIndicator = formatHunkIndicator(file, hunkCounts);
   const statsLength = stats.replace(/\{[^}]+\}/g, '').length;
-  const availableForPath = maxPathLength - statsLength;
+  const hunkLength = hunkIndicator.replace(/\{[^}]+\}/g, '').length;
+  const availableForPath = maxPathLength - statsLength - hunkLength;
   const displayPath = shortenPath(file.path, availableForPath);
 
-  // Build the line
-  let line = isHighlighted ? '{cyan-fg}{bold}\u25b8 {/bold}{/cyan-fg}' : '  ';
+  // Build the line — always show indicator for selected file, bright when focused
+  let indicator: string;
+  if (isSelected && isFocused) {
+    indicator = '{cyan-fg}{bold}\u25b8 {/bold}{/cyan-fg}';
+  } else if (isSelected) {
+    indicator = '{gray-fg}\u25b8 {/gray-fg}';
+  } else {
+    indicator = '  ';
+  }
 
+  let line = indicator;
   line += `{${buttonColor}-fg}${actionButton}{/${buttonColor}-fg} `;
   line += `{${statusColor}-fg}${statusChar}{/${statusColor}-fg} `;
 
-  if (isHighlighted) {
+  if (isSelected && isFocused) {
     line += `{cyan-fg}{inverse}${displayPath}{/inverse}{/cyan-fg}`;
+  } else if (isSelected) {
+    line += `{cyan-fg}${displayPath}{/cyan-fg}`;
   } else {
     line += displayPath;
   }
@@ -138,6 +172,7 @@ function formatFileRow(
   }
 
   line += stats;
+  line += hunkIndicator;
   return line;
 }
 
@@ -150,7 +185,8 @@ export function formatFileList(
   isFocused: boolean,
   width: number,
   scrollOffset: number = 0,
-  maxHeight?: number
+  maxHeight?: number,
+  hunkCounts?: FileHunkCounts | null
 ): string {
   if (files.length === 0) {
     return '{gray-fg} No changes{/gray-fg}';
@@ -177,7 +213,14 @@ export function formatFileList(
       case 'file':
         if (row.file && row.fileIndex !== undefined) {
           lines.push(
-            formatFileRow(row.file, row.fileIndex, selectedIndex, isFocused, maxPathLength)
+            formatFileRow(
+              row.file,
+              row.fileIndex,
+              selectedIndex,
+              isFocused,
+              maxPathLength,
+              hunkCounts ?? null
+            )
           );
         }
         break;

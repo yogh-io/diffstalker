@@ -8,6 +8,37 @@ function calculateVisibleLength(content: string): number {
 }
 
 /**
+ * Format a toggle indicator: blue when on, gray when off.
+ */
+function toggleIndicator(label: string, enabled: boolean): string {
+  return enabled ? `{blue-fg}[${label}]{/blue-fg}` : `{gray-fg}[${label}]{/gray-fg}`;
+}
+
+/**
+ * Build the left-side indicators for the standard (non-hunk) footer.
+ */
+function buildStandardIndicators(
+  mouseEnabled: boolean,
+  autoTabEnabled: boolean,
+  wrapMode: boolean,
+  followEnabled: boolean,
+  showOnlyChanges: boolean,
+  activeTab: BottomTab
+): string {
+  const parts: string[] = [];
+  parts.push(
+    mouseEnabled ? '{yellow-fg}[scroll]{/yellow-fg}' : '{yellow-fg}m:[select]{/yellow-fg}'
+  );
+  parts.push(toggleIndicator('auto', autoTabEnabled));
+  parts.push(toggleIndicator('wrap', wrapMode));
+  parts.push(toggleIndicator('follow', followEnabled));
+  if (activeTab === 'explorer') {
+    parts.push(toggleIndicator('changes', showOnlyChanges));
+  }
+  return parts.join(' ');
+}
+
+/**
  * Format footer content as blessed-compatible tagged string.
  */
 export function formatFooter(
@@ -17,25 +48,24 @@ export function formatFooter(
   wrapMode: boolean,
   followEnabled: boolean,
   showOnlyChanges: boolean,
-  width: number
+  width: number,
+  currentPane?: string
 ): string {
   // Left side: indicators
   let leftContent = '{gray-fg}?{/gray-fg} ';
-  leftContent += mouseEnabled
-    ? '{yellow-fg}[scroll]{/yellow-fg}'
-    : '{yellow-fg}m:[select]{/yellow-fg}';
-  leftContent += ' ';
-  leftContent += autoTabEnabled ? '{blue-fg}[auto]{/blue-fg}' : '{gray-fg}[auto]{/gray-fg}';
-  leftContent += ' ';
-  leftContent += wrapMode ? '{blue-fg}[wrap]{/blue-fg}' : '{gray-fg}[wrap]{/gray-fg}';
-  leftContent += ' ';
-  leftContent += followEnabled ? '{blue-fg}[follow]{/blue-fg}' : '{gray-fg}[follow]{/gray-fg}';
 
-  if (activeTab === 'explorer') {
-    leftContent += ' ';
-    leftContent += showOnlyChanges
-      ? '{blue-fg}[changes]{/blue-fg}'
-      : '{gray-fg}[changes]{/gray-fg}';
+  leftContent += buildStandardIndicators(
+    mouseEnabled,
+    autoTabEnabled,
+    wrapMode,
+    followEnabled,
+    showOnlyChanges,
+    activeTab
+  );
+
+  // Show hunk key hints when diff pane is focused on diff tab
+  if (activeTab === 'diff' && currentPane === 'diff') {
+    leftContent += ' {gray-fg}n/N:hunk s:toggle{/gray-fg}';
   }
 
   // Right side: tabs

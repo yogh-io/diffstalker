@@ -42,6 +42,8 @@ import {
 import type { CommandServer, CommandHandler, AppState } from './ipc/CommandServer.js';
 import type { BottomTab } from './types/tabs.js';
 import type { ThemeName } from './themes.js';
+import { extractHunkPatch } from './git/diff.js';
+import type { HunkBoundary } from './utils/displayRows.js';
 
 export interface AppOptions {
   config: Config;
@@ -80,8 +82,10 @@ export class App {
     | FileFinder
     | null = null;
 
-  // Cached total rows for scroll bounds (single source of truth from render)
+  // Cached total rows and hunk info for scroll bounds (single source of truth from render)
   private bottomPaneTotalRows: number = 0;
+  private bottomPaneHunkCount: number = 0;
+  private bottomPaneHunkBoundaries: HunkBoundary[] = [];
 
   // Selection anchor: remembers category + position before stage/unstage
   private pendingSelectionAnchor: { category: CategoryName; categoryIndex: number } | null = null;
@@ -218,6 +222,9 @@ export class App {
         toggleFollow: () => this.toggleFollow(),
         showDiscardConfirm: (file) => this.showDiscardConfirm(file),
         render: () => this.render(),
+        toggleCurrentHunk: () => this.toggleCurrentHunk(),
+        navigateNextHunk: () => this.navigateNextHunk(),
+        navigatePrevHunk: () => this.navigatePrevHunk(),
       },
       {
         hasActiveModal: () => this.activeModal !== null,
@@ -246,6 +253,7 @@ export class App {
         enterExplorerDirectory: () => this.enterExplorerDirectory(),
         toggleMouseMode: () => this.toggleMouseMode(),
         toggleFollow: () => this.toggleFollow(),
+        selectHunkAtRow: (row) => this.selectHunkAtRow(row),
         render: () => this.render(),
       },
       {
@@ -282,6 +290,10 @@ export class App {
 
     // Load data when switching tabs
     this.uiState.on('tab-change', (tab) => {
+      // Reset hunk selection when leaving diff tab
+      if (tab !== 'diff') {
+        this.uiState.setSelectedHunkIndex(0);
+      }
       if (tab === 'history') {
         this.gitManager?.loadHistory();
       } else if (tab === 'compare') {
@@ -819,8 +831,9 @@ export class App {
     const files = this.gitManager?.state.status?.files ?? [];
     const file = getFileAtIndex(files, index);
     if (file) {
-      // Reset diff scroll when changing files
+      // Reset diff scroll and hunk selection when changing files
       this.uiState.setDiffScrollOffset(0);
+      this.uiState.setSelectedHunkIndex(0);
       this.gitManager?.selectFile(file);
     }
   }
@@ -906,6 +919,62 @@ export class App {
       }
     );
     this.activeModal.focus();
+  }
+
+  // Hunk navigation and staging
+
+  private navigateNextHunk(): void {
+    const current = this.uiState.state.selectedHunkIndex;
+    if (this.bottomPaneHunkCount > 0 && current < this.bottomPaneHunkCount - 1) {
+      this.uiState.setSelectedHunkIndex(current + 1);
+    }
+  }
+
+  private navigatePrevHunk(): void {
+    const current = this.uiState.state.selectedHunkIndex;
+    if (current > 0) {
+      this.uiState.setSelectedHunkIndex(current - 1);
+    }
+  }
+
+  private selectHunkAtRow(visualRow: number): void {
+    if (this.uiState.state.bottomTab !== 'diff') return;
+    if (this.bottomPaneHunkBoundaries.length === 0) return;
+
+    // Focus the diff pane so the hunk gutter appears
+    this.uiState.setPane('diff');
+
+    const absoluteRow = this.uiState.state.diffScrollOffset + visualRow;
+    for (let i = 0; i < this.bottomPaneHunkBoundaries.length; i++) {
+      const b = this.bottomPaneHunkBoundaries[i];
+      if (absoluteRow >= b.startRow && absoluteRow < b.endRow) {
+        this.uiState.setSelectedHunkIndex(i);
+        return;
+      }
+    }
+  }
+
+  private async toggleCurrentHunk(): Promise<void> {
+    const files = this.gitManager?.state.status?.files ?? [];
+    const selectedFile = this.gitManager?.state.selectedFile;
+    if (!selectedFile) return;
+    // Untracked files have no hunks to toggle
+    if (selectedFile.status === 'untracked') return;
+
+    const rawDiff = this.gitManager?.state.diff?.raw;
+    if (!rawDiff) return;
+
+    const patch = extractHunkPatch(rawDiff, this.uiState.state.selectedHunkIndex);
+    if (!patch) return;
+
+    // Set anchor so state-change handler reselects the correct file after refresh
+    this.pendingSelectionAnchor = getCategoryForIndex(files, this.uiState.state.selectedIndex);
+
+    if (selectedFile.staged) {
+      await this.gitManager?.unstageHunk(patch);
+    } else {
+      await this.gitManager?.stageHunk(patch);
+    }
   }
 
   private async openFileFinder(): Promise<void> {
@@ -1036,7 +1105,8 @@ export class App {
       this.compareSelection,
       this.explorerManager?.state,
       width,
-      this.layout.dimensions.topPaneHeight
+      this.layout.dimensions.topPaneHeight,
+      this.gitManager?.state.hunkCounts
     );
 
     this.layout.topPane.setContent(content);
@@ -1051,7 +1121,12 @@ export class App {
     // Update staged count for commit validation
     this.commitFlowState.setStagedCount(stagedCount);
 
-    const { content, totalRows } = renderBottomPane(
+    // Pass selectedHunkIndex and staged status only when diff pane is focused on diff tab
+    const diffPaneFocused = state.bottomTab === 'diff' && state.currentPane === 'diff';
+    const hunkIndex = diffPaneFocused ? state.selectedHunkIndex : undefined;
+    const isFileStaged = diffPaneFocused ? this.gitManager?.state.selectedFile?.staged : undefined;
+
+    const { content, totalRows, hunkCount, hunkBoundaries } = renderBottomPane(
       state,
       this.gitManager?.state.diff ?? null,
       this.gitManager?.historyState,
@@ -1061,10 +1136,18 @@ export class App {
       stagedCount,
       this.currentTheme,
       width,
-      this.layout.dimensions.bottomPaneHeight
+      this.layout.dimensions.bottomPaneHeight,
+      hunkIndex,
+      isFileStaged
     );
 
     this.bottomPaneTotalRows = totalRows;
+    this.bottomPaneHunkCount = hunkCount;
+    this.bottomPaneHunkBoundaries = hunkBoundaries;
+
+    // Silently clamp hunk index to actual count (handles async refresh after hunk staging)
+    this.uiState.clampSelectedHunkIndex(hunkCount);
+
     this.layout.bottomPane.setContent(content);
 
     // Manage commit textarea visibility
@@ -1088,7 +1171,8 @@ export class App {
       state.wrapMode,
       this.followMode?.isEnabled ?? false,
       this.explorerManager?.showOnlyChanges ?? false,
-      width
+      width,
+      state.currentPane
     );
 
     this.layout.footerBox.setContent(content);

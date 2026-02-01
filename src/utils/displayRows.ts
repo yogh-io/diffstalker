@@ -402,6 +402,41 @@ export function wrapDisplayRows(
   return result;
 }
 
+export interface HunkBoundary {
+  startRow: number; // index of the @@ row
+  endRow: number; // exclusive end (next @@, diff-header, spacer, or array end)
+}
+
+/**
+ * Find hunk boundaries in a DisplayRow or WrappedDisplayRow array.
+ * Each hunk spans from a 'diff-hunk' row to the next 'diff-hunk', 'diff-header', 'spacer', or end.
+ */
+export function getHunkBoundaries(rows: (DisplayRow | WrappedDisplayRow)[]): HunkBoundary[] {
+  const boundaries: HunkBoundary[] = [];
+  let currentStart = -1;
+
+  for (let i = 0; i < rows.length; i++) {
+    const type = rows[i].type;
+    if (type === 'diff-hunk') {
+      if (currentStart !== -1) {
+        boundaries.push({ startRow: currentStart, endRow: i });
+      }
+      currentStart = i;
+    } else if (type === 'diff-header' || type === 'spacer') {
+      if (currentStart !== -1) {
+        boundaries.push({ startRow: currentStart, endRow: i });
+        currentStart = -1;
+      }
+    }
+  }
+
+  if (currentStart !== -1) {
+    boundaries.push({ startRow: currentStart, endRow: rows.length });
+  }
+
+  return boundaries;
+}
+
 /**
  * Calculate the total row count after wrapping.
  * More efficient than wrapDisplayRows().length when you only need the count.

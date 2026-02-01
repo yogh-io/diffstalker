@@ -136,6 +136,100 @@ export function parseDiffWithLineNumbers(raw: string): DiffLine[] {
   return result;
 }
 
+/**
+ * Count the number of hunks in a raw diff string.
+ * A hunk starts with a line beginning with '@@'.
+ */
+export function countHunks(rawDiff: string): number {
+  if (!rawDiff) return 0;
+  let count = 0;
+  for (const line of rawDiff.split('\n')) {
+    if (line.startsWith('@@')) count++;
+  }
+  return count;
+}
+
+/**
+ * Extract a valid single-hunk patch from a raw diff.
+ * Includes all file headers (diff --git, index, new file mode,
+ * rename from/to, ---, +++) plus the Nth @@ hunk and its lines
+ * (including '\ No newline at end of file' markers).
+ * Returns null if hunkIndex is out of range.
+ */
+export function extractHunkPatch(rawDiff: string, hunkIndex: number): string | null {
+  if (!rawDiff) return null;
+
+  const lines = rawDiff.split('\n');
+
+  // Collect file headers (everything before the first @@)
+  const headers: string[] = [];
+  let firstHunkLine = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('@@')) {
+      firstHunkLine = i;
+      break;
+    }
+    headers.push(lines[i]);
+  }
+
+  if (firstHunkLine === -1) return null;
+
+  // Find the Nth @@ line
+  let hunkCount = -1;
+  let hunkStart = -1;
+  for (let i = firstHunkLine; i < lines.length; i++) {
+    if (lines[i].startsWith('@@')) {
+      hunkCount++;
+      if (hunkCount === hunkIndex) {
+        hunkStart = i;
+        break;
+      }
+    }
+  }
+
+  if (hunkStart === -1) return null;
+
+  // Collect from that @@ until the next @@ or end-of-content
+  const hunkLines: string[] = [lines[hunkStart]];
+  for (let i = hunkStart + 1; i < lines.length; i++) {
+    if (lines[i].startsWith('@@') || lines[i].startsWith('diff --git')) break;
+    hunkLines.push(lines[i]);
+  }
+
+  // Remove trailing empty line if present (artifact of split)
+  while (hunkLines.length > 1 && hunkLines[hunkLines.length - 1] === '') {
+    hunkLines.pop();
+  }
+
+  const patch = [...headers, ...hunkLines].join('\n') + '\n';
+  return patch;
+}
+
+/**
+ * Count the number of hunks per file in a multi-file raw diff string.
+ * Returns a map of file path -> hunk count.
+ */
+export function countHunksPerFile(rawDiff: string): Map<string, number> {
+  const result = new Map<string, number>();
+  if (!rawDiff) return result;
+
+  let currentFile: string | null = null;
+  for (const line of rawDiff.split('\n')) {
+    if (line.startsWith('diff --git')) {
+      const match = line.match(/^diff --git a\/.+ b\/(.+)$/);
+      if (match) {
+        currentFile = match[1];
+        if (!result.has(currentFile)) {
+          result.set(currentFile, 0);
+        }
+      }
+    } else if (line.startsWith('@@') && currentFile) {
+      result.set(currentFile, (result.get(currentFile) ?? 0) + 1);
+    }
+  }
+  return result;
+}
+
 export async function getDiff(
   repoPath: string,
   file?: string,

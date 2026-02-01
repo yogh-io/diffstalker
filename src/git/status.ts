@@ -1,4 +1,5 @@
 import { simpleGit, SimpleGit, StatusResult } from 'simple-git';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getIgnoredFiles } from './ignoreUtils.js';
@@ -227,6 +228,22 @@ export interface CommitInfo {
   author: string;
   date: Date;
   refs: string;
+}
+
+export function stageHunk(repoPath: string, patch: string): void {
+  execFileSync('git', ['apply', '--cached', '--unidiff-zero'], {
+    cwd: repoPath,
+    input: patch,
+    encoding: 'utf-8',
+  });
+}
+
+export function unstageHunk(repoPath: string, patch: string): void {
+  execFileSync('git', ['apply', '--cached', '--reverse', '--unidiff-zero'], {
+    cwd: repoPath,
+    input: patch,
+    encoding: 'utf-8',
+  });
 }
 
 export async function getCommitHistory(

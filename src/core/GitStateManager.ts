@@ -15,6 +15,8 @@ import {
   commit as gitCommit,
   getHeadMessage,
   getCommitHistory,
+  stageHunk as gitStageHunk,
+  unstageHunk as gitUnstageHunk,
   GitStatus,
   FileEntry,
   CommitInfo,
@@ -28,10 +30,16 @@ import {
   getDiffBetweenRefs,
   getCompareDiffWithUncommitted,
   getCommitDiff,
+  countHunksPerFile,
   DiffResult,
   CompareDiff,
 } from '../git/diff.js';
 import { getCachedBaseBranch, setCachedBaseBranch } from '../utils/baseBranchCache.js';
+
+export interface FileHunkCounts {
+  staged: Map<string, number>;
+  unstaged: Map<string, number>;
+}
 
 export interface GitState {
   status: GitStatus | null;
@@ -39,6 +47,7 @@ export interface GitState {
   selectedFile: FileEntry | null;
   isLoading: boolean;
   error: string | null;
+  hunkCounts: FileHunkCounts | null;
 }
 
 export interface CompareState {
@@ -90,6 +99,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     selectedFile: null,
     isLoading: false,
     error: null,
+    hunkCounts: null,
   };
 
   private _compareState: CompareState = {
@@ -360,8 +370,17 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
       // Emit status immediately so the file list updates after a single git spawn
       this.updateState({ status: newStatus });
 
-      // Fetch unstaged diff (updates diff view once complete)
-      const allUnstagedDiff = await getDiff(this.repoPath, undefined, false);
+      // Fetch unstaged and staged diffs in parallel
+      const [allUnstagedDiff, allStagedDiff] = await Promise.all([
+        getDiff(this.repoPath, undefined, false),
+        getDiff(this.repoPath, undefined, true),
+      ]);
+
+      // Count hunks per file for the file list display
+      const hunkCounts: FileHunkCounts = {
+        unstaged: countHunksPerFile(allUnstagedDiff.raw),
+        staged: countHunksPerFile(allStagedDiff.raw),
+      };
 
       // Determine display diff based on selected file
       let displayDiff: DiffResult;
@@ -388,6 +407,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
 
       this.updateState({
         diff: displayDiff,
+        hunkCounts,
         isLoading: false,
       });
     } catch (err) {
@@ -482,6 +502,36 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
       await this.refresh();
       this.updateState({
         error: `Failed to unstage ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  /**
+   * Stage a single hunk via patch.
+   */
+  async stageHunk(patch: string): Promise<void> {
+    try {
+      await this.queue.enqueueMutation(async () => gitStageHunk(this.repoPath, patch));
+      this.scheduleRefresh();
+    } catch (err) {
+      await this.refresh();
+      this.updateState({
+        error: `Failed to stage hunk: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  /**
+   * Unstage a single hunk via patch.
+   */
+  async unstageHunk(patch: string): Promise<void> {
+    try {
+      await this.queue.enqueueMutation(async () => gitUnstageHunk(this.repoPath, patch));
+      this.scheduleRefresh();
+    } catch (err) {
+      await this.refresh();
+      this.updateState({
+        error: `Failed to unstage hunk: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }

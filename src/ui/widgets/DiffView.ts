@@ -7,6 +7,8 @@ import {
   buildHistoryDisplayRows,
   getDisplayRowsLineNumWidth,
   wrapDisplayRows,
+  getHunkBoundaries,
+  type HunkBoundary,
 } from '../../utils/displayRows.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
 
@@ -15,6 +17,7 @@ const ANSI_RESET = '\x1b[0m';
 const ANSI_BOLD = '\x1b[1m';
 const ANSI_GRAY = '\x1b[90m';
 const ANSI_CYAN = '\x1b[36m';
+const ANSI_GREEN = '\x1b[32m';
 const ANSI_YELLOW = '\x1b[33m';
 
 /**
@@ -277,6 +280,8 @@ function formatDisplayRow(
 export interface DiffRenderResult {
   content: string;
   totalRows: number;
+  hunkCount: number;
+  hunkBoundaries: HunkBoundary[];
 }
 
 /**
@@ -289,33 +294,72 @@ export function formatDiff(
   scrollOffset: number = 0,
   maxHeight?: number,
   themeName: ThemeName = 'dark',
-  wrapMode: boolean = false
+  wrapMode: boolean = false,
+  selectedHunkIndex?: number,
+  isFileStaged?: boolean
 ): DiffRenderResult {
+  const hunkActive = selectedHunkIndex !== undefined && selectedHunkIndex >= 0;
   const displayRows = buildDiffDisplayRows(diff);
 
   if (displayRows.length === 0) {
-    return { content: '{gray-fg}No diff to display{/gray-fg}', totalRows: 0 };
+    return {
+      content: '{gray-fg}No diff to display{/gray-fg}',
+      totalRows: 0,
+      hunkCount: 0,
+      hunkBoundaries: [],
+    };
   }
 
   const theme = getTheme(themeName);
   const lineNumWidth = getDisplayRowsLineNumWidth(displayRows);
-  const contentWidth = width - lineNumWidth - 5; // line num + space + symbol + space + padding
+  // Reserve 1 column for hunk gutter when active
+  const gutterWidth = hunkActive ? 1 : 0;
+  const contentWidth = width - lineNumWidth - 5 - gutterWidth;
   const headerWidth = width - 2;
 
   // Apply wrapping if enabled
   const wrappedRows = wrapDisplayRows(displayRows, contentWidth, wrapMode);
   const totalRows = wrappedRows.length;
 
+  // Compute hunk boundaries on wrapped rows
+  const hunkBoundaries = getHunkBoundaries(wrappedRows);
+  const hunkCount = hunkBoundaries.length;
+
+  // Determine which rows belong to the selected hunk
+  const clampedHunkIndex = Math.min(selectedHunkIndex ?? 0, hunkCount - 1);
+  const selectedBoundary = hunkActive && hunkCount > 0 ? hunkBoundaries[clampedHunkIndex] : null;
+
   // Apply scroll offset and max height
+  const startIdx = scrollOffset;
   const visibleRows = maxHeight
-    ? wrappedRows.slice(scrollOffset, scrollOffset + maxHeight)
-    : wrappedRows.slice(scrollOffset);
+    ? wrappedRows.slice(startIdx, startIdx + maxHeight)
+    : wrappedRows.slice(startIdx);
 
-  const lines = visibleRows.map((row) =>
-    formatDisplayRow(row, lineNumWidth, contentWidth, headerWidth, theme, wrapMode)
-  );
+  const lines = visibleRows.map((row, i) => {
+    const absoluteIdx = startIdx + i;
+    const formatted = formatDisplayRow(
+      row,
+      lineNumWidth,
+      contentWidth,
+      headerWidth,
+      theme,
+      wrapMode
+    );
 
-  return { content: lines.join('\n'), totalRows };
+    if (!hunkActive) return formatted;
+
+    // Determine gutter character — green for staged, cyan for unstaged
+    const inSelectedHunk =
+      selectedBoundary &&
+      absoluteIdx >= selectedBoundary.startRow &&
+      absoluteIdx < selectedBoundary.endRow;
+    const gutterColor = isFileStaged ? ANSI_GREEN : ANSI_CYAN;
+    const gutter = inSelectedHunk ? `{escape}${gutterColor}\u258c${ANSI_RESET}{/escape}` : ' ';
+
+    return gutter + formatted;
+  });
+
+  return { content: lines.join('\n'), totalRows, hunkCount, hunkBoundaries };
 }
 
 /**
@@ -334,7 +378,12 @@ export function formatHistoryDiff(
   const displayRows = buildHistoryDisplayRows(commit, diff);
 
   if (displayRows.length === 0) {
-    return { content: '{gray-fg}No commit selected{/gray-fg}', totalRows: 0 };
+    return {
+      content: '{gray-fg}No commit selected{/gray-fg}',
+      totalRows: 0,
+      hunkCount: 0,
+      hunkBoundaries: [],
+    };
   }
 
   const theme = getTheme(themeName);
@@ -353,5 +402,5 @@ export function formatHistoryDiff(
     formatDisplayRow(row, lineNumWidth, contentWidth, headerWidth, theme, wrapMode)
   );
 
-  return { content: lines.join('\n'), totalRows };
+  return { content: lines.join('\n'), totalRows, hunkCount: 0, hunkBoundaries: [] };
 }
