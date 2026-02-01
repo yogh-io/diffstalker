@@ -372,9 +372,6 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
         return;
       }
 
-      // Emit status immediately so the file list updates after a single git spawn
-      this.updateState({ status: newStatus });
-
       // Fetch unstaged and staged diffs in parallel
       const [allUnstagedDiff, allStagedDiff] = await Promise.all([
         getDiff(this.repoPath, undefined, false),
@@ -393,7 +390,9 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
         allUnstagedDiff
       );
 
+      // Batch status + diffs into a single update to avoid flicker
       this.updateState({
+        status: newStatus,
         diff: displayDiff,
         combinedFileDiffs,
         hunkCounts,
@@ -419,9 +418,11 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
       return { displayDiff: fallbackDiff, combinedFileDiffs: null };
     }
 
-    const currentFile = newStatus.files.find(
-      (f) => f.path === currentSelectedFile.path && f.staged === currentSelectedFile.staged
-    );
+    // Match by path + staged, falling back to path-only (handles staging state changes)
+    const currentFile =
+      newStatus.files.find(
+        (f) => f.path === currentSelectedFile.path && f.staged === currentSelectedFile.staged
+      ) ?? newStatus.files.find((f) => f.path === currentSelectedFile.path);
     if (!currentFile) {
       this.updateState({ selectedFile: null });
       return { displayDiff: fallbackDiff, combinedFileDiffs: null };

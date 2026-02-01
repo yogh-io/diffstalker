@@ -40,12 +40,11 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
   - Staging state shown via button: `[+]` green (unstaged), `[-]` red (staged), `[~]` yellow (partial)
   - Hunk indicator: `@2/4` = 2 staged out of 4 total hunks (always shows staged/total)
   - Stage/unstage: `s`/`Space`/`Enter` stage if unstaged, unstage if staged, complete staging if partial
-  - **Combined diff**: Diff pane shows all hunks for the file in a single view with section headers
-    - `── Unstaged changes ──` (cyan) followed by unstaged hunks
-    - `── Staged changes ──` (green) followed by staged hunks
-    - Hunks never disappear when staged/unstaged — they move between sections
-    - Hunk gutter indicator: cyan for unstaged hunks, green for staged hunks
-    - `s`/`u` in diff pane stages/unstages the hunk under cursor based on its section
+  - **Unified diff**: Diff pane shows all hunks interleaved by file position in a single view
+    - Every hunk has a gutter indicator: cyan `▎` = unstaged, green `▎` = staged
+    - Selected hunk has a bold gutter; `n`/`N` auto-scrolls to keep hunk header visible
+    - Hunks stay in file order when staged/unstaged — they don't disappear or reorder
+    - `s`/`u` in diff pane stages/unstages the hunk under cursor
 
 **Bottom Pane: Diff Display**
 - Shows unified diff for selected file

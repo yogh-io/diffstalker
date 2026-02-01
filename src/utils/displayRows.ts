@@ -30,7 +30,6 @@ export type DisplayRow =
       highlighted?: string;
     }
   | { type: 'diff-context'; lineNum?: number; content: string; highlighted?: string }
-  | { type: 'section-header'; content: string; staged: boolean }
   | { type: 'commit-header'; content: string }
   | { type: 'commit-message'; content: string }
   | { type: 'spacer' };
@@ -423,7 +422,7 @@ export function getHunkBoundaries(rows: (DisplayRow | WrappedDisplayRow)[]): Hun
         boundaries.push({ startRow: currentStart, endRow: i });
       }
       currentStart = i;
-    } else if (type === 'diff-header' || type === 'section-header' || type === 'spacer') {
+    } else if (type === 'diff-header' || type === 'spacer') {
       if (currentStart !== -1) {
         boundaries.push({ startRow: currentStart, endRow: i });
         currentStart = -1;
@@ -478,49 +477,90 @@ export interface CombinedHunkInfo {
 }
 
 /**
+ * Parse the index-referenced line number from a hunk header.
+ * Staged diffs (HEAD→index): use +new (new-side = index lines).
+ * Unstaged diffs (index→working tree): use -old (old-side = index lines).
+ */
+function parseHunkSortKey(hunkContent: string, source: 'unstaged' | 'staged'): number {
+  const m = hunkContent.match(/@@ -(\d+)(?:,\d+)? \+(\d+)/);
+  if (!m) return 0;
+  return source === 'staged' ? parseInt(m[2], 10) : parseInt(m[1], 10);
+}
+
+interface ExtractedHunk {
+  headerLine: DiffLine;
+  bodyLines: DiffLine[];
+  sortKey: number;
+  source: 'unstaged' | 'staged';
+  hunkIndex: number;
+}
+
+/**
+ * Extract individual hunks from a DiffResult's lines.
+ * Returns file-level header lines separately.
+ */
+function extractHunks(
+  diff: DiffResult | null,
+  source: 'unstaged' | 'staged'
+): { fileHeaders: DiffLine[]; hunks: ExtractedHunk[] } {
+  if (!diff || diff.lines.length === 0) return { fileHeaders: [], hunks: [] };
+
+  const fileHeaders: DiffLine[] = [];
+  const hunks: ExtractedHunk[] = [];
+  let currentHunk: ExtractedHunk | null = null;
+  let hunkIdx = 0;
+
+  for (const line of diff.lines) {
+    if (line.type === 'header') {
+      if (currentHunk) {
+        hunks.push(currentHunk);
+        currentHunk = null;
+      }
+      fileHeaders.push(line);
+    } else if (line.type === 'hunk') {
+      if (currentHunk) hunks.push(currentHunk);
+      currentHunk = {
+        headerLine: line,
+        bodyLines: [],
+        sortKey: parseHunkSortKey(line.content, source),
+        source,
+        hunkIndex: hunkIdx++,
+      };
+    } else if (currentHunk) {
+      currentHunk.bodyLines.push(line);
+    }
+  }
+  if (currentHunk) hunks.push(currentHunk);
+
+  return { fileHeaders, hunks };
+}
+
+/**
  * Build combined display rows from unstaged and staged diffs for the same file.
- * Returns display rows with section headers and a mapping from combined hunk index
+ * Hunks are interleaved by file position (index line number) into a single
+ * unified view. Returns display rows and a mapping from combined hunk index
  * to source (unstaged/staged) and original hunk index.
  */
 export function buildCombinedDiffDisplayRows(
   unstaged: DiffResult | null,
   staged: DiffResult | null
 ): { rows: DisplayRow[]; hunkMapping: CombinedHunkInfo[] } {
-  const unstagedRows = buildDiffDisplayRows(unstaged);
-  const stagedRows = buildDiffDisplayRows(staged);
+  const u = extractHunks(unstaged, 'unstaged');
+  const s = extractHunks(staged, 'staged');
 
-  // Strip file-level headers (diff --git, new file, deleted file, rename, Binary)
-  const stripFileHeaders = (rows: DisplayRow[]): DisplayRow[] =>
-    rows.filter((r) => r.type !== 'diff-header');
+  const allHunks = [...u.hunks, ...s.hunks];
+  allHunks.sort((a, b) => a.sortKey - b.sortKey);
 
-  const unstagedContent = stripFileHeaders(unstagedRows);
-  const stagedContent = stripFileHeaders(stagedRows);
-
-  const rows: DisplayRow[] = [];
+  // Build a merged DiffLine array: file headers from whichever has them, then sorted hunks
+  const fileHeaders = u.fileHeaders.length > 0 ? u.fileHeaders : s.fileHeaders;
+  const mergedLines: DiffLine[] = [...fileHeaders];
   const hunkMapping: CombinedHunkInfo[] = [];
 
-  if (unstagedContent.length > 0) {
-    rows.push({ type: 'section-header', content: 'Unstaged changes', staged: false });
-    let hunkIdx = 0;
-    for (const row of unstagedContent) {
-      if (row.type === 'diff-hunk') {
-        hunkMapping.push({ source: 'unstaged', hunkIndex: hunkIdx++ });
-      }
-      rows.push(row);
-    }
+  for (const hunk of allHunks) {
+    mergedLines.push(hunk.headerLine, ...hunk.bodyLines);
+    hunkMapping.push({ source: hunk.source, hunkIndex: hunk.hunkIndex });
   }
 
-  if (stagedContent.length > 0) {
-    if (rows.length > 0) rows.push({ type: 'spacer' });
-    rows.push({ type: 'section-header', content: 'Staged changes', staged: true });
-    let hunkIdx = 0;
-    for (const row of stagedContent) {
-      if (row.type === 'diff-hunk') {
-        hunkMapping.push({ source: 'staged', hunkIndex: hunkIdx++ });
-      }
-      rows.push(row);
-    }
-  }
-
+  const rows = buildDiffDisplayRows({ raw: '', lines: mergedLines });
   return { rows, hunkMapping };
 }

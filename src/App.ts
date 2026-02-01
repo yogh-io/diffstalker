@@ -99,6 +99,7 @@ export class App {
   // Flat view mode state
   private cachedFlatFiles: FlatFileEntry[] = [];
   private pendingFlatSelectionPath: string | null = null;
+  private pendingHunkIndex: number | null = null;
   private combinedHunkMapping: CombinedHunkInfo[] = [];
 
   constructor(options: AppOptions) {
@@ -1044,6 +1045,7 @@ export class App {
     const current = this.uiState.state.selectedHunkIndex;
     if (this.bottomPaneHunkCount > 0 && current < this.bottomPaneHunkCount - 1) {
       this.uiState.setSelectedHunkIndex(current + 1);
+      this.scrollHunkIntoView(current + 1);
     }
   }
 
@@ -1051,6 +1053,20 @@ export class App {
     const current = this.uiState.state.selectedHunkIndex;
     if (current > 0) {
       this.uiState.setSelectedHunkIndex(current - 1);
+      this.scrollHunkIntoView(current - 1);
+    }
+  }
+
+  private scrollHunkIntoView(hunkIndex: number): void {
+    const boundary = this.bottomPaneHunkBoundaries[hunkIndex];
+    if (!boundary) return;
+
+    const scrollOffset = this.uiState.state.diffScrollOffset;
+    const visibleHeight = this.layout.dimensions.bottomPaneHeight;
+
+    // If hunk header is outside the visible area, scroll so it's at top
+    if (boundary.startRow < scrollOffset || boundary.startRow >= scrollOffset + visibleHeight) {
+      this.uiState.setDiffScrollOffset(boundary.startRow);
     }
   }
 
@@ -1083,9 +1099,6 @@ export class App {
   }
 
   private async toggleCurrentHunkFlat(): Promise<void> {
-    const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, this.uiState.state.selectedIndex);
-    if (flatEntry) this.pendingFlatSelectionPath = flatEntry.path;
-
     const mapping = this.combinedHunkMapping[this.uiState.state.selectedHunkIndex];
     if (!mapping) return;
 
@@ -1095,6 +1108,9 @@ export class App {
     const rawDiff = mapping.source === 'unstaged' ? combined.unstaged.raw : combined.staged.raw;
     const patch = extractHunkPatch(rawDiff, mapping.hunkIndex);
     if (!patch) return;
+
+    // Preserve hunk index across refresh — file stays selected via path-only fallback
+    this.pendingHunkIndex = this.uiState.state.selectedHunkIndex;
 
     if (mapping.source === 'staged') {
       await this.gitManager?.unstageHunk(patch);
@@ -1217,6 +1233,15 @@ export class App {
     this.updateHeader();
     this.updateTopPane();
     this.updateBottomPane();
+
+    // Restore hunk index after diff refresh (e.g. after hunk toggle in flat mode)
+    if (this.pendingHunkIndex !== null && this.bottomPaneHunkCount > 0) {
+      const restored = Math.min(this.pendingHunkIndex, this.bottomPaneHunkCount - 1);
+      this.pendingHunkIndex = null;
+      this.uiState.setSelectedHunkIndex(restored);
+      this.updateBottomPane(); // Re-render with correct hunk selection
+    }
+
     this.updateFooter();
     this.screen.render();
   }

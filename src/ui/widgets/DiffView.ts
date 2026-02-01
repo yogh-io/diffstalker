@@ -21,6 +21,7 @@ const ANSI_GRAY = '\x1b[90m';
 const ANSI_CYAN = '\x1b[36m';
 const ANSI_GREEN = '\x1b[32m';
 const ANSI_YELLOW = '\x1b[33m';
+const ANSI_INVERSE = '\x1b[7m';
 
 /**
  * Truncate string to fit within maxWidth, adding ellipsis if needed.
@@ -268,13 +269,6 @@ function formatDisplayRow(
       return `{escape}${prefixAnsi}${content}${ANSI_RESET}{/escape}`;
     }
 
-    case 'section-header': {
-      const color = row.staged ? ANSI_GREEN : ANSI_CYAN;
-      const maxLen = headerWidth - 6;
-      const label = truncate(row.content, maxLen);
-      return `{escape}${ANSI_BOLD}${color}\u2500\u2500 ${label} \u2500\u2500${ANSI_RESET}{/escape}`;
-    }
-
     case 'commit-header':
       return `{escape}${ANSI_YELLOW}${truncate(row.content, headerWidth)}${ANSI_RESET}{/escape}`;
 
@@ -365,6 +359,11 @@ export function formatDiff(
     const gutterColor = isFileStaged ? ANSI_GREEN : ANSI_CYAN;
     const gutter = inSelectedHunk ? `{escape}${gutterColor}\u258c${ANSI_RESET}{/escape}` : ' ';
 
+    // Highlight the @@ header of the selected hunk with inverse video
+    if (inSelectedHunk && row.type === 'diff-hunk') {
+      return gutter + formatted.replace('{escape}', `{escape}${ANSI_INVERSE}`);
+    }
+
     return gutter + formatted;
   });
 
@@ -420,7 +419,8 @@ export interface CombinedDiffRenderResult extends DiffRenderResult {
 
 /**
  * Format combined (unstaged + staged) diff for a single file.
- * Each section is labelled and hunks are colour-coded in the gutter.
+ * Hunks are interleaved by file position. Each hunk shows a gutter
+ * indicator for its staging state (cyan=unstaged, green=staged).
  */
 export function formatCombinedDiff(
   unstaged: DiffResult | null,
@@ -447,6 +447,7 @@ export function formatCombinedDiff(
   const hunkActive = selectedHunkIndex !== undefined && selectedHunkIndex >= 0;
   const theme = getTheme(themeName);
   const lineNumWidth = getDisplayRowsLineNumWidth(displayRows);
+  // Always reserve gutter space in combined diff when hunks are focused
   const gutterWidth = hunkActive ? 1 : 0;
   const contentWidth = width - lineNumWidth - 5 - gutterWidth;
   const headerWidth = width - 2;
@@ -458,10 +459,17 @@ export function formatCombinedDiff(
   const hunkCount = hunkBoundaries.length;
 
   const clampedHunkIndex = Math.min(selectedHunkIndex ?? 0, hunkCount - 1);
-  const selectedBoundary = hunkActive && hunkCount > 0 ? hunkBoundaries[clampedHunkIndex] : null;
 
-  // Determine gutter colour per-hunk: cyan for unstaged, green for staged
-  const selectedHunkStaged = hunkActive && hunkMapping[clampedHunkIndex]?.source === 'staged';
+  // Build a row→hunkIndex lookup for per-hunk gutter coloring
+  const rowToHunkIndex = new Map<number, number>();
+  if (hunkActive) {
+    for (let hi = 0; hi < hunkBoundaries.length; hi++) {
+      const b = hunkBoundaries[hi];
+      for (let r = b.startRow; r < b.endRow; r++) {
+        rowToHunkIndex.set(r, hi);
+      }
+    }
+  }
 
   const startIdx = scrollOffset;
   const visibleRows = maxHeight
@@ -481,12 +489,19 @@ export function formatCombinedDiff(
 
     if (!hunkActive) return formatted;
 
-    const inSelectedHunk =
-      selectedBoundary &&
-      absoluteIdx >= selectedBoundary.startRow &&
-      absoluteIdx < selectedBoundary.endRow;
-    const gutterColor = selectedHunkStaged ? ANSI_GREEN : ANSI_CYAN;
-    const gutter = inSelectedHunk ? `{escape}${gutterColor}\u258c${ANSI_RESET}{/escape}` : ' ';
+    const hi = rowToHunkIndex.get(absoluteIdx);
+    if (hi === undefined) return ' ' + formatted;
+
+    const isSelected = hi === clampedHunkIndex;
+    const isStaged = hunkMapping[hi]?.source === 'staged';
+    const color = isStaged ? ANSI_GREEN : ANSI_CYAN;
+    const bold = isSelected ? ANSI_BOLD : '';
+    const gutter = `{escape}${bold}${color}\u258c${ANSI_RESET}{/escape}`;
+
+    // Highlight the @@ header of the selected hunk with inverse video
+    if (isSelected && row.type === 'diff-hunk') {
+      return gutter + formatted.replace('{escape}', `{escape}${ANSI_INVERSE}`);
+    }
 
     return gutter + formatted;
   });
