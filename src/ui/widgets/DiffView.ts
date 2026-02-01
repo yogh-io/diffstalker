@@ -107,6 +107,65 @@ function formatDiffHunk(content: string, headerWidth: number): string {
 type DiffContentRow = Extract<WrappedDisplayRow, { type: 'diff-add' | 'diff-del' }>;
 
 /**
+ * Truncate or keep content based on wrap mode. Returns the display text and its visible length.
+ */
+function prepareContent(
+  text: string,
+  contentWidth: number,
+  wrapMode: boolean
+): { display: string; visibleLength: number } {
+  const display = wrapMode ? text : truncate(text, contentWidth);
+  return { display, visibleLength: display.length };
+}
+
+/**
+ * Pad a line to the target width with spaces, using the given ANSI background.
+ */
+function padToWidth(
+  prefix: string,
+  content: string,
+  visibleLength: number,
+  targetWidth: number,
+  bg: string,
+  fg: string
+): string {
+  const padding = ' '.repeat(Math.max(0, targetWidth - prefix.length - visibleLength));
+  return `{escape}${bg}${fg}${prefix}${content}${padding}${ANSI_RESET}{/escape}`;
+}
+
+/**
+ * Format a content line for the ANSI theme (blessed tags, no 24-bit color).
+ */
+function formatAnsiContentLine(
+  prefix: string,
+  rawContent: string,
+  contentWidth: number,
+  headerWidth: number,
+  wrapMode: boolean,
+  lineType: 'add' | 'del'
+): string {
+  const { display } = prepareContent(rawContent, contentWidth, wrapMode);
+  const paddedContent = `${prefix}${display}`.padEnd(headerWidth, ' ');
+  const bgTag = lineType === 'add' ? 'green' : 'red';
+  return `{${bgTag}-bg}{white-fg}${escapeContent(paddedContent)}{/white-fg}{/${bgTag}-bg}`;
+}
+
+/**
+ * Build word-diff content string with highlight segments.
+ */
+function buildWordDiffContent(
+  segments: DiffContentRow['wordDiffSegments'],
+  highlightBg: string,
+  bg: string
+): string {
+  let result = '';
+  for (const seg of segments!) {
+    result += seg.type === 'changed' ? `${highlightBg}${seg.text}${bg}` : seg.text;
+  }
+  return result;
+}
+
+/**
  * Format an add or delete content line, parameterized by line type.
  */
 function formatDiffContentLine(
@@ -118,64 +177,33 @@ function formatDiffContentLine(
   wrapMode: boolean,
   lineType: 'add' | 'del'
 ): string {
-  const { colors } = theme;
-  const isCont = row.isContinuation;
   const typeSymbol = lineType === 'add' ? '+' : '-';
-  const symbol = isCont ? '\u00bb' : typeSymbol;
+  const symbol = row.isContinuation ? '\u00bb' : typeSymbol;
   const lineNum = formatLineNum(row.lineNum, lineNumWidth);
   const prefix = `${lineNum} ${symbol}  `;
+  const rawContent = row.content || '';
 
   if (theme.name.includes('ansi')) {
-    const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
-    const visibleContent = `${prefix}${rawContent}`;
-    const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-    const bgTag = lineType === 'add' ? 'green' : 'red';
-    return `{${bgTag}-bg}{white-fg}${escapeContent(paddedContent)}{/white-fg}{/${bgTag}-bg}`;
+    return formatAnsiContentLine(prefix, rawContent, contentWidth, headerWidth, wrapMode, lineType);
   }
 
+  const { colors } = theme;
   const bg = ansiBg(lineType === 'add' ? colors.addBg : colors.delBg);
-  const highlightBg = ansiBg(lineType === 'add' ? colors.addHighlight : colors.delHighlight);
   const fg = ansiFg('#ffffff');
+  const { display, visibleLength } = prepareContent(rawContent, contentWidth, wrapMode);
+  const canUseRichContent = !row.isContinuation && (wrapMode || rawContent.length <= contentWidth);
 
-  if (row.wordDiffSegments && !isCont) {
-    const rawContent = row.content || '';
-    if (!wrapMode && rawContent.length > contentWidth) {
-      const truncated = truncate(rawContent, contentWidth);
-      const visibleContent = `${prefix}${truncated}`;
-      const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-      return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
-    }
-
-    let contentStr = '';
-    for (const seg of row.wordDiffSegments) {
-      if (seg.type === 'changed') {
-        contentStr += `${highlightBg}${seg.text}${bg}`;
-      } else {
-        contentStr += seg.text;
-      }
-    }
-    const visibleWidth = prefix.length + rawContent.length;
-    const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
-    return `{escape}${bg}${fg}${prefix}${contentStr}${padding}${ANSI_RESET}{/escape}`;
+  if (row.wordDiffSegments && canUseRichContent) {
+    const highlightBg = ansiBg(lineType === 'add' ? colors.addHighlight : colors.delHighlight);
+    const contentStr = buildWordDiffContent(row.wordDiffSegments, highlightBg, bg);
+    return padToWidth(prefix, contentStr, rawContent.length, headerWidth, bg, fg);
   }
 
-  if (row.highlighted && !isCont) {
-    const rawContent = row.content || '';
-    if (!wrapMode && rawContent.length > contentWidth) {
-      const truncated = truncate(rawContent, contentWidth);
-      const visibleContent = `${prefix}${truncated}`;
-      const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-      return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
-    }
-    const visibleWidth = prefix.length + rawContent.length;
-    const padding = ' '.repeat(Math.max(0, headerWidth - visibleWidth));
-    return `{escape}${bg}${fg}${prefix}${row.highlighted}${padding}${ANSI_RESET}{/escape}`;
+  if (row.highlighted && canUseRichContent) {
+    return padToWidth(prefix, row.highlighted, rawContent.length, headerWidth, bg, fg);
   }
 
-  const rawContent = wrapMode ? row.content || '' : truncate(row.content || '', contentWidth);
-  const visibleContent = `${prefix}${rawContent}`;
-  const paddedContent = visibleContent.padEnd(headerWidth, ' ');
-  return `{escape}${bg}${fg}${paddedContent}${ANSI_RESET}{/escape}`;
+  return padToWidth(prefix, display, visibleLength, headerWidth, bg, fg);
 }
 
 /**

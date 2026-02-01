@@ -82,6 +82,26 @@ export function setupMouseHandlers(
   });
 }
 
+function handleFileListClick(
+  row: number,
+  x: number | undefined,
+  actions: MouseActions,
+  ctx: MouseContext
+): void {
+  const state = ctx.uiState.state;
+  const files = ctx.getStatusFiles();
+  const fileIndex = getFileIndexFromRow(row + state.fileListScrollOffset, files);
+  if (fileIndex === null || fileIndex < 0) return;
+
+  // Check if click is on the action button [+] or [-] (columns 2-4)
+  if (x !== undefined && x >= 2 && x <= 4) {
+    actions.toggleFileByIndex(fileIndex);
+  } else {
+    ctx.uiState.setSelectedIndex(fileIndex);
+    actions.selectFileByIndex(fileIndex);
+  }
+}
+
 function handleTopPaneClick(
   row: number,
   x: number | undefined,
@@ -113,18 +133,7 @@ function handleTopPaneClick(
       ctx.uiState.setExplorerSelectedIndex(index);
     }
   } else {
-    // Diff tab - select file
-    const files = ctx.getStatusFiles();
-    const fileIndex = getFileIndexFromRow(row + state.fileListScrollOffset, files);
-    if (fileIndex !== null && fileIndex >= 0) {
-      // Check if click is on the action button [+] or [-] (columns 2-4)
-      if (x !== undefined && x >= 2 && x <= 4) {
-        actions.toggleFileByIndex(fileIndex);
-      } else {
-        ctx.uiState.setSelectedIndex(fileIndex);
-        actions.selectFileByIndex(fileIndex);
-      }
-    }
+    handleFileListClick(row, x, actions, ctx);
   }
 }
 

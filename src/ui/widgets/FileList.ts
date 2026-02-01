@@ -99,6 +99,49 @@ export function buildFileListRows(files: FileEntry[]): RowItem[] {
 }
 
 /**
+ * Format a single file row as blessed-compatible tagged string.
+ */
+function formatFileRow(
+  file: FileEntry,
+  fileIndex: number,
+  selectedIndex: number,
+  isFocused: boolean,
+  maxPathLength: number
+): string {
+  const isHighlighted = fileIndex === selectedIndex && isFocused;
+
+  const statusChar = getStatusChar(file.status);
+  const statusColor = getStatusColor(file.status);
+  const actionButton = file.staged ? '[-]' : '[+]';
+  const buttonColor = file.staged ? 'red' : 'green';
+
+  // Calculate available space for path
+  const stats = formatStats(file.insertions, file.deletions);
+  const statsLength = stats.replace(/\{[^}]+\}/g, '').length;
+  const availableForPath = maxPathLength - statsLength;
+  const displayPath = shortenPath(file.path, availableForPath);
+
+  // Build the line
+  let line = isHighlighted ? '{cyan-fg}{bold}\u25b8 {/bold}{/cyan-fg}' : '  ';
+
+  line += `{${buttonColor}-fg}${actionButton}{/${buttonColor}-fg} `;
+  line += `{${statusColor}-fg}${statusChar}{/${statusColor}-fg} `;
+
+  if (isHighlighted) {
+    line += `{cyan-fg}{inverse}${displayPath}{/inverse}{/cyan-fg}`;
+  } else {
+    line += displayPath;
+  }
+
+  if (file.originalPath) {
+    line += ` {gray-fg}\u2190 ${shortenPath(file.originalPath, 30)}{/gray-fg}`;
+  }
+
+  line += stats;
+  return line;
+}
+
+/**
  * Format the file list as blessed-compatible tagged string.
  */
 export function formatFileList(
@@ -124,58 +167,20 @@ export function formatFileList(
   const lines: string[] = [];
 
   for (const row of visibleRows) {
-    if (row.type === 'header') {
-      lines.push(`{bold}{${row.headerColor}-fg}${row.content}{/${row.headerColor}-fg}{/bold}`);
-    } else if (row.type === 'spacer') {
-      lines.push('');
-    } else if (row.type === 'file' && row.file && row.fileIndex !== undefined) {
-      const file = row.file;
-      const isSelected = row.fileIndex === selectedIndex;
-      const isHighlighted = isSelected && isFocused;
-
-      const statusChar = getStatusChar(file.status);
-      const statusColor = getStatusColor(file.status);
-      const actionButton = file.staged ? '[-]' : '[+]';
-      const buttonColor = file.staged ? 'red' : 'green';
-
-      // Calculate available space for path
-      const stats = formatStats(file.insertions, file.deletions);
-      const statsLength = stats.replace(/\{[^}]+\}/g, '').length;
-      const availableForPath = maxPathLength - statsLength;
-      const displayPath = shortenPath(file.path, availableForPath);
-
-      // Build the line
-      let line = '';
-
-      // Selection indicator
-      if (isHighlighted) {
-        line += '{cyan-fg}{bold}\u25b8 {/bold}{/cyan-fg}';
-      } else {
-        line += '  ';
-      }
-
-      // Action button
-      line += `{${buttonColor}-fg}${actionButton}{/${buttonColor}-fg} `;
-
-      // Status character
-      line += `{${statusColor}-fg}${statusChar}{/${statusColor}-fg} `;
-
-      // File path (with highlighting)
-      if (isHighlighted) {
-        line += `{cyan-fg}{inverse}${displayPath}{/inverse}{/cyan-fg}`;
-      } else {
-        line += displayPath;
-      }
-
-      // Original path for renames
-      if (file.originalPath) {
-        line += ` {gray-fg}\u2190 ${shortenPath(file.originalPath, 30)}{/gray-fg}`;
-      }
-
-      // Stats
-      line += stats;
-
-      lines.push(line);
+    switch (row.type) {
+      case 'header':
+        lines.push(`{bold}{${row.headerColor}-fg}${row.content}{/${row.headerColor}-fg}{/bold}`);
+        break;
+      case 'spacer':
+        lines.push('');
+        break;
+      case 'file':
+        if (row.file && row.fileIndex !== undefined) {
+          lines.push(
+            formatFileRow(row.file, row.fileIndex, selectedIndex, isFocused, maxPathLength)
+          );
+        }
+        break;
     }
   }
 

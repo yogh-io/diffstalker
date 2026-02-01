@@ -575,96 +575,85 @@ export class App {
   }
 
   // Navigation methods
+
+  /**
+   * Scroll the content pane (diff or explorer file content) by delta lines.
+   */
+  private scrollActiveDiffPane(delta: number): void {
+    const state = this.uiState.state;
+    if (state.bottomTab === 'explorer') {
+      const newOffset = Math.max(0, state.explorerFileScrollOffset + delta);
+      this.uiState.setExplorerFileScrollOffset(newOffset);
+    } else {
+      const newOffset = Math.max(0, state.diffScrollOffset + delta);
+      this.uiState.setDiffScrollOffset(newOffset);
+    }
+  }
+
+  /**
+   * Navigate the file list by one item and keep selection visible.
+   */
+  private navigateFileList(direction: -1 | 1): void {
+    const state = this.uiState.state;
+    const files = this.gitManager?.state.status?.files ?? [];
+    const newIndex =
+      direction === -1
+        ? Math.max(0, state.selectedIndex - 1)
+        : Math.min(files.length - 1, state.selectedIndex + 1);
+    this.uiState.setSelectedIndex(newIndex);
+    this.selectFileByIndex(newIndex);
+
+    // Keep selection visible
+    const row = getRowFromFileIndex(newIndex, files);
+    if (direction === -1 && row < state.fileListScrollOffset) {
+      this.uiState.setFileListScrollOffset(row);
+    } else if (direction === 1) {
+      const visibleEnd = state.fileListScrollOffset + this.layout.dimensions.topPaneHeight - 1;
+      if (row >= visibleEnd) {
+        this.uiState.setFileListScrollOffset(state.fileListScrollOffset + (row - visibleEnd + 1));
+      }
+    }
+  }
+
+  /**
+   * Navigate the active list pane by one item in the given direction.
+   */
+  private navigateActiveList(direction: -1 | 1): void {
+    const tab = this.uiState.state.bottomTab;
+
+    if (tab === 'history') {
+      if (direction === -1) this.navigateHistoryUp();
+      else this.navigateHistoryDown();
+    } else if (tab === 'compare') {
+      if (direction === -1) this.navigateCompareUp();
+      else this.navigateCompareDown();
+    } else if (tab === 'explorer') {
+      if (direction === -1) this.navigateExplorerUp();
+      else this.navigateExplorerDown();
+    } else {
+      this.navigateFileList(direction);
+    }
+  }
+
   private navigateUp(): void {
     const state = this.uiState.state;
+    const isListPane = state.currentPane !== 'diff';
 
-    if (state.bottomTab === 'history') {
-      if (state.currentPane === 'history') {
-        this.navigateHistoryUp();
-      } else if (state.currentPane === 'diff') {
-        this.uiState.setDiffScrollOffset(Math.max(0, state.diffScrollOffset - 3));
-      }
-      return;
-    }
-
-    if (state.bottomTab === 'compare') {
-      if (state.currentPane === 'compare') {
-        this.navigateCompareUp();
-      } else if (state.currentPane === 'diff') {
-        this.uiState.setDiffScrollOffset(Math.max(0, state.diffScrollOffset - 3));
-      }
-      return;
-    }
-
-    if (state.bottomTab === 'explorer') {
-      if (state.currentPane === 'explorer') {
-        this.navigateExplorerUp();
-      } else if (state.currentPane === 'diff') {
-        this.uiState.setExplorerFileScrollOffset(Math.max(0, state.explorerFileScrollOffset - 3));
-      }
-      return;
-    }
-
-    if (state.currentPane === 'files') {
-      const files = this.gitManager?.state.status?.files ?? [];
-      const newIndex = Math.max(0, state.selectedIndex - 1);
-      this.uiState.setSelectedIndex(newIndex);
-      this.selectFileByIndex(newIndex);
-
-      // Keep selection visible - scroll up if needed
-      const row = getRowFromFileIndex(newIndex, files);
-      if (row < state.fileListScrollOffset) {
-        this.uiState.setFileListScrollOffset(row);
-      }
-    } else if (state.currentPane === 'diff') {
-      this.uiState.setDiffScrollOffset(Math.max(0, state.diffScrollOffset - 3));
+    if (isListPane) {
+      this.navigateActiveList(-1);
+    } else {
+      this.scrollActiveDiffPane(-3);
     }
   }
 
   private navigateDown(): void {
     const state = this.uiState.state;
-    const files = this.gitManager?.state.status?.files ?? [];
+    const isListPane = state.currentPane !== 'diff';
 
-    if (state.bottomTab === 'history') {
-      if (state.currentPane === 'history') {
-        this.navigateHistoryDown();
-      } else if (state.currentPane === 'diff') {
-        this.uiState.setDiffScrollOffset(state.diffScrollOffset + 3);
-      }
-      return;
-    }
-
-    if (state.bottomTab === 'compare') {
-      if (state.currentPane === 'compare') {
-        this.navigateCompareDown();
-      } else if (state.currentPane === 'diff') {
-        this.uiState.setDiffScrollOffset(state.diffScrollOffset + 3);
-      }
-      return;
-    }
-
-    if (state.bottomTab === 'explorer') {
-      if (state.currentPane === 'explorer') {
-        this.navigateExplorerDown();
-      } else if (state.currentPane === 'diff') {
-        this.uiState.setExplorerFileScrollOffset(state.explorerFileScrollOffset + 3);
-      }
-      return;
-    }
-
-    if (state.currentPane === 'files') {
-      const newIndex = Math.min(files.length - 1, state.selectedIndex + 1);
-      this.uiState.setSelectedIndex(newIndex);
-      this.selectFileByIndex(newIndex);
-
-      // Keep selection visible - scroll down if needed
-      const row = getRowFromFileIndex(newIndex, files);
-      const visibleEnd = state.fileListScrollOffset + this.layout.dimensions.topPaneHeight - 1;
-      if (row >= visibleEnd) {
-        this.uiState.setFileListScrollOffset(state.fileListScrollOffset + (row - visibleEnd + 1));
-      }
-    } else if (state.currentPane === 'diff') {
-      this.uiState.setDiffScrollOffset(state.diffScrollOffset + 3);
+    if (isListPane) {
+      this.navigateActiveList(1);
+    } else {
+      this.scrollActiveDiffPane(3);
     }
   }
 

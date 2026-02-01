@@ -200,6 +200,58 @@ function formatFileRow(
 }
 
 /**
+ * Check if a row is currently selected.
+ */
+function isRowSelected(row: RowItem, selectedItem: CompareListSelection | null): boolean {
+  if (!selectedItem) return false;
+  if (row.type === 'commit' && row.commitIndex !== undefined) {
+    return selectedItem.type === 'commit' && selectedItem.index === row.commitIndex;
+  }
+  if (row.type === 'file' && row.fileIndex !== undefined) {
+    return selectedItem.type === 'file' && selectedItem.index === row.fileIndex;
+  }
+  return false;
+}
+
+/**
+ * Format a section header line (e.g. "▼ Commits (5)").
+ */
+function formatSectionHeader(label: string, count: number): string {
+  return `{escape}${ANSI_CYAN}${ANSI_BOLD}▼ ${label}${ANSI_RESET} ${ANSI_GRAY}(${count})${ANSI_RESET}{/escape}`;
+}
+
+/**
+ * Format a single compare list row, returning null for unrenderable rows.
+ */
+function formatCompareRow(
+  row: RowItem,
+  selectedItem: CompareListSelection | null,
+  isFocused: boolean,
+  commits: CommitInfo[],
+  files: CompareFileDiff[],
+  width: number
+): string | null {
+  if (row.type === 'section-header') {
+    const isCommits = row.sectionType === 'commits';
+    return formatSectionHeader(
+      isCommits ? 'Commits' : 'Files',
+      isCommits ? commits.length : files.length
+    );
+  }
+  if (row.type === 'spacer') return '';
+  if (row.type === 'directory' && row.treeRow) return formatDirectoryRow(row.treeRow, width);
+
+  const selected = isRowSelected(row, selectedItem);
+  if (row.type === 'commit' && row.commit && row.commitIndex !== undefined) {
+    return formatCommitRow(row.commit, selected, isFocused, width);
+  }
+  if (row.type === 'file' && row.file && row.fileIndex !== undefined && row.treeRow) {
+    return formatFileRow(row.file, row.treeRow, selected, isFocused, width);
+  }
+  return null;
+}
+
+/**
  * Format the compare list view as blessed-compatible tagged string.
  */
 export function formatCompareListView(
@@ -222,28 +274,9 @@ export function formatCompareListView(
     ? rows.slice(scrollOffset, scrollOffset + maxHeight)
     : rows.slice(scrollOffset);
 
-  const lines: string[] = [];
-
-  for (const row of visibleRows) {
-    if (row.type === 'section-header') {
-      const isCommits = row.sectionType === 'commits';
-      const count = isCommits ? commits.length : files.length;
-      const label = isCommits ? 'Commits' : 'Files';
-      lines.push(
-        `{escape}${ANSI_CYAN}${ANSI_BOLD}▼ ${label}${ANSI_RESET} ${ANSI_GRAY}(${count})${ANSI_RESET}{/escape}`
-      );
-    } else if (row.type === 'spacer') {
-      lines.push('');
-    } else if (row.type === 'commit' && row.commit && row.commitIndex !== undefined) {
-      const isSelected = selectedItem?.type === 'commit' && selectedItem.index === row.commitIndex;
-      lines.push(formatCommitRow(row.commit, isSelected, isFocused, width));
-    } else if (row.type === 'directory' && row.treeRow) {
-      lines.push(formatDirectoryRow(row.treeRow, width));
-    } else if (row.type === 'file' && row.file && row.fileIndex !== undefined && row.treeRow) {
-      const isSelected = selectedItem?.type === 'file' && selectedItem.index === row.fileIndex;
-      lines.push(formatFileRow(row.file, row.treeRow, isSelected, isFocused, width));
-    }
-  }
+  const lines: string[] = visibleRows
+    .map((row) => formatCompareRow(row, selectedItem, isFocused, commits, files, width))
+    .filter((line) => line !== null);
 
   return lines.join('\n');
 }
