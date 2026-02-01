@@ -1,0 +1,15 @@
+#!/bin/sh
+# Run tests before pushing tags.
+# Regular pushes are not gated (pre-commit already runs lint).
+
+pushing_tag=false
+while read local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/tags/*) pushing_tag=true ;;
+  esac
+done
+
+if [ "$pushing_tag" = true ]; then
+  echo "Tag push detected — running tests..."
+  bun test
+fi
