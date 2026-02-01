@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with this repository. Last reviewed: 2026-02.
 
 ## Project Overview
 
-diffstalker is a terminal UI for git staging and committing, built with TypeScript and Ink (React for CLIs). It follows a push-based architecture where external tools write repository paths to a watched file.
+diffstalker is a terminal UI for interactive git staging and committing, built with TypeScript and blessed (neo-blessed). It follows a push-based architecture where external tools write repository paths to a watched file.
 
 ## Feature Documentation
 

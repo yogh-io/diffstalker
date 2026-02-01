@@ -89,6 +89,11 @@ export function parseHunkHeader(line: string): { oldStart: number; newStart: num
  */
 export function parseDiffWithLineNumbers(raw: string): DiffLine[] {
   const lines = raw.split('\n');
+  // Remove trailing empty string from the final newline in git output,
+  // otherwise it gets parsed as a phantom context line on the last hunk
+  if (lines.length > 0 && lines[lines.length - 1] === '') {
+    lines.pop();
+  }
   const result: DiffLine[] = [];
 
   let oldLineNum = 0;
