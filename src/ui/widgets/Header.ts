@@ -1,4 +1,5 @@
 import type { BranchInfo } from '../../git/status.js';
+import type { RemoteOperationState } from '../../types/remote.js';
 import { abbreviateHomePath } from '../../config.js';
 
 /**
@@ -52,7 +53,8 @@ export function formatHeader(
   branch: BranchInfo | null,
   isLoading: boolean,
   error: string | null,
-  width: number
+  width: number,
+  remoteState?: RemoteOperationState | null
 ): string {
   if (!repoPath) {
     return '{gray-fg}Waiting for target path...{/gray-fg}';
@@ -74,6 +76,39 @@ export function formatHeader(
     leftContent += ` {red-fg}(${error}){/red-fg}`;
   }
 
+  // Remote operation status (shown after left content)
+  let remoteStatus = '';
+  let remoteStatusLen = 0;
+  if (remoteState) {
+    if (remoteState.inProgress && remoteState.operation) {
+      const labels: Record<string, string> = {
+        push: 'pushing...',
+        fetch: 'fetching...',
+        pull: 'rebasing...',
+        stash: 'stashing...',
+        stashPop: 'popping stash...',
+        branchSwitch: 'switching branch...',
+        branchCreate: 'creating branch...',
+        softReset: 'resetting...',
+        cherryPick: 'cherry-picking...',
+        revert: 'reverting...',
+      };
+      const label = labels[remoteState.operation] ?? '';
+      remoteStatus = ` {yellow-fg}${label}{/yellow-fg}`;
+      remoteStatusLen = 1 + label.length;
+    } else if (remoteState.error) {
+      const brief =
+        remoteState.error.length > 40
+          ? remoteState.error.slice(0, 40) + '\u2026'
+          : remoteState.error;
+      remoteStatus = ` {red-fg}${brief}{/red-fg}`;
+      remoteStatusLen = 1 + brief.length;
+    } else if (remoteState.lastResult) {
+      remoteStatus = ` {green-fg}${remoteState.lastResult}{/green-fg}`;
+      remoteStatusLen = 1 + remoteState.lastResult.length;
+    }
+  }
+
   // Build right side content (branch info)
   const rightContent = branch ? formatBranch(branch) : '';
 
@@ -86,12 +121,13 @@ export function formatHeader(
     } else if (error) {
       leftLen += error.length + 3; // " (error)"
     }
+    leftLen += remoteStatusLen;
 
     const rightLen = branch ? computeBranchVisibleLength(branch) : 0;
 
     const padding = Math.max(1, width - leftLen - rightLen - 2);
-    return leftContent + ' '.repeat(padding) + rightContent;
+    return leftContent + remoteStatus + ' '.repeat(padding) + rightContent;
   }
 
-  return leftContent;
+  return leftContent + remoteStatus;
 }

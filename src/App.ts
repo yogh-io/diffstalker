@@ -25,6 +25,10 @@ import { HotkeysModal } from './ui/modals/HotkeysModal.js';
 import { BaseBranchPicker } from './ui/modals/BaseBranchPicker.js';
 import { DiscardConfirm } from './ui/modals/DiscardConfirm.js';
 import { FileFinder } from './ui/modals/FileFinder.js';
+import { StashListModal } from './ui/modals/StashListModal.js';
+import { BranchPicker } from './ui/modals/BranchPicker.js';
+import { SoftResetConfirm } from './ui/modals/SoftResetConfirm.js';
+import { CommitActionConfirm } from './ui/modals/CommitActionConfirm.js';
 import { CommitFlowState } from './state/CommitFlowState.js';
 import { UIState } from './state/UIState.js';
 import {
@@ -86,7 +90,14 @@ export class App {
     | BaseBranchPicker
     | DiscardConfirm
     | FileFinder
+    | StashListModal
+    | BranchPicker
+    | SoftResetConfirm
+    | CommitActionConfirm
     | null = null;
+
+  // Auto-clear timer for remote operation status
+  private remoteClearTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Cached total rows and hunk info for scroll bounds (single source of truth from render)
   private bottomPaneTotalRows: number = 0;
@@ -237,12 +248,23 @@ export class App {
         toggleCurrentHunk: () => this.toggleCurrentHunk(),
         navigateNextHunk: () => this.navigateNextHunk(),
         navigatePrevHunk: () => this.navigatePrevHunk(),
+        push: () => this.gitManager?.push(),
+        fetchRemote: () => this.gitManager?.fetchRemote(),
+        pullRebase: () => this.gitManager?.pullRebase(),
+        stash: () => this.gitManager?.stash(),
+        stashPop: () => this.gitManager?.stashPop(),
+        openStashListModal: () => this.openStashListModal(),
+        openBranchPicker: () => this.openBranchPicker(),
+        showSoftResetConfirm: () => this.showSoftResetConfirm(),
+        cherryPickSelected: () => this.cherryPickSelected(),
+        revertSelected: () => this.revertSelected(),
       },
       {
         hasActiveModal: () => this.activeModal !== null,
         getBottomTab: () => this.uiState.state.bottomTab,
         getCurrentPane: () => this.uiState.state.currentPane,
         isCommitInputFocused: () => this.commitFlowState.state.inputFocused,
+        isRemoteInProgress: () => this.gitManager?.remoteState.inProgress ?? false,
         getStatusFiles: () => this.gitManager?.state.status?.files ?? [],
         getSelectedIndex: () => this.uiState.state.selectedIndex,
         uiState: this.uiState,
@@ -267,6 +289,11 @@ export class App {
         toggleMouseMode: () => this.toggleMouseMode(),
         toggleFollow: () => this.toggleFollow(),
         selectHunkAtRow: (row) => this.selectHunkAtRow(row),
+        focusCommitInput: () => this.focusCommitInput(),
+        toggleAmend: () => {
+          this.commitFlowState.toggleAmend();
+          this.render();
+        },
         render: () => this.render(),
       },
       {
@@ -333,6 +360,12 @@ export class App {
         // Explorer is already loaded on init, but refresh if needed
         if (!this.explorerManager?.state.displayRows.length) {
           this.explorerManager?.loadDirectory('');
+        }
+      } else if (tab === 'commit') {
+        this.gitManager?.loadStashList();
+        // Also load history if needed for HEAD commit display
+        if (!this.gitManager?.historyState.commits.length) {
+          this.gitManager?.loadHistory();
         }
       }
     });
@@ -457,6 +490,21 @@ export class App {
     });
 
     this.gitManager.on('compare-selection-change', () => {
+      this.render();
+    });
+
+    this.gitManager.on('remote-state-change', (remoteState) => {
+      // Auto-clear success after 3s, error after 5s
+      if (this.remoteClearTimer) clearTimeout(this.remoteClearTimer);
+      if (remoteState.lastResult && !remoteState.inProgress) {
+        this.remoteClearTimer = setTimeout(() => {
+          this.gitManager?.clearRemoteState();
+        }, 3000);
+      } else if (remoteState.error) {
+        this.remoteClearTimer = setTimeout(() => {
+          this.gitManager?.clearRemoteState();
+        }, 5000);
+      }
       this.render();
     });
 
@@ -1174,6 +1222,99 @@ export class App {
     this.activeModal.focus();
   }
 
+  private openStashListModal(): void {
+    const entries = this.gitManager?.state.stashList ?? [];
+    this.activeModal = new StashListModal(
+      this.screen,
+      entries,
+      (index) => {
+        this.activeModal = null;
+        this.gitManager?.stashPop(index);
+      },
+      () => {
+        this.activeModal = null;
+      }
+    );
+    this.activeModal.focus();
+  }
+
+  private openBranchPicker(): void {
+    this.gitManager?.getLocalBranches().then((branches) => {
+      this.activeModal = new BranchPicker(
+        this.screen,
+        branches,
+        (name) => {
+          this.activeModal = null;
+          this.gitManager?.switchBranch(name);
+        },
+        (name) => {
+          this.activeModal = null;
+          this.gitManager?.createBranch(name);
+        },
+        () => {
+          this.activeModal = null;
+        }
+      );
+      this.activeModal.focus();
+    });
+  }
+
+  private showSoftResetConfirm(): void {
+    const headCommit = this.gitManager?.historyState.commits[0];
+    if (!headCommit) return;
+
+    this.activeModal = new SoftResetConfirm(
+      this.screen,
+      headCommit,
+      () => {
+        this.activeModal = null;
+        this.gitManager?.softReset();
+      },
+      () => {
+        this.activeModal = null;
+      }
+    );
+    this.activeModal.focus();
+  }
+
+  private cherryPickSelected(): void {
+    const commit = this.gitManager?.historyState.selectedCommit;
+    if (!commit) return;
+
+    this.activeModal = new CommitActionConfirm(
+      this.screen,
+      'Cherry-pick',
+      commit,
+      () => {
+        this.activeModal = null;
+        this.gitManager?.cherryPick(commit.hash);
+      },
+      () => {
+        this.activeModal = null;
+      }
+    );
+    this.activeModal.focus();
+  }
+
+  private revertSelected(): void {
+    const commit = this.gitManager?.historyState.selectedCommit;
+    if (!commit) return;
+
+    this.activeModal = new CommitActionConfirm(
+      this.screen,
+      'Revert',
+      commit,
+      () => {
+        this.activeModal = null;
+        this.gitManager?.revertCommit(commit.hash);
+      },
+      () => {
+        this.activeModal = null;
+      }
+    );
+    this.activeModal.focus();
+  }
+
   private async commit(message: string): Promise<void> {
     await this.gitManager?.commit(message);
   }
@@ -1255,7 +1396,8 @@ export class App {
       gitState?.status?.branch ?? null,
       gitState?.isLoading ?? false,
       gitState?.error ?? null,
-      width
+      width,
+      this.gitManager?.remoteState ?? null
     );
 
     this.layout.headerBox.setContent(content);
@@ -1314,7 +1456,11 @@ export class App {
       this.layout.dimensions.bottomPaneHeight,
       hunkIndex,
       isFileStaged,
-      state.flatViewMode ? this.gitManager?.state.combinedFileDiffs : undefined
+      state.flatViewMode ? this.gitManager?.state.combinedFileDiffs : undefined,
+      this.gitManager?.state.status?.branch ?? null,
+      this.gitManager?.remoteState ?? null,
+      this.gitManager?.state.stashList,
+      this.gitManager?.historyState.commits[0] ?? null
     );
 
     this.bottomPaneTotalRows = totalRows;
@@ -1371,6 +1517,9 @@ export class App {
     }
     if (this.commandServer) {
       this.commandServer.stop();
+    }
+    if (this.remoteClearTimer) {
+      clearTimeout(this.remoteClearTimer);
     }
 
     // Destroy screen (this will clean up terminal)

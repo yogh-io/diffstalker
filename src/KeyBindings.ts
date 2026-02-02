@@ -33,6 +33,16 @@ export interface KeyBindingActions {
   toggleCurrentHunk(): void;
   navigateNextHunk(): void;
   navigatePrevHunk(): void;
+  push(): void;
+  fetchRemote(): void;
+  pullRebase(): void;
+  stash(): void;
+  stashPop(): void;
+  openStashListModal(): void;
+  openBranchPicker(): void;
+  showSoftResetConfirm(): void;
+  cherryPickSelected(): void;
+  revertSelected(): void;
 }
 
 /**
@@ -43,6 +53,7 @@ export interface KeyBindingContext {
   getBottomTab(): BottomTab;
   getCurrentPane(): string;
   isCommitInputFocused(): boolean;
+  isRemoteInProgress(): boolean;
   getStatusFiles(): FileEntry[];
   getSelectedIndex(): number;
   uiState: UIState;
@@ -183,6 +194,30 @@ export function setupKeyBindings(
     }
   });
 
+  // Ctrl+a: toggle amend on commit tab (works even when input is focused)
+  screen.key(['C-a'], () => {
+    if (ctx.getBottomTab() === 'commit') {
+      ctx.commitFlowState.toggleAmend();
+      actions.render();
+    }
+  });
+
+  // Remote operations (global, any tab)
+  screen.key(['S-p'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused() || ctx.isRemoteInProgress()) return;
+    actions.push();
+  });
+
+  screen.key(['S-f'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused() || ctx.isRemoteInProgress()) return;
+    actions.fetchRemote();
+  });
+
+  screen.key(['S-r'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused() || ctx.isRemoteInProgress()) return;
+    actions.pullRebase();
+  });
+
   screen.key(['escape'], () => {
     if (ctx.getBottomTab() === 'commit') {
       if (ctx.isCommitInputFocused()) {
@@ -223,10 +258,13 @@ export function setupKeyBindings(
   // Follow toggle
   screen.key(['f'], () => actions.toggleFollow());
 
-  // Compare view: base branch picker
+  // Compare view: base branch picker / Commit tab: branch picker
   screen.key(['b'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused()) return;
     if (ctx.getBottomTab() === 'compare') {
       ctx.uiState.openModal('baseBranch');
+    } else if (ctx.getBottomTab() === 'commit') {
+      actions.openBranchPicker();
     }
   });
 
@@ -283,6 +321,52 @@ export function setupKeyBindings(
     if (ctx.hasActiveModal()) return;
     if (ctx.getBottomTab() === 'diff' && ctx.getCurrentPane() === 'diff') {
       actions.navigatePrevHunk();
+    }
+  });
+
+  // Stash: save (global)
+  screen.key(['S-s'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused() || ctx.isRemoteInProgress()) return;
+    actions.stash();
+  });
+
+  // Stash: pop (commit tab only)
+  screen.key(['o'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused()) return;
+    if (ctx.getBottomTab() === 'commit') {
+      actions.stashPop();
+    }
+  });
+
+  // Stash: list modal (commit tab only)
+  screen.key(['l'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused()) return;
+    if (ctx.getBottomTab() === 'commit') {
+      actions.openStashListModal();
+    }
+  });
+
+  // Soft reset HEAD~1 (commit tab only)
+  screen.key(['S-x'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused() || ctx.isRemoteInProgress()) return;
+    if (ctx.getBottomTab() === 'commit') {
+      actions.showSoftResetConfirm();
+    }
+  });
+
+  // Cherry-pick selected commit (history tab only)
+  screen.key(['p'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused()) return;
+    if (ctx.getBottomTab() === 'history') {
+      actions.cherryPickSelected();
+    }
+  });
+
+  // Revert selected commit (history tab only)
+  screen.key(['v'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused()) return;
+    if (ctx.getBottomTab() === 'history') {
+      actions.revertSelected();
     }
   });
 }

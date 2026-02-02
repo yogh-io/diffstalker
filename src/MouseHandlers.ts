@@ -28,6 +28,8 @@ export interface MouseActions {
   toggleMouseMode(): void;
   toggleFollow(): void;
   selectHunkAtRow(visualRow: number): void;
+  focusCommitInput(): void;
+  toggleAmend(): void;
   render(): void;
 }
 
@@ -80,11 +82,20 @@ export function setupMouseHandlers(
     }
   });
 
-  // Click on bottom pane to select hunk (diff tab)
+  // Click on bottom pane
   layout.bottomPane.on('click', (mouse: { x: number; y: number }) => {
     const clickedRow = layout.screenYToBottomPaneRow(mouse.y);
     if (clickedRow >= 0) {
-      actions.selectHunkAtRow(clickedRow);
+      if (ctx.uiState.state.bottomTab === 'commit') {
+        // Row 6 (0-indexed) is the amend checkbox row
+        if (clickedRow === 6) {
+          actions.toggleAmend();
+        } else {
+          actions.focusCommitInput();
+        }
+      } else {
+        actions.selectHunkAtRow(clickedRow);
+      }
     }
   });
 

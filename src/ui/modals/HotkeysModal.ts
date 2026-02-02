@@ -35,6 +35,10 @@ const hotkeyGroups: HotkeyGroup[] = [
       { key: 'c', description: 'Commit panel' },
       { key: 'r', description: 'Refresh' },
       { key: 'q', description: 'Quit' },
+      { key: 'P', description: 'Push to remote' },
+      { key: 'F', description: 'Fetch from remote' },
+      { key: 'R', description: 'Pull --rebase' },
+      { key: 'S', description: 'Stash save (global)' },
     ],
   },
   {
@@ -73,6 +77,25 @@ const hotkeyGroups: HotkeyGroup[] = [
       { key: '/', description: 'Find file' },
       { key: 'Ctrl+P', description: 'Find file (any tab)' },
       { key: 'g', description: 'Show changes only' },
+    ],
+  },
+  {
+    title: 'Commit Panel',
+    entries: [
+      { key: 'i/Enter', description: 'Edit message' },
+      { key: 'a', description: 'Toggle amend' },
+      { key: 'Ctrl+a', description: 'Toggle amend (typing)' },
+      { key: 'o', description: 'Pop stash' },
+      { key: 'l', description: 'Stash list modal' },
+      { key: 'b', description: 'Branch picker' },
+      { key: 'X', description: 'Soft reset HEAD~1' },
+    ],
+  },
+  {
+    title: 'History',
+    entries: [
+      { key: 'p', description: 'Cherry-pick commit' },
+      { key: 'v', description: 'Revert commit' },
     ],
   },
   {

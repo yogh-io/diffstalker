@@ -17,10 +17,25 @@ import {
   getCommitHistory,
   stageHunk as gitStageHunk,
   unstageHunk as gitUnstageHunk,
+  push as gitPush,
+  fetchRemote as gitFetchRemote,
+  pullRebase as gitPullRebase,
+  getStashList as gitGetStashList,
+  stashSave as gitStashSave,
+  stashPop as gitStashPop,
+  getLocalBranches as gitGetLocalBranches,
+  switchBranch as gitSwitchBranch,
+  createBranch as gitCreateBranch,
+  softResetHead as gitSoftResetHead,
+  cherryPick as gitCherryPick,
+  revertCommit as gitRevertCommit,
   GitStatus,
   FileEntry,
   CommitInfo,
+  StashEntry,
+  LocalBranch,
 } from '../git/status.js';
+import type { RemoteOperationState, RemoteOperation } from '../types/remote.js';
 import {
   getDiff,
   getDiffForUntracked,
@@ -38,6 +53,8 @@ import {
 import { getCachedBaseBranch, setCachedBaseBranch } from '../utils/baseBranchCache.js';
 
 export type { FileHunkCounts } from '../git/diff.js';
+export type { RemoteOperationState, RemoteOperation } from '../types/remote.js';
+export type { StashEntry, LocalBranch } from '../git/status.js';
 
 export interface CombinedFileDiffs {
   unstaged: DiffResult;
@@ -52,6 +69,7 @@ export interface GitState {
   isLoading: boolean;
   error: string | null;
   hunkCounts: FileHunkCounts | null;
+  stashList: StashEntry[];
 }
 
 export interface CompareState {
@@ -81,6 +99,7 @@ type GitStateEventMap = {
   'compare-state-change': [CompareState];
   'history-state-change': [HistoryState];
   'compare-selection-change': [CompareSelectionState];
+  'remote-state-change': [RemoteOperationState];
   error: [string];
 };
 
@@ -105,6 +124,7 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     isLoading: false,
     error: null,
     hunkCounts: null,
+    stashList: [],
   };
 
   private _compareState: CompareState = {
@@ -127,6 +147,13 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
     diff: null,
   };
 
+  private _remoteState: RemoteOperationState = {
+    operation: null,
+    inProgress: false,
+    error: null,
+    lastResult: null,
+  };
+
   constructor(repoPath: string) {
     super();
     this.repoPath = repoPath;
@@ -147,6 +174,15 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
 
   get compareSelectionState(): CompareSelectionState {
     return this._compareSelectionState;
+  }
+
+  get remoteState(): RemoteOperationState {
+    return this._remoteState;
+  }
+
+  private updateRemoteState(partial: Partial<RemoteOperationState>): void {
+    this._remoteState = { ...this._remoteState, ...partial };
+    this.emit('remote-state-change', this._remoteState);
   }
 
   private updateState(partial: Partial<GitState>): void {
@@ -637,6 +673,144 @@ export class GitStateManager extends EventEmitter<GitStateEventMap> {
         error: `Failed to commit: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
+  }
+
+  // Remote operations
+
+  /**
+   * Push to remote.
+   */
+  async push(): Promise<void> {
+    if (this._remoteState.inProgress) return;
+    await this.runRemoteOperation('push', () => gitPush(this.repoPath));
+  }
+
+  /**
+   * Fetch from remote.
+   */
+  async fetchRemote(): Promise<void> {
+    if (this._remoteState.inProgress) return;
+    await this.runRemoteOperation('fetch', () => gitFetchRemote(this.repoPath));
+  }
+
+  /**
+   * Pull with rebase from remote.
+   */
+  async pullRebase(): Promise<void> {
+    if (this._remoteState.inProgress) return;
+    await this.runRemoteOperation('pull', () => gitPullRebase(this.repoPath));
+  }
+
+  private async runRemoteOperation(
+    operation: RemoteOperation,
+    fn: () => Promise<string>
+  ): Promise<void> {
+    this.updateRemoteState({ operation, inProgress: true, error: null, lastResult: null });
+
+    try {
+      const result = await this.queue.enqueue(fn);
+      this.updateRemoteState({ inProgress: false, lastResult: result });
+      // Refresh status to pick up new ahead/behind counts
+      this.scheduleRefresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.updateRemoteState({ inProgress: false, error: message });
+    }
+  }
+
+  // Stash operations
+
+  /**
+   * Load the stash list.
+   */
+  async loadStashList(): Promise<void> {
+    try {
+      const stashList = await this.queue.enqueue(() => gitGetStashList(this.repoPath));
+      this.updateState({ stashList });
+    } catch {
+      // Silently ignore — stash list is non-critical
+    }
+  }
+
+  /**
+   * Save working changes to stash.
+   */
+  async stash(message?: string): Promise<void> {
+    if (this._remoteState.inProgress) return;
+    await this.runRemoteOperation('stash', () => gitStashSave(this.repoPath, message));
+    await this.loadStashList();
+  }
+
+  /**
+   * Pop a stash entry.
+   */
+  async stashPop(index: number = 0): Promise<void> {
+    if (this._remoteState.inProgress) return;
+    await this.runRemoteOperation('stashPop', () => gitStashPop(this.repoPath, index));
+    await this.loadStashList();
+  }
+
+  // Branch operations
+
+  /**
+   * Get local branches.
+   */
+  async getLocalBranches(): Promise<LocalBranch[]> {
+    return this.queue.enqueue(() => gitGetLocalBranches(this.repoPath));
+  }
+
+  /**
+   * Switch to an existing branch.
+   */
+  async switchBranch(name: string): Promise<void> {
+    if (this._remoteState.inProgress) return;
+    await this.runRemoteOperation('branchSwitch', () => gitSwitchBranch(this.repoPath, name));
+    // Reset compare base branch since it may not exist on the new branch
+    this.updateCompareState({ compareBaseBranch: null });
+  }
+
+  /**
+   * Create and switch to a new branch.
+   */
+  async createBranch(name: string): Promise<void> {
+    if (this._remoteState.inProgress) return;
+    await this.runRemoteOperation('branchCreate', () => gitCreateBranch(this.repoPath, name));
+    this.updateCompareState({ compareBaseBranch: null });
+  }
+
+  // Undo operations
+
+  /**
+   * Soft reset HEAD by count commits.
+   */
+  async softReset(count: number = 1): Promise<void> {
+    if (this._remoteState.inProgress) return;
+    await this.runRemoteOperation('softReset', () => gitSoftResetHead(this.repoPath, count));
+  }
+
+  // History actions
+
+  /**
+   * Cherry-pick a commit.
+   */
+  async cherryPick(hash: string): Promise<void> {
+    if (this._remoteState.inProgress) return;
+    await this.runRemoteOperation('cherryPick', () => gitCherryPick(this.repoPath, hash));
+  }
+
+  /**
+   * Revert a commit.
+   */
+  async revertCommit(hash: string): Promise<void> {
+    if (this._remoteState.inProgress) return;
+    await this.runRemoteOperation('revert', () => gitRevertCommit(this.repoPath, hash));
+  }
+
+  /**
+   * Clear the remote state (e.g. after auto-clear timeout).
+   */
+  clearRemoteState(): void {
+    this.updateRemoteState({ operation: null, error: null, lastResult: null });
   }
 
   /**

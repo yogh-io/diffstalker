@@ -246,6 +246,34 @@ export function unstageHunk(repoPath: string, patch: string): void {
   });
 }
 
+export async function push(repoPath: string): Promise<string> {
+  const git = simpleGit(repoPath);
+  const result = await git.push();
+  // Build a summary string from the push result
+  const pushed = result.pushed;
+  if (pushed.length === 0) return 'Everything up-to-date';
+  return pushed.map((p) => `${p.local} → ${p.remote}`).join(', ');
+}
+
+export async function fetchRemote(repoPath: string): Promise<string> {
+  const git = simpleGit(repoPath);
+  await git.fetch();
+  return 'Fetch complete';
+}
+
+export async function pullRebase(repoPath: string): Promise<string> {
+  const git = simpleGit(repoPath);
+  const result = await git.pull(['--rebase']);
+  if (
+    result.summary.changes === 0 &&
+    result.summary.insertions === 0 &&
+    result.summary.deletions === 0
+  ) {
+    return 'Already up-to-date';
+  }
+  return `${result.summary.changes} file(s) changed`;
+}
+
 export async function getCommitHistory(
   repoPath: string,
   count: number = 50
@@ -264,4 +292,90 @@ export async function getCommitHistory(
   } catch {
     return [];
   }
+}
+
+// Stash operations
+
+export interface StashEntry {
+  index: number;
+  message: string;
+}
+
+export async function getStashList(repoPath: string): Promise<StashEntry[]> {
+  const git = simpleGit(repoPath);
+  try {
+    const result = await git.stashList();
+    return result.all.map((entry, i) => ({
+      index: i,
+      message: entry.message,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function stashSave(repoPath: string, message?: string): Promise<string> {
+  const git = simpleGit(repoPath);
+  const args = ['push'];
+  if (message) args.push('-m', message);
+  await git.stash(args);
+  return 'Stashed';
+}
+
+export async function stashPop(repoPath: string, index: number = 0): Promise<string> {
+  const git = simpleGit(repoPath);
+  await git.stash(['pop', `stash@{${index}}`]);
+  return 'Stash popped';
+}
+
+// Branch operations
+
+export interface LocalBranch {
+  name: string;
+  current: boolean;
+  tracking?: string;
+}
+
+export async function getLocalBranches(repoPath: string): Promise<LocalBranch[]> {
+  const git = simpleGit(repoPath);
+  const result = await git.branchLocal();
+  return result.all.map((name) => ({
+    name,
+    current: name === result.current,
+    tracking: result.branches[name]?.label || undefined,
+  }));
+}
+
+export async function switchBranch(repoPath: string, name: string): Promise<string> {
+  const git = simpleGit(repoPath);
+  await git.checkout(name);
+  return `Switched to ${name}`;
+}
+
+export async function createBranch(repoPath: string, name: string): Promise<string> {
+  const git = simpleGit(repoPath);
+  await git.checkoutLocalBranch(name);
+  return `Created ${name}`;
+}
+
+// Undo operations
+
+export async function softResetHead(repoPath: string, count: number = 1): Promise<string> {
+  const git = simpleGit(repoPath);
+  await git.reset(['--soft', `HEAD~${count}`]);
+  return 'Reset done';
+}
+
+// History actions
+
+export async function cherryPick(repoPath: string, hash: string): Promise<string> {
+  const git = simpleGit(repoPath);
+  await git.raw(['cherry-pick', hash]);
+  return 'Cherry-picked';
+}
+
+export async function revertCommit(repoPath: string, hash: string): Promise<string> {
+  const git = simpleGit(repoPath);
+  await git.revert(hash);
+  return 'Reverted';
 }
