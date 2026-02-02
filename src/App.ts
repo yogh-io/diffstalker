@@ -585,6 +585,9 @@ export class App {
     // Load root directory
     this.explorerManager.loadDirectory('');
 
+    // Pre-load file paths for file finder (runs in background)
+    this.explorerManager.loadFilePaths();
+
     // Update git status after tree is loaded
     this.updateExplorerGitStatus();
   }
@@ -1185,7 +1188,12 @@ export class App {
   }
 
   private async openFileFinder(): Promise<void> {
-    const allPaths = (await this.explorerManager?.getAllFilePaths()) ?? [];
+    let allPaths = this.explorerManager?.getCachedFilePaths() ?? [];
+    if (allPaths.length === 0) {
+      // First open or cache not yet loaded — wait for it
+      await this.explorerManager?.loadFilePaths();
+      allPaths = this.explorerManager?.getCachedFilePaths() ?? [];
+    }
     if (allPaths.length === 0) return;
 
     this.activeModal = new FileFinder(

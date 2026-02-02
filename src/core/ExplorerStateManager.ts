@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { getIgnoredFiles } from '../git/ignoreUtils.js';
+import { listAllFiles } from '../git/status.js';
 import type { FileStatus } from '../git/status.js';
 
 export interface SelectedFile {
@@ -83,6 +84,7 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
   private options: ExplorerOptions;
   private expandedPaths: Set<string> = new Set();
   private gitStatusMap: GitStatusMap = { files: new Map(), directories: new Set() };
+  private _cachedFilePaths: string[] | null = null;
 
   private _state: ExplorerState = {
     currentPath: '',
@@ -125,9 +127,12 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
 
   /**
    * Update git status map and refresh display.
+   * Also invalidates the file path cache so the next file finder open gets fresh data.
    */
   setGitStatus(statusMap: GitStatusMap): void {
     this.gitStatusMap = statusMap;
+    // Invalidate file path cache — reload in background
+    this.loadFilePaths();
     // Refresh display to show updated status
     if (this._state.tree) {
       this.applyGitStatusToTree(this._state.tree);
@@ -665,51 +670,23 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
   }
 
   /**
-   * Get all file paths in the repo (for file finder).
-   * Scans the filesystem directly to get all files, not just expanded ones.
+   * Load all file paths using git ls-files (fast, single git command).
+   * Stores result in cache for instant access by FileFinder.
    */
-  async getAllFilePaths(): Promise<string[]> {
-    const paths: string[] = [];
+  async loadFilePaths(): Promise<void> {
+    try {
+      this._cachedFilePaths = await listAllFiles(this.repoPath);
+    } catch {
+      this._cachedFilePaths = [];
+    }
+  }
 
-    const scanDir = async (dirPath: string): Promise<void> => {
-      try {
-        const fullPath = path.join(this.repoPath, dirPath);
-        const entries = await fs.promises.readdir(fullPath, { withFileTypes: true });
-
-        // Build list of paths for gitignore check
-        const pathsToCheck = entries.map((e) => (dirPath ? path.join(dirPath, e.name) : e.name));
-
-        // Get ignored files
-        const ignoredFiles = this.options.hideGitignored
-          ? await getIgnoredFiles(this.repoPath, pathsToCheck)
-          : new Set<string>();
-
-        for (const entry of entries) {
-          // Filter dot-prefixed hidden files
-          if (this.options.hideHidden && entry.name.startsWith('.')) {
-            continue;
-          }
-
-          const entryPath = dirPath ? path.join(dirPath, entry.name) : entry.name;
-
-          // Filter gitignored files
-          if (this.options.hideGitignored && ignoredFiles.has(entryPath)) {
-            continue;
-          }
-
-          if (entry.isDirectory()) {
-            await scanDir(entryPath);
-          } else {
-            paths.push(entryPath);
-          }
-        }
-      } catch {
-        // Ignore errors for individual directories
-      }
-    };
-
-    await scanDir('');
-    return paths;
+  /**
+   * Get cached file paths (for file finder).
+   * Returns empty array if not yet loaded.
+   */
+  getCachedFilePaths(): string[] {
+    return this._cachedFilePaths ?? [];
   }
 
   /**

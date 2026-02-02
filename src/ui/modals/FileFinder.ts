@@ -1,11 +1,72 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
-import { Fzf, type FzfResultItem } from 'fzf';
 
 const MAX_RESULTS = 15;
+const DEBOUNCE_MS = 15;
+
+interface MatchResult {
+  path: string;
+  score: number;
+  positions: Set<number>;
+}
 
 /**
- * Highlight matched characters in a display path using fzf position data.
+ * Fuzzy subsequence match: checks if all characters in `query` appear
+ * in `target` in order. Returns match positions and a score, or null if no match.
+ */
+function subsequenceMatch(query: string, target: string): MatchResult | null {
+  const lowerQuery = query.toLowerCase();
+  const lowerTarget = target.toLowerCase();
+
+  // Quick check: all query chars must exist somewhere
+  let qi = 0;
+  for (let ti = 0; ti < lowerTarget.length && qi < lowerQuery.length; ti++) {
+    if (lowerTarget[ti] === lowerQuery[qi]) qi++;
+  }
+  if (qi < lowerQuery.length) return null;
+
+  // Score the match
+  const positions = new Set<number>();
+  let score = 0;
+  qi = 0;
+  let lastMatchIndex = -1;
+
+  for (let ti = 0; ti < lowerTarget.length && qi < lowerQuery.length; ti++) {
+    if (lowerTarget[ti] === lowerQuery[qi]) {
+      positions.add(ti);
+
+      // Consecutive match bonus
+      if (lastMatchIndex === ti - 1) {
+        score += 5;
+      }
+
+      // Match after separator (/ or .) — start of path segment
+      if (ti === 0 || target[ti - 1] === '/' || target[ti - 1] === '.') {
+        score += 3;
+      }
+
+      // Match at start of filename (after last /)
+      const lastSlash = target.lastIndexOf('/', ti - 1);
+      if (ti === lastSlash + 1) {
+        score += 2;
+      }
+
+      // Prefer matches later in the path (filename over directory)
+      score += ti / target.length;
+
+      lastMatchIndex = ti;
+      qi++;
+    }
+  }
+
+  // Penalize longer paths (prefer shorter, more specific matches)
+  score -= target.length * 0.01;
+
+  return { path: target, score, positions };
+}
+
+/**
+ * Highlight matched characters in a display path.
  * The positions set refers to indices in the original full path,
  * so we need an offset when the display path is truncated.
  */
@@ -28,13 +89,13 @@ export class FileFinder {
   private box: Widgets.BoxElement;
   private textbox: Widgets.TextareaElement;
   private screen: Widgets.Screen;
-  private fzf: Fzf<string[]>;
   private allPaths: string[];
-  private results: FzfResultItem<string>[] = [];
+  private results: MatchResult[] = [];
   private selectedIndex: number = 0;
   private query: string = '';
   private onSelect: (path: string) => void;
   private onCancel: () => void;
+  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     screen: Widgets.Screen,
@@ -44,7 +105,6 @@ export class FileFinder {
   ) {
     this.screen = screen;
     this.allPaths = allPaths;
-    this.fzf = new Fzf(allPaths, { limit: MAX_RESULTS, forward: false });
     this.onSelect = onSelect;
     this.onCancel = onCancel;
 
@@ -87,9 +147,9 @@ export class FileFinder {
     // Setup key handlers
     this.setupKeyHandlers();
 
-    // Initial render with all files
+    // Initial render with first N files
     this.updateResults();
-    this.render();
+    this.renderContent();
   }
 
   private setupKeyHandlers(): void {
@@ -104,62 +164,74 @@ export class FileFinder {
       if (this.results.length > 0) {
         const selected = this.results[this.selectedIndex];
         this.close();
-        this.onSelect(selected.item);
+        this.onSelect(selected.path);
       }
     });
 
     // Handle up/down for navigation (Ctrl+j/k since j/k are for typing)
     this.textbox.key(['C-j', 'down'], () => {
       this.selectedIndex = Math.min(this.results.length - 1, this.selectedIndex + 1);
-      this.render();
+      this.renderContent();
     });
 
     this.textbox.key(['C-k', 'up'], () => {
       this.selectedIndex = Math.max(0, this.selectedIndex - 1);
-      this.render();
+      this.renderContent();
     });
 
     // Handle tab for next result
     this.textbox.key(['tab'], () => {
       this.selectedIndex = (this.selectedIndex + 1) % Math.max(1, this.results.length);
-      this.render();
+      this.renderContent();
     });
 
     // Handle shift-tab for previous result
     this.textbox.key(['S-tab'], () => {
       this.selectedIndex =
         (this.selectedIndex - 1 + this.results.length) % Math.max(1, this.results.length);
-      this.render();
+      this.renderContent();
     });
 
-    // Update results on keypress
+    // Update results on keypress with debounce
     this.textbox.on('keypress', () => {
-      // Defer to next tick to get updated value
-      setImmediate(() => {
+      if (this.debounceTimer) clearTimeout(this.debounceTimer);
+      this.debounceTimer = setTimeout(() => {
         const newQuery = this.textbox.getValue() || '';
         if (newQuery !== this.query) {
           this.query = newQuery;
           this.selectedIndex = 0;
           this.updateResults();
-          this.render();
+          this.renderContent();
         }
-      });
+      }, DEBOUNCE_MS);
     });
   }
 
   private updateResults(): void {
     if (!this.query) {
-      // fzf returns nothing for empty query, show first N files
+      // Show first N files for empty query
       this.results = this.allPaths
         .slice(0, MAX_RESULTS)
-        .map((item) => ({ item, positions: new Set<number>(), start: 0, end: 0, score: 0 }));
+        .map((p) => ({ path: p, positions: new Set<number>(), score: 0 }));
       return;
     }
 
-    this.results = this.fzf.find(this.query);
+    const matches: MatchResult[] = [];
+    for (const p of this.allPaths) {
+      const match = subsequenceMatch(this.query, p);
+      if (match) {
+        matches.push(match);
+        // Collect more than needed so we can sort, but cap to avoid scoring thousands
+        if (matches.length >= MAX_RESULTS * 10) break;
+      }
+    }
+
+    // Sort by score descending
+    matches.sort((a, b) => b.score - a.score);
+    this.results = matches.slice(0, MAX_RESULTS);
   }
 
-  private render(): void {
+  private renderContent(): void {
     const lines: string[] = [];
     const width = (this.box.width as number) - 4;
 
@@ -177,7 +249,7 @@ export class FileFinder {
         const isSelected = i === this.selectedIndex;
 
         // Truncate path if needed
-        const fullPath = result.item;
+        const fullPath = result.path;
         const maxLen = width - 4;
         let displayPath = fullPath;
         let offset = 0;
@@ -188,7 +260,7 @@ export class FileFinder {
           offset = offset - 1;
         }
 
-        // Highlight matched characters using fzf positions
+        // Highlight matched characters
         const highlighted = highlightMatch(displayPath, result.positions, offset);
 
         if (isSelected) {
@@ -212,6 +284,7 @@ export class FileFinder {
   }
 
   private close(): void {
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.textbox.destroy();
     this.box.destroy();
   }

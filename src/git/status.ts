@@ -379,3 +379,13 @@ export async function revertCommit(repoPath: string, hash: string): Promise<stri
   await git.revert(hash);
   return 'Reverted';
 }
+
+/**
+ * List all files in the repo: tracked files + untracked (not ignored) files.
+ * Uses git ls-files which is fast (git already has the index in memory).
+ */
+export async function listAllFiles(repoPath: string): Promise<string[]> {
+  const git = simpleGit(repoPath);
+  const result = await git.raw(['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+  return result.split('\0').filter((f) => f.length > 0);
+}
