@@ -1,0 +1,243 @@
+{
+  "timestamp": "2026-02-06T18:38:55.083Z",
+  "gitRef": "v0.2.3",
+  "gitSha": "11ba9fc",
+  "summary": {
+    "files": 82,
+    "lines": 16165,
+    "functions": 1146,
+    "avgCyclomaticComplexity": 5.1,
+    "maxCyclomaticComplexity": {
+      "value": 42,
+      "function": "buildDiffDisplayRows",
+      "file": "src/utils/displayRows.ts:112"
+    },
+    "avgCognitiveComplexity": 6.5,
+    "maxCognitiveComplexity": {
+      "value": 68,
+      "function": "buildDiffDisplayRows",
+      "file": "src/utils/displayRows.ts:112"
+    },
+    "smells": 0
+  },
+  "hotspots": [
+    {
+      "file": "src/utils/displayRows.ts",
+      "lines": 567,
+      "cyclomaticMax": 42,
+      "cognitiveMax": 68,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/widgets/CommitPanel.ts",
+      "lines": 217,
+      "cyclomaticMax": 34,
+      "cognitiveMax": 42,
+      "smells": 0
+    },
+    {
+      "file": "src/App.ts",
+      "lines": 1548,
+      "cyclomaticMax": 31,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "src/utils/flatFileList.ts",
+      "lines": 100,
+      "cyclomaticMax": 29,
+      "cognitiveMax": 14,
+      "smells": 0
+    },
+    {
+      "file": "src/git/diff.ts",
+      "lines": 656,
+      "cyclomaticMax": 26,
+      "cognitiveMax": 41,
+      "smells": 0
+    },
+    {
+      "file": "src/git/status.ts",
+      "lines": 392,
+      "cyclomaticMax": 22,
+      "cognitiveMax": 25,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/PaneRenderers.ts",
+      "lines": 249,
+      "cyclomaticMax": 20,
+      "cognitiveMax": 8,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/widgets/ExplorerContent.ts",
+      "lines": 130,
+      "cyclomaticMax": 20,
+      "cognitiveMax": 24,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/widgets/Header.ts",
+      "lines": 134,
+      "cyclomaticMax": 18,
+      "cognitiveMax": 22,
+      "smells": 0
+    },
+    {
+      "file": "src/MouseHandlers.ts",
+      "lines": 268,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "src/ipc/CommandServer.ts",
+      "lines": 266,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 6,
+      "smells": 0
+    },
+    {
+      "file": "src/index.ts",
+      "lines": 178,
+      "cyclomaticMax": 16,
+      "cognitiveMax": 17,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/widgets/ExplorerView.ts",
+      "lines": 245,
+      "cyclomaticMax": 16,
+      "cognitiveMax": 21,
+      "smells": 0
+    },
+    {
+      "file": "src/utils/ansiTruncate.ts",
+      "lines": 123,
+      "cyclomaticMax": 16,
+      "cognitiveMax": 24,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/widgets/DiffView.ts",
+      "lines": 511,
+      "cyclomaticMax": 15,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/widgets/CompareListView.ts",
+      "lines": 383,
+      "cyclomaticMax": 14,
+      "cognitiveMax": 16,
+      "smells": 0
+    },
+    {
+      "file": "src/utils/diffRowCalculations.ts",
+      "lines": 136,
+      "cyclomaticMax": 13,
+      "cognitiveMax": 24,
+      "smells": 0
+    },
+    {
+      "file": "src/core/ExplorerStateManager.ts",
+      "lines": 727,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/widgets/FileList.ts",
+      "lines": 215,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "src/utils/lineBreaking.ts",
+      "lines": 114,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 17,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/modals/BranchPicker.ts",
+      "lines": 185,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 17,
+      "smells": 0
+    },
+    {
+      "file": "src/config.ts",
+      "lines": 107,
+      "cyclomaticMax": 10,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "src/state/UIState.ts",
+      "lines": 307,
+      "cyclomaticMax": 10,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "src/KeyBindings.ts",
+      "lines": 373,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "src/core/GitStateManager.ts",
+      "lines": 989,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/widgets/HistoryView.ts",
+      "lines": 97,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "src/utils/formatPath.ts",
+      "lines": 72,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 11,
+      "smells": 0
+    },
+    {
+      "file": "src/utils/explorerDisplayRows.ts",
+      "lines": 206,
+      "cyclomaticMax": 8,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/modals/FileFinder.ts",
+      "lines": 238,
+      "cyclomaticMax": 7,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/modals/BaseBranchPicker.ts",
+      "lines": 134,
+      "cyclomaticMax": 6,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "src/ui/modals/StashListModal.ts",
+      "lines": 122,
+      "cyclomaticMax": 5,
+      "cognitiveMax": 11,
+      "smells": 0
+    }
+  ],
+  "smellsByRule": {}
+}
