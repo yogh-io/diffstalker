@@ -1,5 +1,6 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
+import { Fzf, type FzfResultItem } from 'fzf';
 
 const MAX_RESULTS = 15;
 const DEBOUNCE_MS = 15;
@@ -8,61 +9,6 @@ interface MatchResult {
   path: string;
   score: number;
   positions: Set<number>;
-}
-
-/**
- * Fuzzy subsequence match: checks if all characters in `query` appear
- * in `target` in order. Returns match positions and a score, or null if no match.
- */
-function subsequenceMatch(query: string, target: string): MatchResult | null {
-  const lowerQuery = query.toLowerCase();
-  const lowerTarget = target.toLowerCase();
-
-  // Quick check: all query chars must exist somewhere
-  let qi = 0;
-  for (let ti = 0; ti < lowerTarget.length && qi < lowerQuery.length; ti++) {
-    if (lowerTarget[ti] === lowerQuery[qi]) qi++;
-  }
-  if (qi < lowerQuery.length) return null;
-
-  // Score the match
-  const positions = new Set<number>();
-  let score = 0;
-  qi = 0;
-  let lastMatchIndex = -1;
-
-  for (let ti = 0; ti < lowerTarget.length && qi < lowerQuery.length; ti++) {
-    if (lowerTarget[ti] === lowerQuery[qi]) {
-      positions.add(ti);
-
-      // Consecutive match bonus
-      if (lastMatchIndex === ti - 1) {
-        score += 5;
-      }
-
-      // Match after separator (/ or .) — start of path segment
-      if (ti === 0 || target[ti - 1] === '/' || target[ti - 1] === '.') {
-        score += 3;
-      }
-
-      // Match at start of filename (after last /)
-      const lastSlash = target.lastIndexOf('/', ti - 1);
-      if (ti === lastSlash + 1) {
-        score += 2;
-      }
-
-      // Prefer matches later in the path (filename over directory)
-      score += ti / target.length;
-
-      lastMatchIndex = ti;
-      qi++;
-    }
-  }
-
-  // Penalize longer paths (prefer shorter, more specific matches)
-  score -= target.length * 0.01;
-
-  return { path: target, score, positions };
 }
 
 /**
@@ -96,6 +42,7 @@ export class FileFinder {
   private onSelect: (path: string) => void;
   private onCancel: () => void;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private fzf: Fzf<string[]>;
 
   constructor(
     screen: Widgets.Screen,
@@ -107,6 +54,7 @@ export class FileFinder {
     this.allPaths = allPaths;
     this.onSelect = onSelect;
     this.onCancel = onCancel;
+    this.fzf = new Fzf(allPaths, { limit: MAX_RESULTS, casing: 'smart-case' });
 
     // Create modal box
     const width = Math.min(80, (screen.width as number) - 10);
@@ -209,26 +157,17 @@ export class FileFinder {
 
   private updateResults(): void {
     if (!this.query) {
-      // Show first N files for empty query
       this.results = this.allPaths
         .slice(0, MAX_RESULTS)
         .map((p) => ({ path: p, positions: new Set<number>(), score: 0 }));
       return;
     }
-
-    const matches: MatchResult[] = [];
-    for (const p of this.allPaths) {
-      const match = subsequenceMatch(this.query, p);
-      if (match) {
-        matches.push(match);
-        // Collect more than needed so we can sort, but cap to avoid scoring thousands
-        if (matches.length >= MAX_RESULTS * 10) break;
-      }
-    }
-
-    // Sort by score descending
-    matches.sort((a, b) => b.score - a.score);
-    this.results = matches.slice(0, MAX_RESULTS);
+    const entries = this.fzf.find(this.query);
+    this.results = entries.map((entry: FzfResultItem) => ({
+      path: entry.item,
+      score: entry.score,
+      positions: entry.positions,
+    }));
   }
 
   private renderContent(): void {

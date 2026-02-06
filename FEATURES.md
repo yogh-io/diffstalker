@@ -158,8 +158,10 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 
 **File Finder Modal**
 - Open with `/` key
-- Fuzzy search across all files in repo
+- Fuzzy search across all files in repo using the fzf algorithm (fzf-for-js)
 - Real-time filtering as you type
+- Smart-case matching: case-insensitive unless query contains uppercase
+- PascalCase/camelCase aware: uppercase letters in query preferentially match word boundaries (e.g., "HLV" matches "HabitatListView")
 - Navigate results with Ctrl+j/k or Up/Down arrows
 - Select with Enter, cancel with Escape
 - Matched characters highlighted in yellow
@@ -614,8 +616,10 @@ Selected theme is saved to `~/.config/diffstalker/config.json`.
 
 ### File Finder Modal
 
-- Fuzzy file search across entire repository
+- Fuzzy file search across entire repository using the fzf algorithm
 - Text input for search query
+- Smart-case: case-insensitive unless query contains uppercase
+- PascalCase/camelCase aware: typing uppercase letters anchors matches to word boundaries (e.g., "HLView" → "HabitatListView")
 - Top 15 results shown with match highlighting
 - Navigate with Ctrl+j/k, Up/Down, or Tab
 - Select with Enter, cancel with Escape
