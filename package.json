@@ -1,6 +1,6 @@
 {
   "name": "diffstalker",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Terminal application that displays git diff/status for directories",
   "author": "yogh-io",
   "license": "MIT",
