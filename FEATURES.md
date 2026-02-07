@@ -575,7 +575,7 @@ Selected theme is saved to `~/.config/diffstalker/config.json`.
 
 - Comprehensive keyboard shortcut reference
 - Two-column layout on wide terminals
-- Close with Esc, Enter, or `?`
+- Close with Esc, Enter, `?`, or any mouse click
 
 ### Base Branch Picker Modal
 

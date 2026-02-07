@@ -58,6 +58,9 @@ export class ModalController {
    */
   handleModalChange(modal: string | null): void {
     if (this.activeModal) {
+      if (this.activeModal instanceof HotkeysModal) {
+        this.activeModal.close();
+      }
       this.activeModal = null;
     }
 

@@ -123,6 +123,7 @@ export class HotkeysModal {
   private box: Widgets.BoxElement;
   private screen: Widgets.Screen;
   private onClose: () => void;
+  private screenClickHandler: (() => void) | null = null;
 
   constructor(screen: Widgets.Screen, onClose: () => void) {
     this.screen = screen;
@@ -178,16 +179,17 @@ export class HotkeysModal {
   }
 
   private setupKeyHandlers(): void {
-    this.box.key(['escape', 'enter', '?', 'q'], () => {
+    this.box.key(['escape', 'enter', 'q'], () => {
       this.close();
       this.onClose();
     });
 
-    // Close on click anywhere
-    this.box.on('click', () => {
+    // Close on any mouse click (screen-level catches clicks outside the modal too)
+    this.screenClickHandler = () => {
       this.close();
       this.onClose();
-    });
+    };
+    this.screen.on('click', this.screenClickHandler);
   }
 
   /**
@@ -242,7 +244,7 @@ export class HotkeysModal {
 
     // Footer
     lines.push('');
-    lines.push('{gray-fg}Press Esc, Enter, or ? to close{/gray-fg}');
+    lines.push('{gray-fg}Press Esc, Enter, ?, or click to close{/gray-fg}');
 
     this.box.setContent(lines.join('\n'));
     this.screen.render();
@@ -260,7 +262,11 @@ export class HotkeysModal {
     return lines;
   }
 
-  private close(): void {
+  close(): void {
+    if (this.screenClickHandler) {
+      this.screen.removeListener('click', this.screenClickHandler);
+      this.screenClickHandler = null;
+    }
     this.box.destroy();
   }
 
