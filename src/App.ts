@@ -119,9 +119,9 @@ export class App {
 
     // Initialize commit flow state
     this.commitFlowState = new CommitFlowState({
-      getHeadMessage: () => this.gitManager?.getHeadCommitMessage() ?? Promise.resolve(''),
+      getHeadMessage: () => this.gitManager?.history.getHeadCommitMessage() ?? Promise.resolve(''),
       onCommit: async (message, amend) => {
-        await this.gitManager?.commit(message, amend);
+        await this.gitManager?.workingTree.commit(message, amend);
       },
       onSuccess: () => {
         this.uiState.setTab('diff');
@@ -169,6 +169,7 @@ export class App {
       getHunkCount: () => this.bottomPaneHunkCount,
       getHunkBoundaries: () => this.bottomPaneHunkBoundaries,
       getRepoPath: () => this.repoPath,
+      onError: (message) => this.showError(message),
     });
 
     // Setup modal controller
@@ -223,6 +224,15 @@ export class App {
     this.render();
   }
 
+  /**
+   * Display an error in the UI by emitting a state change with the error set.
+   */
+  private showError(message: string): void {
+    if (!this.gitManager) return;
+    const wt = this.gitManager.workingTree;
+    wt.emit('state-change', { ...wt.state, error: message });
+  }
+
   private setupKeyboardHandlers(): void {
     setupKeyBindings(
       this.screen,
@@ -248,11 +258,11 @@ export class App {
         toggleCurrentHunk: () => this.staging.toggleCurrentHunk(),
         navigateNextHunk: () => this.navigation.navigateNextHunk(),
         navigatePrevHunk: () => this.navigation.navigatePrevHunk(),
-        push: () => this.gitManager?.push(),
-        fetchRemote: () => this.gitManager?.fetchRemote(),
-        pullRebase: () => this.gitManager?.pullRebase(),
-        stash: () => this.gitManager?.stash(),
-        stashPop: () => this.gitManager?.stashPop(),
+        push: () => this.gitManager?.remote.push(),
+        fetchRemote: () => this.gitManager?.remote.fetchRemote(),
+        pullRebase: () => this.gitManager?.remote.pullRebase(),
+        stash: () => this.gitManager?.remote.stash(),
+        stashPop: () => this.gitManager?.remote.stashPop(),
         openStashListModal: () => this.modals.openStashListModal(),
         openBranchPicker: () => this.modals.openBranchPicker(),
         showSoftResetConfirm: () => this.modals.showSoftResetConfirm(),
@@ -264,8 +274,8 @@ export class App {
         getBottomTab: () => this.uiState.state.bottomTab,
         getCurrentPane: () => this.uiState.state.currentPane,
         isCommitInputFocused: () => this.commitFlowState.state.inputFocused,
-        isRemoteInProgress: () => this.gitManager?.remoteState.inProgress ?? false,
-        getStatusFiles: () => this.gitManager?.state.status?.files ?? [],
+        isRemoteInProgress: () => this.gitManager?.remote.remoteState.inProgress ?? false,
+        getStatusFiles: () => this.gitManager?.workingTree.state.status?.files ?? [],
         getSelectedIndex: () => this.uiState.state.selectedIndex,
         uiState: this.uiState,
         getExplorerManager: () => this.explorerManager,
@@ -299,10 +309,10 @@ export class App {
       {
         uiState: this.uiState,
         getExplorerManager: () => this.explorerManager,
-        getStatusFiles: () => this.gitManager?.state.status?.files ?? [],
-        getHistoryCommitCount: () => this.gitManager?.historyState.commits.length ?? 0,
-        getCompareCommits: () => this.gitManager?.compareState?.compareDiff?.commits ?? [],
-        getCompareFiles: () => this.gitManager?.compareState?.compareDiff?.files ?? [],
+        getStatusFiles: () => this.gitManager?.workingTree.state.status?.files ?? [],
+        getHistoryCommitCount: () => this.gitManager?.history.historyState.commits.length ?? 0,
+        getCompareCommits: () => this.gitManager?.compare.compareState?.compareDiff?.commits ?? [],
+        getCompareFiles: () => this.gitManager?.compare.compareState?.compareDiff?.files ?? [],
         getBottomPaneTotalRows: () => this.bottomPaneTotalRows,
         getScreenWidth: () => (this.screen.width as number) || 80,
         getCachedFlatFiles: () => this.cachedFlatFiles,
@@ -323,19 +333,19 @@ export class App {
         this.uiState.setSelectedHunkIndex(0);
       }
       if (tab === 'history') {
-        this.gitManager?.loadHistory();
+        this.loadHistory();
       } else if (tab === 'compare') {
-        this.gitManager?.refreshCompareDiff(this.uiState.state.includeUncommitted);
+        this.gitManager?.compare.refreshCompareDiff(this.uiState.state.includeUncommitted);
       } else if (tab === 'explorer') {
         // Explorer is already loaded on init, but refresh if needed
         if (!this.explorerManager?.state.displayRows.length) {
           this.explorerManager?.loadDirectory('');
         }
       } else if (tab === 'commit') {
-        this.gitManager?.loadStashList();
+        this.gitManager?.workingTree.loadStashList();
         // Also load history if needed for HEAD commit display
-        if (!this.gitManager?.historyState.commits.length) {
-          this.gitManager?.loadHistory();
+        if (!this.gitManager?.history.historyState.commits.length) {
+          this.loadHistory();
         }
       }
     });
@@ -372,9 +382,12 @@ export class App {
   }
 
   private initGitManager(oldRepoPath?: string): void {
-    // Clean up existing manager
+    // Clean up existing manager's event listeners
     if (this.gitManager) {
-      this.gitManager.removeAllListeners();
+      this.gitManager.workingTree.removeAllListeners();
+      this.gitManager.history.removeAllListeners();
+      this.gitManager.compare.removeAllListeners();
+      this.gitManager.remote.removeAllListeners();
       // Use oldRepoPath if provided (when switching repos), otherwise use current path
       removeManagerForRepo(oldRepoPath ?? this.repoPath);
     }
@@ -382,18 +395,19 @@ export class App {
     // Get or create manager for this repo
     this.gitManager = getManagerForRepo(this.repoPath);
 
-    // Listen to state changes
-    this.gitManager.on('state-change', () => {
+    // Listen to working tree state changes
+    this.gitManager.workingTree.on('state-change', () => {
       // Skip reconciliation while loading — the pending anchor must wait
       // for the new status to arrive before being consumed
-      if (!this.gitManager?.state.isLoading) {
+      if (!this.gitManager?.workingTree.state.isLoading) {
         this.reconcileSelectionAfterStateChange();
       }
       this.updateExplorerGitStatus();
       this.render();
     });
 
-    this.gitManager.on('history-state-change', (historyState) => {
+    // Listen to history state changes
+    this.gitManager.history.on('history-state-change', (historyState) => {
       // Auto-select first commit when history loads
       if (historyState.commits.length > 0 && !historyState.selectedCommit) {
         const state = this.uiState.state;
@@ -404,35 +418,46 @@ export class App {
       this.render();
     });
 
-    this.gitManager.on('compare-state-change', () => {
+    // Listen to compare state changes
+    this.gitManager.compare.on('compare-state-change', () => {
       this.render();
     });
 
-    this.gitManager.on('compare-selection-change', () => {
+    this.gitManager.compare.on('compare-selection-change', () => {
       this.render();
     });
 
-    this.gitManager.on('remote-state-change', (remoteState) => {
+    // Listen to remote operation state changes
+    this.gitManager.remote.on('remote-state-change', (remoteState) => {
       // Auto-clear success after 3s, error after 5s
       if (this.remoteClearTimer) clearTimeout(this.remoteClearTimer);
       if (remoteState.lastResult && !remoteState.inProgress) {
         this.remoteClearTimer = setTimeout(() => {
-          this.gitManager?.clearRemoteState();
+          this.gitManager?.remote.clearRemoteState();
         }, 3000);
       } else if (remoteState.error) {
         this.remoteClearTimer = setTimeout(() => {
-          this.gitManager?.clearRemoteState();
+          this.gitManager?.remote.clearRemoteState();
         }, 5000);
       }
       this.render();
     });
 
     // Start watching and do initial refresh
-    this.gitManager.startWatching();
-    this.gitManager.refresh();
+    this.gitManager.workingTree.startWatching();
+    this.gitManager.workingTree.refresh();
 
     // Initialize explorer manager
     this.initExplorerManager();
+  }
+
+  /**
+   * Load history with error handling (moved from facade).
+   */
+  private loadHistory(count: number = 100): void {
+    this.gitManager?.history.loadHistory(count).catch((err) => {
+      this.showError(`Failed to load history: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   /**
@@ -440,13 +465,15 @@ export class App {
    * Handles both flat mode (path-based anchoring) and categorized mode (category-based anchoring).
    */
   private reconcileSelectionAfterStateChange(): void {
-    const files = this.gitManager?.state.status?.files ?? [];
+    const files = this.gitManager?.workingTree.state.status?.files ?? [];
 
-    if (this.uiState.state.flatViewMode && this.staging.pendingFlatSelectionPath) {
-      const flatFiles = buildFlatFileList(files, this.gitManager?.state.hunkCounts ?? null);
-      const targetPath = this.staging.pendingFlatSelectionPath;
-      this.staging.pendingFlatSelectionPath = null;
-      const newIndex = getFlatFileIndexByPath(flatFiles, targetPath);
+    const pendingFlatPath = this.staging.consumePendingFlatSelectionPath();
+    if (this.uiState.state.flatViewMode && pendingFlatPath) {
+      const flatFiles = buildFlatFileList(
+        files,
+        this.gitManager?.workingTree.state.hunkCounts ?? null
+      );
+      const newIndex = getFlatFileIndexByPath(flatFiles, pendingFlatPath);
       if (newIndex >= 0) {
         this.uiState.setSelectedIndex(newIndex);
         this.navigation.selectFileByIndex(newIndex);
@@ -458,9 +485,8 @@ export class App {
       return;
     }
 
-    if (this.staging.pendingSelectionAnchor) {
-      const anchor = this.staging.pendingSelectionAnchor;
-      this.staging.pendingSelectionAnchor = null;
+    const anchor = this.staging.consumePendingSelectionAnchor();
+    if (anchor) {
       const newIndex = getIndexForCategoryPosition(files, anchor.category, anchor.categoryIndex);
       this.uiState.setSelectedIndex(newIndex);
       this.navigation.selectFileByIndex(newIndex);
@@ -469,7 +495,10 @@ export class App {
 
     // No pending anchor — just clamp to valid range
     if (this.uiState.state.flatViewMode) {
-      const flatFiles = buildFlatFileList(files, this.gitManager?.state.hunkCounts ?? null);
+      const flatFiles = buildFlatFileList(
+        files,
+        this.gitManager?.workingTree.state.hunkCounts ?? null
+      );
       const maxIndex = flatFiles.length - 1;
       if (maxIndex >= 0 && this.uiState.state.selectedIndex > maxIndex) {
         this.uiState.setSelectedIndex(maxIndex);
@@ -517,7 +546,7 @@ export class App {
   private updateExplorerGitStatus(): void {
     if (!this.explorerManager || !this.gitManager) return;
 
-    const files = this.gitManager.state.status?.files ?? [];
+    const files = this.gitManager.workingTree.state.status?.files ?? [];
     const statusMap: GitStatusMap = {
       files: new Map(),
       directories: new Set(),
@@ -559,11 +588,11 @@ export class App {
   private loadCurrentTabData(): void {
     const tab = this.uiState.state.bottomTab;
     if (tab === 'history') {
-      this.gitManager?.loadHistory();
+      this.loadHistory();
     } else if (tab === 'compare') {
-      this.gitManager?.refreshCompareDiff(this.uiState.state.includeUncommitted);
+      this.gitManager?.compare.refreshCompareDiff(this.uiState.state.includeUncommitted);
     }
-    // Diff tab data is loaded by gitManager.refresh() in initGitManager
+    // Diff tab data is loaded by gitManager.workingTree.refresh() in initGitManager
     // Explorer data is loaded by initExplorerManager()
   }
 
@@ -591,8 +620,8 @@ export class App {
 
   private getAppState(): AppState {
     const state = this.uiState.state;
-    const gitState = this.gitManager?.state;
-    const historyState = this.gitManager?.historyState;
+    const gitState = this.gitManager?.workingTree.state;
+    const historyState = this.gitManager?.history.historyState;
     const files = gitState?.status?.files ?? [];
     const commits = historyState?.commits ?? [];
 
@@ -622,11 +651,11 @@ export class App {
   }
 
   private async commit(message: string): Promise<void> {
-    await this.gitManager?.commit(message);
+    await this.gitManager?.workingTree.commit(message);
   }
 
   private async refresh(): Promise<void> {
-    await this.gitManager?.refresh();
+    await this.gitManager?.workingTree.refresh();
   }
 
   private toggleMouseMode(): void {
@@ -682,9 +711,9 @@ export class App {
     this.updateBottomPane();
 
     // Restore hunk index after diff refresh (e.g. after hunk toggle in flat mode)
-    if (this.staging.pendingHunkIndex !== null && this.bottomPaneHunkCount > 0) {
-      const restored = Math.min(this.staging.pendingHunkIndex, this.bottomPaneHunkCount - 1);
-      this.staging.pendingHunkIndex = null;
+    const pendingHunk = this.staging.consumePendingHunkIndex();
+    if (pendingHunk !== null && this.bottomPaneHunkCount > 0) {
+      const restored = Math.min(pendingHunk, this.bottomPaneHunkCount - 1);
       this.uiState.setSelectedHunkIndex(restored);
       this.updateBottomPane(); // Re-render with correct hunk selection
     }
@@ -694,7 +723,7 @@ export class App {
   }
 
   private updateHeader(): void {
-    const gitState = this.gitManager?.state;
+    const gitState = this.gitManager?.workingTree.state;
     const width = (this.screen.width as number) || 80;
 
     const content = formatHeader(
@@ -703,7 +732,7 @@ export class App {
       gitState?.isLoading ?? false,
       gitState?.error ?? null,
       width,
-      this.gitManager?.remoteState ?? null
+      this.gitManager?.remote.remoteState ?? null
     );
 
     this.layout.headerBox.setContent(content);
@@ -712,23 +741,26 @@ export class App {
   private updateTopPane(): void {
     const state = this.uiState.state;
     const width = (this.screen.width as number) || 80;
-    const files = this.gitManager?.state.status?.files ?? [];
+    const files = this.gitManager?.workingTree.state.status?.files ?? [];
 
     // Build and cache flat file list when in flat mode
     if (state.flatViewMode) {
-      this.cachedFlatFiles = buildFlatFileList(files, this.gitManager?.state.hunkCounts ?? null);
+      this.cachedFlatFiles = buildFlatFileList(
+        files,
+        this.gitManager?.workingTree.state.hunkCounts ?? null
+      );
     }
 
     const content = renderTopPane(
       state,
       files,
-      this.gitManager?.historyState?.commits ?? [],
-      this.gitManager?.compareState?.compareDiff ?? null,
+      this.gitManager?.history.historyState?.commits ?? [],
+      this.gitManager?.compare.compareState?.compareDiff ?? null,
       this.navigation.compareSelection,
       this.explorerManager?.state,
       width,
       this.layout.dimensions.topPaneHeight,
-      this.gitManager?.state.hunkCounts,
+      this.gitManager?.workingTree.state.hunkCounts,
       state.flatViewMode ? this.cachedFlatFiles : undefined
     );
 
@@ -738,7 +770,7 @@ export class App {
   private updateBottomPane(): void {
     const state = this.uiState.state;
     const width = (this.screen.width as number) || 80;
-    const files = this.gitManager?.state.status?.files ?? [];
+    const files = this.gitManager?.workingTree.state.status?.files ?? [];
     const stagedCount = files.filter((f) => f.staged).length;
 
     // Update staged count for commit validation
@@ -747,13 +779,15 @@ export class App {
     // Pass selectedHunkIndex and staged status only when diff pane is focused on diff tab
     const diffPaneFocused = state.bottomTab === 'diff' && state.currentPane === 'diff';
     const hunkIndex = diffPaneFocused ? state.selectedHunkIndex : undefined;
-    const isFileStaged = diffPaneFocused ? this.gitManager?.state.selectedFile?.staged : undefined;
+    const isFileStaged = diffPaneFocused
+      ? this.gitManager?.workingTree.state.selectedFile?.staged
+      : undefined;
 
     const { content, totalRows, hunkCount, hunkBoundaries, hunkMapping } = renderBottomPane(
       state,
-      this.gitManager?.state.diff ?? null,
-      this.gitManager?.historyState,
-      this.gitManager?.compareSelectionState,
+      this.gitManager?.workingTree.state.diff ?? null,
+      this.gitManager?.history.historyState,
+      this.gitManager?.compare.compareSelectionState,
       this.explorerManager?.state?.selectedFile ?? null,
       this.commitFlowState.state,
       stagedCount,
@@ -762,11 +796,11 @@ export class App {
       this.layout.dimensions.bottomPaneHeight,
       hunkIndex,
       isFileStaged,
-      state.flatViewMode ? this.gitManager?.state.combinedFileDiffs : undefined,
-      this.gitManager?.state.status?.branch ?? null,
-      this.gitManager?.remoteState ?? null,
-      this.gitManager?.state.stashList,
-      this.gitManager?.historyState.commits[0] ?? null
+      state.flatViewMode ? this.gitManager?.workingTree.state.combinedFileDiffs : undefined,
+      this.gitManager?.workingTree.state.status?.branch ?? null,
+      this.gitManager?.remote.remoteState ?? null,
+      this.gitManager?.workingTree.state.stashList,
+      this.gitManager?.history.historyState.commits[0] ?? null
     );
 
     this.bottomPaneTotalRows = totalRows;

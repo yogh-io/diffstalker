@@ -25,6 +25,7 @@ export interface NavigationContext {
   getHunkCount(): number;
   getHunkBoundaries(): HunkBoundary[];
   getRepoPath(): string;
+  onError(message: string): void;
 }
 
 /**
@@ -49,7 +50,7 @@ export class NavigationController {
 
   navigateFileList(direction: -1 | 1): void {
     const state = this.ctx.uiState.state;
-    const files = this.ctx.getGitManager()?.state.status?.files ?? [];
+    const files = this.ctx.getGitManager()?.workingTree.state.status?.files ?? [];
 
     const maxIndex = state.flatViewMode
       ? this.ctx.getCachedFlatFiles().length - 1
@@ -132,7 +133,7 @@ export class NavigationController {
 
   private navigateHistoryDown(): void {
     const state = this.ctx.uiState.state;
-    const commits = this.ctx.getGitManager()?.historyState.commits ?? [];
+    const commits = this.ctx.getGitManager()?.history.historyState.commits ?? [];
     const newIndex = Math.min(commits.length - 1, state.historySelectedIndex + 1);
 
     if (newIndex !== state.historySelectedIndex) {
@@ -146,16 +147,21 @@ export class NavigationController {
   }
 
   selectHistoryCommitByIndex(index: number): void {
-    const commits = this.ctx.getGitManager()?.historyState.commits ?? [];
+    const gm = this.ctx.getGitManager();
+    const commits = gm?.history.historyState.commits ?? [];
     const commit = getCommitAtIndex(commits, index);
     if (commit) {
       this.ctx.uiState.setDiffScrollOffset(0);
-      this.ctx.getGitManager()?.selectHistoryCommit(commit);
+      gm?.history.selectHistoryCommit(commit).catch((err) => {
+        this.ctx.onError(
+          `Failed to load commit diff: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     }
   }
 
   private navigateCompareUp(): void {
-    const compareState = this.ctx.getGitManager()?.compareState;
+    const compareState = this.ctx.getGitManager()?.compare.compareState;
     const commits = compareState?.compareDiff?.commits ?? [];
     const files = compareState?.compareDiff?.files ?? [];
 
@@ -177,7 +183,7 @@ export class NavigationController {
   }
 
   private navigateCompareDown(): void {
-    const compareState = this.ctx.getGitManager()?.compareState;
+    const compareState = this.ctx.getGitManager()?.compare.compareState;
     const commits = compareState?.compareDiff?.commits ?? [];
     const files = compareState?.compareDiff?.files ?? [];
 
@@ -212,10 +218,15 @@ export class NavigationController {
     this.compareSelection = selection;
     this.ctx.uiState.setDiffScrollOffset(0);
 
+    const gm = this.ctx.getGitManager();
     if (selection.type === 'commit') {
-      this.ctx.getGitManager()?.selectCompareCommit(selection.index);
+      gm?.compare.selectCompareCommit(selection.index).catch((err) => {
+        this.ctx.onError(
+          `Failed to load commit diff: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     } else {
-      this.ctx.getGitManager()?.selectCompareFile(selection.index);
+      gm?.compare.selectCompareFile(selection.index);
     }
   }
 
@@ -270,16 +281,16 @@ export class NavigationController {
         if (file) {
           this.ctx.uiState.setDiffScrollOffset(0);
           this.ctx.uiState.setSelectedHunkIndex(0);
-          this.ctx.getGitManager()?.selectFile(file);
+          this.ctx.getGitManager()?.workingTree.selectFile(file);
         }
       }
     } else {
-      const files = this.ctx.getGitManager()?.state.status?.files ?? [];
+      const files = this.ctx.getGitManager()?.workingTree.state.status?.files ?? [];
       const file = getFileAtIndex(files, index);
       if (file) {
         this.ctx.uiState.setDiffScrollOffset(0);
         this.ctx.uiState.setSelectedHunkIndex(0);
-        this.ctx.getGitManager()?.selectFile(file);
+        this.ctx.getGitManager()?.workingTree.selectFile(file);
       }
     }
   }
@@ -294,7 +305,7 @@ export class NavigationController {
     const relativePath = absolutePath.slice(repoPrefix.length);
     if (!relativePath) return;
 
-    const files = this.ctx.getGitManager()?.state.status?.files ?? [];
+    const files = this.ctx.getGitManager()?.workingTree.state.status?.files ?? [];
     const fileIndex = files.findIndex((f) => f.path === relativePath);
 
     if (fileIndex >= 0) {

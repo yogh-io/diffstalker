@@ -59,7 +59,7 @@ export interface KeyBindingContext {
   uiState: UIState;
   getExplorerManager(): { toggleShowOnlyChanges(): Promise<void> } | null;
   commitFlowState: { toggleAmend(): void };
-  getGitManager(): { refreshCompareDiff(includeUncommitted: boolean): void } | null;
+  getGitManager(): { compare: { refreshCompareDiff(includeUncommitted: boolean): void } } | null;
   layout: { setSplitRatio(ratio: number): void };
   getCachedFlatFiles(): FlatFileEntry[];
 }
@@ -274,7 +274,7 @@ export function setupKeyBindings(
     if (ctx.getBottomTab() === 'compare') {
       ctx.uiState.toggleIncludeUncommitted();
       const includeUncommitted = ctx.uiState.state.includeUncommitted;
-      ctx.getGitManager()?.refreshCompareDiff(includeUncommitted);
+      ctx.getGitManager()?.compare.refreshCompareDiff(includeUncommitted);
     }
   });
 

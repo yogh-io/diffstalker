@@ -86,9 +86,10 @@ export class ModalController {
       this.activeModal.focus();
     } else if (modal === 'baseBranch') {
       const gm = this.ctx.getGitManager();
-      gm?.getCandidateBaseBranches()
+      gm?.compare
+        .getCandidateBaseBranches()
         .then((branches) => {
-          const currentBranch = gm?.compareState.compareBaseBranch ?? null;
+          const currentBranch = gm?.compare.compareState.compareBaseBranch ?? null;
           this.activeModal = new BaseBranchPicker(
             this.ctx.screen,
             branches,
@@ -97,7 +98,7 @@ export class ModalController {
               this.activeModal = null;
               this.ctx.uiState.closeModal();
               const includeUncommitted = this.ctx.uiState.state.includeUncommitted;
-              gm?.setCompareBaseBranch(branch, includeUncommitted);
+              gm?.compare.setCompareBaseBranch(branch, includeUncommitted);
             },
             () => {
               this.activeModal = null;
@@ -116,7 +117,7 @@ export class ModalController {
       file.path,
       async () => {
         this.activeModal = null;
-        await this.ctx.getGitManager()?.discard(file);
+        await this.ctx.getGitManager()?.workingTree.discard(file);
       },
       () => {
         this.activeModal = null;
@@ -165,13 +166,13 @@ export class ModalController {
   }
 
   openStashListModal(): void {
-    const entries = this.ctx.getGitManager()?.state.stashList ?? [];
+    const entries = this.ctx.getGitManager()?.workingTree.state.stashList ?? [];
     this.activeModal = new StashListModal(
       this.ctx.screen,
       entries,
       (index) => {
         this.activeModal = null;
-        this.ctx.getGitManager()?.stashPop(index);
+        this.ctx.getGitManager()?.remote.stashPop(index);
       },
       () => {
         this.activeModal = null;
@@ -183,18 +184,18 @@ export class ModalController {
   openBranchPicker(): void {
     this.ctx
       .getGitManager()
-      ?.getLocalBranches()
+      ?.remote.getLocalBranches()
       .then((branches) => {
         this.activeModal = new BranchPicker(
           this.ctx.screen,
           branches,
           (name) => {
             this.activeModal = null;
-            this.ctx.getGitManager()?.switchBranch(name);
+            this.ctx.getGitManager()?.remote.switchBranch(name);
           },
           (name) => {
             this.activeModal = null;
-            this.ctx.getGitManager()?.createBranch(name);
+            this.ctx.getGitManager()?.remote.createBranch(name);
           },
           () => {
             this.activeModal = null;
@@ -206,7 +207,7 @@ export class ModalController {
   }
 
   showSoftResetConfirm(): void {
-    const headCommit = this.ctx.getGitManager()?.historyState.commits[0];
+    const headCommit = this.ctx.getGitManager()?.history.historyState.commits[0];
     if (!headCommit) return;
 
     this.activeModal = new SoftResetConfirm(
@@ -214,7 +215,7 @@ export class ModalController {
       headCommit,
       () => {
         this.activeModal = null;
-        this.ctx.getGitManager()?.softReset();
+        this.ctx.getGitManager()?.remote.softReset();
       },
       () => {
         this.activeModal = null;
@@ -224,7 +225,7 @@ export class ModalController {
   }
 
   cherryPickSelected(): void {
-    const commit = this.ctx.getGitManager()?.historyState.selectedCommit;
+    const commit = this.ctx.getGitManager()?.history.historyState.selectedCommit;
     if (!commit) return;
 
     this.activeModal = new CommitActionConfirm(
@@ -233,7 +234,7 @@ export class ModalController {
       commit,
       () => {
         this.activeModal = null;
-        this.ctx.getGitManager()?.cherryPick(commit.hash);
+        this.ctx.getGitManager()?.remote.cherryPick(commit.hash);
       },
       () => {
         this.activeModal = null;
@@ -243,7 +244,7 @@ export class ModalController {
   }
 
   revertSelected(): void {
-    const commit = this.ctx.getGitManager()?.historyState.selectedCommit;
+    const commit = this.ctx.getGitManager()?.history.historyState.selectedCommit;
     if (!commit) return;
 
     this.activeModal = new CommitActionConfirm(
@@ -252,7 +253,7 @@ export class ModalController {
       commit,
       () => {
         this.activeModal = null;
-        this.ctx.getGitManager()?.revertCommit(commit.hash);
+        this.ctx.getGitManager()?.remote.revertCommit(commit.hash);
       },
       () => {
         this.activeModal = null;
