@@ -11,8 +11,9 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 3. [Mouse Interactions](#mouse-interactions)
 4. [Scrolling Architecture](#scrolling-architecture)
 5. [Themes](#themes)
-6. [Edge Cases](#edge-cases)
-7. [Configuration](#configuration)
+6. [Focus Navigation](#focus-navigation)
+7. [Edge Cases](#edge-cases)
+8. [Configuration](#configuration)
 
 ---
 
@@ -160,7 +161,8 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 |-----|--------|---------|
 | `Up` / `k` | Move up | All views |
 | `Down` / `j` | Move down | All views |
-| `Tab` | Toggle pane focus | All views |
+| `Tab` | Cycle to next focus zone | All views |
+| `Shift+Tab` | Cycle to previous focus zone | All views |
 | `1` | Switch to Diff tab | All views |
 | `2` | Switch to Commit tab | All views |
 | `3` | Switch to History tab | All views |
@@ -416,6 +418,38 @@ Each theme defines `DiffColors`:
 ### Theme Persistence
 
 Selected theme is saved to `~/.config/diffstalker/config.json`.
+
+---
+
+## Focus Navigation
+
+The app uses a **focus zone** system for full keyboard-only navigation with `Tab`/`Shift+Tab`.
+
+### Focus Zones Per Tab
+
+| Tab | Zones (Tab order) | Default |
+|-----|--------------------|---------|
+| Diff | `fileList` → `diffView` | `fileList` |
+| Commit | `fileList` → `commitMessage` → `commitAmend` | `commitMessage` |
+| History | `historyList` → `historyDiff` | `historyList` |
+| Compare | `compareList` → `compareDiff` | `compareList` |
+| Explorer | `explorerTree` → `explorerContent` | `explorerTree` |
+
+### Visual Indicators
+
+- **Middle separator**: Cyan when a top-pane zone is focused, gray for bottom-pane zones
+- **Commit message input**: Cyan border when `commitMessage` zone is focused (even before editing)
+- **Amend checkbox**: `▸` marker in cyan when `commitAmend` zone is focused
+- **Help text**: Context-sensitive hints based on focused zone
+
+### Space/Enter Activation
+
+| Zone | Action |
+|------|--------|
+| `fileList` | Toggle stage/unstage |
+| `commitMessage` | Enter editing mode |
+| `commitAmend` | Toggle amend checkbox |
+| `explorerTree` | Enter directory |
 
 ---
 

@@ -1,4 +1,4 @@
-import type { UIStateData } from '../state/UIState.js';
+import type { UIStateData, FocusZone } from '../state/UIState.js';
 import type { CommitFlowStateData } from '../state/CommitFlowState.js';
 import type { FileEntry, CommitInfo } from '../git/status.js';
 import type { DiffResult, CompareDiff } from '../git/diff.js';
@@ -126,13 +126,15 @@ export function renderBottomPane(
   bottomPaneHeight: number,
   selectedHunkIndex?: number,
   isFileStaged?: boolean,
-  combinedFileDiffs?: CombinedFileDiffs | null
+  combinedFileDiffs?: CombinedFileDiffs | null,
+  focusedZone?: FocusZone
 ): BottomPaneResult {
   if (state.bottomTab === 'commit') {
     const panelOpts = {
       state: commitFlowState,
       stagedCount,
       width,
+      focusedZone,
     };
     const totalRows = getCommitPanelTotalRows(panelOpts);
     const content = formatCommitPanel(
@@ -140,7 +142,8 @@ export function renderBottomPane(
       stagedCount,
       width,
       state.diffScrollOffset,
-      bottomPaneHeight
+      bottomPaneHeight,
+      focusedZone
     );
     return { content, totalRows, hunkCount: 0, hunkBoundaries: [] };
   }

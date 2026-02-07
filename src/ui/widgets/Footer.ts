@@ -68,6 +68,8 @@ export function formatFooter(
     leftContent += ' {gray-fg}n/N:hunk s:toggle{/gray-fg}';
   }
 
+  leftContent += ' {gray-fg}Tab:next{/gray-fg}';
+
   // Right side: tabs
   const tabs: Array<{ key: string; label: string; tab: BottomTab }> = [
     { key: '1', label: 'Diff', tab: 'diff' },

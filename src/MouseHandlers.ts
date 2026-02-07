@@ -1,5 +1,6 @@
 import type { LayoutManager } from './ui/Layout.js';
 import type { UIState } from './state/UIState.js';
+import { TAB_ZONES } from './state/UIState.js';
 import type { FileEntry, CommitInfo } from './git/status.js';
 import type { CompareFileDiff } from './git/diff.js';
 import type { CompareListSelection } from './ui/widgets/CompareListView.js';
@@ -73,7 +74,8 @@ export function setupMouseHandlers(
     handleBottomPaneScroll(-SCROLL_AMOUNT, layout, ctx);
   });
 
-  // Click on top pane to select item
+  // Click on top pane to select item (does NOT change focus zone —
+  // preserves diff pane focus so hunk staging with 's' keeps working)
   layout.topPane.on('click', (mouse: { x: number; y: number }) => {
     const clickedRow = layout.screenYToTopPaneRow(mouse.y);
     if (clickedRow >= 0) {
@@ -86,8 +88,12 @@ export function setupMouseHandlers(
     const clickedRow = layout.screenYToBottomPaneRow(mouse.y);
     if (clickedRow >= 0) {
       if (ctx.uiState.state.bottomTab === 'commit') {
-        actions.focusCommitInput();
+        handleCommitPaneClick(clickedRow, actions, ctx);
       } else {
+        // Set focus to the bottom-pane zone for this tab
+        const zones = TAB_ZONES[ctx.uiState.state.bottomTab];
+        const bottomZone = zones[zones.length - 1];
+        ctx.uiState.setFocusedZone(bottomZone);
         actions.selectHunkAtRow(clickedRow);
       }
     }
@@ -131,6 +137,19 @@ function handleFileListClick(
       ctx.uiState.setSelectedIndex(fileIndex);
       actions.selectFileByIndex(fileIndex);
     }
+  }
+}
+
+function handleCommitPaneClick(row: number, actions: MouseActions, ctx: MouseContext): void {
+  // Commit panel layout: rows 0-4 = title + message box, row 5 = blank, row 6 = amend
+  const absoluteRow = row + ctx.uiState.state.diffScrollOffset;
+  if (absoluteRow === 6) {
+    ctx.uiState.setFocusedZone('commitAmend');
+  } else if (absoluteRow >= 2 && absoluteRow <= 4) {
+    ctx.uiState.setFocusedZone('commitMessage');
+    actions.focusCommitInput();
+  } else {
+    ctx.uiState.setFocusedZone('commitMessage');
   }
 }
 

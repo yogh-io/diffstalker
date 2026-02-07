@@ -1,6 +1,6 @@
 import type { Widgets } from 'blessed';
 import type { BottomTab } from './types/tabs.js';
-import type { UIState } from './state/UIState.js';
+import type { UIState, FocusZone } from './state/UIState.js';
 import type { FileEntry } from './git/status.js';
 import { SPLIT_RATIO_STEP } from './ui/Layout.js';
 import { getFileAtIndex } from './ui/widgets/FileList.js';
@@ -44,6 +44,7 @@ export interface KeyBindingContext {
   hasActiveModal(): boolean;
   getBottomTab(): BottomTab;
   getCurrentPane(): string;
+  getFocusedZone(): FocusZone;
   isCommitInputFocused(): boolean;
   getStatusFiles(): FileEntry[];
   getSelectedIndex(): number;
@@ -94,10 +95,15 @@ export function setupKeyBindings(
     });
   }
 
-  // Pane toggle (skip if modal is open)
+  // Focus zone cycling (skip if modal or commit input is active)
   screen.key(['tab'], () => {
-    if (ctx.hasActiveModal()) return;
-    ctx.uiState.togglePane();
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused()) return;
+    ctx.uiState.advanceFocus();
+  });
+
+  screen.key(['S-tab'], () => {
+    if (ctx.hasActiveModal() || ctx.isCommitInputFocused()) return;
+    ctx.uiState.retreatFocus();
   });
 
   // Staging operations (skip if modal is open)
@@ -126,6 +132,17 @@ export function setupKeyBindings(
   // Select/toggle (skip if modal is open)
   screen.key(['enter', 'space'], () => {
     if (ctx.hasActiveModal()) return;
+    const zone = ctx.getFocusedZone();
+    // Zone-aware dispatch for commit panel elements
+    if (zone === 'commitMessage' && !ctx.isCommitInputFocused()) {
+      actions.focusCommitInput();
+      return;
+    }
+    if (zone === 'commitAmend') {
+      ctx.commitFlowState.toggleAmend();
+      actions.render();
+      return;
+    }
     if (ctx.getBottomTab() === 'explorer' && ctx.getCurrentPane() === 'explorer') {
       actions.enterExplorerDirectory();
     } else {

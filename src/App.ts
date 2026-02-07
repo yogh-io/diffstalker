@@ -265,6 +265,7 @@ export class App {
         hasActiveModal: () => this.modals.hasActiveModal(),
         getBottomTab: () => this.uiState.state.bottomTab,
         getCurrentPane: () => this.uiState.state.currentPane,
+        getFocusedZone: () => this.uiState.state.focusedZone,
         isCommitInputFocused: () => this.commitFlowState.state.inputFocused,
         getStatusFiles: () => this.gitManager?.workingTree.state.status?.files ?? [],
         getSelectedIndex: () => this.uiState.state.selectedIndex,
@@ -699,8 +700,20 @@ export class App {
       this.updateBottomPane(); // Re-render with correct hunk selection
     }
 
+    this.updateSeparators();
     this.updateFooter();
     this.screen.render();
+  }
+
+  private updateSeparators(): void {
+    const zone = this.uiState.state.focusedZone;
+    // Top-pane zones: fileList, historyList, compareList, explorerTree
+    const isTopPaneZone =
+      zone === 'fileList' ||
+      zone === 'historyList' ||
+      zone === 'compareList' ||
+      zone === 'explorerTree';
+    this.layout.middleSeparator.style.fg = isTopPaneZone ? 'cyan' : 'gray';
   }
 
   private updateHeader(): void {
@@ -777,7 +790,8 @@ export class App {
       this.layout.dimensions.bottomPaneHeight,
       hunkIndex,
       isFileStaged,
-      state.flatViewMode ? this.gitManager?.workingTree.state.combinedFileDiffs : undefined
+      state.flatViewMode ? this.gitManager?.workingTree.state.combinedFileDiffs : undefined,
+      state.focusedZone
     );
 
     this.bottomPaneTotalRows = totalRows;

@@ -1,12 +1,58 @@
 import { EventEmitter } from 'node:events';
 import type { BottomTab } from '../types/tabs.js';
 import type { FileEntry } from '../git/status.js';
+import { FocusRing } from './FocusRing.js';
 
 export type Pane = 'files' | 'diff' | 'commit' | 'history' | 'compare' | 'explorer';
 
+export type FocusZone =
+  | 'fileList'
+  | 'diffView'
+  | 'commitMessage'
+  | 'commitAmend'
+  | 'historyList'
+  | 'historyDiff'
+  | 'compareList'
+  | 'compareDiff'
+  | 'explorerTree'
+  | 'explorerContent';
+
+/** Map each focus zone to its derived currentPane value. */
+export const ZONE_TO_PANE: Record<FocusZone, Pane> = {
+  fileList: 'files',
+  diffView: 'diff',
+  commitMessage: 'commit',
+  commitAmend: 'commit',
+  historyList: 'history',
+  historyDiff: 'diff',
+  compareList: 'compare',
+  compareDiff: 'diff',
+  explorerTree: 'explorer',
+  explorerContent: 'diff',
+};
+
+/** Ordered list of focus zones per tab (Tab order). */
+export const TAB_ZONES: Record<BottomTab, FocusZone[]> = {
+  diff: ['fileList', 'diffView'],
+  commit: ['fileList', 'commitMessage', 'commitAmend'],
+  history: ['historyList', 'historyDiff'],
+  compare: ['compareList', 'compareDiff'],
+  explorer: ['explorerTree', 'explorerContent'],
+};
+
+/** Default focus zone when switching to each tab. */
+export const DEFAULT_TAB_ZONE: Record<BottomTab, FocusZone> = {
+  diff: 'fileList',
+  commit: 'commitMessage',
+  history: 'historyList',
+  compare: 'compareList',
+  explorer: 'explorerTree',
+};
+
 export interface UIStateData {
   // Navigation
-  currentPane: Pane;
+  focusedZone: FocusZone;
+  currentPane: Pane; // Derived from focusedZone via ZONE_TO_PANE
   bottomTab: BottomTab;
   selectedIndex: number;
 
@@ -60,6 +106,7 @@ type UIStateEventMap = {
 };
 
 const DEFAULT_STATE: UIStateData = {
+  focusedZone: 'fileList',
   currentPane: 'files',
   bottomTab: 'diff',
   selectedIndex: 0,
@@ -92,10 +139,19 @@ const DEFAULT_STATE: UIStateData = {
  */
 export class UIState extends EventEmitter<UIStateEventMap> {
   private _state: UIStateData;
+  private focusRing: FocusRing<FocusZone>;
 
   constructor(initialState: Partial<UIStateData> = {}) {
     super();
     this._state = { ...DEFAULT_STATE, ...initialState };
+    const tab = this._state.bottomTab;
+    const zones = TAB_ZONES[tab];
+    this.focusRing = new FocusRing(zones);
+    if (this._state.focusedZone) {
+      this.focusRing.setCurrent(this._state.focusedZone);
+    }
+    // Ensure currentPane is in sync
+    this._state.currentPane = ZONE_TO_PANE[this._state.focusedZone];
   }
 
   get state(): UIStateData {
@@ -104,30 +160,39 @@ export class UIState extends EventEmitter<UIStateEventMap> {
 
   private update(partial: Partial<UIStateData>): void {
     this._state = { ...this._state, ...partial };
+    // Derive currentPane from focusedZone
+    this._state.currentPane = ZONE_TO_PANE[this._state.focusedZone];
     this.emit('change', this._state);
   }
 
   // Navigation
   setPane(pane: Pane): void {
-    if (this._state.currentPane !== pane) {
-      this.update({ currentPane: pane });
-      this.emit('pane-change', pane);
+    // Map pane to the first matching zone for the current tab
+    const zones = TAB_ZONES[this._state.bottomTab];
+    const zone = zones.find((z) => ZONE_TO_PANE[z] === pane);
+    if (zone) {
+      this.setFocusedZone(zone);
+    }
+  }
+
+  setFocusedZone(zone: FocusZone): void {
+    if (this._state.focusedZone !== zone) {
+      this.focusRing.setCurrent(zone);
+      const oldPane = this._state.currentPane;
+      this.update({ focusedZone: zone });
+      if (this._state.currentPane !== oldPane) {
+        this.emit('pane-change', this._state.currentPane);
+      }
     }
   }
 
   setTab(tab: BottomTab): void {
     if (this._state.bottomTab !== tab) {
-      // Map tab to appropriate pane
-      const paneMap: Record<BottomTab, Pane> = {
-        diff: 'files',
-        commit: 'commit',
-        history: 'history',
-        compare: 'compare',
-        explorer: 'explorer',
-      };
+      const defaultZone = DEFAULT_TAB_ZONE[tab];
+      this.focusRing.setItems(TAB_ZONES[tab], defaultZone);
       this.update({
         bottomTab: tab,
-        currentPane: paneMap[tab],
+        focusedZone: defaultZone,
       });
       this.emit('tab-change', tab);
     }
@@ -271,24 +336,38 @@ export class UIState extends EventEmitter<UIStateEventMap> {
     this.update({ commitInputFocused: focused });
   }
 
-  // Helper for toggling between panes
-  togglePane(): void {
-    const { bottomTab, currentPane } = this._state;
-    if (bottomTab === 'diff' || bottomTab === 'commit') {
-      this.setPane(currentPane === 'files' ? 'diff' : 'files');
-    } else if (bottomTab === 'history') {
-      this.setPane(currentPane === 'history' ? 'diff' : 'history');
-    } else if (bottomTab === 'compare') {
-      this.setPane(currentPane === 'compare' ? 'diff' : 'compare');
-    } else if (bottomTab === 'explorer') {
-      this.setPane(currentPane === 'explorer' ? 'diff' : 'explorer');
+  // Focus zone cycling
+  advanceFocus(): void {
+    const zone = this.focusRing.next();
+    const oldPane = this._state.currentPane;
+    this.update({ focusedZone: zone });
+    if (this._state.currentPane !== oldPane) {
+      this.emit('pane-change', this._state.currentPane);
     }
+  }
+
+  retreatFocus(): void {
+    const zone = this.focusRing.prev();
+    const oldPane = this._state.currentPane;
+    this.update({ focusedZone: zone });
+    if (this._state.currentPane !== oldPane) {
+      this.emit('pane-change', this._state.currentPane);
+    }
+  }
+
+  /** Backward compat alias for advanceFocus(). */
+  togglePane(): void {
+    this.advanceFocus();
   }
 
   // Reset repo-specific state when switching repositories
   resetForNewRepo(): void {
+    const defaultZone = DEFAULT_TAB_ZONE[this._state.bottomTab];
+    this.focusRing.setItems(TAB_ZONES[this._state.bottomTab], defaultZone);
     this._state = {
       ...this._state,
+      focusedZone: defaultZone,
+      currentPane: ZONE_TO_PANE[defaultZone],
       selectedIndex: 0,
       fileListScrollOffset: 0,
       diffScrollOffset: 0,

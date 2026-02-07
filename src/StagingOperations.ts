@@ -160,7 +160,20 @@ export class StagingOperations {
 
   async toggleCurrentHunk(): Promise<void> {
     const selectedFile = this.ctx.getGitManager()?.workingTree.state.selectedFile;
-    if (!selectedFile || selectedFile.status === 'untracked') return;
+    if (!selectedFile) return;
+    if (selectedFile.status === 'untracked') {
+      // Hunk staging not available for untracked files; stage the whole file
+      // but preserve selection state like a normal hunk toggle would
+      const wt = this.ctx.getGitManager()?.workingTree;
+      const files = wt?.state.status?.files ?? [];
+      this.pendingSelectionAnchor = getCategoryForIndex(
+        files,
+        this.ctx.uiState.state.selectedIndex
+      );
+      this.pendingHunkIndex = this.ctx.uiState.state.selectedHunkIndex;
+      await wt?.stage(selectedFile);
+      return;
+    }
 
     if (this.ctx.uiState.state.flatViewMode) {
       await this.toggleCurrentHunkFlat();

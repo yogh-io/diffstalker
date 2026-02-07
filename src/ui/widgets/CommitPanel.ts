@@ -1,16 +1,18 @@
 import type { CommitFlowStateData } from '../../state/CommitFlowState.js';
+import type { FocusZone } from '../../state/UIState.js';
 
 export interface CommitPanelOptions {
   state: CommitFlowStateData;
   stagedCount: number;
   width: number;
+  focusedZone?: FocusZone;
 }
 
 /**
  * Build all lines for the commit panel (used for both rendering and totalRows).
  */
 export function buildCommitPanelLines(opts: CommitPanelOptions): string[] {
-  const { state, stagedCount, width } = opts;
+  const { state, stagedCount, width, focusedZone } = opts;
   const lines: string[] = [];
 
   // Title
@@ -21,8 +23,9 @@ export function buildCommitPanelLines(opts: CommitPanelOptions): string[] {
   lines.push(title);
   lines.push('');
 
-  // Message input area
-  const borderColor = state.inputFocused ? 'cyan' : 'gray';
+  // Message input area - cyan when zone-focused or input-focused
+  const messageFocused = state.inputFocused || focusedZone === 'commitMessage';
+  const borderColor = messageFocused ? 'cyan' : 'gray';
 
   // Top border
   const innerWidth = Math.max(20, width - 6);
@@ -48,10 +51,16 @@ export function buildCommitPanelLines(opts: CommitPanelOptions): string[] {
 
   lines.push('');
 
-  // Amend checkbox
+  // Amend checkbox - cyan marker when zone-focused
+  const amendFocused = focusedZone === 'commitAmend';
   const checkbox = state.amend ? '[x]' : '[ ]';
-  const checkboxColor = state.amend ? 'green' : 'gray';
-  lines.push(`{${checkboxColor}-fg}${checkbox}{/${checkboxColor}-fg} Amend {gray-fg}(a){/gray-fg}`);
+  let checkboxColor = 'gray';
+  if (amendFocused) checkboxColor = 'cyan';
+  else if (state.amend) checkboxColor = 'green';
+  const amendPrefix = amendFocused ? '{cyan-fg}\u25b8 {/cyan-fg}' : '  ';
+  lines.push(
+    `${amendPrefix}{${checkboxColor}-fg}${checkbox}{/${checkboxColor}-fg} Amend {gray-fg}(a){/gray-fg}`
+  );
 
   // Error message
   if (state.error) {
@@ -67,10 +76,17 @@ export function buildCommitPanelLines(opts: CommitPanelOptions): string[] {
 
   lines.push('');
 
-  // Help text
-  const helpText = state.inputFocused
-    ? 'Enter: commit | Ctrl+a: amend | Esc: unfocus'
-    : 'i/Enter: edit | a: amend | Esc: back';
+  // Help text - context-sensitive based on focused zone
+  let helpText: string;
+  if (state.inputFocused) {
+    helpText = 'Enter: commit | Ctrl+a: amend | Esc: unfocus';
+  } else if (focusedZone === 'commitMessage') {
+    helpText = 'Tab: next | Space: edit | a: amend';
+  } else if (focusedZone === 'commitAmend') {
+    helpText = 'Tab: next | Space: toggle | Esc: back';
+  } else {
+    helpText = 'i/Enter: edit | a: amend | Esc: back';
+  }
   lines.push(`{gray-fg}Staged: ${stagedCount} file(s) | ${helpText}{/gray-fg}`);
 
   return lines;
@@ -91,12 +107,14 @@ export function formatCommitPanel(
   stagedCount: number,
   width: number,
   scrollOffset: number = 0,
-  visibleHeight?: number
+  visibleHeight?: number,
+  focusedZone?: FocusZone
 ): string {
   const allLines = buildCommitPanelLines({
     state,
     stagedCount,
     width,
+    focusedZone,
   });
 
   if (visibleHeight && allLines.length > visibleHeight) {

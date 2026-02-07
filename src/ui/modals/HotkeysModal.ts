@@ -16,7 +16,8 @@ const hotkeyGroups: HotkeyGroup[] = [
     title: 'Navigation',
     entries: [
       { key: 'j/k', description: 'Move up/down' },
-      { key: 'Tab', description: 'Toggle pane focus' },
+      { key: 'Tab', description: 'Next focus zone' },
+      { key: 'Shift+Tab', description: 'Previous focus zone' },
     ],
   },
   {
