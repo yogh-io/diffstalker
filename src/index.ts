@@ -2,6 +2,7 @@
 import { App } from './App.js';
 import { loadConfig } from './config.js';
 import { CommandServer } from './ipc/CommandServer.js';
+import { setDebug } from './utils/logger.js';
 
 // Cleanup function to reset terminal state on exit
 function cleanupTerminal(): void {
@@ -138,6 +139,7 @@ async function main(): Promise<void> {
   }
   if (args.debug) {
     config.debug = true;
+    setDebug(true);
   }
 
   // Start IPC server if --socket specified

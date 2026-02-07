@@ -5,6 +5,7 @@
 
 import { createEmphasize } from 'emphasize';
 import { common } from 'lowlight';
+import { ANSI_FG_RESET } from './ansi.js';
 
 // Create emphasize instance with common languages
 const emphasize = createEmphasize(common);
@@ -203,7 +204,7 @@ export function highlightLinePreserveBg(content: string, language: string): stri
     const result = emphasize.highlight(language, content);
     // Replace full reset (\x1b[0m) with foreground-only reset (\x1b[39m)
     // This preserves any background color set by the caller
-    return result.value.replace(/\x1b\[0m/g, '\x1b[39m');
+    return result.value.replace(/\x1b\[0m/g, ANSI_FG_RESET);
   } catch {
     return content;
   }
@@ -238,7 +239,7 @@ export function highlightBlockPreserveBg(lines: string[], language: string): str
     const block = lines.join('\n');
     const result = emphasize.highlight(language, block);
     // Replace full resets with foreground-only resets
-    const highlighted = result.value.replace(/\x1b\[0m/g, '\x1b[39m');
+    const highlighted = result.value.replace(/\x1b\[0m/g, ANSI_FG_RESET);
     return highlighted.split('\n');
   } catch {
     return lines;

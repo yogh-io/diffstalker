@@ -5,12 +5,7 @@
  * while preserving formatting up to the truncation point.
  */
 
-// ANSI escape sequence pattern: ESC [ ... m
-// Matches sequences like \x1b[32m, \x1b[0m, \x1b[1;34m, etc.
-const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
-
-// ANSI reset sequence to clear all formatting
-const ANSI_RESET = '\x1b[0m';
+import { ANSI_PATTERN, ANSI_RESET } from './ansi.js';
 
 /**
  * Calculate the visual length of a string (excluding ANSI codes).

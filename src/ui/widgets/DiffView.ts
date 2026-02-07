@@ -13,15 +13,17 @@ import {
   type CombinedHunkInfo,
 } from '../../utils/displayRows.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
-
-// ANSI escape codes for raw terminal output (avoids blessed tag escaping issues)
-const ANSI_RESET = '\x1b[0m';
-const ANSI_BOLD = '\x1b[1m';
-const ANSI_GRAY = '\x1b[90m';
-const ANSI_CYAN = '\x1b[36m';
-const ANSI_GREEN = '\x1b[32m';
-const ANSI_YELLOW = '\x1b[33m';
-const ANSI_INVERSE = '\x1b[7m';
+import {
+  ANSI_RESET,
+  ANSI_BOLD,
+  ANSI_GRAY,
+  ANSI_CYAN,
+  ANSI_GREEN,
+  ANSI_YELLOW,
+  ANSI_INVERSE,
+  ansiBg,
+  ansiFg,
+} from '../../utils/ansi.js';
 
 /**
  * Truncate string to fit within maxWidth, adding ellipsis if needed.
@@ -45,26 +47,6 @@ function formatLineNum(lineNum: number | undefined, width: number): string {
  */
 function escapeContent(content: string): string {
   return content.replace(/\{/g, '{{').replace(/\}/g, '}}');
-}
-
-/**
- * Build raw ANSI escape sequence for 24-bit RGB background.
- */
-function ansiBg(hex: string): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `\x1b[48;2;${r};${g};${b}m`;
-}
-
-/**
- * Build raw ANSI escape sequence for 24-bit RGB foreground.
- */
-function ansiFg(hex: string): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `\x1b[38;2;${r};${g};${b}m`;
 }
 
 /**
@@ -258,7 +240,7 @@ function formatDisplayRow(
       const lineNum = formatLineNum(row.lineNum, lineNumWidth);
       const prefix = `${lineNum} ${symbol}  `;
       const rawContent = row.content || '';
-      const prefixAnsi = `\x1b[90m${prefix}\x1b[0m`;
+      const prefixAnsi = `${ANSI_GRAY}${prefix}${ANSI_RESET}`;
 
       if (row.highlighted && !isCont) {
         const content = wrapMode ? row.highlighted : truncateAnsi(row.highlighted, contentWidth);

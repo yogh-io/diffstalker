@@ -4,31 +4,18 @@ import { LayoutManager } from './ui/Layout.js';
 import { setupKeyBindings } from './KeyBindings.js';
 import { renderTopPane, renderBottomPane } from './ui/PaneRenderers.js';
 import { setupMouseHandlers } from './MouseHandlers.js';
+import { NavigationController } from './NavigationController.js';
+import { StagingOperations } from './StagingOperations.js';
+import { ModalController } from './ModalController.js';
 import { FollowMode, FollowModeWatcherState } from './FollowMode.js';
 import { formatHeader } from './ui/widgets/Header.js';
 
 import { formatFooter } from './ui/widgets/Footer.js';
-import { getFileAtIndex, getRowFromFileIndex } from './ui/widgets/FileList.js';
-import { getCommitAtIndex } from './ui/widgets/HistoryView.js';
-import {
-  getNextCompareSelection,
-  getRowFromCompareSelection,
-  type CompareListSelection,
-} from './ui/widgets/CompareListView.js';
 import {
   ExplorerStateManager,
   ExplorerOptions,
   GitStatusMap,
 } from './core/ExplorerStateManager.js';
-import { ThemePicker } from './ui/modals/ThemePicker.js';
-import { HotkeysModal } from './ui/modals/HotkeysModal.js';
-import { BaseBranchPicker } from './ui/modals/BaseBranchPicker.js';
-import { DiscardConfirm } from './ui/modals/DiscardConfirm.js';
-import { FileFinder } from './ui/modals/FileFinder.js';
-import { StashListModal } from './ui/modals/StashListModal.js';
-import { BranchPicker } from './ui/modals/BranchPicker.js';
-import { SoftResetConfirm } from './ui/modals/SoftResetConfirm.js';
-import { CommitActionConfirm } from './ui/modals/CommitActionConfirm.js';
 import { CommitFlowState } from './state/CommitFlowState.js';
 import { UIState } from './state/UIState.js';
 import {
@@ -37,22 +24,15 @@ import {
   removeManagerForRepo,
 } from './core/GitStateManager.js';
 import { Config, saveConfig } from './config.js';
-import type { FileEntry } from './git/status.js';
-import {
-  getCategoryForIndex,
-  getIndexForCategoryPosition,
-  type CategoryName,
-} from './utils/fileCategories.js';
+import { getIndexForCategoryPosition } from './utils/fileCategories.js';
 import {
   buildFlatFileList,
-  getFlatFileAtIndex,
   getFlatFileIndexByPath,
   type FlatFileEntry,
 } from './utils/flatFileList.js';
 import type { CommandServer, CommandHandler, AppState } from './ipc/CommandServer.js';
 import type { BottomTab } from './types/tabs.js';
 import type { ThemeName } from './themes.js';
-import { extractHunkPatch } from './git/diff.js';
 import type { HunkBoundary, CombinedHunkInfo } from './utils/displayRows.js';
 
 export interface AppOptions {
@@ -74,6 +54,9 @@ export class App {
   private explorerManager: ExplorerStateManager | null = null;
   private config: Config;
   private commandServer: CommandServer | null;
+  private navigation: NavigationController;
+  private staging: StagingOperations;
+  private modals: ModalController;
 
   // Current state
   private repoPath: string;
@@ -83,19 +66,6 @@ export class App {
   private commitFlowState: CommitFlowState;
   private commitTextarea: Widgets.TextareaElement | null = null;
 
-  // Active modals
-  private activeModal:
-    | ThemePicker
-    | HotkeysModal
-    | BaseBranchPicker
-    | DiscardConfirm
-    | FileFinder
-    | StashListModal
-    | BranchPicker
-    | SoftResetConfirm
-    | CommitActionConfirm
-    | null = null;
-
   // Auto-clear timer for remote operation status
   private remoteClearTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -104,13 +74,8 @@ export class App {
   private bottomPaneHunkCount: number = 0;
   private bottomPaneHunkBoundaries: HunkBoundary[] = [];
 
-  // Selection anchor: remembers category + position before stage/unstage
-  private pendingSelectionAnchor: { category: CategoryName; categoryIndex: number } | null = null;
-
   // Flat view mode state
   private cachedFlatFiles: FlatFileEntry[] = [];
-  private pendingFlatSelectionPath: string | null = null;
-  private pendingHunkIndex: number | null = null;
   private combinedHunkMapping: CombinedHunkInfo[] = [];
 
   constructor(options: AppOptions) {
@@ -193,6 +158,41 @@ export class App {
       });
     });
 
+    // Setup navigation controller
+    this.navigation = new NavigationController({
+      uiState: this.uiState,
+      getGitManager: () => this.gitManager,
+      getExplorerManager: () => this.explorerManager,
+      getTopPaneHeight: () => this.layout.dimensions.topPaneHeight,
+      getBottomPaneHeight: () => this.layout.dimensions.bottomPaneHeight,
+      getCachedFlatFiles: () => this.cachedFlatFiles,
+      getHunkCount: () => this.bottomPaneHunkCount,
+      getHunkBoundaries: () => this.bottomPaneHunkBoundaries,
+      getRepoPath: () => this.repoPath,
+    });
+
+    // Setup modal controller
+    this.modals = new ModalController({
+      screen: this.screen,
+      uiState: this.uiState,
+      getGitManager: () => this.gitManager,
+      getExplorerManager: () => this.explorerManager,
+      getTopPaneHeight: () => this.layout.dimensions.topPaneHeight,
+      getCurrentTheme: () => this.currentTheme,
+      setCurrentTheme: (theme) => {
+        this.currentTheme = theme;
+      },
+      render: () => this.render(),
+    });
+
+    // Setup staging operations
+    this.staging = new StagingOperations({
+      uiState: this.uiState,
+      getGitManager: () => this.gitManager,
+      getCachedFlatFiles: () => this.cachedFlatFiles,
+      getCombinedHunkMapping: () => this.combinedHunkMapping,
+    });
+
     // Setup keyboard handlers
     this.setupKeyboardHandlers();
 
@@ -228,39 +228,39 @@ export class App {
       this.screen,
       {
         exit: () => this.exit(),
-        navigateDown: () => this.navigateDown(),
-        navigateUp: () => this.navigateUp(),
-        stageSelected: () => this.stageSelected(),
-        unstageSelected: () => this.unstageSelected(),
-        stageAll: () => this.stageAll(),
-        unstageAll: () => this.unstageAll(),
-        toggleSelected: () => this.toggleSelected(),
-        enterExplorerDirectory: () => this.enterExplorerDirectory(),
-        goExplorerUp: () => this.goExplorerUp(),
-        openFileFinder: () => this.openFileFinder(),
+        navigateDown: () => this.navigation.navigateDown(),
+        navigateUp: () => this.navigation.navigateUp(),
+        stageSelected: () => this.staging.stageSelected(),
+        unstageSelected: () => this.staging.unstageSelected(),
+        stageAll: () => this.staging.stageAll(),
+        unstageAll: () => this.staging.unstageAll(),
+        toggleSelected: () => this.staging.toggleSelected(),
+        enterExplorerDirectory: () => this.navigation.enterExplorerDirectory(),
+        goExplorerUp: () => this.navigation.goExplorerUp(),
+        openFileFinder: () => this.modals.openFileFinder(),
         focusCommitInput: () => this.focusCommitInput(),
         unfocusCommitInput: () => this.unfocusCommitInput(),
         refresh: () => this.refresh(),
         toggleMouseMode: () => this.toggleMouseMode(),
         toggleFollow: () => this.toggleFollow(),
-        showDiscardConfirm: (file) => this.showDiscardConfirm(file),
+        showDiscardConfirm: (file) => this.modals.showDiscardConfirm(file),
         render: () => this.render(),
-        toggleCurrentHunk: () => this.toggleCurrentHunk(),
-        navigateNextHunk: () => this.navigateNextHunk(),
-        navigatePrevHunk: () => this.navigatePrevHunk(),
+        toggleCurrentHunk: () => this.staging.toggleCurrentHunk(),
+        navigateNextHunk: () => this.navigation.navigateNextHunk(),
+        navigatePrevHunk: () => this.navigation.navigatePrevHunk(),
         push: () => this.gitManager?.push(),
         fetchRemote: () => this.gitManager?.fetchRemote(),
         pullRebase: () => this.gitManager?.pullRebase(),
         stash: () => this.gitManager?.stash(),
         stashPop: () => this.gitManager?.stashPop(),
-        openStashListModal: () => this.openStashListModal(),
-        openBranchPicker: () => this.openBranchPicker(),
-        showSoftResetConfirm: () => this.showSoftResetConfirm(),
-        cherryPickSelected: () => this.cherryPickSelected(),
-        revertSelected: () => this.revertSelected(),
+        openStashListModal: () => this.modals.openStashListModal(),
+        openBranchPicker: () => this.modals.openBranchPicker(),
+        showSoftResetConfirm: () => this.modals.showSoftResetConfirm(),
+        cherryPickSelected: () => this.modals.cherryPickSelected(),
+        revertSelected: () => this.modals.revertSelected(),
       },
       {
-        hasActiveModal: () => this.activeModal !== null,
+        hasActiveModal: () => this.modals.hasActiveModal(),
         getBottomTab: () => this.uiState.state.bottomTab,
         getCurrentPane: () => this.uiState.state.currentPane,
         isCommitInputFocused: () => this.commitFlowState.state.inputFocused,
@@ -281,14 +281,14 @@ export class App {
     setupMouseHandlers(
       this.layout,
       {
-        selectHistoryCommitByIndex: (index) => this.selectHistoryCommitByIndex(index),
-        selectCompareItem: (selection) => this.selectCompareItem(selection),
-        selectFileByIndex: (index) => this.selectFileByIndex(index),
-        toggleFileByIndex: (index) => this.toggleFileByIndex(index),
-        enterExplorerDirectory: () => this.enterExplorerDirectory(),
+        selectHistoryCommitByIndex: (index) => this.navigation.selectHistoryCommitByIndex(index),
+        selectCompareItem: (selection) => this.navigation.selectCompareItem(selection),
+        selectFileByIndex: (index) => this.navigation.selectFileByIndex(index),
+        toggleFileByIndex: (index) => this.staging.toggleFileByIndex(index),
+        enterExplorerDirectory: () => this.navigation.enterExplorerDirectory(),
         toggleMouseMode: () => this.toggleMouseMode(),
         toggleFollow: () => this.toggleFollow(),
-        selectHunkAtRow: (row) => this.selectHunkAtRow(row),
+        selectHunkAtRow: (row) => this.navigation.selectHunkAtRow(row),
         focusCommitInput: () => this.focusCommitInput(),
         toggleAmend: () => {
           this.commitFlowState.toggleAmend();
@@ -308,36 +308,6 @@ export class App {
         getCachedFlatFiles: () => this.cachedFlatFiles,
       }
     );
-  }
-
-  /**
-   * Toggle staging for a flat file entry (stage if unstaged/partial, unstage if fully staged).
-   */
-  private async toggleFlatEntry(entry: FlatFileEntry): Promise<void> {
-    this.pendingFlatSelectionPath = entry.path;
-    if (entry.stagingState === 'staged') {
-      if (entry.stagedEntry) await this.gitManager?.unstage(entry.stagedEntry);
-    } else {
-      if (entry.unstagedEntry) await this.gitManager?.stage(entry.unstagedEntry);
-    }
-  }
-
-  private async toggleFileByIndex(index: number): Promise<void> {
-    if (this.uiState.state.flatViewMode) {
-      const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, index);
-      if (flatEntry) await this.toggleFlatEntry(flatEntry);
-    } else {
-      const files = this.gitManager?.state.status?.files ?? [];
-      const file = getFileAtIndex(files, index);
-      if (file) {
-        this.pendingSelectionAnchor = getCategoryForIndex(files, this.uiState.state.selectedIndex);
-        if (file.staged) {
-          await this.gitManager?.unstage(file);
-        } else {
-          await this.gitManager?.stage(file);
-        }
-      }
-    }
   }
 
   private setupStateListeners(): void {
@@ -372,58 +342,7 @@ export class App {
 
     // Handle modal opening/closing
     this.uiState.on('modal-change', (modal) => {
-      // Close any existing modal
-      if (this.activeModal) {
-        this.activeModal = null;
-      }
-
-      // Open new modal if requested
-      if (modal === 'theme') {
-        this.activeModal = new ThemePicker(
-          this.screen,
-          this.currentTheme,
-          (theme) => {
-            this.currentTheme = theme;
-            saveConfig({ theme });
-            this.activeModal = null;
-            this.uiState.closeModal();
-            this.render();
-          },
-          () => {
-            this.activeModal = null;
-            this.uiState.closeModal();
-          }
-        );
-        this.activeModal.focus();
-      } else if (modal === 'hotkeys') {
-        this.activeModal = new HotkeysModal(this.screen, () => {
-          this.activeModal = null;
-          this.uiState.closeModal();
-        });
-        this.activeModal.focus();
-      } else if (modal === 'baseBranch') {
-        // Load candidate branches and show picker
-        this.gitManager?.getCandidateBaseBranches().then((branches) => {
-          const currentBranch = this.gitManager?.compareState.compareBaseBranch ?? null;
-          this.activeModal = new BaseBranchPicker(
-            this.screen,
-            branches,
-            currentBranch,
-            (branch) => {
-              this.activeModal = null;
-              this.uiState.closeModal();
-              // Set base branch and refresh compare view
-              const includeUncommitted = this.uiState.state.includeUncommitted;
-              this.gitManager?.setCompareBaseBranch(branch, includeUncommitted);
-            },
-            () => {
-              this.activeModal = null;
-              this.uiState.closeModal();
-            }
-          );
-          this.activeModal.focus();
-        });
-      }
+      this.modals.handleModalChange(modal);
     });
 
     // Save split ratio to config when it changes
@@ -448,7 +367,7 @@ export class App {
   }
 
   private handleFollowFileNavigate(rawContent: string): void {
-    this.navigateToFile(rawContent);
+    this.navigation.navigateToFile(rawContent);
     this.render();
   }
 
@@ -479,7 +398,7 @@ export class App {
       if (historyState.commits.length > 0 && !historyState.selectedCommit) {
         const state = this.uiState.state;
         if (state.bottomTab === 'history') {
-          this.selectHistoryCommitByIndex(state.historySelectedIndex);
+          this.navigation.selectHistoryCommitByIndex(state.historySelectedIndex);
         }
       }
       this.render();
@@ -523,28 +442,28 @@ export class App {
   private reconcileSelectionAfterStateChange(): void {
     const files = this.gitManager?.state.status?.files ?? [];
 
-    if (this.uiState.state.flatViewMode && this.pendingFlatSelectionPath) {
+    if (this.uiState.state.flatViewMode && this.staging.pendingFlatSelectionPath) {
       const flatFiles = buildFlatFileList(files, this.gitManager?.state.hunkCounts ?? null);
-      const targetPath = this.pendingFlatSelectionPath;
-      this.pendingFlatSelectionPath = null;
+      const targetPath = this.staging.pendingFlatSelectionPath;
+      this.staging.pendingFlatSelectionPath = null;
       const newIndex = getFlatFileIndexByPath(flatFiles, targetPath);
       if (newIndex >= 0) {
         this.uiState.setSelectedIndex(newIndex);
-        this.selectFileByIndex(newIndex);
+        this.navigation.selectFileByIndex(newIndex);
       } else if (flatFiles.length > 0) {
         const clamped = Math.min(this.uiState.state.selectedIndex, flatFiles.length - 1);
         this.uiState.setSelectedIndex(clamped);
-        this.selectFileByIndex(clamped);
+        this.navigation.selectFileByIndex(clamped);
       }
       return;
     }
 
-    if (this.pendingSelectionAnchor) {
-      const anchor = this.pendingSelectionAnchor;
-      this.pendingSelectionAnchor = null;
+    if (this.staging.pendingSelectionAnchor) {
+      const anchor = this.staging.pendingSelectionAnchor;
+      this.staging.pendingSelectionAnchor = null;
       const newIndex = getIndexForCategoryPosition(files, anchor.category, anchor.categoryIndex);
       this.uiState.setSelectedIndex(newIndex);
-      this.selectFileByIndex(newIndex);
+      this.navigation.selectFileByIndex(newIndex);
       return;
     }
 
@@ -626,8 +545,8 @@ export class App {
    * Called when switching to a new repo via file watcher.
    */
   private resetRepoSpecificState(): void {
-    // Reset compare selection (App-level state)
-    this.compareSelection = null;
+    // Reset compare selection (owned by NavigationController)
+    this.navigation.compareSelection = null;
 
     // Reset UI state scroll offsets and selections
     this.uiState.resetForNewRepo();
@@ -652,14 +571,14 @@ export class App {
     if (!this.commandServer) return;
 
     const handler: CommandHandler = {
-      navigateUp: () => this.navigateUp(),
-      navigateDown: () => this.navigateDown(),
+      navigateUp: () => this.navigation.navigateUp(),
+      navigateDown: () => this.navigation.navigateDown(),
       switchTab: (tab: BottomTab) => this.uiState.setTab(tab),
       togglePane: () => this.uiState.togglePane(),
-      stage: async () => this.stageSelected(),
-      unstage: async () => this.unstageSelected(),
-      stageAll: async () => this.stageAll(),
-      unstageAll: async () => this.unstageAll(),
+      stage: async () => this.staging.stageSelected(),
+      unstage: async () => this.staging.unstageSelected(),
+      stageAll: async () => this.staging.stageAll(),
+      unstageAll: async () => this.staging.unstageAll(),
       commit: async (message: string) => this.commit(message),
       refresh: async () => this.refresh(),
       getState: (): AppState => this.getAppState(),
@@ -700,627 +619,6 @@ export class App {
       mouseEnabled: state.mouseEnabled,
       autoTabEnabled: state.autoTabEnabled,
     };
-  }
-
-  // Navigation methods
-
-  /**
-   * Scroll the content pane (diff or explorer file content) by delta lines.
-   */
-  private scrollActiveDiffPane(delta: number): void {
-    const state = this.uiState.state;
-    if (state.bottomTab === 'explorer') {
-      const newOffset = Math.max(0, state.explorerFileScrollOffset + delta);
-      this.uiState.setExplorerFileScrollOffset(newOffset);
-    } else {
-      const newOffset = Math.max(0, state.diffScrollOffset + delta);
-      this.uiState.setDiffScrollOffset(newOffset);
-    }
-  }
-
-  /**
-   * Navigate the file list by one item and keep selection visible.
-   */
-  private navigateFileList(direction: -1 | 1): void {
-    const state = this.uiState.state;
-    const files = this.gitManager?.state.status?.files ?? [];
-
-    // Determine max index based on view mode
-    const maxIndex = state.flatViewMode ? this.cachedFlatFiles.length - 1 : files.length - 1;
-    if (maxIndex < 0) return;
-
-    const newIndex =
-      direction === -1
-        ? Math.max(0, state.selectedIndex - 1)
-        : Math.min(maxIndex, state.selectedIndex + 1);
-    this.uiState.setSelectedIndex(newIndex);
-    this.selectFileByIndex(newIndex);
-
-    // In flat mode row === index + 1 (header row); in categorized mode account for headers/spacers
-    const row = state.flatViewMode ? newIndex + 1 : getRowFromFileIndex(newIndex, files);
-    this.scrollToKeepRowVisible(row, direction, state.fileListScrollOffset);
-  }
-
-  /**
-   * Scroll the file list to keep a given row visible.
-   */
-  private scrollToKeepRowVisible(row: number, direction: -1 | 1, currentOffset: number): void {
-    if (direction === -1 && row < currentOffset) {
-      this.uiState.setFileListScrollOffset(row);
-    } else if (direction === 1) {
-      const visibleEnd = currentOffset + this.layout.dimensions.topPaneHeight - 1;
-      if (row >= visibleEnd) {
-        this.uiState.setFileListScrollOffset(currentOffset + (row - visibleEnd + 1));
-      }
-    }
-  }
-
-  /**
-   * Navigate the active list pane by one item in the given direction.
-   */
-  private navigateActiveList(direction: -1 | 1): void {
-    const tab = this.uiState.state.bottomTab;
-
-    if (tab === 'history') {
-      if (direction === -1) this.navigateHistoryUp();
-      else this.navigateHistoryDown();
-    } else if (tab === 'compare') {
-      if (direction === -1) this.navigateCompareUp();
-      else this.navigateCompareDown();
-    } else if (tab === 'explorer') {
-      if (direction === -1) this.navigateExplorerUp();
-      else this.navigateExplorerDown();
-    } else {
-      this.navigateFileList(direction);
-    }
-  }
-
-  private navigateUp(): void {
-    const state = this.uiState.state;
-    const isListPane = state.currentPane !== 'diff';
-
-    if (isListPane) {
-      this.navigateActiveList(-1);
-    } else {
-      this.scrollActiveDiffPane(-3);
-    }
-  }
-
-  private navigateDown(): void {
-    const state = this.uiState.state;
-    const isListPane = state.currentPane !== 'diff';
-
-    if (isListPane) {
-      this.navigateActiveList(1);
-    } else {
-      this.scrollActiveDiffPane(3);
-    }
-  }
-
-  private navigateHistoryUp(): void {
-    const state = this.uiState.state;
-    const newIndex = Math.max(0, state.historySelectedIndex - 1);
-
-    if (newIndex !== state.historySelectedIndex) {
-      this.uiState.setHistorySelectedIndex(newIndex);
-      // Keep selection visible
-      if (newIndex < state.historyScrollOffset) {
-        this.uiState.setHistoryScrollOffset(newIndex);
-      }
-      this.selectHistoryCommitByIndex(newIndex);
-    }
-  }
-
-  private navigateHistoryDown(): void {
-    const state = this.uiState.state;
-    const commits = this.gitManager?.historyState.commits ?? [];
-    const newIndex = Math.min(commits.length - 1, state.historySelectedIndex + 1);
-
-    if (newIndex !== state.historySelectedIndex) {
-      this.uiState.setHistorySelectedIndex(newIndex);
-      // Keep selection visible
-      const visibleEnd = state.historyScrollOffset + this.layout.dimensions.topPaneHeight - 1;
-      if (newIndex >= visibleEnd) {
-        this.uiState.setHistoryScrollOffset(state.historyScrollOffset + 1);
-      }
-      this.selectHistoryCommitByIndex(newIndex);
-    }
-  }
-
-  private selectHistoryCommitByIndex(index: number): void {
-    const commits = this.gitManager?.historyState.commits ?? [];
-    const commit = getCommitAtIndex(commits, index);
-    if (commit) {
-      this.uiState.setDiffScrollOffset(0);
-      this.gitManager?.selectHistoryCommit(commit);
-    }
-  }
-
-  // Compare navigation
-  private compareSelection: CompareListSelection | null = null;
-
-  private navigateCompareUp(): void {
-    const compareState = this.gitManager?.compareState;
-    const commits = compareState?.compareDiff?.commits ?? [];
-    const files = compareState?.compareDiff?.files ?? [];
-
-    if (commits.length === 0 && files.length === 0) return;
-
-    const next = getNextCompareSelection(this.compareSelection, commits, files, 'up');
-    if (
-      next &&
-      (next.type !== this.compareSelection?.type || next.index !== this.compareSelection?.index)
-    ) {
-      this.selectCompareItem(next);
-
-      // Keep selection visible - scroll up if needed
-      const state = this.uiState.state;
-      const row = getRowFromCompareSelection(next, commits, files);
-      if (row < state.compareScrollOffset) {
-        this.uiState.setCompareScrollOffset(row);
-      }
-    }
-  }
-
-  private navigateCompareDown(): void {
-    const compareState = this.gitManager?.compareState;
-    const commits = compareState?.compareDiff?.commits ?? [];
-    const files = compareState?.compareDiff?.files ?? [];
-
-    if (commits.length === 0 && files.length === 0) return;
-
-    // Auto-select first item if nothing selected
-    if (!this.compareSelection) {
-      // Select first commit if available, otherwise first file
-      if (commits.length > 0) {
-        this.selectCompareItem({ type: 'commit', index: 0 });
-      } else if (files.length > 0) {
-        this.selectCompareItem({ type: 'file', index: 0 });
-      }
-      return;
-    }
-
-    const next = getNextCompareSelection(this.compareSelection, commits, files, 'down');
-    if (
-      next &&
-      (next.type !== this.compareSelection?.type || next.index !== this.compareSelection?.index)
-    ) {
-      this.selectCompareItem(next);
-
-      // Keep selection visible - scroll down if needed
-      const state = this.uiState.state;
-      const row = getRowFromCompareSelection(next, commits, files);
-      const visibleEnd = state.compareScrollOffset + this.layout.dimensions.topPaneHeight - 1;
-      if (row >= visibleEnd) {
-        this.uiState.setCompareScrollOffset(state.compareScrollOffset + (row - visibleEnd + 1));
-      }
-    }
-  }
-
-  private selectCompareItem(selection: CompareListSelection): void {
-    this.compareSelection = selection;
-    this.uiState.setDiffScrollOffset(0);
-
-    if (selection.type === 'commit') {
-      this.gitManager?.selectCompareCommit(selection.index);
-    } else {
-      this.gitManager?.selectCompareFile(selection.index);
-    }
-  }
-
-  // Explorer navigation
-  private navigateExplorerUp(): void {
-    const state = this.uiState.state;
-    const rows = this.explorerManager?.state.displayRows ?? [];
-
-    if (rows.length === 0) return;
-
-    const newScrollOffset = this.explorerManager?.navigateUp(state.explorerScrollOffset);
-    if (newScrollOffset !== null && newScrollOffset !== undefined) {
-      this.uiState.setExplorerScrollOffset(newScrollOffset);
-    }
-    this.uiState.setExplorerSelectedIndex(this.explorerManager?.state.selectedIndex ?? 0);
-  }
-
-  private navigateExplorerDown(): void {
-    const state = this.uiState.state;
-    const rows = this.explorerManager?.state.displayRows ?? [];
-
-    if (rows.length === 0) return;
-
-    const visibleHeight = this.layout.dimensions.topPaneHeight;
-    const newScrollOffset = this.explorerManager?.navigateDown(
-      state.explorerScrollOffset,
-      visibleHeight
-    );
-    if (newScrollOffset !== null && newScrollOffset !== undefined) {
-      this.uiState.setExplorerScrollOffset(newScrollOffset);
-    }
-    this.uiState.setExplorerSelectedIndex(this.explorerManager?.state.selectedIndex ?? 0);
-  }
-
-  private async enterExplorerDirectory(): Promise<void> {
-    await this.explorerManager?.enterDirectory();
-    // Reset file content scroll when expanding/collapsing
-    this.uiState.setExplorerFileScrollOffset(0);
-    // Sync selected index from explorer manager (it maintains selection by path)
-    this.uiState.setExplorerSelectedIndex(this.explorerManager?.state.selectedIndex ?? 0);
-  }
-
-  private async goExplorerUp(): Promise<void> {
-    await this.explorerManager?.goUp();
-    // Reset file content scroll when collapsing
-    this.uiState.setExplorerFileScrollOffset(0);
-    // Sync selected index from explorer manager
-    this.uiState.setExplorerSelectedIndex(this.explorerManager?.state.selectedIndex ?? 0);
-  }
-
-  private selectFileByIndex(index: number): void {
-    if (this.uiState.state.flatViewMode) {
-      const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, index);
-      if (flatEntry) {
-        // Prefer unstaged entry (shows unstaged diff for partial files), fallback to staged
-        const file = flatEntry.unstagedEntry ?? flatEntry.stagedEntry;
-        if (file) {
-          this.uiState.setDiffScrollOffset(0);
-          this.uiState.setSelectedHunkIndex(0);
-          this.gitManager?.selectFile(file);
-        }
-      }
-    } else {
-      const files = this.gitManager?.state.status?.files ?? [];
-      const file = getFileAtIndex(files, index);
-      if (file) {
-        this.uiState.setDiffScrollOffset(0);
-        this.uiState.setSelectedHunkIndex(0);
-        this.gitManager?.selectFile(file);
-      }
-    }
-  }
-
-  /**
-   * Navigate to a file given its absolute path.
-   * Extracts the relative path and finds the file in the current file list.
-   */
-  private navigateToFile(absolutePath: string): void {
-    if (!absolutePath || !this.repoPath) return;
-
-    // Check if the path is within the current repo
-    const repoPrefix = this.repoPath.endsWith('/') ? this.repoPath : this.repoPath + '/';
-    if (!absolutePath.startsWith(repoPrefix)) return;
-
-    // Extract relative path
-    const relativePath = absolutePath.slice(repoPrefix.length);
-    if (!relativePath) return;
-
-    // Find the file in the list
-    const files = this.gitManager?.state.status?.files ?? [];
-    const fileIndex = files.findIndex((f) => f.path === relativePath);
-
-    if (fileIndex >= 0) {
-      this.uiState.setSelectedIndex(fileIndex);
-      this.selectFileByIndex(fileIndex);
-    }
-  }
-
-  // Git operations
-  private async stageSelected(): Promise<void> {
-    const files = this.gitManager?.state.status?.files ?? [];
-    const index = this.uiState.state.selectedIndex;
-
-    if (this.uiState.state.flatViewMode) {
-      const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, index);
-      if (!flatEntry) return;
-      // Stage: operate on the unstaged entry if available
-      const file = flatEntry.unstagedEntry;
-      if (file) {
-        this.pendingFlatSelectionPath = flatEntry.path;
-        await this.gitManager?.stage(file);
-      }
-    } else {
-      const selectedFile = getFileAtIndex(files, index);
-      if (selectedFile && !selectedFile.staged) {
-        this.pendingSelectionAnchor = getCategoryForIndex(files, index);
-        await this.gitManager?.stage(selectedFile);
-      }
-    }
-  }
-
-  private async unstageSelected(): Promise<void> {
-    const files = this.gitManager?.state.status?.files ?? [];
-    const index = this.uiState.state.selectedIndex;
-
-    if (this.uiState.state.flatViewMode) {
-      const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, index);
-      if (!flatEntry) return;
-      const file = flatEntry.stagedEntry;
-      if (file) {
-        this.pendingFlatSelectionPath = flatEntry.path;
-        await this.gitManager?.unstage(file);
-      }
-    } else {
-      const selectedFile = getFileAtIndex(files, index);
-      if (selectedFile?.staged) {
-        this.pendingSelectionAnchor = getCategoryForIndex(files, index);
-        await this.gitManager?.unstage(selectedFile);
-      }
-    }
-  }
-
-  private async toggleSelected(): Promise<void> {
-    const index = this.uiState.state.selectedIndex;
-
-    if (this.uiState.state.flatViewMode) {
-      const flatEntry = getFlatFileAtIndex(this.cachedFlatFiles, index);
-      if (flatEntry) await this.toggleFlatEntry(flatEntry);
-    } else {
-      const files = this.gitManager?.state.status?.files ?? [];
-      const selectedFile = getFileAtIndex(files, index);
-      if (selectedFile) {
-        this.pendingSelectionAnchor = getCategoryForIndex(files, index);
-        if (selectedFile.staged) {
-          await this.gitManager?.unstage(selectedFile);
-        } else {
-          await this.gitManager?.stage(selectedFile);
-        }
-      }
-    }
-  }
-
-  private async stageAll(): Promise<void> {
-    await this.gitManager?.stageAll();
-  }
-
-  private async unstageAll(): Promise<void> {
-    await this.gitManager?.unstageAll();
-  }
-
-  private showDiscardConfirm(file: FileEntry): void {
-    this.activeModal = new DiscardConfirm(
-      this.screen,
-      file.path,
-      async () => {
-        this.activeModal = null;
-        await this.gitManager?.discard(file);
-      },
-      () => {
-        this.activeModal = null;
-      }
-    );
-    this.activeModal.focus();
-  }
-
-  // Hunk navigation and staging
-
-  private navigateNextHunk(): void {
-    const current = this.uiState.state.selectedHunkIndex;
-    if (this.bottomPaneHunkCount > 0 && current < this.bottomPaneHunkCount - 1) {
-      this.uiState.setSelectedHunkIndex(current + 1);
-      this.scrollHunkIntoView(current + 1);
-    }
-  }
-
-  private navigatePrevHunk(): void {
-    const current = this.uiState.state.selectedHunkIndex;
-    if (current > 0) {
-      this.uiState.setSelectedHunkIndex(current - 1);
-      this.scrollHunkIntoView(current - 1);
-    }
-  }
-
-  private scrollHunkIntoView(hunkIndex: number): void {
-    const boundary = this.bottomPaneHunkBoundaries[hunkIndex];
-    if (!boundary) return;
-
-    const scrollOffset = this.uiState.state.diffScrollOffset;
-    const visibleHeight = this.layout.dimensions.bottomPaneHeight;
-
-    // If hunk header is outside the visible area, scroll so it's at top
-    if (boundary.startRow < scrollOffset || boundary.startRow >= scrollOffset + visibleHeight) {
-      this.uiState.setDiffScrollOffset(boundary.startRow);
-    }
-  }
-
-  private selectHunkAtRow(visualRow: number): void {
-    if (this.uiState.state.bottomTab !== 'diff') return;
-    if (this.bottomPaneHunkBoundaries.length === 0) return;
-
-    // Focus the diff pane so the hunk gutter appears
-    this.uiState.setPane('diff');
-
-    const absoluteRow = this.uiState.state.diffScrollOffset + visualRow;
-    for (let i = 0; i < this.bottomPaneHunkBoundaries.length; i++) {
-      const b = this.bottomPaneHunkBoundaries[i];
-      if (absoluteRow >= b.startRow && absoluteRow < b.endRow) {
-        this.uiState.setSelectedHunkIndex(i);
-        return;
-      }
-    }
-  }
-
-  private async toggleCurrentHunk(): Promise<void> {
-    const selectedFile = this.gitManager?.state.selectedFile;
-    if (!selectedFile || selectedFile.status === 'untracked') return;
-
-    if (this.uiState.state.flatViewMode) {
-      await this.toggleCurrentHunkFlat();
-    } else {
-      await this.toggleCurrentHunkCategorized(selectedFile);
-    }
-  }
-
-  private async toggleCurrentHunkFlat(): Promise<void> {
-    const mapping = this.combinedHunkMapping[this.uiState.state.selectedHunkIndex];
-    if (!mapping) return;
-
-    const combined = this.gitManager?.state.combinedFileDiffs;
-    if (!combined) return;
-
-    const rawDiff = mapping.source === 'unstaged' ? combined.unstaged.raw : combined.staged.raw;
-    const patch = extractHunkPatch(rawDiff, mapping.hunkIndex);
-    if (!patch) return;
-
-    // Preserve hunk index across refresh — file stays selected via path-only fallback
-    this.pendingHunkIndex = this.uiState.state.selectedHunkIndex;
-
-    if (mapping.source === 'staged') {
-      await this.gitManager?.unstageHunk(patch);
-    } else {
-      await this.gitManager?.stageHunk(patch);
-    }
-  }
-
-  private async toggleCurrentHunkCategorized(selectedFile: FileEntry): Promise<void> {
-    const rawDiff = this.gitManager?.state.diff?.raw;
-    if (!rawDiff) return;
-
-    const patch = extractHunkPatch(rawDiff, this.uiState.state.selectedHunkIndex);
-    if (!patch) return;
-
-    const files = this.gitManager?.state.status?.files ?? [];
-    this.pendingSelectionAnchor = getCategoryForIndex(files, this.uiState.state.selectedIndex);
-
-    if (selectedFile.staged) {
-      await this.gitManager?.unstageHunk(patch);
-    } else {
-      await this.gitManager?.stageHunk(patch);
-    }
-  }
-
-  private async openFileFinder(): Promise<void> {
-    let allPaths = this.explorerManager?.getCachedFilePaths() ?? [];
-    if (allPaths.length === 0) {
-      // First open or cache not yet loaded — wait for it
-      await this.explorerManager?.loadFilePaths();
-      allPaths = this.explorerManager?.getCachedFilePaths() ?? [];
-    }
-    if (allPaths.length === 0) return;
-
-    this.activeModal = new FileFinder(
-      this.screen,
-      allPaths,
-      async (selectedPath) => {
-        this.activeModal = null;
-        // Switch to explorer tab if not already there
-        if (this.uiState.state.bottomTab !== 'explorer') {
-          this.uiState.setTab('explorer');
-        }
-        // Navigate to the selected file in explorer
-        const success = await this.explorerManager?.navigateToPath(selectedPath);
-        if (success) {
-          // Sync selected index from explorer manager
-          const selectedIndex = this.explorerManager?.state.selectedIndex ?? 0;
-          this.uiState.setExplorerSelectedIndex(selectedIndex);
-          this.uiState.setExplorerFileScrollOffset(0);
-          // Scroll to make selected file visible
-          const visibleHeight = this.layout.dimensions.topPaneHeight;
-          if (selectedIndex >= visibleHeight) {
-            this.uiState.setExplorerScrollOffset(selectedIndex - Math.floor(visibleHeight / 2));
-          } else {
-            this.uiState.setExplorerScrollOffset(0);
-          }
-        }
-        this.render();
-      },
-      () => {
-        this.activeModal = null;
-        this.render();
-      }
-    );
-    this.activeModal.focus();
-  }
-
-  private openStashListModal(): void {
-    const entries = this.gitManager?.state.stashList ?? [];
-    this.activeModal = new StashListModal(
-      this.screen,
-      entries,
-      (index) => {
-        this.activeModal = null;
-        this.gitManager?.stashPop(index);
-      },
-      () => {
-        this.activeModal = null;
-      }
-    );
-    this.activeModal.focus();
-  }
-
-  private openBranchPicker(): void {
-    this.gitManager?.getLocalBranches().then((branches) => {
-      this.activeModal = new BranchPicker(
-        this.screen,
-        branches,
-        (name) => {
-          this.activeModal = null;
-          this.gitManager?.switchBranch(name);
-        },
-        (name) => {
-          this.activeModal = null;
-          this.gitManager?.createBranch(name);
-        },
-        () => {
-          this.activeModal = null;
-        }
-      );
-      this.activeModal.focus();
-    });
-  }
-
-  private showSoftResetConfirm(): void {
-    const headCommit = this.gitManager?.historyState.commits[0];
-    if (!headCommit) return;
-
-    this.activeModal = new SoftResetConfirm(
-      this.screen,
-      headCommit,
-      () => {
-        this.activeModal = null;
-        this.gitManager?.softReset();
-      },
-      () => {
-        this.activeModal = null;
-      }
-    );
-    this.activeModal.focus();
-  }
-
-  private cherryPickSelected(): void {
-    const commit = this.gitManager?.historyState.selectedCommit;
-    if (!commit) return;
-
-    this.activeModal = new CommitActionConfirm(
-      this.screen,
-      'Cherry-pick',
-      commit,
-      () => {
-        this.activeModal = null;
-        this.gitManager?.cherryPick(commit.hash);
-      },
-      () => {
-        this.activeModal = null;
-      }
-    );
-    this.activeModal.focus();
-  }
-
-  private revertSelected(): void {
-    const commit = this.gitManager?.historyState.selectedCommit;
-    if (!commit) return;
-
-    this.activeModal = new CommitActionConfirm(
-      this.screen,
-      'Revert',
-      commit,
-      () => {
-        this.activeModal = null;
-        this.gitManager?.revertCommit(commit.hash);
-      },
-      () => {
-        this.activeModal = null;
-      }
-    );
-    this.activeModal.focus();
   }
 
   private async commit(message: string): Promise<void> {
@@ -1384,9 +682,9 @@ export class App {
     this.updateBottomPane();
 
     // Restore hunk index after diff refresh (e.g. after hunk toggle in flat mode)
-    if (this.pendingHunkIndex !== null && this.bottomPaneHunkCount > 0) {
-      const restored = Math.min(this.pendingHunkIndex, this.bottomPaneHunkCount - 1);
-      this.pendingHunkIndex = null;
+    if (this.staging.pendingHunkIndex !== null && this.bottomPaneHunkCount > 0) {
+      const restored = Math.min(this.staging.pendingHunkIndex, this.bottomPaneHunkCount - 1);
+      this.staging.pendingHunkIndex = null;
       this.uiState.setSelectedHunkIndex(restored);
       this.updateBottomPane(); // Re-render with correct hunk selection
     }
@@ -1426,7 +724,7 @@ export class App {
       files,
       this.gitManager?.historyState?.commits ?? [],
       this.gitManager?.compareState?.compareDiff ?? null,
-      this.compareSelection,
+      this.navigation.compareSelection,
       this.explorerManager?.state,
       width,
       this.layout.dimensions.topPaneHeight,

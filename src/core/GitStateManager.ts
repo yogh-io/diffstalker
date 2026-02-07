@@ -1,98 +1,32 @@
-import * as path from 'node:path';
-import * as fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { watch, FSWatcher } from 'chokidar';
+/**
+ * GitStateManager facade.
+ * Coordinates sub-managers and re-exports their events/types for backward compatibility.
+ * All logic lives in the focused sub-managers; this file wires them together.
+ */
+
 import { EventEmitter } from 'node:events';
-import ignore, { Ignore } from 'ignore';
-import { GitOperationQueue, getQueueForRepo, removeQueueForRepo } from './GitOperationQueue.js';
-import {
-  getStatus,
-  stageFile,
-  unstageFile,
-  stageAll as gitStageAll,
-  unstageAll as gitUnstageAll,
-  discardChanges as gitDiscardChanges,
-  commit as gitCommit,
-  getHeadMessage,
-  getCommitHistory,
-  stageHunk as gitStageHunk,
-  unstageHunk as gitUnstageHunk,
-  push as gitPush,
-  fetchRemote as gitFetchRemote,
-  pullRebase as gitPullRebase,
-  getStashList as gitGetStashList,
-  stashSave as gitStashSave,
-  stashPop as gitStashPop,
-  getLocalBranches as gitGetLocalBranches,
-  switchBranch as gitSwitchBranch,
-  createBranch as gitCreateBranch,
-  softResetHead as gitSoftResetHead,
-  cherryPick as gitCherryPick,
-  revertCommit as gitRevertCommit,
-  GitStatus,
-  FileEntry,
-  CommitInfo,
-  StashEntry,
-  LocalBranch,
-} from '../git/status.js';
-import type { RemoteOperationState, RemoteOperation } from '../types/remote.js';
-import {
-  getDiff,
-  getDiffForUntracked,
-  getStagedDiff,
-  getDefaultBaseBranch,
-  getCandidateBaseBranches,
-  getDiffBetweenRefs,
-  getCompareDiffWithUncommitted,
-  getCommitDiff,
-  countHunksPerFile,
-  DiffResult,
-  CompareDiff,
-  FileHunkCounts,
-} from '../git/diff.js';
-import { getCachedBaseBranch, setCachedBaseBranch } from '../utils/baseBranchCache.js';
+import { getQueueForRepo, removeQueueForRepo } from './GitOperationQueue.js';
+import { WorkingTreeManager } from './WorkingTreeManager.js';
+import { HistoryManager } from './HistoryManager.js';
+import { CompareManager } from './CompareManager.js';
+import { RemoteOperationManager } from './RemoteOperationManager.js';
+import type { GitState } from './WorkingTreeManager.js';
+import type { HistoryState } from './HistoryManager.js';
+import type { CompareState, CompareSelectionState } from './CompareManager.js';
+import type { RemoteOperationState } from './RemoteOperationManager.js';
+import type { FileEntry, CommitInfo, LocalBranch } from '../git/status.js';
 
+// Re-export types for backward compatibility
+export type { CombinedFileDiffs, GitState } from './WorkingTreeManager.js';
+export type { HistoryState } from './HistoryManager.js';
+export type {
+  CompareState,
+  CompareSelectionType,
+  CompareSelectionState,
+} from './CompareManager.js';
+export type { RemoteOperationState, RemoteOperation } from './RemoteOperationManager.js';
 export type { FileHunkCounts } from '../git/diff.js';
-export type { RemoteOperationState, RemoteOperation } from '../types/remote.js';
 export type { StashEntry, LocalBranch } from '../git/status.js';
-
-export interface CombinedFileDiffs {
-  unstaged: DiffResult;
-  staged: DiffResult;
-}
-
-export interface GitState {
-  status: GitStatus | null;
-  diff: DiffResult | null;
-  combinedFileDiffs: CombinedFileDiffs | null;
-  selectedFile: FileEntry | null;
-  isLoading: boolean;
-  error: string | null;
-  hunkCounts: FileHunkCounts | null;
-  stashList: StashEntry[];
-}
-
-export interface CompareState {
-  compareDiff: CompareDiff | null;
-  compareBaseBranch: string | null;
-  compareLoading: boolean;
-  compareError: string | null;
-}
-
-export interface HistoryState {
-  commits: CommitInfo[];
-  selectedCommit: CommitInfo | null;
-  commitDiff: DiffResult | null;
-  isLoading: boolean;
-}
-
-export type CompareSelectionType = 'commit' | 'file';
-
-export interface CompareSelectionState {
-  type: CompareSelectionType | null;
-  index: number;
-  diff: DiffResult | null;
-}
 
 type GitStateEventMap = {
   'state-change': [GitState];
@@ -104,860 +38,200 @@ type GitStateEventMap = {
 };
 
 /**
- * GitStateManager manages git state independent of React.
- * It owns the operation queue, file watchers, and emits events on state changes.
+ * Facade that coordinates WorkingTreeManager, HistoryManager,
+ * CompareManager, and RemoteOperationManager.
+ * Preserves the exact same public API as before for App.ts compatibility.
  */
 export class GitStateManager extends EventEmitter<GitStateEventMap> {
   private repoPath: string;
-  private queue: GitOperationQueue;
-  private gitWatcher: FSWatcher | null = null;
-  private workingDirWatcher: FSWatcher | null = null;
-  private ignorers: Map<string, Ignore> = new Map();
-  private diffDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // Current state
-  private _state: GitState = {
-    status: null,
-    diff: null,
-    combinedFileDiffs: null,
-    selectedFile: null,
-    isLoading: false,
-    error: null,
-    hunkCounts: null,
-    stashList: [],
-  };
-
-  private _compareState: CompareState = {
-    compareDiff: null,
-    compareBaseBranch: null,
-    compareLoading: false,
-    compareError: null,
-  };
-
-  private _historyState: HistoryState = {
-    commits: [],
-    selectedCommit: null,
-    commitDiff: null,
-    isLoading: false,
-  };
-
-  private _compareSelectionState: CompareSelectionState = {
-    type: null,
-    index: 0,
-    diff: null,
-  };
-
-  private _remoteState: RemoteOperationState = {
-    operation: null,
-    inProgress: false,
-    error: null,
-    lastResult: null,
-  };
+  readonly workingTree: WorkingTreeManager;
+  readonly history: HistoryManager;
+  readonly compare: CompareManager;
+  readonly remote: RemoteOperationManager;
 
   constructor(repoPath: string) {
     super();
     this.repoPath = repoPath;
-    this.queue = getQueueForRepo(repoPath);
+    const queue = getQueueForRepo(repoPath);
+
+    // Create sub-managers with cross-cutting callbacks
+    this.history = new HistoryManager(repoPath, queue);
+    this.compare = new CompareManager(repoPath, queue);
+
+    this.workingTree = new WorkingTreeManager(repoPath, queue, async () => {
+      await this.history.refreshIfLoaded();
+      await this.compare.refreshIfLoaded();
+    });
+
+    this.remote = new RemoteOperationManager(repoPath, queue, {
+      scheduleRefresh: () => this.workingTree.scheduleRefresh(),
+      loadStashList: () => this.workingTree.loadStashList(),
+      resetCompareBaseBranch: () => this.compare.resetBaseBranch(),
+    });
+
+    // Forward all sub-manager events to facade
+    this.workingTree.on('state-change', (s) => this.emit('state-change', s));
+    this.workingTree.on('error', (s) => this.emit('error', s));
+    this.history.on('history-state-change', (s) => this.emit('history-state-change', s));
+    this.compare.on('compare-state-change', (s) => this.emit('compare-state-change', s));
+    this.compare.on('compare-selection-change', (s) => this.emit('compare-selection-change', s));
+    this.remote.on('remote-state-change', (s) => this.emit('remote-state-change', s));
   }
 
+  // --- State getters (backward compat) ---
+
   get state(): GitState {
-    return this._state;
+    return this.workingTree.state;
   }
 
   get compareState(): CompareState {
-    return this._compareState;
+    return this.compare.compareState;
   }
 
   get historyState(): HistoryState {
-    return this._historyState;
+    return this.history.historyState;
   }
 
   get compareSelectionState(): CompareSelectionState {
-    return this._compareSelectionState;
+    return this.compare.compareSelectionState;
   }
 
   get remoteState(): RemoteOperationState {
-    return this._remoteState;
+    return this.remote.remoteState;
   }
 
-  private updateRemoteState(partial: Partial<RemoteOperationState>): void {
-    this._remoteState = { ...this._remoteState, ...partial };
-    this.emit('remote-state-change', this._remoteState);
-  }
+  // --- Delegating methods ---
 
-  private updateState(partial: Partial<GitState>): void {
-    this._state = { ...this._state, ...partial };
-    this.emit('state-change', this._state);
-  }
-
-  private updateCompareState(partial: Partial<CompareState>): void {
-    this._compareState = { ...this._compareState, ...partial };
-    this.emit('compare-state-change', this._compareState);
-  }
-
-  private updateHistoryState(partial: Partial<HistoryState>): void {
-    this._historyState = { ...this._historyState, ...partial };
-    this.emit('history-state-change', this._historyState);
-  }
-
-  private updateCompareSelectionState(partial: Partial<CompareSelectionState>): void {
-    this._compareSelectionState = { ...this._compareSelectionState, ...partial };
-    this.emit('compare-selection-change', this._compareSelectionState);
-  }
-
-  /**
-   * Load gitignore patterns from all .gitignore files and .git/info/exclude.
-   * Returns a Map of directory → Ignore instance, where each instance handles
-   * patterns relative to its own directory (matching how git scopes .gitignore files).
-   */
-  private loadGitignores(): Map<string, Ignore> {
-    const ignorers = new Map<string, Ignore>();
-
-    // Root ignorer: .git dir + root .gitignore + .git/info/exclude
-    const rootIg = ignore();
-    rootIg.add('.git');
-
-    const rootGitignorePath = path.join(this.repoPath, '.gitignore');
-    if (fs.existsSync(rootGitignorePath)) {
-      rootIg.add(fs.readFileSync(rootGitignorePath, 'utf-8'));
-    }
-
-    const excludePath = path.join(this.repoPath, '.git', 'info', 'exclude');
-    if (fs.existsSync(excludePath)) {
-      rootIg.add(fs.readFileSync(excludePath, 'utf-8'));
-    }
-
-    ignorers.set('', rootIg);
-
-    // Find all nested .gitignore files using git ls-files
-    try {
-      const output = execFileSync(
-        'git',
-        ['ls-files', '-z', '--cached', '--others', '**/.gitignore'],
-        { cwd: this.repoPath, encoding: 'utf-8' }
-      );
-
-      for (const entry of output.split('\0')) {
-        if (!entry || entry === '.gitignore') continue;
-        if (!entry.endsWith('.gitignore')) continue;
-
-        const dir = path.dirname(entry);
-        const absPath = path.join(this.repoPath, entry);
-
-        try {
-          const content = fs.readFileSync(absPath, 'utf-8');
-          const ig = ignore();
-          ig.add(content);
-          ignorers.set(dir, ig);
-        } catch {
-          // Skip unreadable files
-        }
-      }
-    } catch {
-      // git ls-files failed — we still have the root ignorer
-    }
-
-    return ignorers;
-  }
-
-  /**
-   * Start watching for file changes.
-   */
+  // Working tree
   startWatching(): void {
-    const gitDir = path.join(this.repoPath, '.git');
-    if (!fs.existsSync(gitDir)) return;
-
-    // --- Git internals watcher ---
-    const indexFile = path.join(gitDir, 'index');
-    const headFile = path.join(gitDir, 'HEAD');
-    const refsDir = path.join(gitDir, 'refs');
-    const gitignorePath = path.join(this.repoPath, '.gitignore');
-
-    // Git uses atomic writes (write to temp, then rename). We use polling
-    // for reliable detection of these atomic operations.
-    this.gitWatcher = watch([indexFile, headFile, refsDir, gitignorePath], {
-      persistent: true,
-      ignoreInitial: true,
-      usePolling: true,
-      interval: 100,
-    });
-
-    // --- Working directory watcher with gitignore support ---
-    this.ignorers = this.loadGitignores();
-
-    this.workingDirWatcher = watch(this.repoPath, {
-      persistent: true,
-      ignoreInitial: true,
-      ignored: (filePath: string) => {
-        const relativePath = path.relative(this.repoPath, filePath);
-        if (!relativePath) return false;
-
-        // Walk ancestor directories from root to parent, checking each ignorer
-        const parts = relativePath.split('/');
-        for (let depth = 0; depth < parts.length; depth++) {
-          const dir = depth === 0 ? '' : parts.slice(0, depth).join('/');
-          const ig = this.ignorers.get(dir);
-          if (ig) {
-            const relToDir = depth === 0 ? relativePath : parts.slice(depth).join('/');
-            if (ig.ignores(relToDir)) return true;
-          }
-        }
-        return false;
-      },
-      awaitWriteFinish: {
-        stabilityThreshold: 100,
-        pollInterval: 50,
-      },
-    });
-
-    const scheduleRefresh = () => this.scheduleRefresh();
-
-    this.gitWatcher.on('change', (filePath) => {
-      // Reload gitignore patterns if .gitignore changed
-      if (filePath === gitignorePath) {
-        this.ignorers = this.loadGitignores();
-      }
-      scheduleRefresh();
-    });
-    this.gitWatcher.on('add', scheduleRefresh);
-    this.gitWatcher.on('unlink', scheduleRefresh);
-    this.gitWatcher.on('error', (err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      this.emit('error', `Git watcher error: ${message}`);
-    });
-
-    this.workingDirWatcher.on('change', scheduleRefresh);
-    this.workingDirWatcher.on('add', scheduleRefresh);
-    this.workingDirWatcher.on('unlink', scheduleRefresh);
-    this.workingDirWatcher.on('error', (err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      this.emit('error', `Working dir watcher error: ${message}`);
-    });
+    this.workingTree.startWatching();
   }
-
-  /**
-   * Stop watching and clean up resources.
-   */
   dispose(): void {
-    if (this.diffDebounceTimer) clearTimeout(this.diffDebounceTimer);
-    this.gitWatcher?.close();
-    this.workingDirWatcher?.close();
+    this.workingTree.dispose();
     removeQueueForRepo(this.repoPath);
   }
-
-  /**
-   * Schedule a refresh (coalesced if one is already pending).
-   * Also refreshes history and compare data if they were previously loaded.
-   */
   scheduleRefresh(): void {
-    this.queue.scheduleRefresh(async () => {
-      await this.doRefresh();
-
-      // Also refresh history if it was loaded (has commits)
-      if (this._historyState.commits.length > 0) {
-        await this.doLoadHistory();
-      }
-
-      // Also refresh compare if it was loaded (has a base branch set)
-      if (this._compareState.compareBaseBranch) {
-        await this.doRefreshCompareDiff(false);
-      }
-    });
+    this.workingTree.scheduleRefresh();
   }
-
-  /**
-   * Schedule a lightweight status-only refresh (no diff fetching).
-   * Used after stage/unstage where the diff view updates on file selection.
-   */
-  scheduleStatusRefresh(): void {
-    this.queue.scheduleRefresh(async () => {
-      const newStatus = await getStatus(this.repoPath);
-      if (!newStatus.isRepo) {
-        this.updateState({
-          status: newStatus,
-          diff: null,
-          isLoading: false,
-          error: 'Not a git repository',
-        });
-        return;
-      }
-      this.updateState({ status: newStatus, isLoading: false });
-    });
-  }
-
-  /**
-   * Immediately refresh git state.
-   */
   async refresh(): Promise<void> {
-    await this.queue.enqueue(() => this.doRefresh());
+    await this.workingTree.refresh();
   }
-
-  private async doRefresh(): Promise<void> {
-    this.updateState({ isLoading: true, error: null });
-
-    try {
-      const newStatus = await getStatus(this.repoPath);
-
-      if (!newStatus.isRepo) {
-        this.updateState({
-          status: newStatus,
-          diff: null,
-          isLoading: false,
-          error: 'Not a git repository',
-        });
-        return;
-      }
-
-      // Fetch unstaged and staged diffs in parallel
-      const [allUnstagedDiff, allStagedDiff] = await Promise.all([
-        getDiff(this.repoPath, undefined, false),
-        getDiff(this.repoPath, undefined, true),
-      ]);
-
-      // Count hunks per file for the file list display
-      const hunkCounts: FileHunkCounts = {
-        unstaged: countHunksPerFile(allUnstagedDiff.raw),
-        staged: countHunksPerFile(allStagedDiff.raw),
-      };
-
-      // Determine display diff based on selected file
-      const { displayDiff, combinedFileDiffs } = await this.resolveFileDiffs(
-        newStatus,
-        allUnstagedDiff
-      );
-
-      // Batch status + diffs into a single update to avoid flicker
-      this.updateState({
-        status: newStatus,
-        diff: displayDiff,
-        combinedFileDiffs,
-        hunkCounts,
-        isLoading: false,
-      });
-    } catch (err) {
-      this.updateState({
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Unknown error',
-      });
-    }
-  }
-
-  /**
-   * Resolve display diff and combined diffs for the currently selected file.
-   */
-  private async resolveFileDiffs(
-    newStatus: GitStatus,
-    fallbackDiff: DiffResult
-  ): Promise<{ displayDiff: DiffResult; combinedFileDiffs: CombinedFileDiffs | null }> {
-    const currentSelectedFile = this._state.selectedFile;
-    if (!currentSelectedFile) {
-      return { displayDiff: fallbackDiff, combinedFileDiffs: null };
-    }
-
-    // Match by path + staged, falling back to path-only (handles staging state changes)
-    const currentFile =
-      newStatus.files.find(
-        (f) => f.path === currentSelectedFile.path && f.staged === currentSelectedFile.staged
-      ) ?? newStatus.files.find((f) => f.path === currentSelectedFile.path);
-    if (!currentFile) {
-      this.updateState({ selectedFile: null });
-      return { displayDiff: fallbackDiff, combinedFileDiffs: null };
-    }
-
-    if (currentFile.status === 'untracked') {
-      const displayDiff = await getDiffForUntracked(this.repoPath, currentFile.path);
-      return {
-        displayDiff,
-        combinedFileDiffs: { unstaged: displayDiff, staged: { raw: '', lines: [] } },
-      };
-    }
-
-    const [unstagedFileDiff, stagedFileDiff] = await Promise.all([
-      getDiff(this.repoPath, currentFile.path, false),
-      getDiff(this.repoPath, currentFile.path, true),
-    ]);
-    const displayDiff = currentFile.staged ? stagedFileDiff : unstagedFileDiff;
-    return {
-      displayDiff,
-      combinedFileDiffs: { unstaged: unstagedFileDiff, staged: stagedFileDiff },
-    };
-  }
-
-  /**
-   * Select a file and update the diff display.
-   * The selection highlight updates immediately; the diff fetch is debounced
-   * so rapid arrow-key presses only spawn one git process for the final file.
-   */
   selectFile(file: FileEntry | null): void {
-    this.updateState({ selectedFile: file });
-
-    if (!this._state.status?.isRepo) return;
-
-    if (this.diffDebounceTimer) {
-      // Already cooling down — reset the timer and fetch when it expires
-      clearTimeout(this.diffDebounceTimer);
-      this.diffDebounceTimer = setTimeout(() => {
-        this.diffDebounceTimer = null;
-        this.fetchDiffForSelection();
-      }, 20);
-    } else {
-      // First call — fetch immediately, then start cooldown
-      this.fetchDiffForSelection();
-      this.diffDebounceTimer = setTimeout(() => {
-        this.diffDebounceTimer = null;
-      }, 20);
-    }
+    this.workingTree.selectFile(file);
   }
-
-  private fetchDiffForSelection(): void {
-    const file = this._state.selectedFile;
-
-    this.queue
-      .enqueue(async () => {
-        if (file !== this._state.selectedFile) return;
-        await this.doFetchDiffForFile(file);
-      })
-      .catch((err) => {
-        this.updateState({
-          error: `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`,
-        });
-      });
-  }
-
-  private async doFetchDiffForFile(file: FileEntry | null): Promise<void> {
-    if (!file) {
-      const allDiff = await getStagedDiff(this.repoPath);
-      if (this._state.selectedFile === null) {
-        this.updateState({ diff: allDiff, combinedFileDiffs: null });
-      }
-      return;
-    }
-
-    if (file.status === 'untracked') {
-      const fileDiff = await getDiffForUntracked(this.repoPath, file.path);
-      if (file === this._state.selectedFile) {
-        this.updateState({
-          diff: fileDiff,
-          combinedFileDiffs: { unstaged: fileDiff, staged: { raw: '', lines: [] } },
-        });
-      }
-      return;
-    }
-
-    const [unstagedDiff, stagedDiff] = await Promise.all([
-      getDiff(this.repoPath, file.path, false),
-      getDiff(this.repoPath, file.path, true),
-    ]);
-    if (file === this._state.selectedFile) {
-      const displayDiff = file.staged ? stagedDiff : unstagedDiff;
-      this.updateState({
-        diff: displayDiff,
-        combinedFileDiffs: { unstaged: unstagedDiff, staged: stagedDiff },
-      });
-    }
-  }
-
-  /**
-   * Stage a file.
-   */
   async stage(file: FileEntry): Promise<void> {
-    try {
-      await this.queue.enqueueMutation(() => stageFile(this.repoPath, file.path));
-      this.scheduleStatusRefresh();
-    } catch (err) {
-      await this.refresh();
-      this.updateState({
-        error: `Failed to stage ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
+    await this.workingTree.stage(file);
   }
-
-  /**
-   * Unstage a file.
-   */
   async unstage(file: FileEntry): Promise<void> {
-    try {
-      await this.queue.enqueueMutation(() => unstageFile(this.repoPath, file.path));
-      this.scheduleStatusRefresh();
-    } catch (err) {
-      await this.refresh();
-      this.updateState({
-        error: `Failed to unstage ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
+    await this.workingTree.unstage(file);
   }
-
-  /**
-   * Stage a single hunk via patch.
-   */
   async stageHunk(patch: string): Promise<void> {
-    try {
-      await this.queue.enqueueMutation(async () => gitStageHunk(this.repoPath, patch));
-      this.scheduleRefresh();
-    } catch (err) {
-      await this.refresh();
-      this.updateState({
-        error: `Failed to stage hunk: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
+    await this.workingTree.stageHunk(patch);
   }
-
-  /**
-   * Unstage a single hunk via patch.
-   */
   async unstageHunk(patch: string): Promise<void> {
-    try {
-      await this.queue.enqueueMutation(async () => gitUnstageHunk(this.repoPath, patch));
-      this.scheduleRefresh();
-    } catch (err) {
-      await this.refresh();
-      this.updateState({
-        error: `Failed to unstage hunk: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
+    await this.workingTree.unstageHunk(patch);
   }
-
-  /**
-   * Discard changes to a file.
-   */
   async discard(file: FileEntry): Promise<void> {
-    if (file.staged || file.status === 'untracked') return;
-
-    try {
-      await this.queue.enqueueMutation(() => gitDiscardChanges(this.repoPath, file.path));
-      await this.refresh();
-    } catch (err) {
-      this.updateState({
-        error: `Failed to discard ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
+    await this.workingTree.discard(file);
   }
-
-  /**
-   * Stage all files.
-   */
   async stageAll(): Promise<void> {
-    try {
-      await this.queue.enqueueMutation(() => gitStageAll(this.repoPath));
-      await this.refresh();
-    } catch (err) {
-      this.updateState({
-        error: `Failed to stage all: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
+    await this.workingTree.stageAll();
   }
-
-  /**
-   * Unstage all files.
-   */
   async unstageAll(): Promise<void> {
-    try {
-      await this.queue.enqueueMutation(() => gitUnstageAll(this.repoPath));
-      await this.refresh();
-    } catch (err) {
-      this.updateState({
-        error: `Failed to unstage all: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
+    await this.workingTree.unstageAll();
   }
-
-  /**
-   * Create a commit.
-   */
   async commit(message: string, amend: boolean = false): Promise<void> {
-    try {
-      await this.queue.enqueue(() => gitCommit(this.repoPath, message, amend));
-      await this.refresh();
-    } catch (err) {
-      this.updateState({
-        error: `Failed to commit: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
+    await this.workingTree.commit(message, amend);
   }
-
-  // Remote operations
-
-  /**
-   * Push to remote.
-   */
-  async push(): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('push', () => gitPush(this.repoPath));
-  }
-
-  /**
-   * Fetch from remote.
-   */
-  async fetchRemote(): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('fetch', () => gitFetchRemote(this.repoPath));
-  }
-
-  /**
-   * Pull with rebase from remote.
-   */
-  async pullRebase(): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('pull', () => gitPullRebase(this.repoPath));
-  }
-
-  private async runRemoteOperation(
-    operation: RemoteOperation,
-    fn: () => Promise<string>
-  ): Promise<void> {
-    this.updateRemoteState({ operation, inProgress: true, error: null, lastResult: null });
-
-    try {
-      const result = await this.queue.enqueue(fn);
-      this.updateRemoteState({ inProgress: false, lastResult: result });
-      // Refresh status to pick up new ahead/behind counts
-      this.scheduleRefresh();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.updateRemoteState({ inProgress: false, error: message });
-    }
-  }
-
-  // Stash operations
-
-  /**
-   * Load the stash list.
-   */
   async loadStashList(): Promise<void> {
-    try {
-      const stashList = await this.queue.enqueue(() => gitGetStashList(this.repoPath));
-      this.updateState({ stashList });
-    } catch {
-      // Silently ignore — stash list is non-critical
-    }
+    await this.workingTree.loadStashList();
   }
 
-  /**
-   * Save working changes to stash.
-   */
-  async stash(message?: string): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('stash', () => gitStashSave(this.repoPath, message));
-    await this.loadStashList();
-  }
-
-  /**
-   * Pop a stash entry.
-   */
-  async stashPop(index: number = 0): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('stashPop', () => gitStashPop(this.repoPath, index));
-    await this.loadStashList();
-  }
-
-  // Branch operations
-
-  /**
-   * Get local branches.
-   */
-  async getLocalBranches(): Promise<LocalBranch[]> {
-    return this.queue.enqueue(() => gitGetLocalBranches(this.repoPath));
-  }
-
-  /**
-   * Switch to an existing branch.
-   */
-  async switchBranch(name: string): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('branchSwitch', () => gitSwitchBranch(this.repoPath, name));
-    // Reset compare base branch since it may not exist on the new branch
-    this.updateCompareState({ compareBaseBranch: null });
-  }
-
-  /**
-   * Create and switch to a new branch.
-   */
-  async createBranch(name: string): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('branchCreate', () => gitCreateBranch(this.repoPath, name));
-    this.updateCompareState({ compareBaseBranch: null });
-  }
-
-  // Undo operations
-
-  /**
-   * Soft reset HEAD by count commits.
-   */
-  async softReset(count: number = 1): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('softReset', () => gitSoftResetHead(this.repoPath, count));
-  }
-
-  // History actions
-
-  /**
-   * Cherry-pick a commit.
-   */
-  async cherryPick(hash: string): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('cherryPick', () => gitCherryPick(this.repoPath, hash));
-  }
-
-  /**
-   * Revert a commit.
-   */
-  async revertCommit(hash: string): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('revert', () => gitRevertCommit(this.repoPath, hash));
-  }
-
-  /**
-   * Clear the remote state (e.g. after auto-clear timeout).
-   */
-  clearRemoteState(): void {
-    this.updateRemoteState({ operation: null, error: null, lastResult: null });
-  }
-
-  /**
-   * Get the HEAD commit message.
-   */
-  async getHeadCommitMessage(): Promise<string> {
-    return this.queue.enqueue(() => getHeadMessage(this.repoPath));
-  }
-
-  /**
-   * Refresh compare diff.
-   */
-  async refreshCompareDiff(includeUncommitted: boolean = false): Promise<void> {
-    this.updateCompareState({ compareLoading: true, compareError: null });
-
-    try {
-      await this.queue.enqueue(() => this.doRefreshCompareDiff(includeUncommitted));
-    } catch (err) {
-      this.updateCompareState({
-        compareLoading: false,
-        compareError: `Failed to load compare diff: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
-  }
-
-  /**
-   * Internal: refresh compare diff (called within queue).
-   */
-  private async doRefreshCompareDiff(includeUncommitted: boolean): Promise<void> {
-    let base = this._compareState.compareBaseBranch;
-    if (!base) {
-      // Try cached value first, then fall back to default detection
-      base = getCachedBaseBranch(this.repoPath) ?? (await getDefaultBaseBranch(this.repoPath));
-      this.updateCompareState({ compareBaseBranch: base });
-    }
-    if (base) {
-      const diff = includeUncommitted
-        ? await getCompareDiffWithUncommitted(this.repoPath, base)
-        : await getDiffBetweenRefs(this.repoPath, base);
-      this.updateCompareState({ compareDiff: diff, compareLoading: false });
-    } else {
-      this.updateCompareState({
-        compareDiff: null,
-        compareLoading: false,
-        compareError: 'No base branch found',
-      });
-    }
-  }
-
-  /**
-   * Get candidate base branches for branch comparison.
-   */
-  async getCandidateBaseBranches(): Promise<string[]> {
-    return getCandidateBaseBranches(this.repoPath);
-  }
-
-  /**
-   * Set the base branch for branch comparison and refresh.
-   * Also saves the selection to the cache for future sessions.
-   */
-  async setCompareBaseBranch(branch: string, includeUncommitted: boolean = false): Promise<void> {
-    this.updateCompareState({ compareBaseBranch: branch });
-    setCachedBaseBranch(this.repoPath, branch);
-    await this.refreshCompareDiff(includeUncommitted);
-  }
-
-  /**
-   * Load commit history for the history view.
-   */
+  // History
   async loadHistory(count: number = 100): Promise<void> {
-    this.updateHistoryState({ isLoading: true });
-
     try {
-      await this.queue.enqueue(() => this.doLoadHistory(count));
+      await this.history.loadHistory(count);
     } catch (err) {
-      this.updateHistoryState({ isLoading: false });
-      this.updateState({
+      this.emit('state-change', {
+        ...this.workingTree.state,
         error: `Failed to load history: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }
-
-  /**
-   * Internal: load commit history (called within queue).
-   */
-  private async doLoadHistory(count: number = 100): Promise<void> {
-    const commits = await getCommitHistory(this.repoPath, count);
-    this.updateHistoryState({ commits, isLoading: false });
-  }
-
-  /**
-   * Select a commit in history view and load its diff.
-   */
   async selectHistoryCommit(commit: CommitInfo | null): Promise<void> {
-    this.updateHistoryState({ selectedCommit: commit, commitDiff: null });
-
-    if (!commit) return;
-
     try {
-      await this.queue.enqueue(async () => {
-        const diff = await getCommitDiff(this.repoPath, commit.hash);
-        this.updateHistoryState({ commitDiff: diff });
-      });
+      await this.history.selectHistoryCommit(commit);
     } catch (err) {
-      this.updateState({
+      this.emit('state-change', {
+        ...this.workingTree.state,
         error: `Failed to load commit diff: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }
+  async getHeadCommitMessage(): Promise<string> {
+    return this.history.getHeadCommitMessage();
+  }
 
-  /**
-   * Select a commit in compare view and load its diff.
-   */
+  // Compare
+  async refreshCompareDiff(includeUncommitted: boolean = false): Promise<void> {
+    await this.compare.refreshCompareDiff(includeUncommitted);
+  }
+  async getCandidateBaseBranches(): Promise<string[]> {
+    return this.compare.getCandidateBaseBranches();
+  }
+  async setCompareBaseBranch(branch: string, includeUncommitted: boolean = false): Promise<void> {
+    await this.compare.setCompareBaseBranch(branch, includeUncommitted);
+  }
   async selectCompareCommit(index: number): Promise<void> {
-    const compareDiff = this._compareState.compareDiff;
-    if (!compareDiff || index < 0 || index >= compareDiff.commits.length) {
-      this.updateCompareSelectionState({ type: null, index: 0, diff: null });
-      return;
-    }
-
-    const commit = compareDiff.commits[index];
-    this.updateCompareSelectionState({ type: 'commit', index, diff: null });
-
     try {
-      await this.queue.enqueue(async () => {
-        const diff = await getCommitDiff(this.repoPath, commit.hash);
-        this.updateCompareSelectionState({ diff });
-      });
+      await this.compare.selectCompareCommit(index);
     } catch (err) {
-      this.updateState({
+      this.emit('state-change', {
+        ...this.workingTree.state,
         error: `Failed to load commit diff: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }
-
-  /**
-   * Select a file in compare view and show its diff.
-   */
   selectCompareFile(index: number): void {
-    const compareDiff = this._compareState.compareDiff;
-    if (!compareDiff || index < 0 || index >= compareDiff.files.length) {
-      this.updateCompareSelectionState({ type: null, index: 0, diff: null });
-      return;
-    }
+    this.compare.selectCompareFile(index);
+  }
 
-    const file = compareDiff.files[index];
-    this.updateCompareSelectionState({ type: 'file', index, diff: file.diff });
+  // Remote
+  async push(): Promise<void> {
+    await this.remote.push();
+  }
+  async fetchRemote(): Promise<void> {
+    await this.remote.fetchRemote();
+  }
+  async pullRebase(): Promise<void> {
+    await this.remote.pullRebase();
+  }
+  async stash(message?: string): Promise<void> {
+    await this.remote.stash(message);
+  }
+  async stashPop(index: number = 0): Promise<void> {
+    await this.remote.stashPop(index);
+  }
+  async getLocalBranches(): Promise<LocalBranch[]> {
+    return this.remote.getLocalBranches();
+  }
+  async switchBranch(name: string): Promise<void> {
+    await this.remote.switchBranch(name);
+  }
+  async createBranch(name: string): Promise<void> {
+    await this.remote.createBranch(name);
+  }
+  async softReset(count: number = 1): Promise<void> {
+    await this.remote.softReset(count);
+  }
+  async cherryPick(hash: string): Promise<void> {
+    await this.remote.cherryPick(hash);
+  }
+  async revertCommit(hash: string): Promise<void> {
+    await this.remote.revertCommit(hash);
+  }
+  clearRemoteState(): void {
+    this.remote.clearRemoteState();
   }
 }
 

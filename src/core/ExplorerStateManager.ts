@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { getIgnoredFiles } from '../git/ignoreUtils.js';
 import { listAllFiles } from '../git/status.js';
+import * as logger from '../utils/logger.js';
 import type { FileStatus } from '../git/status.js';
 
 export interface SelectedFile {
@@ -233,7 +234,10 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
       }
 
       return node;
-    } catch {
+    } catch (err) {
+      logger.warn(
+        `Failed to build tree node for ${relativePath}: ${err instanceof Error ? err.message : err}`
+      );
       return null;
     }
   }
@@ -302,7 +306,10 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
       this.collapseNode(node, children);
 
       node.childrenLoaded = true;
-    } catch {
+    } catch (err) {
+      logger.warn(
+        `Failed to read directory ${node.name}: ${err instanceof Error ? err.message : err}`
+      );
       node.childrenLoaded = true;
       node.children = [];
     }
@@ -676,7 +683,8 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
   async loadFilePaths(): Promise<void> {
     try {
       this._cachedFilePaths = await listAllFiles(this.repoPath);
-    } catch {
+    } catch (err) {
+      logger.warn(`Failed to load file paths: ${err instanceof Error ? err.message : err}`);
       this._cachedFilePaths = [];
     }
   }

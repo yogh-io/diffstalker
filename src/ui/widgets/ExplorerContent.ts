@@ -5,11 +5,7 @@ import {
   getExplorerContentLineNumWidth,
 } from '../../utils/explorerDisplayRows.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
-
-const ANSI_RESET = '\x1b[0m';
-const ANSI_GRAY = '\x1b[90m';
-const ANSI_CYAN = '\x1b[36m';
-const ANSI_YELLOW = '\x1b[33m';
+import { ANSI_RESET, ANSI_GRAY, ANSI_CYAN, ANSI_YELLOW } from '../../utils/ansi.js';
 
 /**
  * Format explorer file content as blessed-compatible tagged string.

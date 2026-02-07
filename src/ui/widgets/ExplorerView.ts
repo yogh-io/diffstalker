@@ -1,17 +1,17 @@
 import type { ExplorerDisplayRow } from '../../core/ExplorerStateManager.js';
 import type { FileStatus } from '../../git/status.js';
-
-// ANSI escape codes
-const ANSI_RESET = '\x1b[0m';
-const ANSI_BOLD = '\x1b[1m';
-const ANSI_GRAY = '\x1b[90m';
-const ANSI_CYAN = '\x1b[36m';
-const ANSI_YELLOW = '\x1b[33m';
-const ANSI_GREEN = '\x1b[32m';
-const ANSI_RED = '\x1b[31m';
-const ANSI_BLUE = '\x1b[34m';
-const ANSI_MAGENTA = '\x1b[35m';
-const ANSI_INVERSE = '\x1b[7m';
+import {
+  ANSI_RESET,
+  ANSI_BOLD,
+  ANSI_GRAY,
+  ANSI_CYAN,
+  ANSI_YELLOW,
+  ANSI_GREEN,
+  ANSI_RED,
+  ANSI_BLUE,
+  ANSI_MAGENTA,
+  ANSI_INVERSE,
+} from '../../utils/ansi.js';
 
 /**
  * Build tree prefix characters (│ ├ └).

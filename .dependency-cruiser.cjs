@@ -43,11 +43,11 @@ module.exports = {
     // --- UI layer must not import top-level orchestrators ---
     {
       name: "ui-no-top-level",
-      comment: "ui/ must not import App, index, KeyBindings, MouseHandlers, or FollowMode",
+      comment: "ui/ must not import App, index, KeyBindings, MouseHandlers, NavigationController, or FollowMode",
       severity: "error",
       from: { path: "^src/ui/" },
       to: {
-        path: "^src/(App|index|KeyBindings|MouseHandlers|FollowMode)\\.ts$",
+        path: "^src/(App|index|KeyBindings|MouseHandlers|NavigationController|StagingOperations|ModalController|FollowMode)\\.ts$",
       },
     },
 

@@ -103,21 +103,58 @@ interface FileSection {
   newRowIndices: number[]; // Maps newContent index -> row index
 }
 
-/**
- * Build display rows from a DiffResult.
- * Filters out non-displayable lines (index, ---, +++ headers).
- * Pairs consecutive deletions/additions within hunks and computes word-level diffs.
- * Applies block-based syntax highlighting to properly handle multi-line constructs.
- */
-export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
-  if (!diff) return [];
+/** Result of pairing consecutive deletions with additions for word-diff. */
+interface WordDiffPairing {
+  delSegmentsMap: Map<number, WordDiffSegment[]>;
+  addSegmentsMap: Map<number, WordDiffSegment[]>;
+}
 
-  const filteredLines = diff.lines.filter(isDisplayableDiffLine);
+/** Result of building raw display rows before syntax highlighting. */
+interface RawDiffResult {
+  rows: DisplayRow[];
+  fileSections: FileSection[];
+}
+
+/** Type guard for rows that can receive syntax highlighting. */
+function isHighlightable(
+  row: DisplayRow
+): row is DisplayRow & { type: 'diff-add' | 'diff-del' | 'diff-context' } {
+  return row.type === 'diff-add' || row.type === 'diff-del' || row.type === 'diff-context';
+}
+
+/**
+ * Pair consecutive deletions with additions and compute word-level diffs.
+ * Returns maps from pair index to word diff segments for each side.
+ */
+function pairDeletionsAndAdditions(deletions: DiffLine[], additions: DiffLine[]): WordDiffPairing {
+  const delSegmentsMap: Map<number, WordDiffSegment[]> = new Map();
+  const addSegmentsMap: Map<number, WordDiffSegment[]> = new Map();
+  const pairCount = Math.min(deletions.length, additions.length);
+
+  for (let j = 0; j < pairCount; j++) {
+    const delContent = getLineContent(deletions[j]);
+    const addContent = getLineContent(additions[j]);
+
+    if (areSimilarEnough(delContent, addContent)) {
+      const { oldSegments, newSegments } = computeWordDiff(delContent, addContent);
+      delSegmentsMap.set(j, oldSegments);
+      addSegmentsMap.set(j, newSegments);
+    }
+  }
+
+  return { delSegmentsMap, addSegmentsMap };
+}
+
+/**
+ * Build display rows from filtered diff lines in a single pass.
+ * Collects content streams per file section for later syntax highlighting.
+ * Pairs consecutive del/add lines for word-level diff computation.
+ */
+function buildRawDiffRows(filteredLines: DiffLine[]): RawDiffResult {
   const rows: DisplayRow[] = [];
   const fileSections: FileSection[] = [];
   let currentSection: FileSection | null = null;
 
-  // Phase 1: Build display rows and collect content streams per file section
   let i = 0;
   while (i < filteredLines.length) {
     const line = filteredLines[i];
@@ -187,20 +224,7 @@ export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
     }
 
     // Pair deletions with additions for word-level diff
-    const delSegmentsMap: Map<number, WordDiffSegment[]> = new Map();
-    const addSegmentsMap: Map<number, WordDiffSegment[]> = new Map();
-    const pairCount = Math.min(deletions.length, additions.length);
-
-    for (let j = 0; j < pairCount; j++) {
-      const delContent = getLineContent(deletions[j]);
-      const addContent = getLineContent(additions[j]);
-
-      if (areSimilarEnough(delContent, addContent)) {
-        const { oldSegments, newSegments } = computeWordDiff(delContent, addContent);
-        delSegmentsMap.set(j, oldSegments);
-        addSegmentsMap.set(j, newSegments);
-      }
-    }
+    const { delSegmentsMap, addSegmentsMap } = pairDeletionsAndAdditions(deletions, additions);
 
     for (let j = 0; j < deletions.length; j++) {
       const delLine = deletions[j];
@@ -245,43 +269,73 @@ export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
     fileSections.push(currentSection);
   }
 
-  // Phase 2: Apply block highlighting for each file section
-  for (const section of fileSections) {
-    if (!section.language) continue;
+  return { rows, fileSections };
+}
 
-    if (section.oldContent.length > 0) {
-      const oldHighlighted = highlightBlockPreserveBg(section.oldContent, section.language);
-      for (let j = 0; j < section.oldRowIndices.length; j++) {
-        const rowIndex = section.oldRowIndices[j];
-        const row = rows[rowIndex];
-        const highlighted = oldHighlighted[j];
-        if (
-          highlighted &&
-          highlighted !== (row as { content: string }).content &&
-          (row.type === 'diff-del' || row.type === 'diff-context')
-        ) {
-          (row as { highlighted?: string }).highlighted = highlighted;
-        }
-      }
-    }
+/**
+ * Highlight a content stream and map results back to display rows.
+ * Only applies highlighting to rows that match the expected types.
+ */
+function applyStreamHighlighting(
+  rows: DisplayRow[],
+  content: string[],
+  rowIndices: number[],
+  language: string,
+  allowedTypes: ReadonlySet<string>
+): void {
+  if (content.length === 0) return;
 
-    if (section.newContent.length > 0) {
-      const newHighlighted = highlightBlockPreserveBg(section.newContent, section.language);
-      for (let j = 0; j < section.newRowIndices.length; j++) {
-        const rowIndex = section.newRowIndices[j];
-        const row = rows[rowIndex];
-        const highlighted = newHighlighted[j];
-        if (
-          highlighted &&
-          highlighted !== (row as { content: string }).content &&
-          (row.type === 'diff-add' || row.type === 'diff-context')
-        ) {
-          (row as { highlighted?: string }).highlighted = highlighted;
-        }
-      }
+  const highlighted = highlightBlockPreserveBg(content, language);
+  for (let j = 0; j < rowIndices.length; j++) {
+    const rowIndex = rowIndices[j];
+    const row = rows[rowIndex];
+    const hl = highlighted[j];
+    if (hl && isHighlightable(row) && allowedTypes.has(row.type) && hl !== row.content) {
+      row.highlighted = hl;
     }
   }
+}
 
+const OLD_STREAM_TYPES: ReadonlySet<string> = new Set(['diff-del', 'diff-context']);
+const NEW_STREAM_TYPES: ReadonlySet<string> = new Set(['diff-add', 'diff-context']);
+
+/**
+ * Apply block-based syntax highlighting to display rows.
+ * Each file section's old and new content streams are highlighted separately,
+ * then mapped back to the corresponding row indices.
+ */
+function applySyntaxHighlighting(rows: DisplayRow[], fileSections: FileSection[]): void {
+  for (const section of fileSections) {
+    if (!section.language) continue;
+    applyStreamHighlighting(
+      rows,
+      section.oldContent,
+      section.oldRowIndices,
+      section.language,
+      OLD_STREAM_TYPES
+    );
+    applyStreamHighlighting(
+      rows,
+      section.newContent,
+      section.newRowIndices,
+      section.language,
+      NEW_STREAM_TYPES
+    );
+  }
+}
+
+/**
+ * Build display rows from a DiffResult.
+ * Filters out non-displayable lines (index, ---, +++ headers).
+ * Pairs consecutive deletions/additions within hunks and computes word-level diffs.
+ * Applies block-based syntax highlighting to properly handle multi-line constructs.
+ */
+export function buildDiffDisplayRows(diff: DiffResult | null): DisplayRow[] {
+  if (!diff) return [];
+
+  const filteredLines = diff.lines.filter(isDisplayableDiffLine);
+  const { rows, fileSections } = buildRawDiffRows(filteredLines);
+  applySyntaxHighlighting(rows, fileSections);
   return rows;
 }
 
