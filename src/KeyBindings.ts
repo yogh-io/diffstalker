@@ -252,8 +252,11 @@ export function setupKeyBindings(
   // Theme picker
   screen.key(['t'], () => ctx.uiState.openModal('theme'));
 
-  // Hotkeys modal
-  screen.key(['?'], () => ctx.uiState.toggleModal('hotkeys'));
+  // Hotkeys modal (only opens; closing is handled by the modal's own key handler)
+  screen.key(['?'], () => {
+    if (ctx.hasActiveModal()) return;
+    ctx.uiState.openModal('hotkeys');
+  });
 
   // Follow toggle
   screen.key(['f'], () => actions.toggleFollow());

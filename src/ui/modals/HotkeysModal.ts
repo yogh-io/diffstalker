@@ -179,7 +179,7 @@ export class HotkeysModal {
   }
 
   private setupKeyHandlers(): void {
-    this.box.key(['escape', 'enter', 'q'], () => {
+    this.box.key(['escape', 'enter', 'q', '?'], () => {
       this.close();
       this.onClose();
     });

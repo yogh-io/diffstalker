@@ -58,9 +58,6 @@ export class ModalController {
    */
   handleModalChange(modal: string | null): void {
     if (this.activeModal) {
-      if (this.activeModal instanceof HotkeysModal) {
-        this.activeModal.close();
-      }
       this.activeModal = null;
     }
 
@@ -84,7 +81,9 @@ export class ModalController {
     } else if (modal === 'hotkeys') {
       this.activeModal = new HotkeysModal(this.ctx.screen, () => {
         this.activeModal = null;
-        this.ctx.uiState.closeModal();
+        // Delay UIState cleanup so the screen-level ? handler still sees
+        // the modal as active and won't immediately re-open it
+        setImmediate(() => this.ctx.uiState.closeModal());
       });
       this.activeModal.focus();
     } else if (modal === 'baseBranch') {
