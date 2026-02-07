@@ -258,14 +258,6 @@ export class App {
         toggleCurrentHunk: () => this.staging.toggleCurrentHunk(),
         navigateNextHunk: () => this.navigation.navigateNextHunk(),
         navigatePrevHunk: () => this.navigation.navigatePrevHunk(),
-        push: () => this.gitManager?.remote.push(),
-        fetchRemote: () => this.gitManager?.remote.fetchRemote(),
-        pullRebase: () => this.gitManager?.remote.pullRebase(),
-        stash: () => this.gitManager?.remote.stash(),
-        stashPop: () => this.gitManager?.remote.stashPop(),
-        openStashListModal: () => this.modals.openStashListModal(),
-        openBranchPicker: () => this.modals.openBranchPicker(),
-        showSoftResetConfirm: () => this.modals.showSoftResetConfirm(),
         cherryPickSelected: () => this.modals.cherryPickSelected(),
         revertSelected: () => this.modals.revertSelected(),
       },
@@ -274,7 +266,6 @@ export class App {
         getBottomTab: () => this.uiState.state.bottomTab,
         getCurrentPane: () => this.uiState.state.currentPane,
         isCommitInputFocused: () => this.commitFlowState.state.inputFocused,
-        isRemoteInProgress: () => this.gitManager?.remote.remoteState.inProgress ?? false,
         getStatusFiles: () => this.gitManager?.workingTree.state.status?.files ?? [],
         getSelectedIndex: () => this.uiState.state.selectedIndex,
         uiState: this.uiState,
@@ -300,10 +291,6 @@ export class App {
         toggleFollow: () => this.toggleFollow(),
         selectHunkAtRow: (row) => this.navigation.selectHunkAtRow(row),
         focusCommitInput: () => this.focusCommitInput(),
-        toggleAmend: () => {
-          this.commitFlowState.toggleAmend();
-          this.render();
-        },
         render: () => this.render(),
       },
       {
@@ -340,12 +327,6 @@ export class App {
         // Explorer is already loaded on init, but refresh if needed
         if (!this.explorerManager?.state.displayRows.length) {
           this.explorerManager?.loadDirectory('');
-        }
-      } else if (tab === 'commit') {
-        this.gitManager?.workingTree.loadStashList();
-        // Also load history if needed for HEAD commit display
-        if (!this.gitManager?.history.historyState.commits.length) {
-          this.loadHistory();
         }
       }
     });
@@ -796,11 +777,7 @@ export class App {
       this.layout.dimensions.bottomPaneHeight,
       hunkIndex,
       isFileStaged,
-      state.flatViewMode ? this.gitManager?.workingTree.state.combinedFileDiffs : undefined,
-      this.gitManager?.workingTree.state.status?.branch ?? null,
-      this.gitManager?.remote.remoteState ?? null,
-      this.gitManager?.workingTree.state.stashList,
-      this.gitManager?.history.historyState.commits[0] ?? null
+      state.flatViewMode ? this.gitManager?.workingTree.state.combinedFileDiffs : undefined
     );
 
     this.bottomPaneTotalRows = totalRows;

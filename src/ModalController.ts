@@ -9,9 +9,6 @@ import { HotkeysModal } from './ui/modals/HotkeysModal.js';
 import { BaseBranchPicker } from './ui/modals/BaseBranchPicker.js';
 import { DiscardConfirm } from './ui/modals/DiscardConfirm.js';
 import { FileFinder } from './ui/modals/FileFinder.js';
-import { StashListModal } from './ui/modals/StashListModal.js';
-import { BranchPicker } from './ui/modals/BranchPicker.js';
-import { SoftResetConfirm } from './ui/modals/SoftResetConfirm.js';
 import { CommitActionConfirm } from './ui/modals/CommitActionConfirm.js';
 import { saveConfig } from './config.js';
 import * as logger from './utils/logger.js';
@@ -41,9 +38,6 @@ export class ModalController {
     | BaseBranchPicker
     | DiscardConfirm
     | FileFinder
-    | StashListModal
-    | BranchPicker
-    | SoftResetConfirm
     | CommitActionConfirm
     | null = null;
 
@@ -162,65 +156,6 @@ export class ModalController {
       () => {
         this.activeModal = null;
         this.ctx.render();
-      }
-    );
-    this.activeModal.focus();
-  }
-
-  openStashListModal(): void {
-    const entries = this.ctx.getGitManager()?.workingTree.state.stashList ?? [];
-    this.activeModal = new StashListModal(
-      this.ctx.screen,
-      entries,
-      (index) => {
-        this.activeModal = null;
-        this.ctx.getGitManager()?.remote.stashPop(index);
-      },
-      () => {
-        this.activeModal = null;
-      }
-    );
-    this.activeModal.focus();
-  }
-
-  openBranchPicker(): void {
-    this.ctx
-      .getGitManager()
-      ?.remote.getLocalBranches()
-      .then((branches) => {
-        this.activeModal = new BranchPicker(
-          this.ctx.screen,
-          branches,
-          (name) => {
-            this.activeModal = null;
-            this.ctx.getGitManager()?.remote.switchBranch(name);
-          },
-          (name) => {
-            this.activeModal = null;
-            this.ctx.getGitManager()?.remote.createBranch(name);
-          },
-          () => {
-            this.activeModal = null;
-          }
-        );
-        this.activeModal.focus();
-      })
-      .catch((err) => logger.error('Failed to load branches', err));
-  }
-
-  showSoftResetConfirm(): void {
-    const headCommit = this.ctx.getGitManager()?.history.historyState.commits[0];
-    if (!headCommit) return;
-
-    this.activeModal = new SoftResetConfirm(
-      this.ctx.screen,
-      headCommit,
-      () => {
-        this.activeModal = null;
-        this.ctx.getGitManager()?.remote.softReset();
-      },
-      () => {
-        this.activeModal = null;
       }
     );
     this.activeModal.focus();

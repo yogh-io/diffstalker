@@ -29,7 +29,6 @@ export interface MouseActions {
   toggleFollow(): void;
   selectHunkAtRow(visualRow: number): void;
   focusCommitInput(): void;
-  toggleAmend(): void;
   render(): void;
 }
 
@@ -87,12 +86,7 @@ export function setupMouseHandlers(
     const clickedRow = layout.screenYToBottomPaneRow(mouse.y);
     if (clickedRow >= 0) {
       if (ctx.uiState.state.bottomTab === 'commit') {
-        // Row 6 (0-indexed) is the amend checkbox row
-        if (clickedRow === 6) {
-          actions.toggleAmend();
-        } else {
-          actions.focusCommitInput();
-        }
+        actions.focusCommitInput();
       } else {
         actions.selectHunkAtRow(clickedRow);
       }

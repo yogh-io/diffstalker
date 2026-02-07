@@ -65,32 +65,16 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 
 **Top Pane: File List** (same as Diff View)
 
-**Bottom Pane: Repository Control Center**
-- Scrollable dashboard with commit form and repository operations
+**Bottom Pane: Commit Form**
 - Header: "Commit Message" (with "(amending)" indicator when amend enabled)
 - Text input field for commit message
   - Single-line with border (cyan when focused, gray when unfocused)
   - Placeholder: "Press i or Enter to edit..."
 - Amend checkbox: `[ ] Amend` (toggle with `a` when unfocused, `Ctrl+a` always)
   - When checked, loads previous commit message
-  - Clickable: mouse click on checkbox row toggles amend
 - Click-to-focus: clicking anywhere in the commit panel focuses the input
-- Help text shows context-sensitive hints
-- **Stash section**: Shows stash count and entries (up to 5 shown inline)
-  - `S`: save working changes to stash (global, works from any tab)
-  - `o`: pop latest stash (commit tab)
-  - `l`: open stash list modal for selecting which stash to pop
-- **Branch section**: Shows current branch and tracking info
-  - `b`: open branch picker modal to switch or create branches
-  - Branch picker has text filter; typing a non-existing name offers "Create" option
-- **Undo section**: Shows HEAD commit for reference
-  - `X`: soft reset HEAD~1 (with confirmation dialog, changes return to staged)
-- **Remote section** (below commit form):
-  - Shows tracking info: `main → origin/main ↑2 ↓0`
-  - Remote operation status (pushing/fetching/rebasing/stashing/switching branch/etc.)
-  - Keybinding hints: `P: push | F: fetch | R: pull --rebase`
-- All operation status (in-progress/success/error) shows in the header bar
-  - Success messages auto-clear after 3 seconds, errors after 5 seconds
+- Help text shows staged count and context-sensitive hints
+- Error/status display for commit operations
 
 ### Tab 3: History View
 
@@ -211,26 +195,6 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 | `r` / `Ctrl+R` | Refresh git status |
 | `q` / `Ctrl+C` | Quit application |
 
-### Remote Operations
-
-| Key | Action |
-|-----|--------|
-| `P` (Shift+P) | Push to remote |
-| `F` (Shift+F) | Fetch from remote |
-| `R` (Shift+R) | Pull with rebase |
-| `S` (Shift+S) | Stash save (global, any tab) |
-
-Remote operation status is shown in the header (yellow while in progress, green on success, red on error). Success messages auto-clear after 3 seconds, errors after 5 seconds. Operations are disabled while a modal is open, the commit input is focused, or another remote operation is already in progress.
-
-### Stash, Branch & Undo (Commit Tab)
-
-| Key | Action |
-|-----|--------|
-| `o` | Pop latest stash |
-| `l` | Open stash list modal |
-| `b` | Open branch picker modal |
-| `X` (Shift+X) | Soft reset HEAD~1 (confirmation required) |
-
 ### History Actions (History Tab)
 
 | Key | Action |
@@ -308,7 +272,6 @@ Remote operation status is shown in the header (yellow while in progress, green 
 | Tab buttons (footer) | Switch to that tab |
 | `?` indicator | Open hotkeys modal |
 | Commit panel area | Focus commit input |
-| Amend checkbox row | Toggle amend |
 | `m:select`/`m:scroll` | Toggle mouse mode |
 | `auto-tab` | Toggle auto-tab mode |
 | `wrap` | Toggle wrap mode |
@@ -587,26 +550,6 @@ Selected theme is saved to `~/.config/diffstalker/config.json`.
 ### Discard Confirmation
 
 - Inline prompt: "Discard changes to <file>? (y/n)"
-- `y` confirms, `n` or Esc cancels
-
-### Branch Picker Modal
-
-- Text input at top for filtering branch names
-- List of local branches with current marked with `*`
-- If typed name matches no existing branch, shows "Create: <name>" as first option
-- Enter on existing branch switches to it; Enter on "Create" creates and switches
-- Navigate with Ctrl+j/k or Up/Down, cancel with Escape
-
-### Stash List Modal
-
-- Shows all stash entries with index and message
-- j/k to navigate, Enter to pop selected stash
-- Esc to cancel
-
-### Soft Reset Confirmation
-
-- Shows commit hash and message being undone
-- "Changes will return to staged state"
 - `y` confirms, `n` or Esc cancels
 
 ### Commit Action Confirmation (Cherry-pick / Revert)

@@ -1,13 +1,12 @@
 import type { UIStateData } from '../state/UIState.js';
 import type { CommitFlowStateData } from '../state/CommitFlowState.js';
-import type { FileEntry, CommitInfo, BranchInfo, StashEntry } from '../git/status.js';
+import type { FileEntry, CommitInfo } from '../git/status.js';
 import type { DiffResult, CompareDiff } from '../git/diff.js';
 import type { CombinedFileDiffs } from '../core/WorkingTreeManager.js';
 import type { ExplorerState } from '../core/ExplorerStateManager.js';
 import type { HistoryState } from '../core/HistoryManager.js';
 import type { CompareSelectionState } from '../core/CompareManager.js';
 import type { FileHunkCounts } from '../git/diff.js';
-import type { RemoteOperationState } from '../types/remote.js';
 import type { CompareListSelection } from './widgets/CompareListView.js';
 import type { ThemeName } from '../themes.js';
 import type { SelectedFile } from '../core/ExplorerStateManager.js';
@@ -127,31 +126,19 @@ export function renderBottomPane(
   bottomPaneHeight: number,
   selectedHunkIndex?: number,
   isFileStaged?: boolean,
-  combinedFileDiffs?: CombinedFileDiffs | null,
-  branch?: BranchInfo | null,
-  remoteState?: RemoteOperationState | null,
-  stashList?: StashEntry[],
-  headCommit?: CommitInfo | null
+  combinedFileDiffs?: CombinedFileDiffs | null
 ): BottomPaneResult {
   if (state.bottomTab === 'commit') {
     const panelOpts = {
       state: commitFlowState,
       stagedCount,
       width,
-      branch,
-      remoteState,
-      stashList,
-      headCommit,
     };
     const totalRows = getCommitPanelTotalRows(panelOpts);
     const content = formatCommitPanel(
       commitFlowState,
       stagedCount,
       width,
-      branch,
-      remoteState,
-      stashList,
-      headCommit,
       state.diffScrollOffset,
       bottomPaneHeight
     );
