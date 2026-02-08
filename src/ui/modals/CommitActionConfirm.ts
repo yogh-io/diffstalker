@@ -1,11 +1,12 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import type { CommitInfo } from '../../git/status.js';
+import type { Modal } from './Modal.js';
 
 /**
  * CommitActionConfirm modal for confirming cherry-pick or revert.
  */
-export class CommitActionConfirm {
+export class CommitActionConfirm implements Modal {
   private box: Widgets.BoxElement;
   private screen: Widgets.Screen;
   private onConfirm: () => void;
@@ -49,12 +50,12 @@ export class CommitActionConfirm {
 
   private setupKeyHandlers(): void {
     this.box.key(['y', 'Y'], () => {
-      this.close();
+      this.destroy();
       this.onConfirm();
     });
 
-    this.box.key(['n', 'N', 'escape', 'q'], () => {
-      this.close();
+    this.box.key(['n', 'N', 'escape'], () => {
+      this.destroy();
       this.onCancel();
     });
   }
@@ -80,7 +81,7 @@ export class CommitActionConfirm {
     this.screen.render();
   }
 
-  private close(): void {
+  destroy(): void {
     this.box.destroy();
   }
 

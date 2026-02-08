@@ -268,18 +268,23 @@ export class App {
         focusCommitInput: () => this.focusCommitInput(),
         unfocusCommitInput: () => this.unfocusCommitInput(),
         openRepoPicker: () => this.modals.openRepoPicker(),
+        openThemePicker: () => this.modals.openThemePicker(),
+        openHotkeysModal: () => this.modals.openHotkeysModal(),
+        openBaseBranchPicker: () => this.modals.openBaseBranchPicker(),
+        closeActiveModal: () => this.modals.closeActiveModal(),
         toggleMouseMode: () => this.toggleMouseMode(),
         toggleFollow: () => this.toggleFollow(),
-        showDiscardConfirm: (file) => this.modals.showDiscardConfirm(file),
+        openDiscardConfirm: (file) => this.modals.openDiscardConfirm(file),
         render: () => this.render(),
         toggleCurrentHunk: () => this.staging.toggleCurrentHunk(),
         navigateNextHunk: () => this.navigation.navigateNextHunk(),
         navigatePrevHunk: () => this.navigation.navigatePrevHunk(),
-        cherryPickSelected: () => this.modals.cherryPickSelected(),
-        revertSelected: () => this.modals.revertSelected(),
+        openCherryPickConfirm: () => this.modals.openCherryPickConfirm(),
+        openRevertConfirm: () => this.modals.openRevertConfirm(),
       },
       {
         hasActiveModal: () => this.modals.hasActiveModal(),
+        getActiveModalType: () => this.modals.getActiveModalType(),
         getBottomTab: () => this.uiState.state.bottomTab,
         getCurrentPane: () => this.uiState.state.currentPane,
         getFocusedZone: () => this.uiState.state.focusedZone,
@@ -309,6 +314,7 @@ export class App {
         toggleFollow: () => this.toggleFollow(),
         selectHunkAtRow: (row) => this.navigation.selectHunkAtRow(row),
         focusCommitInput: () => this.focusCommitInput(),
+        openHotkeysModal: () => this.modals.openHotkeysModal(),
         render: () => this.render(),
       },
       {
@@ -358,11 +364,6 @@ export class App {
       }
     });
 
-    // Handle modal opening/closing
-    this.uiState.on('modal-change', (modal) => {
-      this.modals.handleModalChange(modal);
-    });
-
     // Persist UI state to config when toggles or split ratio change
     let saveTimer: ReturnType<typeof setTimeout> | null = null;
     this.uiState.on('change', (state) => {
@@ -396,9 +397,10 @@ export class App {
 
   private recordCurrentRepo(): void {
     const max = this.config.maxRecentRepos ?? 10;
+    const normalized = this.repoPath.replace(/\/$/, '');
     this.recentRepos = [
-      this.repoPath,
-      ...this.recentRepos.filter((r) => r !== this.repoPath),
+      normalized,
+      ...this.recentRepos.map((r) => r.replace(/\/$/, '')).filter((r) => r !== normalized),
     ].slice(0, max);
     addRecentRepo(this.repoPath, max);
   }

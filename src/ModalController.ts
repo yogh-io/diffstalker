@@ -4,6 +4,7 @@ import type { GitStateManager } from './core/GitStateManager.js';
 import type { ExplorerStateManager } from './core/ExplorerStateManager.js';
 import type { FileEntry } from './git/status.js';
 import type { ThemeName } from './themes.js';
+import type { Modal } from './ui/modals/Modal.js';
 import { ThemePicker } from './ui/modals/ThemePicker.js';
 import { HotkeysModal } from './ui/modals/HotkeysModal.js';
 import { BaseBranchPicker } from './ui/modals/BaseBranchPicker.js';
@@ -13,6 +14,15 @@ import { CommitActionConfirm } from './ui/modals/CommitActionConfirm.js';
 import { RepoPicker } from './ui/modals/RepoPicker.js';
 import { saveConfig } from './config.js';
 import * as logger from './utils/logger.js';
+
+export type ModalType =
+  | 'theme'
+  | 'hotkeys'
+  | 'baseBranch'
+  | 'discard'
+  | 'fileFinder'
+  | 'commitAction'
+  | 'repoPicker';
 
 /**
  * Read-only context provided by App for modal management.
@@ -33,18 +43,11 @@ export interface ModalContext {
 
 /**
  * Manages all modal dialogs: creation, focus, and dismissal.
- * Owns the activeModal state.
+ * Single source of truth for modal state.
  */
 export class ModalController {
-  private activeModal:
-    | ThemePicker
-    | HotkeysModal
-    | BaseBranchPicker
-    | DiscardConfirm
-    | FileFinder
-    | CommitActionConfirm
-    | RepoPicker
-    | null = null;
+  private activeModal: Modal | null = null;
+  private activeModalType: ModalType | null = null;
 
   constructor(private ctx: ModalContext) {}
 
@@ -52,76 +55,92 @@ export class ModalController {
     return this.activeModal !== null;
   }
 
-  /**
-   * Handle modal open/close triggered by UIState modal-change events.
-   */
-  handleModalChange(modal: string | null): void {
-    if (this.activeModal) {
-      this.activeModal = null;
-    }
+  getActiveModalType(): ModalType | null {
+    return this.activeModalType;
+  }
 
-    if (modal === 'theme') {
-      this.activeModal = new ThemePicker(
-        this.ctx.screen,
-        this.ctx.getCurrentTheme(),
-        (theme) => {
-          this.ctx.setCurrentTheme(theme);
-          saveConfig({ theme });
-          this.activeModal = null;
-          this.ctx.uiState.closeModal();
-          this.ctx.render();
-        },
-        () => {
-          this.activeModal = null;
-          this.ctx.uiState.closeModal();
-        }
-      );
-      this.activeModal.focus();
-    } else if (modal === 'hotkeys') {
-      this.activeModal = new HotkeysModal(this.ctx.screen, () => {
-        this.activeModal = null;
-        // Delay UIState cleanup so the screen-level ? handler still sees
-        // the modal as active and won't immediately re-open it
-        setImmediate(() => this.ctx.uiState.closeModal());
-      });
-      this.activeModal.focus();
-    } else if (modal === 'baseBranch') {
-      const gm = this.ctx.getGitManager();
-      gm?.compare
-        .getCandidateBaseBranches()
-        .then((branches) => {
-          const currentBranch = gm?.compare.compareState.compareBaseBranch ?? null;
-          this.activeModal = new BaseBranchPicker(
-            this.ctx.screen,
-            branches,
-            currentBranch,
-            (branch) => {
-              this.activeModal = null;
-              this.ctx.uiState.closeModal();
-              const includeUncommitted = this.ctx.uiState.state.includeUncommitted;
-              gm?.compare.setCompareBaseBranch(branch, includeUncommitted);
-            },
-            () => {
-              this.activeModal = null;
-              this.ctx.uiState.closeModal();
-            }
-          );
-          this.activeModal.focus();
-        })
-        .catch((err) => logger.error('Failed to load base branches', err));
+  closeActiveModal(): void {
+    if (this.activeModal) {
+      this.activeModal.destroy();
+      this.activeModal = null;
+      this.activeModalType = null;
+      this.ctx.render();
     }
   }
 
-  showDiscardConfirm(file: FileEntry): void {
+  private clearModal(): void {
+    this.activeModal = null;
+    this.activeModalType = null;
+  }
+
+  openThemePicker(): void {
+    this.activeModalType = 'theme';
+    this.activeModal = new ThemePicker(
+      this.ctx.screen,
+      this.ctx.getCurrentTheme(),
+      (theme) => {
+        this.ctx.setCurrentTheme(theme);
+        saveConfig({ theme });
+        this.clearModal();
+        this.ctx.render();
+      },
+      () => {
+        this.clearModal();
+      }
+    );
+    this.activeModal.focus();
+  }
+
+  openHotkeysModal(): void {
+    this.activeModalType = 'hotkeys';
+    this.activeModal = new HotkeysModal(this.ctx.screen, () => {
+      this.clearModal();
+    });
+    this.activeModal.focus();
+  }
+
+  openBaseBranchPicker(): void {
+    const gm = this.ctx.getGitManager();
+    if (!gm) return;
+
+    this.activeModalType = 'baseBranch';
+    gm.compare
+      .getCandidateBaseBranches()
+      .then((branches) => {
+        const currentBranch = gm.compare.compareState.compareBaseBranch ?? null;
+        const modal = new BaseBranchPicker(
+          this.ctx.screen,
+          branches,
+          currentBranch,
+          (branch) => {
+            this.clearModal();
+            const includeUncommitted = this.ctx.uiState.state.includeUncommitted;
+            gm.compare.setCompareBaseBranch(branch, includeUncommitted);
+          },
+          () => {
+            this.clearModal();
+          }
+        );
+        this.activeModal = modal;
+        modal.focus();
+      })
+      .catch((err) => {
+        this.clearModal();
+        logger.error('Failed to load base branches', err);
+      });
+  }
+
+  openDiscardConfirm(file: FileEntry): void {
+    this.activeModalType = 'discard';
     this.activeModal = new DiscardConfirm(
       this.ctx.screen,
       file.path,
       async () => {
-        this.activeModal = null;
+        this.clearModal();
         await this.ctx.getGitManager()?.workingTree.discard(file);
       },
       () => {
-        this.activeModal = null;
+        this.clearModal();
       }
     );
     this.activeModal.focus();
@@ -136,11 +155,12 @@ export class ModalController {
     }
     if (allPaths.length === 0) return;
 
+    this.activeModalType = 'fileFinder';
     this.activeModal = new FileFinder(
       this.ctx.screen,
       allPaths,
       async (selectedPath) => {
-        this.activeModal = null;
+        this.clearModal();
         if (this.ctx.uiState.state.bottomTab !== 'explorer') {
           this.ctx.uiState.setTab('explorer');
         }
@@ -159,46 +179,48 @@ export class ModalController {
         this.ctx.render();
       },
       () => {
-        this.activeModal = null;
+        this.clearModal();
         this.ctx.render();
       }
     );
     this.activeModal.focus();
   }
 
-  cherryPickSelected(): void {
+  openCherryPickConfirm(): void {
     const commit = this.ctx.getGitManager()?.history.historyState.selectedCommit;
     if (!commit) return;
 
+    this.activeModalType = 'commitAction';
     this.activeModal = new CommitActionConfirm(
       this.ctx.screen,
       'Cherry-pick',
       commit,
       () => {
-        this.activeModal = null;
+        this.clearModal();
         this.ctx.getGitManager()?.remote.cherryPick(commit.hash);
       },
       () => {
-        this.activeModal = null;
+        this.clearModal();
       }
     );
     this.activeModal.focus();
   }
 
-  revertSelected(): void {
+  openRevertConfirm(): void {
     const commit = this.ctx.getGitManager()?.history.historyState.selectedCommit;
     if (!commit) return;
 
+    this.activeModalType = 'commitAction';
     this.activeModal = new CommitActionConfirm(
       this.ctx.screen,
       'Revert',
       commit,
       () => {
-        this.activeModal = null;
+        this.clearModal();
         this.ctx.getGitManager()?.remote.revertCommit(commit.hash);
       },
       () => {
-        this.activeModal = null;
+        this.clearModal();
       }
     );
     this.activeModal.focus();
@@ -207,16 +229,17 @@ export class ModalController {
   openRepoPicker(): void {
     const repos = this.ctx.getRecentRepos();
     const currentRepo = this.ctx.getRepoPath();
+    this.activeModalType = 'repoPicker';
     this.activeModal = new RepoPicker(
       this.ctx.screen,
       repos,
       currentRepo,
       (selected) => {
-        this.activeModal = null;
+        this.clearModal();
         this.ctx.onRepoSwitch(selected);
       },
       () => {
-        this.activeModal = null;
+        this.clearModal();
         this.ctx.render();
       }
     );

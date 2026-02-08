@@ -1,6 +1,7 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import { Fzf, type FzfResultItem } from 'fzf';
+import type { Modal } from './Modal.js';
 
 const MAX_RESULTS = 15;
 const DEBOUNCE_MS = 15;
@@ -31,7 +32,7 @@ function highlightMatch(displayPath: string, positions: Set<number>, offset: num
 /**
  * FileFinder modal for fuzzy file search.
  */
-export class FileFinder {
+export class FileFinder implements Modal {
   private box: Widgets.BoxElement;
   private textbox: Widgets.TextareaElement;
   private screen: Widgets.Screen;
@@ -103,7 +104,7 @@ export class FileFinder {
   private setupKeyHandlers(): void {
     // Handle escape to cancel
     this.textbox.key(['escape'], () => {
-      this.close();
+      this.destroy();
       this.onCancel();
     });
 
@@ -111,7 +112,7 @@ export class FileFinder {
     this.textbox.key(['enter'], () => {
       if (this.results.length > 0) {
         const selected = this.results[this.selectedIndex];
-        this.close();
+        this.destroy();
         this.onSelect(selected.path);
       }
     });
@@ -222,15 +223,12 @@ export class FileFinder {
     this.screen.render();
   }
 
-  private close(): void {
+  destroy(): void {
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     this.textbox.destroy();
     this.box.destroy();
   }
 
-  /**
-   * Focus the modal input.
-   */
   focus(): void {
     this.textbox.focus();
   }

@@ -1,6 +1,5 @@
 import { EventEmitter } from 'node:events';
 import type { BottomTab } from '../types/tabs.js';
-import type { FileEntry } from '../git/status.js';
 import { FocusRing } from './FocusRing.js';
 
 export type Pane = 'files' | 'diff' | 'commit' | 'history' | 'compare' | 'explorer';
@@ -88,10 +87,6 @@ export interface UIStateData {
   // Split ratio
   splitRatio: number;
 
-  // Modal state
-  activeModal: 'theme' | 'hotkeys' | 'baseBranch' | null;
-  pendingDiscard: FileEntry | null;
-
   // Text input focus
   commitInputFocused: boolean;
 }
@@ -102,7 +97,6 @@ type UIStateEventMap = {
   'tab-change': [BottomTab];
   'selection-change': [number];
   'scroll-change': [{ type: string; offset: number }];
-  'modal-change': ['theme' | 'hotkeys' | 'baseBranch' | null];
 };
 
 const DEFAULT_STATE: UIStateData = {
@@ -128,8 +122,6 @@ const DEFAULT_STATE: UIStateData = {
   hideGitignored: true,
   flatViewMode: false,
   splitRatio: 0.4,
-  activeModal: null,
-  pendingDiscard: null,
   commitInputFocused: false,
 };
 
@@ -305,30 +297,6 @@ export class UIState extends EventEmitter<UIStateEventMap> {
 
   setSplitRatio(ratio: number): void {
     this.update({ splitRatio: Math.min(0.85, Math.max(0.15, ratio)) });
-  }
-
-  // Modals
-  openModal(modal: 'theme' | 'hotkeys' | 'baseBranch'): void {
-    this.update({ activeModal: modal });
-    this.emit('modal-change', modal);
-  }
-
-  closeModal(): void {
-    this.update({ activeModal: null });
-    this.emit('modal-change', null);
-  }
-
-  toggleModal(modal: 'theme' | 'hotkeys' | 'baseBranch'): void {
-    if (this._state.activeModal === modal) {
-      this.closeModal();
-    } else {
-      this.openModal(modal);
-    }
-  }
-
-  // Discard confirmation
-  setPendingDiscard(file: FileEntry | null): void {
-    this.update({ pendingDiscard: file });
   }
 
   // Commit input focus

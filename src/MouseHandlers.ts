@@ -30,6 +30,7 @@ export interface MouseActions {
   toggleFollow(): void;
   selectHunkAtRow(visualRow: number): void;
   focusCommitInput(): void;
+  openHotkeysModal(): void;
   render(): void;
 }
 
@@ -222,7 +223,7 @@ function handleFooterClick(x: number, actions: MouseActions, ctx: MouseContext):
   } else if (x >= 34 && x <= 43 && ctx.uiState.state.bottomTab === 'explorer') {
     ctx.getExplorerManager()?.toggleShowOnlyChanges();
   } else if (x === 0) {
-    ctx.uiState.openModal('hotkeys');
+    actions.openHotkeysModal();
   }
 }
 

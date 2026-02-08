@@ -1,5 +1,6 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
+import type { Modal } from './Modal.js';
 
 interface HotkeyEntry {
   key: string;
@@ -112,7 +113,7 @@ const hotkeyGroups: HotkeyGroup[] = [
 /**
  * HotkeysModal shows available keyboard shortcuts.
  */
-export class HotkeysModal {
+export class HotkeysModal implements Modal {
   private box: Widgets.BoxElement;
   private screen: Widgets.Screen;
   private onClose: () => void;
@@ -172,14 +173,14 @@ export class HotkeysModal {
   }
 
   private setupKeyHandlers(): void {
-    this.box.key(['escape', 'enter', 'q', '?'], () => {
-      this.close();
+    this.box.key(['escape', 'enter'], () => {
+      this.destroy();
       this.onClose();
     });
 
     // Close on any mouse click (screen-level catches clicks outside the modal too)
     this.screenClickHandler = () => {
-      this.close();
+      this.destroy();
       this.onClose();
     };
     this.screen.on('click', this.screenClickHandler);
@@ -255,7 +256,7 @@ export class HotkeysModal {
     return lines;
   }
 
-  close(): void {
+  destroy(): void {
     if (this.screenClickHandler) {
       this.screen.removeListener('click', this.screenClickHandler);
       this.screenClickHandler = null;
@@ -263,9 +264,6 @@ export class HotkeysModal {
     this.box.destroy();
   }
 
-  /**
-   * Focus the modal.
-   */
   focus(): void {
     this.box.focus();
   }

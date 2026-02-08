@@ -1,11 +1,12 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import { ThemeName, themes, themeOrder } from '../../themes.js';
+import type { Modal } from './Modal.js';
 
 /**
  * ThemePicker modal for selecting diff themes.
  */
-export class ThemePicker {
+export class ThemePicker implements Modal {
   private box: Widgets.BoxElement;
   private screen: Widgets.Screen;
   private selectedIndex: number;
@@ -58,14 +59,14 @@ export class ThemePicker {
   }
 
   private setupKeyHandlers(): void {
-    this.box.key(['escape', 'q'], () => {
-      this.close();
+    this.box.key(['escape'], () => {
+      this.destroy();
       this.onCancel();
     });
 
     this.box.key(['enter', 'space'], () => {
       const selected = themeOrder[this.selectedIndex];
-      this.close();
+      this.destroy();
       this.onSelect(selected);
     });
 
@@ -118,13 +119,10 @@ export class ThemePicker {
     this.screen.render();
   }
 
-  private close(): void {
+  destroy(): void {
     this.box.destroy();
   }
 
-  /**
-   * Focus the modal.
-   */
   focus(): void {
     this.box.focus();
   }

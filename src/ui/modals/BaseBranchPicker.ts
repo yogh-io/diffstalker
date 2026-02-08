@@ -1,10 +1,11 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
+import type { Modal } from './Modal.js';
 
 /**
  * BaseBranchPicker modal for selecting the base branch for PR comparison.
  */
-export class BaseBranchPicker {
+export class BaseBranchPicker implements Modal {
   private box: Widgets.BoxElement;
   private screen: Widgets.Screen;
   private branches: string[];
@@ -63,15 +64,15 @@ export class BaseBranchPicker {
   }
 
   private setupKeyHandlers(): void {
-    this.box.key(['escape', 'q', 'b'], () => {
-      this.close();
+    this.box.key(['escape'], () => {
+      this.destroy();
       this.onCancel();
     });
 
     this.box.key(['enter', 'space'], () => {
       const selected = this.branches[this.selectedIndex];
       if (selected) {
-        this.close();
+        this.destroy();
         this.onSelect(selected);
       }
     });
@@ -120,13 +121,10 @@ export class BaseBranchPicker {
     this.screen.render();
   }
 
-  private close(): void {
+  destroy(): void {
     this.box.destroy();
   }
 
-  /**
-   * Focus the modal.
-   */
   focus(): void {
     this.box.focus();
   }

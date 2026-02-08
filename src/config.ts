@@ -145,7 +145,12 @@ export function abbreviateHomePath(fullPath: string): string {
   return fullPath;
 }
 
+function normalizeRepoPath(p: string): string {
+  return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p;
+}
+
 export function addRecentRepo(repoPath: string, maxRecentRepos: number = 10): void {
+  const normalized = normalizeRepoPath(repoPath);
   let existing: string[] = [];
   if (fs.existsSync(CONFIG_PATH)) {
     try {
@@ -155,6 +160,8 @@ export function addRecentRepo(repoPath: string, maxRecentRepos: number = 10): vo
       // start fresh
     }
   }
-  const filtered = existing.filter((r) => r !== repoPath);
-  saveConfig({ recentRepos: [repoPath, ...filtered].slice(0, maxRecentRepos) });
+  const filtered = existing.filter((r) => normalizeRepoPath(r) !== normalized);
+  saveConfig({
+    recentRepos: [normalized, ...filtered.map(normalizeRepoPath)].slice(0, maxRecentRepos),
+  });
 }

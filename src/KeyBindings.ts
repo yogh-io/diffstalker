@@ -2,6 +2,7 @@ import type { Widgets } from 'blessed';
 import type { BottomTab } from './types/tabs.js';
 import type { UIState, FocusZone } from './state/UIState.js';
 import type { FileEntry } from './git/status.js';
+import type { ModalType } from './ModalController.js';
 import { SPLIT_RATIO_STEP } from './ui/Layout.js';
 import { getFileAtIndex } from './ui/widgets/FileList.js';
 import type { FlatFileEntry } from './utils/flatFileList.js';
@@ -26,15 +27,19 @@ export interface KeyBindingActions {
   focusCommitInput(): void;
   unfocusCommitInput(): void;
   openRepoPicker(): void;
+  openThemePicker(): void;
+  openHotkeysModal(): void;
+  openBaseBranchPicker(): void;
+  closeActiveModal(): void;
   toggleMouseMode(): void;
   toggleFollow(): void;
-  showDiscardConfirm(file: FileEntry): void;
+  openDiscardConfirm(file: FileEntry): void;
   render(): void;
   toggleCurrentHunk(): void;
   navigateNextHunk(): void;
   navigatePrevHunk(): void;
-  cherryPickSelected(): void;
-  revertSelected(): void;
+  openCherryPickConfirm(): void;
+  openRevertConfirm(): void;
 }
 
 /**
@@ -42,6 +47,7 @@ export interface KeyBindingActions {
  */
 export interface KeyBindingContext {
   hasActiveModal(): boolean;
+  getActiveModalType(): ModalType | null;
   getBottomTab(): BottomTab;
   getCurrentPane(): string;
   getFocusedZone(): FocusZone;
@@ -64,8 +70,16 @@ export function setupKeyBindings(
   actions: KeyBindingActions,
   ctx: KeyBindingContext
 ): void {
-  // Quit
-  screen.key(['q', 'C-c'], () => {
+  // Quit: q closes modal if open, Ctrl+C always exits
+  screen.key(['q'], () => {
+    if (ctx.hasActiveModal()) {
+      actions.closeActiveModal();
+      return;
+    }
+    actions.exit();
+  });
+
+  screen.key(['C-c'], () => {
     actions.exit();
   });
 
@@ -194,6 +208,7 @@ export function setupKeyBindings(
   });
 
   screen.key(['a'], () => {
+    if (ctx.hasActiveModal()) return;
     if (ctx.getBottomTab() === 'commit' && !ctx.isCommitInputFocused()) {
       ctx.commitFlowState.toggleAmend();
       actions.render();
@@ -210,7 +225,12 @@ export function setupKeyBindings(
     }
   });
 
+  // Escape: close modal first, then commit-tab escape logic
   screen.key(['escape'], () => {
+    if (ctx.hasActiveModal()) {
+      actions.closeActiveModal();
+      return;
+    }
     if (ctx.getBottomTab() === 'commit') {
       if (ctx.isCommitInputFocused()) {
         actions.unfocusCommitInput();
@@ -220,16 +240,29 @@ export function setupKeyBindings(
     }
   });
 
-  // Repo picker
+  // Repo picker (toggle)
   screen.key(['r'], () => {
+    if (ctx.getActiveModalType() === 'repoPicker') {
+      actions.closeActiveModal();
+      return;
+    }
     if (ctx.hasActiveModal()) return;
     actions.openRepoPicker();
   });
 
-  // Display toggles
-  screen.key(['w'], () => ctx.uiState.toggleWrapMode());
-  screen.key(['m'], () => actions.toggleMouseMode());
-  screen.key(['S-t'], () => ctx.uiState.toggleAutoTab());
+  // Display toggles (guarded)
+  screen.key(['w'], () => {
+    if (ctx.hasActiveModal()) return;
+    ctx.uiState.toggleWrapMode();
+  });
+  screen.key(['m'], () => {
+    if (ctx.hasActiveModal()) return;
+    actions.toggleMouseMode();
+  });
+  screen.key(['S-t'], () => {
+    if (ctx.hasActiveModal()) return;
+    ctx.uiState.toggleAutoTab();
+  });
 
   // Split ratio adjustments
   screen.key(['-', '_', '['], () => {
@@ -244,23 +277,41 @@ export function setupKeyBindings(
     actions.render();
   });
 
-  // Theme picker
-  screen.key(['t'], () => ctx.uiState.openModal('theme'));
-
-  // Hotkeys modal (only opens; closing is handled by the modal's own key handler)
-  screen.key(['?'], () => {
+  // Theme picker (toggle)
+  screen.key(['t'], () => {
+    if (ctx.getActiveModalType() === 'theme') {
+      actions.closeActiveModal();
+      return;
+    }
     if (ctx.hasActiveModal()) return;
-    ctx.uiState.openModal('hotkeys');
+    actions.openThemePicker();
   });
 
-  // Follow toggle
-  screen.key(['f'], () => actions.toggleFollow());
+  // Hotkeys modal (toggle)
+  screen.key(['?'], () => {
+    if (ctx.getActiveModalType() === 'hotkeys') {
+      actions.closeActiveModal();
+      return;
+    }
+    if (ctx.hasActiveModal()) return;
+    actions.openHotkeysModal();
+  });
 
-  // Compare view: base branch picker
+  // Follow toggle (guarded)
+  screen.key(['f'], () => {
+    if (ctx.hasActiveModal()) return;
+    actions.toggleFollow();
+  });
+
+  // Compare view: base branch picker (toggle)
   screen.key(['b'], () => {
+    if (ctx.getActiveModalType() === 'baseBranch') {
+      actions.closeActiveModal();
+      return;
+    }
     if (ctx.hasActiveModal()) return;
     if (ctx.getBottomTab() === 'compare') {
-      ctx.uiState.openModal('baseBranch');
+      actions.openBaseBranchPicker();
     }
   });
 
@@ -283,15 +334,16 @@ export function setupKeyBindings(
     }
   });
 
-  // Discard changes (with confirmation)
+  // Discard changes (with confirmation, guarded)
   screen.key(['d'], () => {
+    if (ctx.hasActiveModal()) return;
     if (ctx.getBottomTab() === 'diff') {
       if (ctx.uiState.state.flatViewMode) {
         const flatEntry = getFlatFileAtIndex(ctx.getCachedFlatFiles(), ctx.getSelectedIndex());
         if (flatEntry?.unstagedEntry) {
           const file = flatEntry.unstagedEntry;
           if (file.status !== 'untracked') {
-            actions.showDiscardConfirm(file);
+            actions.openDiscardConfirm(file);
           }
         }
       } else {
@@ -299,7 +351,7 @@ export function setupKeyBindings(
         const selectedFile = getFileAtIndex(files, ctx.getSelectedIndex());
         // Only allow discard for unstaged modified files
         if (selectedFile && !selectedFile.staged && selectedFile.status !== 'untracked') {
-          actions.showDiscardConfirm(selectedFile);
+          actions.openDiscardConfirm(selectedFile);
         }
       }
     }
@@ -324,7 +376,7 @@ export function setupKeyBindings(
   screen.key(['p'], () => {
     if (ctx.hasActiveModal() || ctx.isCommitInputFocused()) return;
     if (ctx.getBottomTab() === 'history') {
-      actions.cherryPickSelected();
+      actions.openCherryPickConfirm();
     }
   });
 
@@ -332,7 +384,7 @@ export function setupKeyBindings(
   screen.key(['v'], () => {
     if (ctx.hasActiveModal() || ctx.isCommitInputFocused()) return;
     if (ctx.getBottomTab() === 'history') {
-      actions.revertSelected();
+      actions.openRevertConfirm();
     }
   });
 }

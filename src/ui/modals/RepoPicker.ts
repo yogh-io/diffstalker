@@ -1,11 +1,12 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import { abbreviateHomePath } from '../../config.js';
+import type { Modal } from './Modal.js';
 
 /**
  * RepoPicker modal for switching between recently-visited repositories.
  */
-export class RepoPicker {
+export class RepoPicker implements Modal {
   private box: Widgets.BoxElement;
   private screen: Widgets.Screen;
   private repos: string[];
@@ -65,15 +66,15 @@ export class RepoPicker {
   }
 
   private setupKeyHandlers(): void {
-    this.box.key(['escape', 'q', 'r'], () => {
-      this.close();
+    this.box.key(['escape'], () => {
+      this.destroy();
       this.onCancel();
     });
 
     this.box.key(['enter', 'space'], () => {
       const selected = this.repos[this.selectedIndex];
       if (selected) {
-        this.close();
+        this.destroy();
         this.onSelect(selected);
       }
     });
@@ -122,13 +123,10 @@ export class RepoPicker {
     this.screen.render();
   }
 
-  private close(): void {
+  destroy(): void {
     this.box.destroy();
   }
 
-  /**
-   * Focus the modal.
-   */
   focus(): void {
     this.box.focus();
   }

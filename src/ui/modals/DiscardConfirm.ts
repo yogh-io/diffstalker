@@ -1,10 +1,11 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
+import type { Modal } from './Modal.js';
 
 /**
  * DiscardConfirm modal for confirming discard of file changes.
  */
-export class DiscardConfirm {
+export class DiscardConfirm implements Modal {
   private box: Widgets.BoxElement;
   private screen: Widgets.Screen;
   private filePath: string;
@@ -53,12 +54,12 @@ export class DiscardConfirm {
 
   private setupKeyHandlers(): void {
     this.box.key(['y', 'Y'], () => {
-      this.close();
+      this.destroy();
       this.onConfirm();
     });
 
-    this.box.key(['n', 'N', 'escape', 'q'], () => {
-      this.close();
+    this.box.key(['n', 'N', 'escape'], () => {
+      this.destroy();
       this.onCancel();
     });
   }
@@ -88,13 +89,10 @@ export class DiscardConfirm {
     this.screen.render();
   }
 
-  private close(): void {
+  destroy(): void {
     this.box.destroy();
   }
 
-  /**
-   * Focus the modal.
-   */
   focus(): void {
     this.box.focus();
   }
