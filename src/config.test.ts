@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { isValidTheme, VALID_THEMES } from './config.js';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { isValidTheme, VALID_THEMES, loadConfig, saveConfig } from './config.js';
 
 describe('isValidTheme', () => {
   it('returns true for dark theme', () => {
@@ -48,5 +51,102 @@ describe('isValidTheme', () => {
     expect(isValidTheme({})).toBe(false);
     expect(isValidTheme([])).toBe(false);
     expect(isValidTheme(true)).toBe(false);
+  });
+});
+
+/**
+ * Tests for loadConfig/saveConfig toggle persistence.
+ * Uses a real temp directory to avoid fs mocking issues with bun test.
+ */
+describe('loadConfig/saveConfig toggle fields', () => {
+  const configPath = path.join(os.homedir(), '.config', 'diffstalker', 'config.json');
+  let originalContent: string | null = null;
+
+  beforeEach(() => {
+    // Back up existing config if present
+    try {
+      originalContent = fs.readFileSync(configPath, 'utf-8');
+    } catch {
+      originalContent = null;
+    }
+  });
+
+  afterEach(() => {
+    // Restore original config
+    if (originalContent !== null) {
+      fs.writeFileSync(configPath, originalContent);
+    } else {
+      // Remove config file if it didn't exist before
+      try {
+        fs.unlinkSync(configPath);
+      } catch {
+        // Ignore if already gone
+      }
+    }
+  });
+
+  it('reads boolean toggle values from config file', () => {
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        autoTabEnabled: true,
+        wrapMode: true,
+        mouseEnabled: false,
+      })
+    );
+
+    const config = loadConfig();
+    expect(config.autoTabEnabled).toBe(true);
+    expect(config.wrapMode).toBe(true);
+    expect(config.mouseEnabled).toBe(false);
+  });
+
+  it('ignores non-boolean values for toggle fields', () => {
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        autoTabEnabled: 'yes',
+        wrapMode: 1,
+        mouseEnabled: null,
+      })
+    );
+
+    const config = loadConfig();
+    expect(config.autoTabEnabled).toBeUndefined();
+    expect(config.wrapMode).toBeUndefined();
+    expect(config.mouseEnabled).toBeUndefined();
+  });
+
+  it('defaults are correct when config file has no toggle fields', () => {
+    fs.writeFileSync(configPath, JSON.stringify({ theme: 'dark' }));
+
+    const config = loadConfig();
+    expect(config.autoTabEnabled).toBeUndefined();
+    expect(config.wrapMode).toBeUndefined();
+    expect(config.mouseEnabled).toBeUndefined();
+  });
+
+  it('saveConfig persists toggle values', () => {
+    // Start with a clean config
+    fs.writeFileSync(configPath, JSON.stringify({ theme: 'dark' }));
+
+    saveConfig({ autoTabEnabled: true, wrapMode: false, mouseEnabled: false });
+
+    const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(written.autoTabEnabled).toBe(true);
+    expect(written.wrapMode).toBe(false);
+    expect(written.mouseEnabled).toBe(false);
+    expect(written.theme).toBe('dark'); // preserved existing
+  });
+
+  it('round-trip: save then load preserves values', () => {
+    // Start clean
+    fs.writeFileSync(configPath, JSON.stringify({}));
+
+    saveConfig({ autoTabEnabled: true, mouseEnabled: false });
+
+    const config = loadConfig();
+    expect(config.autoTabEnabled).toBe(true);
+    expect(config.mouseEnabled).toBe(false);
   });
 });

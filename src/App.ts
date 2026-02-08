@@ -74,6 +74,9 @@ export class App {
   private bottomPaneHunkCount: number = 0;
   private bottomPaneHunkBoundaries: HunkBoundary[] = [];
 
+  // Auto-tab transition tracking
+  private prevFileCount: number = 0;
+
   // Flat view mode state
   private cachedFlatFiles: FlatFileEntry[] = [];
   private combinedHunkMapping: CombinedHunkInfo[] = [];
@@ -87,6 +90,9 @@ export class App {
     // Initialize UI state with config values
     this.uiState = new UIState({
       splitRatio: options.config.splitRatio ?? 0.4,
+      autoTabEnabled: options.config.autoTabEnabled ?? false,
+      wrapMode: options.config.wrapMode ?? false,
+      mouseEnabled: options.config.mouseEnabled ?? true,
     });
 
     // Create blessed screen
@@ -193,6 +199,12 @@ export class App {
       getCachedFlatFiles: () => this.cachedFlatFiles,
       getCombinedHunkMapping: () => this.combinedHunkMapping,
     });
+
+    // If mouse was persisted as disabled, disable it now
+    if (!this.uiState.state.mouseEnabled) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (this.screen as any).program.disableMouse();
+    }
 
     // Setup keyboard handlers
     this.setupKeyboardHandlers();
@@ -309,6 +321,15 @@ export class App {
   }
 
   private setupStateListeners(): void {
+    // Apply auto-tab logic when toggled on
+    let prevAutoTab = this.uiState.state.autoTabEnabled;
+    this.uiState.on('change', (state) => {
+      if (state.autoTabEnabled && !prevAutoTab) {
+        this.applyAutoTab();
+      }
+      prevAutoTab = state.autoTabEnabled;
+    });
+
     // Update footer when UI state changes
     this.uiState.on('change', () => {
       this.render();
@@ -337,14 +358,19 @@ export class App {
       this.modals.handleModalChange(modal);
     });
 
-    // Save split ratio to config when it changes
+    // Persist UI state to config when toggles or split ratio change
     let saveTimer: ReturnType<typeof setTimeout> | null = null;
     this.uiState.on('change', (state) => {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = setTimeout(() => {
-        if (state.splitRatio !== this.config.splitRatio) {
-          saveConfig({ splitRatio: state.splitRatio });
-        }
+        const updates: Record<string, unknown> = {};
+        if (state.splitRatio !== this.config.splitRatio) updates.splitRatio = state.splitRatio;
+        if (state.autoTabEnabled !== this.config.autoTabEnabled)
+          updates.autoTabEnabled = state.autoTabEnabled;
+        if (state.wrapMode !== this.config.wrapMode) updates.wrapMode = state.wrapMode;
+        if (state.mouseEnabled !== this.config.mouseEnabled)
+          updates.mouseEnabled = state.mouseEnabled;
+        if (Object.keys(updates).length > 0) saveConfig(updates);
       }, 500);
     });
   }
@@ -383,6 +409,7 @@ export class App {
       // for the new status to arrive before being consumed
       if (!this.gitManager?.workingTree.state.isLoading) {
         this.reconcileSelectionAfterStateChange();
+        this.applyAutoTab();
       }
       this.updateExplorerGitStatus();
       this.render();
@@ -651,6 +678,30 @@ export class App {
       program.enableMouse();
     } else {
       program.disableMouse();
+    }
+  }
+
+  /**
+   * When auto-tab is enabled, switch tabs based on file count transitions:
+   * - Files disappear (prev > 0, current === 0): switch to history
+   * - Files appear (prev === 0, current > 0): switch to diff
+   * Always updates prevFileCount so enabling doesn't trigger on stale state.
+   */
+  private applyAutoTab(): void {
+    const files = this.gitManager?.workingTree.state.status?.files ?? [];
+    const currentCount = files.length;
+    const prev = this.prevFileCount;
+    this.prevFileCount = currentCount;
+
+    if (!this.uiState.state.autoTabEnabled) return;
+
+    const tab = this.uiState.state.bottomTab;
+    if (prev > 0 && currentCount === 0 && (tab === 'diff' || tab === 'commit')) {
+      this.uiState.setHistorySelectedIndex(0);
+      this.uiState.setHistoryScrollOffset(0);
+      this.uiState.setTab('history');
+    } else if (prev === 0 && currentCount > 0 && tab === 'history') {
+      this.uiState.setTab('diff');
     }
   }
 

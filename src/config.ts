@@ -10,6 +10,9 @@ export interface Config {
   debug: boolean;
   theme: ThemeName;
   splitRatio?: number;
+  autoTabEnabled?: boolean;
+  wrapMode?: boolean;
+  mouseEnabled?: boolean;
 }
 
 const defaultConfig: Config = {
@@ -56,6 +59,15 @@ export function loadConfig(): Config {
       ) {
         config.splitRatio = fileConfig.splitRatio;
       }
+      if (typeof fileConfig.autoTabEnabled === 'boolean') {
+        config.autoTabEnabled = fileConfig.autoTabEnabled;
+      }
+      if (typeof fileConfig.wrapMode === 'boolean') {
+        config.wrapMode = fileConfig.wrapMode;
+      }
+      if (typeof fileConfig.mouseEnabled === 'boolean') {
+        config.mouseEnabled = fileConfig.mouseEnabled;
+      }
     } catch {
       // Ignore config file errors
     }
@@ -65,7 +77,18 @@ export function loadConfig(): Config {
 }
 
 export function saveConfig(
-  updates: Partial<Pick<Config, 'theme' | 'pager' | 'targetFile' | 'splitRatio'>>
+  updates: Partial<
+    Pick<
+      Config,
+      | 'theme'
+      | 'pager'
+      | 'targetFile'
+      | 'splitRatio'
+      | 'autoTabEnabled'
+      | 'wrapMode'
+      | 'mouseEnabled'
+    >
+  >
 ): void {
   // Ensure config directory exists
   const configDir = path.dirname(CONFIG_PATH);
