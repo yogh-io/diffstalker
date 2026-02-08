@@ -10,6 +10,7 @@ import { BaseBranchPicker } from './ui/modals/BaseBranchPicker.js';
 import { DiscardConfirm } from './ui/modals/DiscardConfirm.js';
 import { FileFinder } from './ui/modals/FileFinder.js';
 import { CommitActionConfirm } from './ui/modals/CommitActionConfirm.js';
+import { RepoPicker } from './ui/modals/RepoPicker.js';
 import { saveConfig } from './config.js';
 import * as logger from './utils/logger.js';
 
@@ -24,6 +25,9 @@ export interface ModalContext {
   getTopPaneHeight(): number;
   getCurrentTheme(): ThemeName;
   setCurrentTheme(theme: ThemeName): void;
+  getRepoPath(): string;
+  getRecentRepos(): string[];
+  onRepoSwitch(repoPath: string): void;
   render(): void;
 }
 
@@ -39,6 +43,7 @@ export class ModalController {
     | DiscardConfirm
     | FileFinder
     | CommitActionConfirm
+    | RepoPicker
     | null = null;
 
   constructor(private ctx: ModalContext) {}
@@ -194,6 +199,25 @@ export class ModalController {
       },
       () => {
         this.activeModal = null;
+      }
+    );
+    this.activeModal.focus();
+  }
+
+  openRepoPicker(): void {
+    const repos = this.ctx.getRecentRepos();
+    const currentRepo = this.ctx.getRepoPath();
+    this.activeModal = new RepoPicker(
+      this.ctx.screen,
+      repos,
+      currentRepo,
+      (selected) => {
+        this.activeModal = null;
+        this.ctx.onRepoSwitch(selected);
+      },
+      () => {
+        this.activeModal = null;
+        this.ctx.render();
       }
     );
     this.activeModal.focus();

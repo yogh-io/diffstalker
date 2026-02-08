@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { isValidTheme, VALID_THEMES, loadConfig, saveConfig } from './config.js';
+import { isValidTheme, VALID_THEMES, loadConfig, saveConfig, addRecentRepo } from './config.js';
 
 describe('isValidTheme', () => {
   it('returns true for dark theme', () => {
@@ -148,5 +148,104 @@ describe('loadConfig/saveConfig toggle fields', () => {
     const config = loadConfig();
     expect(config.autoTabEnabled).toBe(true);
     expect(config.mouseEnabled).toBe(false);
+  });
+});
+
+describe('recentRepos config', () => {
+  const configPath = path.join(os.homedir(), '.config', 'diffstalker', 'config.json');
+  let originalContent: string | null = null;
+
+  beforeEach(() => {
+    try {
+      originalContent = fs.readFileSync(configPath, 'utf-8');
+    } catch {
+      originalContent = null;
+    }
+  });
+
+  afterEach(() => {
+    if (originalContent !== null) {
+      fs.writeFileSync(configPath, originalContent);
+    } else {
+      try {
+        fs.unlinkSync(configPath);
+      } catch {
+        // Ignore if already gone
+      }
+    }
+  });
+
+  it('loadConfig reads recentRepos as string array', () => {
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ recentRepos: ['/home/user/repoA', '/home/user/repoB'] })
+    );
+
+    const config = loadConfig();
+    expect(config.recentRepos).toEqual(['/home/user/repoA', '/home/user/repoB']);
+  });
+
+  it('loadConfig rejects non-array recentRepos', () => {
+    fs.writeFileSync(configPath, JSON.stringify({ recentRepos: 'not-an-array' }));
+
+    const config = loadConfig();
+    expect(config.recentRepos).toBeUndefined();
+  });
+
+  it('loadConfig rejects recentRepos array with non-strings', () => {
+    fs.writeFileSync(configPath, JSON.stringify({ recentRepos: ['/valid', 123, null] }));
+
+    const config = loadConfig();
+    expect(config.recentRepos).toBeUndefined();
+  });
+
+  it('loadConfig reads maxRecentRepos within valid range', () => {
+    fs.writeFileSync(configPath, JSON.stringify({ maxRecentRepos: 20 }));
+
+    const config = loadConfig();
+    expect(config.maxRecentRepos).toBe(20);
+  });
+
+  it('loadConfig rejects maxRecentRepos outside range', () => {
+    fs.writeFileSync(configPath, JSON.stringify({ maxRecentRepos: 0 }));
+    expect(loadConfig().maxRecentRepos).toBeUndefined();
+
+    fs.writeFileSync(configPath, JSON.stringify({ maxRecentRepos: 51 }));
+    expect(loadConfig().maxRecentRepos).toBeUndefined();
+
+    fs.writeFileSync(configPath, JSON.stringify({ maxRecentRepos: 'ten' }));
+    expect(loadConfig().maxRecentRepos).toBeUndefined();
+  });
+
+  it('addRecentRepo prepends and deduplicates', () => {
+    fs.writeFileSync(configPath, JSON.stringify({ recentRepos: ['/repoA', '/repoB', '/repoC'] }));
+
+    addRecentRepo('/repoB');
+
+    const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(written.recentRepos).toEqual(['/repoB', '/repoA', '/repoC']);
+  });
+
+  it('addRecentRepo caps at max', () => {
+    fs.writeFileSync(configPath, JSON.stringify({ recentRepos: ['/r1', '/r2', '/r3'] }));
+
+    addRecentRepo('/r4', 3);
+
+    const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(written.recentRepos).toEqual(['/r4', '/r1', '/r2']);
+  });
+
+  it('addRecentRepo works with no existing config', () => {
+    // Ensure config file doesn't exist
+    try {
+      fs.unlinkSync(configPath);
+    } catch {
+      // Ignore
+    }
+
+    addRecentRepo('/newRepo');
+
+    const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(written.recentRepos).toEqual(['/newRepo']);
   });
 });

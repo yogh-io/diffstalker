@@ -25,7 +25,7 @@ export interface KeyBindingActions {
   openFileFinder(): void;
   focusCommitInput(): void;
   unfocusCommitInput(): void;
-  refresh(): void;
+  openRepoPicker(): void;
   toggleMouseMode(): void;
   toggleFollow(): void;
   showDiscardConfirm(file: FileEntry): void;
@@ -220,8 +220,11 @@ export function setupKeyBindings(
     }
   });
 
-  // Refresh
-  screen.key(['r'], () => actions.refresh());
+  // Repo picker
+  screen.key(['r'], () => {
+    if (ctx.hasActiveModal()) return;
+    actions.openRepoPicker();
+  });
 
   // Display toggles
   screen.key(['w'], () => ctx.uiState.toggleWrapMode());
@@ -255,7 +258,7 @@ export function setupKeyBindings(
 
   // Compare view: base branch picker
   screen.key(['b'], () => {
-    if (ctx.hasActiveModal() || ctx.isCommitInputFocused()) return;
+    if (ctx.hasActiveModal()) return;
     if (ctx.getBottomTab() === 'compare') {
       ctx.uiState.openModal('baseBranch');
     }

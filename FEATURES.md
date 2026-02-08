@@ -194,7 +194,7 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 |-----|--------|
 | `c` | Open commit panel (switch to Tab 2) |
 | `d` | Discard changes (unstaged modified files only, with confirmation) |
-| `r` / `Ctrl+R` | Refresh git status |
+| `r` | Open repo picker |
 | `q` / `Ctrl+C` | Quit application |
 
 ### History Actions (History Tab)
@@ -601,6 +601,15 @@ The app uses a **focus zone** system for full keyboard-only navigation with `Tab
 - Navigate with Ctrl+j/k, Up/Down, or Tab
 - Select with Enter, cancel with Escape
 - Automatically expands tree to show selected file
+
+### Repo Picker Modal
+
+- Open with `r` key
+- Lists recently-visited repositories (persisted across sessions)
+- Current repo marked with `(current)`
+- Navigate with j/k, select with Enter, cancel with Esc/q/r
+- Selecting a different repo switches to it (stops follow mode if active)
+- Recent repos stored in `~/.config/diffstalker/config.json` (max configurable via `maxRecentRepos`, default 10)
 
 ---
 

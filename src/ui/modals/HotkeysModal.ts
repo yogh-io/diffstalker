@@ -34,7 +34,7 @@ const hotkeyGroups: HotkeyGroup[] = [
     title: 'Actions',
     entries: [
       { key: 'c', description: 'Commit panel' },
-      { key: 'r', description: 'Refresh' },
+      { key: 'r', description: 'Repo picker' },
       { key: 'q', description: 'Quit' },
     ],
   },

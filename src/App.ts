@@ -23,7 +23,7 @@ import {
   getManagerForRepo,
   removeManagerForRepo,
 } from './core/GitStateManager.js';
-import { Config, saveConfig } from './config.js';
+import { Config, saveConfig, addRecentRepo } from './config.js';
 import { getIndexForCategoryPosition } from './utils/fileCategories.js';
 import {
   buildFlatFileList,
@@ -61,6 +61,7 @@ export class App {
   // Current state
   private repoPath: string;
   private currentTheme: ThemeName;
+  private recentRepos: string[];
 
   // Commit flow state
   private commitFlowState: CommitFlowState;
@@ -86,6 +87,7 @@ export class App {
     this.commandServer = options.commandServer ?? null;
     this.repoPath = options.initialPath ?? process.cwd();
     this.currentTheme = options.config.theme;
+    this.recentRepos = options.config.recentRepos ?? [];
 
     // Initialize UI state with config values
     this.uiState = new UIState({
@@ -189,6 +191,9 @@ export class App {
       setCurrentTheme: (theme) => {
         this.currentTheme = theme;
       },
+      getRepoPath: () => this.repoPath,
+      getRecentRepos: () => this.recentRepos,
+      onRepoSwitch: (repoPath) => this.switchToRepo(repoPath),
       render: () => this.render(),
     });
 
@@ -262,7 +267,7 @@ export class App {
         openFileFinder: () => this.modals.openFileFinder(),
         focusCommitInput: () => this.focusCommitInput(),
         unfocusCommitInput: () => this.unfocusCommitInput(),
-        refresh: () => this.refresh(),
+        openRepoPicker: () => this.modals.openRepoPicker(),
         toggleMouseMode: () => this.toggleMouseMode(),
         toggleFollow: () => this.toggleFollow(),
         showDiscardConfirm: (file) => this.modals.showDiscardConfirm(file),
@@ -389,6 +394,26 @@ export class App {
     this.render();
   }
 
+  private recordCurrentRepo(): void {
+    const max = this.config.maxRecentRepos ?? 10;
+    this.recentRepos = [
+      this.repoPath,
+      ...this.recentRepos.filter((r) => r !== this.repoPath),
+    ].slice(0, max);
+    addRecentRepo(this.repoPath, max);
+  }
+
+  private switchToRepo(newPath: string): void {
+    if (newPath === this.repoPath) return;
+    if (this.followMode?.isEnabled) this.followMode.stop();
+    const oldRepoPath = this.repoPath;
+    this.repoPath = newPath;
+    this.initGitManager(oldRepoPath);
+    this.resetRepoSpecificState();
+    this.loadCurrentTabData();
+    this.render();
+  }
+
   private initGitManager(oldRepoPath?: string): void {
     // Clean up existing manager's event listeners
     if (this.gitManager) {
@@ -458,6 +483,9 @@ export class App {
 
     // Initialize explorer manager
     this.initExplorerManager();
+
+    // Record this repo in recent repos list
+    this.recordCurrentRepo();
   }
 
   /**

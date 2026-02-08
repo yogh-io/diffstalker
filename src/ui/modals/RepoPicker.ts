@@ -1,39 +1,41 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
+import { abbreviateHomePath } from '../../config.js';
 
 /**
- * BaseBranchPicker modal for selecting the base branch for PR comparison.
+ * RepoPicker modal for switching between recently-visited repositories.
  */
-export class BaseBranchPicker {
+export class RepoPicker {
   private box: Widgets.BoxElement;
   private screen: Widgets.Screen;
-  private branches: string[];
+  private repos: string[];
   private selectedIndex: number;
-  private currentBranch: string | null;
-  private onSelect: (branch: string) => void;
+  private currentRepo: string;
+  private onSelect: (repoPath: string) => void;
   private onCancel: () => void;
 
   constructor(
     screen: Widgets.Screen,
-    branches: string[],
-    currentBranch: string | null,
-    onSelect: (branch: string) => void,
+    repos: string[],
+    currentRepo: string,
+    onSelect: (repoPath: string) => void,
     onCancel: () => void
   ) {
     this.screen = screen;
-    this.branches = branches;
-    this.currentBranch = currentBranch;
+    this.repos = repos;
+    this.currentRepo = currentRepo;
     this.onSelect = onSelect;
     this.onCancel = onCancel;
 
-    // Find current branch index
-    this.selectedIndex = currentBranch ? branches.indexOf(currentBranch) : 0;
+    // Find current repo index
+    this.selectedIndex = repos.indexOf(currentRepo);
     if (this.selectedIndex < 0) this.selectedIndex = 0;
 
     // Create modal box
-    const width = 50;
-    const maxVisibleBranches = Math.min(branches.length, 15);
-    const height = maxVisibleBranches + 6; // branches + header + footer + borders + padding
+    const screenWidth = screen.width as number;
+    const width = Math.min(70, screenWidth - 4);
+    const maxVisibleRepos = Math.min(repos.length, 15);
+    const height = maxVisibleRepos + 6; // repos + header + footer + borders + padding
 
     this.box = blessed.box({
       parent: screen,
@@ -63,13 +65,13 @@ export class BaseBranchPicker {
   }
 
   private setupKeyHandlers(): void {
-    this.box.key(['escape', 'q', 'b'], () => {
+    this.box.key(['escape', 'q', 'r'], () => {
       this.close();
       this.onCancel();
     });
 
     this.box.key(['enter', 'space'], () => {
-      const selected = this.branches[this.selectedIndex];
+      const selected = this.repos[this.selectedIndex];
       if (selected) {
         this.close();
         this.onSelect(selected);
@@ -82,7 +84,7 @@ export class BaseBranchPicker {
     });
 
     this.box.key(['down', 'j'], () => {
-      this.selectedIndex = Math.min(this.branches.length - 1, this.selectedIndex + 1);
+      this.selectedIndex = Math.min(this.repos.length - 1, this.selectedIndex + 1);
       this.render();
     });
   }
@@ -91,20 +93,20 @@ export class BaseBranchPicker {
     const lines: string[] = [];
 
     // Header
-    lines.push('{bold}{cyan-fg}     Select Base Branch{/cyan-fg}{/bold}');
+    lines.push('{bold}{cyan-fg}     Recent Repositories{/cyan-fg}{/bold}');
     lines.push('');
 
-    if (this.branches.length === 0) {
-      lines.push('{gray-fg}No branches found{/gray-fg}');
+    if (this.repos.length === 0) {
+      lines.push('{gray-fg}No recent repositories{/gray-fg}');
     } else {
-      // Branch list
-      for (let i = 0; i < this.branches.length; i++) {
-        const branch = this.branches[i];
+      // Repo list
+      for (let i = 0; i < this.repos.length; i++) {
+        const repo = this.repos[i];
         const isSelected = i === this.selectedIndex;
-        const isCurrent = branch === this.currentBranch;
+        const isCurrent = repo === this.currentRepo;
 
         let line = isSelected ? '{cyan-fg}{bold}> ' : '  ';
-        line += branch;
+        line += abbreviateHomePath(repo);
         if (isSelected) line += '{/bold}{/cyan-fg}';
         if (isCurrent) line += ' {gray-fg}(current){/gray-fg}';
 

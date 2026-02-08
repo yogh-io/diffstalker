@@ -13,6 +13,8 @@ export interface Config {
   autoTabEnabled?: boolean;
   wrapMode?: boolean;
   mouseEnabled?: boolean;
+  recentRepos?: string[];
+  maxRecentRepos?: number;
 }
 
 const defaultConfig: Config = {
@@ -68,6 +70,19 @@ export function loadConfig(): Config {
       if (typeof fileConfig.mouseEnabled === 'boolean') {
         config.mouseEnabled = fileConfig.mouseEnabled;
       }
+      if (
+        Array.isArray(fileConfig.recentRepos) &&
+        fileConfig.recentRepos.every((r: unknown) => typeof r === 'string')
+      ) {
+        config.recentRepos = fileConfig.recentRepos;
+      }
+      if (
+        typeof fileConfig.maxRecentRepos === 'number' &&
+        fileConfig.maxRecentRepos >= 1 &&
+        fileConfig.maxRecentRepos <= 50
+      ) {
+        config.maxRecentRepos = fileConfig.maxRecentRepos;
+      }
     } catch {
       // Ignore config file errors
     }
@@ -87,6 +102,8 @@ export function saveConfig(
       | 'autoTabEnabled'
       | 'wrapMode'
       | 'mouseEnabled'
+      | 'recentRepos'
+      | 'maxRecentRepos'
     >
   >
 ): void {
@@ -126,4 +143,18 @@ export function abbreviateHomePath(fullPath: string): string {
     return '~' + fullPath.slice(home.length);
   }
   return fullPath;
+}
+
+export function addRecentRepo(repoPath: string, maxRecentRepos: number = 10): void {
+  let existing: string[] = [];
+  if (fs.existsSync(CONFIG_PATH)) {
+    try {
+      const fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      if (Array.isArray(fileConfig.recentRepos)) existing = fileConfig.recentRepos;
+    } catch {
+      // start fresh
+    }
+  }
+  const filtered = existing.filter((r) => r !== repoPath);
+  saveConfig({ recentRepos: [repoPath, ...filtered].slice(0, maxRecentRepos) });
 }
