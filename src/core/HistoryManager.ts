@@ -69,7 +69,7 @@ export class HistoryManager extends EventEmitter<HistoryEventMap> {
 
   private async doLoadHistory(count: number = 100): Promise<void> {
     const commits = await getCommitHistory(this.repoPath, count);
-    this.updateHistoryState({ commits, isLoading: false });
+    this.updateHistoryState({ commits, selectedCommit: null, commitDiff: null, isLoading: false });
   }
 
   /**
