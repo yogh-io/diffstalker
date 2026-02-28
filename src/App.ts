@@ -27,9 +27,11 @@ import { Config, saveConfig, addRecentRepo } from './config.js';
 import { getIndexForCategoryPosition } from './utils/fileCategories.js';
 import {
   buildFlatFileList,
+  getFlatFileAtIndex,
   getFlatFileIndexByPath,
   type FlatFileEntry,
 } from './utils/flatFileList.js';
+import { getFileAtIndex } from './ui/widgets/FileList.js';
 import type { CommandServer, CommandHandler, AppState } from './ipc/CommandServer.js';
 import type { BottomTab } from './types/tabs.js';
 import type { ThemeName } from './themes.js';
@@ -532,20 +534,40 @@ export class App {
       return;
     }
 
-    // No pending anchor — just clamp to valid range
+    // No pending anchor — clamp to valid range and sync diff if file changed
+    const currentSelected = this.gitManager?.workingTree.state.selectedFile ?? null;
     if (this.uiState.state.flatViewMode) {
       const flatFiles = buildFlatFileList(
         files,
         this.gitManager?.workingTree.state.hunkCounts ?? null
       );
       const maxIndex = flatFiles.length - 1;
-      if (maxIndex >= 0 && this.uiState.state.selectedIndex > maxIndex) {
-        this.uiState.setSelectedIndex(maxIndex);
+      let idx = this.uiState.state.selectedIndex;
+      if (maxIndex >= 0 && idx > maxIndex) {
+        idx = maxIndex;
+        this.uiState.setSelectedIndex(idx);
+      }
+      const flatEntry = getFlatFileAtIndex(flatFiles, idx);
+      const fileAtIdx = flatEntry?.unstagedEntry ?? flatEntry?.stagedEntry ?? null;
+      if (
+        fileAtIdx &&
+        (fileAtIdx.path !== currentSelected?.path || fileAtIdx.staged !== currentSelected?.staged)
+      ) {
+        this.navigation.selectFileByIndex(idx);
       }
     } else if (files.length > 0) {
       const maxIndex = files.length - 1;
-      if (this.uiState.state.selectedIndex > maxIndex) {
-        this.uiState.setSelectedIndex(maxIndex);
+      let idx = this.uiState.state.selectedIndex;
+      if (idx > maxIndex) {
+        idx = maxIndex;
+        this.uiState.setSelectedIndex(idx);
+      }
+      const fileAtIdx = getFileAtIndex(files, idx);
+      if (
+        fileAtIdx &&
+        (fileAtIdx.path !== currentSelected?.path || fileAtIdx.staged !== currentSelected?.staged)
+      ) {
+        this.navigation.selectFileByIndex(idx);
       }
     }
   }
