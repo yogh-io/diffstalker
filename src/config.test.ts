@@ -59,10 +59,13 @@ describe('isValidTheme', () => {
  * Uses a real temp directory to avoid fs mocking issues with bun test.
  */
 describe('loadConfig/saveConfig toggle fields', () => {
-  const configPath = path.join(os.homedir(), '.config', 'diffstalker', 'config.json');
+  const configDir = path.join(os.homedir(), '.config', 'diffstalker');
+  const configPath = path.join(configDir, 'config.json');
   let originalContent: string | null = null;
 
   beforeEach(() => {
+    // Ensure config directory exists (may not exist in CI)
+    fs.mkdirSync(configDir, { recursive: true });
     // Back up existing config if present
     try {
       originalContent = fs.readFileSync(configPath, 'utf-8');
@@ -152,10 +155,13 @@ describe('loadConfig/saveConfig toggle fields', () => {
 });
 
 describe('recentRepos config', () => {
-  const configPath = path.join(os.homedir(), '.config', 'diffstalker', 'config.json');
+  const configDir = path.join(os.homedir(), '.config', 'diffstalker');
+  const configPath = path.join(configDir, 'config.json');
   let originalContent: string | null = null;
 
   beforeEach(() => {
+    // Ensure config directory exists (may not exist in CI)
+    fs.mkdirSync(configDir, { recursive: true });
     try {
       originalContent = fs.readFileSync(configPath, 'utf-8');
     } catch {
