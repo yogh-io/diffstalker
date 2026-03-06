@@ -1,6 +1,7 @@
 import type { UIState } from './state/UIState.js';
 import type { GitStateManager } from './core/GitStateManager.js';
 import type { ExplorerStateManager } from './core/ExplorerStateManager.js';
+import type { FileEntry } from './git/status.js';
 import type { FlatFileEntry } from './utils/flatFileList.js';
 import type { HunkBoundary } from './utils/displayRows.js';
 import {
@@ -8,9 +9,8 @@ import {
   getRowFromCompareSelection,
   type CompareListSelection,
 } from './ui/widgets/CompareListView.js';
-import { getFileAtIndex, getRowFromFileIndex } from './ui/widgets/FileList.js';
+import { getRowFromFileIndex } from './ui/widgets/FileList.js';
 import { getCommitAtIndex } from './ui/widgets/HistoryView.js';
-import { getFlatFileAtIndex } from './utils/flatFileList.js';
 
 /**
  * Read-only context provided by App for navigation decisions.
@@ -26,6 +26,8 @@ export interface NavigationContext {
   getHunkBoundaries(): HunkBoundary[];
   getRepoPath(): string;
   onError(message: string): void;
+  resolveFileAtIndex(index: number): FileEntry | null;
+  getFileListMaxIndex(): number;
 }
 
 /**
@@ -52,9 +54,7 @@ export class NavigationController {
     const state = this.ctx.uiState.state;
     const files = this.ctx.getGitManager()?.workingTree.state.status?.files ?? [];
 
-    const maxIndex = state.flatViewMode
-      ? this.ctx.getCachedFlatFiles().length - 1
-      : files.length - 1;
+    const maxIndex = this.ctx.getFileListMaxIndex();
     if (maxIndex < 0) return;
 
     const newIndex =
@@ -274,24 +274,11 @@ export class NavigationController {
   }
 
   selectFileByIndex(index: number): void {
-    if (this.ctx.uiState.state.flatViewMode) {
-      const flatEntry = getFlatFileAtIndex(this.ctx.getCachedFlatFiles(), index);
-      if (flatEntry) {
-        const file = flatEntry.unstagedEntry ?? flatEntry.stagedEntry;
-        if (file) {
-          this.ctx.uiState.setDiffScrollOffset(0);
-          this.ctx.uiState.setSelectedHunkIndex(0);
-          this.ctx.getGitManager()?.workingTree.selectFile(file);
-        }
-      }
-    } else {
-      const files = this.ctx.getGitManager()?.workingTree.state.status?.files ?? [];
-      const file = getFileAtIndex(files, index);
-      if (file) {
-        this.ctx.uiState.setDiffScrollOffset(0);
-        this.ctx.uiState.setSelectedHunkIndex(0);
-        this.ctx.getGitManager()?.workingTree.selectFile(file);
-      }
+    const file = this.ctx.resolveFileAtIndex(index);
+    if (file) {
+      this.ctx.uiState.setDiffScrollOffset(0);
+      this.ctx.uiState.setSelectedHunkIndex(0);
+      this.ctx.getGitManager()?.workingTree.selectFile(file);
     }
   }
 

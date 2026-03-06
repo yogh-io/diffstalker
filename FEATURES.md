@@ -331,11 +331,10 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 
 ### Key Functions
 
-**Layout Calculations:**
-- `getMaxScrollOffset(totalItems, maxHeight)` - maximum valid scroll offset
-- `getRowForFileIndex(index, mod, untracked, staged)` - file index to display row
+**Layout Calculations (FileList.ts):**
 - `getFileListTotalRows(files)` - total rows including headers/spacers
-- `calculateScrollOffset(selectedRow, currentOffset, visibleHeight)` - auto-scroll
+- `getRowFromFileIndex(fileIndex, files)` - file index to display row
+- `getFileIndexFromRow(row, files)` - display row to file index
 
 **Row Building (Single Source of Truth Pattern):**
 - `buildDiffDisplayRows(diff)` - unified DisplayRow[] for diff

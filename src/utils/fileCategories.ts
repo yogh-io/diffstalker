@@ -1,4 +1,4 @@
-import { FileEntry } from '../git/status.js';
+import type { FileEntry } from '../git/status.js';
 
 /**
  * Categorize files into Modified, Untracked, and Staged sections.
@@ -95,4 +95,12 @@ export function getIndexForCategoryPosition(
   };
 
   return offsets[category] + clampedIndex;
+}
+
+/**
+ * Get the file at a specific index (accounting for category ordering).
+ */
+export function getFileAtIndex(files: FileEntry[], index: number): FileEntry | null {
+  const { ordered } = categorizeFiles(files);
+  return ordered[index] ?? null;
 }

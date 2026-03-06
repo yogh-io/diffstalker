@@ -3,7 +3,6 @@ import type { GitStateManager } from './core/GitStateManager.js';
 import type { FileEntry } from './git/status.js';
 import type { FlatFileEntry } from './utils/flatFileList.js';
 import type { CombinedHunkInfo } from './utils/displayRows.js';
-import { getFileAtIndex } from './ui/widgets/FileList.js';
 import { getFlatFileAtIndex } from './utils/flatFileList.js';
 import { getCategoryForIndex, type CategoryName } from './utils/fileCategories.js';
 import { extractHunkPatch } from './git/diff.js';
@@ -16,6 +15,7 @@ export interface StagingContext {
   getGitManager(): GitStateManager | null;
   getCachedFlatFiles(): FlatFileEntry[];
   getCombinedHunkMapping(): CombinedHunkInfo[];
+  resolveFileAtIndex(index: number): FileEntry | null;
 }
 
 /**
@@ -62,7 +62,7 @@ export class StagingOperations {
         await wt?.stage(file);
       }
     } else {
-      const selectedFile = getFileAtIndex(files, index);
+      const selectedFile = this.ctx.resolveFileAtIndex(index);
       if (selectedFile && !selectedFile.staged) {
         this.pendingSelectionAnchor = getCategoryForIndex(files, index);
         await wt?.stage(selectedFile);
@@ -85,7 +85,7 @@ export class StagingOperations {
         await wt?.unstage(file);
       }
     } else {
-      const selectedFile = getFileAtIndex(files, index);
+      const selectedFile = this.ctx.resolveFileAtIndex(index);
       if (selectedFile?.staged) {
         this.pendingSelectionAnchor = getCategoryForIndex(files, index);
         await wt?.unstage(selectedFile);
@@ -103,7 +103,7 @@ export class StagingOperations {
       const gm = this.ctx.getGitManager();
       const wt = gm?.workingTree;
       const files = wt?.state.status?.files ?? [];
-      const selectedFile = getFileAtIndex(files, index);
+      const selectedFile = this.ctx.resolveFileAtIndex(index);
       if (selectedFile) {
         this.pendingSelectionAnchor = getCategoryForIndex(files, index);
         if (selectedFile.staged) {
@@ -141,7 +141,7 @@ export class StagingOperations {
       const gm = this.ctx.getGitManager();
       const wt = gm?.workingTree;
       const files = wt?.state.status?.files ?? [];
-      const file = getFileAtIndex(files, index);
+      const file = this.ctx.resolveFileAtIndex(index);
       if (file) {
         this.pendingSelectionAnchor = getCategoryForIndex(
           files,

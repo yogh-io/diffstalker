@@ -8,6 +8,7 @@ import { isDisplayableDiffLine } from './diffFilters.js';
 import { breakLine, getLineRowCount } from './lineBreaking.js';
 import { computeWordDiff, areSimilarEnough, WordDiffSegment } from './wordDiff.js';
 import { getLanguageFromPath, highlightBlockPreserveBg } from './languageDetection.js';
+import { getLineContent as extractLineContent } from './diffRowCalculations.js';
 
 export type { WordDiffSegment } from './wordDiff.js';
 
@@ -38,15 +39,7 @@ export type DisplayRow =
  * Get the text content from a diff line (strip leading +/-/space and control chars)
  */
 function getLineContent(line: DiffLine): string {
-  let content: string;
-  if (line.type === 'addition' || line.type === 'deletion') {
-    content = line.content.slice(1);
-  } else if (line.type === 'context') {
-    // Context lines start with space
-    content = line.content.startsWith(' ') ? line.content.slice(1) : line.content;
-  } else {
-    content = line.content;
-  }
+  const content = extractLineContent(line);
   // Strip control characters that cause rendering artifacts
   // and convert tabs to spaces for consistent width calculation
   return content.replace(/[\x00-\x08\x0a-\x1f\x7f]/g, '').replace(/\t/g, '    ');

@@ -1,6 +1,6 @@
 import type { FileEntry } from '../../git/status.js';
 import type { FileHunkCounts } from '../../git/diff.js';
-import { categorizeFiles } from '../../utils/fileCategories.js';
+import { categorizeFiles, getFileAtIndex } from '../../utils/fileCategories.js';
 import {
   getStatusChar,
   getStatusColor,
@@ -179,13 +179,7 @@ export function getFileListTotalRows(files: FileEntry[]): number {
   return buildFileListRows(files).length;
 }
 
-/**
- * Get the file at a specific index (accounting for category ordering).
- */
-export function getFileAtIndex(files: FileEntry[], index: number): FileEntry | null {
-  const { ordered } = categorizeFiles(files);
-  return ordered[index] ?? null;
-}
+export { getFileAtIndex };
 
 /**
  * Get the file index from a visual row (accounting for headers and spacers).

@@ -114,30 +114,24 @@ function handleFileListClick(
 ): void {
   const state = ctx.uiState.state;
 
+  // Row-to-index mapping differs between flat and categorized mode
+  let fileIndex: number | null;
   if (state.flatViewMode) {
     // Flat mode: row 0 is header, files start at row 1
     const absoluteRow = row + state.fileListScrollOffset;
-    const fileIndex = absoluteRow - 1; // subtract header row
+    const idx = absoluteRow - 1; // subtract header row
     const flatFiles = ctx.getCachedFlatFiles();
-    if (fileIndex < 0 || fileIndex >= flatFiles.length) return;
-
-    if (x !== undefined && x >= 2 && x <= 4) {
-      actions.toggleFileByIndex(fileIndex);
-    } else {
-      ctx.uiState.setSelectedIndex(fileIndex);
-      actions.selectFileByIndex(fileIndex);
-    }
+    fileIndex = idx >= 0 && idx < flatFiles.length ? idx : null;
   } else {
-    const files = ctx.getStatusFiles();
-    const fileIndex = getFileIndexFromRow(row + state.fileListScrollOffset, files);
-    if (fileIndex === null || fileIndex < 0) return;
+    fileIndex = getFileIndexFromRow(row + state.fileListScrollOffset, ctx.getStatusFiles());
+  }
+  if (fileIndex === null || fileIndex < 0) return;
 
-    if (x !== undefined && x >= 2 && x <= 4) {
-      actions.toggleFileByIndex(fileIndex);
-    } else {
-      ctx.uiState.setSelectedIndex(fileIndex);
-      actions.selectFileByIndex(fileIndex);
-    }
+  if (x !== undefined && x >= 2 && x <= 4) {
+    actions.toggleFileByIndex(fileIndex);
+  } else {
+    ctx.uiState.setSelectedIndex(fileIndex);
+    actions.selectFileByIndex(fileIndex);
   }
 }
 

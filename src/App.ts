@@ -32,6 +32,10 @@ import {
   type FlatFileEntry,
 } from './utils/flatFileList.js';
 import { getFileAtIndex } from './ui/widgets/FileList.js';
+import {
+  resolveFileAtIndex as resolveFile,
+  getFileListMaxIndex as getMaxIndex,
+} from './utils/fileResolution.js';
 import type { CommandServer, CommandHandler, AppState } from './ipc/CommandServer.js';
 import type { BottomTab } from './types/tabs.js';
 import type { ThemeName } from './themes.js';
@@ -180,6 +184,19 @@ export class App {
       getHunkBoundaries: () => this.bottomPaneHunkBoundaries,
       getRepoPath: () => this.repoPath,
       onError: (message) => this.showError(message),
+      resolveFileAtIndex: (index) =>
+        resolveFile(
+          index,
+          this.uiState.state.flatViewMode,
+          this.cachedFlatFiles,
+          this.gitManager?.workingTree.state.status?.files ?? []
+        ),
+      getFileListMaxIndex: () =>
+        getMaxIndex(
+          this.uiState.state.flatViewMode,
+          this.cachedFlatFiles,
+          this.gitManager?.workingTree.state.status?.files ?? []
+        ),
     });
 
     // Setup modal controller
@@ -205,6 +222,13 @@ export class App {
       getGitManager: () => this.gitManager,
       getCachedFlatFiles: () => this.cachedFlatFiles,
       getCombinedHunkMapping: () => this.combinedHunkMapping,
+      resolveFileAtIndex: (index) =>
+        resolveFile(
+          index,
+          this.uiState.state.flatViewMode,
+          this.cachedFlatFiles,
+          this.gitManager?.workingTree.state.status?.files ?? []
+        ),
     });
 
     // If mouse was persisted as disabled, disable it now
@@ -298,7 +322,13 @@ export class App {
         commitFlowState: this.commitFlowState,
         getGitManager: () => this.gitManager,
         layout: this.layout,
-        getCachedFlatFiles: () => this.cachedFlatFiles,
+        resolveFileAtIndex: (index) =>
+          resolveFile(
+            index,
+            this.uiState.state.flatViewMode,
+            this.cachedFlatFiles,
+            this.gitManager?.workingTree.state.status?.files ?? []
+          ),
       }
     );
   }

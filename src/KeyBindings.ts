@@ -4,9 +4,6 @@ import type { UIState, FocusZone } from './state/UIState.js';
 import type { FileEntry } from './git/status.js';
 import type { ModalType } from './ModalController.js';
 import { SPLIT_RATIO_STEP } from './ui/Layout.js';
-import { getFileAtIndex } from './ui/widgets/FileList.js';
-import type { FlatFileEntry } from './utils/flatFileList.js';
-import { getFlatFileAtIndex } from './utils/flatFileList.js';
 
 /**
  * Actions that keyboard bindings can trigger.
@@ -59,7 +56,7 @@ export interface KeyBindingContext {
   commitFlowState: { toggleAmend(): void };
   getGitManager(): { compare: { refreshCompareDiff(includeUncommitted: boolean): void } } | null;
   layout: { setSplitRatio(ratio: number): void };
-  getCachedFlatFiles(): FlatFileEntry[];
+  resolveFileAtIndex(index: number): FileEntry | null;
 }
 
 /**
@@ -338,21 +335,9 @@ export function setupKeyBindings(
   screen.key(['d'], () => {
     if (ctx.hasActiveModal()) return;
     if (ctx.getBottomTab() === 'diff') {
-      if (ctx.uiState.state.flatViewMode) {
-        const flatEntry = getFlatFileAtIndex(ctx.getCachedFlatFiles(), ctx.getSelectedIndex());
-        if (flatEntry?.unstagedEntry) {
-          const file = flatEntry.unstagedEntry;
-          if (file.status !== 'untracked') {
-            actions.openDiscardConfirm(file);
-          }
-        }
-      } else {
-        const files = ctx.getStatusFiles();
-        const selectedFile = getFileAtIndex(files, ctx.getSelectedIndex());
-        // Only allow discard for unstaged modified files
-        if (selectedFile && !selectedFile.staged && selectedFile.status !== 'untracked') {
-          actions.openDiscardConfirm(selectedFile);
-        }
+      const file = ctx.resolveFileAtIndex(ctx.getSelectedIndex());
+      if (file && !file.staged && file.status !== 'untracked') {
+        actions.openDiscardConfirm(file);
       }
     }
   });
