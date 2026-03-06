@@ -28,6 +28,7 @@ jobs:
       - run: bun test
       - run: bun run metrics:snapshot
       - name: Commit metrics snapshot
+        if: ${{ !env.ACT }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -35,8 +36,10 @@ jobs:
           git commit -m "Add metrics snapshot for ${{ github.ref_name }}" || true
           git push origin HEAD:main
       - run: npm publish --access public
+        if: ${{ !env.ACT }}
 
       - name: Create GitHub Release
+        if: ${{ !env.ACT }}
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true

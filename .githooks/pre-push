@@ -10,6 +10,6 @@ while read local_ref local_sha remote_ref remote_sha; do
 done
 
 if [ "$pushing_tag" = true ]; then
-  echo "Tag push detected — running tests..."
-  bun test
+  echo "Tag push detected — dry-running CI workflow..."
+  act push --env ACT=true --workflows .github/workflows/release.yml
 fi
