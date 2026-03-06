@@ -1,6 +1,10 @@
+import { createRequire } from 'node:module';
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import type { Modal } from './Modal.js';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../../../package.json') as { version: string };
 
 interface HotkeyEntry {
   key: string;
@@ -238,7 +242,11 @@ export class HotkeysModal implements Modal {
 
     // Footer
     lines.push('');
-    lines.push('{gray-fg}Press Esc, Enter, ?, or click to close{/gray-fg}');
+    const closeHint = 'Press Esc, Enter, ?, or click to close';
+    const versionLabel = `v${version}`;
+    const innerWidth = width - 4; // account for border + padding
+    const gap = Math.max(1, innerWidth - closeHint.length - versionLabel.length);
+    lines.push(`{gray-fg}${closeHint}${' '.repeat(gap)}${versionLabel}{/gray-fg}`);
 
     this.box.setContent(lines.join('\n'));
     this.screen.render();
