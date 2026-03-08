@@ -86,6 +86,7 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
   private expandedPaths: Set<string> = new Set();
   private gitStatusMap: GitStatusMap = { files: new Map(), directories: new Set() };
   private _cachedFilePaths: string[] | null = null;
+  private _isGitRepo: boolean;
 
   private _state: ExplorerState = {
     currentPath: '',
@@ -100,6 +101,7 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
   constructor(repoPath: string, options: Partial<ExplorerOptions>) {
     super();
     this.repoPath = repoPath;
+    this._isGitRepo = fs.existsSync(path.join(repoPath, '.git'));
     this.options = {
       hideHidden: options.hideHidden ?? true,
       hideGitignored: options.hideGitignored ?? true,
@@ -255,10 +257,11 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
       // Build list of paths for gitignore check
       const pathsToCheck = entries.map((e) => (node.path ? path.join(node.path, e.name) : e.name));
 
-      // Get ignored files
-      const ignoredFiles = this.options.hideGitignored
-        ? await getIgnoredFiles(this.repoPath, pathsToCheck)
-        : new Set<string>();
+      // Get ignored files (skip git check if not a git repo)
+      const ignoredFiles =
+        this.options.hideGitignored && this._isGitRepo
+          ? await getIgnoredFiles(this.repoPath, pathsToCheck)
+          : new Set<string>();
 
       const children: ExplorerTreeNode[] = [];
 
@@ -681,6 +684,10 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
    * Stores result in cache for instant access by FileFinder.
    */
   async loadFilePaths(): Promise<void> {
+    if (!this._isGitRepo) {
+      this._cachedFilePaths = [];
+      return;
+    }
     try {
       this._cachedFilePaths = await listAllFiles(this.repoPath);
     } catch (err) {
