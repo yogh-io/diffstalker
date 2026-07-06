@@ -97,9 +97,6 @@ Modes:
   diffstalker --follow            Follow default hook file
   diffstalker --follow /tmp/hook  Follow custom hook file
 
-Environment:
-  DIFFSTALKER_PAGER       External pager for diff display
-
 Keyboard:
   j/k, Up/Down  Navigate files / scroll diff
   s             Stage selected file
@@ -110,7 +107,7 @@ Keyboard:
   Tab           Switch between panes
   1/2/3/4/5     Switch tabs (Diff/Commit/History/Compare/Explorer)
   c             Open commit panel
-  r             Refresh
+  r             Open repo picker
   q / Ctrl+C    Quit
 
 Mouse:

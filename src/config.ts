@@ -4,7 +4,6 @@ import * as os from 'node:os';
 import { ThemeName } from './themes.js';
 
 export interface Config {
-  pager?: string;
   targetFile: string;
   watcherEnabled: boolean;
   debug: boolean;
@@ -42,16 +41,10 @@ export function isValidTheme(theme: unknown): theme is ThemeName {
 export function loadConfig(): Config {
   const config = { ...defaultConfig };
 
-  // Override from environment
-  if (process.env.DIFFSTALKER_PAGER) {
-    config.pager = process.env.DIFFSTALKER_PAGER;
-  }
-
   // Try to load from config file
   if (fs.existsSync(CONFIG_PATH)) {
     try {
       const fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-      if (fileConfig.pager) config.pager = fileConfig.pager;
       if (fileConfig.targetFile) config.targetFile = fileConfig.targetFile;
       if (isValidTheme(fileConfig.theme)) config.theme = fileConfig.theme;
       if (
@@ -96,7 +89,6 @@ export function saveConfig(
     Pick<
       Config,
       | 'theme'
-      | 'pager'
       | 'targetFile'
       | 'splitRatio'
       | 'autoTabEnabled'

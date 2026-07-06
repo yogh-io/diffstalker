@@ -5,11 +5,91 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-06
+
+### Added
+
+- Git worktree and bare-repo layout support, with a worktree switcher
+- Mouse support in the repo picker
+- "Include uncommitted" checkbox rendered in the Compare view
+- Auto-scroll to the latest changed file in auto mode
+
+### Fixed
+
+- Follow mode not switching into a nested repository
+
+## [0.2.6] - 2026-03-08
+
+### Fixed
+
+- Error spam when opening a non-git directory
+
 ## [0.2.5] - 2026-03-06
 
 ### Added
 
 - Show application version in hotkeys modal footer
+
+## [0.2.4] - 2026-03-08
+
+### Added
+
+- Repo picker modal (`r`) for switching between recent repositories
+- Focus zone system for Tab/Shift-Tab navigation
+
+### Changed
+
+- Commit tab stripped to the essentials: message input, amend, submit
+- Modal state centralized in ModalController
+
+### Fixed
+
+- `q` closing the app while a modal was open
+- Hotkeys modal `?` toggle race condition
+- History selection not updating after refresh
+
+## [0.2.3] - 2026-02-06
+
+### Added
+
+- Repository control center on the commit tab
+- Release script and documented release workflow
+
+### Changed
+
+- File finder rebuilt on `git ls-files` with fzf matching
+
+## [0.2.2] - 2026-02-01
+
+### Added
+
+- Hunk-level staging with toggle key, click selection, and per-file indicators
+- Flat file view with combined interleaved diff
+- fzf-powered file finder (Ctrl+P)
+- Unit and integration tests for git and utility modules
+- dependency-cruiser architecture layering rules
+- Pre-push hook running tests before tag pushes
+
+### Fixed
+
+- Phantom context line on the last hunk of a diff
+- Selection desync on full-hunk staging
+- Explorer mouse and keyboard bugs
+
+## [0.2.1] - 2026-01-30
+
+### Added
+
+- Explorer tree view with git status, file finder, and selection anchor
+- Code quality metrics tooling
+
+### Changed
+
+- App.ts decomposed into KeyBindings, MouseHandlers, PaneRenderers, and FollowMode modules
+
+### Fixed
+
+- Watcher cleanup and state refresh when switching repositories
 
 ## [0.2.0] - 2026-01-27
 

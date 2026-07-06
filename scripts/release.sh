@@ -32,6 +32,12 @@ case "$bump" in
 esac
 next="$ma.$mi.$pa"
 
+# Require a changelog entry for the version being released
+if ! grep -q "^## \[$next\]" CHANGELOG.md; then
+  echo "Error: CHANGELOG.md has no entry for $next" >&2
+  exit 1
+fi
+
 echo "$current -> $next"
 
 # Update package.json
