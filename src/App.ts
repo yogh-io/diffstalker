@@ -35,6 +35,7 @@ import {
   type FlatFileEntry,
 } from './utils/flatFileList.js';
 import { getFileAtIndex } from './ui/widgets/FileList.js';
+import { applyBlessedRgbPatch } from './utils/blessedRgbPatch.js';
 import {
   resolveFileAtIndex as resolveFile,
   getFileListMaxIndex as getMaxIndex,
@@ -111,6 +112,9 @@ export class App {
       wrapMode: options.config.wrapMode ?? false,
       mouseEnabled: options.config.mouseEnabled ?? true,
     });
+
+    // Enable 24-bit RGB rendering; must happen before the screen is created
+    applyBlessedRgbPatch();
 
     // Create blessed screen
     this.screen = blessed.screen({
