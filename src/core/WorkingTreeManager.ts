@@ -241,17 +241,26 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
   scheduleStatusRefresh(): void {
     this.queue.scheduleRefresh(async () => {
-      const newStatus = await getStatus(this.repoPath);
-      if (!newStatus.isRepo) {
+      try {
+        const newStatus = await getStatus(this.repoPath);
+        if (!newStatus.isRepo) {
+          this.updateState({
+            status: newStatus,
+            diff: null,
+            isLoading: false,
+            error: 'Not a git repository',
+          });
+          return;
+        }
+        this.updateState({ status: newStatus, isLoading: false });
+      } catch (err) {
+        // Transient failure (e.g. index.lock contention): keep the previous
+        // status and surface the error instead of wiping the file list
         this.updateState({
-          status: newStatus,
-          diff: null,
           isLoading: false,
-          error: 'Not a git repository',
+          error: err instanceof Error ? err.message : 'Unknown error',
         });
-        return;
       }
-      this.updateState({ status: newStatus, isLoading: false });
     });
   }
 

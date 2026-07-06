@@ -1,4 +1,5 @@
-import { execSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { simpleGit } from 'simple-git';
 import { CommitInfo } from './status.js';
 
@@ -267,7 +268,7 @@ export async function getDiff(
 export async function getDiffForUntracked(repoPath: string, file: string): Promise<DiffResult> {
   try {
     // For untracked files, show the entire file as additions
-    const content = execSync(`cat "${file}"`, { cwd: repoPath, encoding: 'utf-8' });
+    const content = fs.readFileSync(path.join(repoPath, file), 'utf-8');
     const lines: DiffLine[] = [
       { type: 'header', content: `diff --git a/${file} b/${file}` },
       { type: 'header', content: 'new file mode 100644' },

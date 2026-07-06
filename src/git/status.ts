@@ -80,100 +80,98 @@ export function parseStatusCode(code: string): FileStatus {
   }
 }
 
+/**
+ * Read the repository status. Returns isRepo: false only for a directory
+ * that genuinely is not a git repository; any other failure (index.lock
+ * contention, permissions, git missing) propagates so callers can surface
+ * it without wiping the previous status.
+ */
 export async function getStatus(repoPath: string): Promise<GitStatus> {
   const git: SimpleGit = simpleGit(repoPath);
 
-  try {
-    const isRepo = await git.checkIsRepo();
-    if (!isRepo) {
-      return {
-        files: [],
-        branch: { current: '', ahead: 0, behind: 0 },
-        isRepo: false,
-      };
-    }
-
-    const status: StatusResult = await git.status();
-
-    // Build processed file list, filtering ignored files
-    const processedFiles: FileEntry[] = [];
-    const seen = new Set<string>();
-
-    const untrackedPaths = status.files.filter((f) => f.working_dir === '?').map((f) => f.path);
-    const ignoredFiles = await getIgnoredFiles(repoPath, untrackedPaths);
-
-    for (const file of status.files) {
-      if (file.index === '!' || file.working_dir === '!' || ignoredFiles.has(file.path)) {
-        continue;
-      }
-
-      const key = `${file.path}-${file.index !== ' ' && file.index !== '?'}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      if (file.index && file.index !== ' ' && file.index !== '?') {
-        processedFiles.push({
-          path: file.path,
-          status: parseStatusCode(file.index),
-          staged: true,
-        });
-      }
-
-      if (file.working_dir && file.working_dir !== ' ') {
-        processedFiles.push({
-          path: file.path,
-          status: file.working_dir === '?' ? 'untracked' : parseStatusCode(file.working_dir),
-          staged: false,
-        });
-      }
-    }
-
-    // Fetch line stats for staged and unstaged files
-    const [stagedNumstat, unstagedNumstat] = await Promise.all([
-      git.diff(['--cached', '--numstat']).catch(() => ''),
-      git.diff(['--numstat']).catch(() => ''),
-    ]);
-
-    const stagedStats = parseNumstat(stagedNumstat);
-    const unstagedStats = parseNumstat(unstagedNumstat);
-
-    for (const file of processedFiles) {
-      const stats = file.staged ? stagedStats.get(file.path) : unstagedStats.get(file.path);
-      if (stats) {
-        file.insertions = stats.insertions;
-        file.deletions = stats.deletions;
-      }
-    }
-
-    // Count lines for untracked files (not in numstat output)
-    const untrackedFiles = processedFiles.filter((f) => f.status === 'untracked');
-    if (untrackedFiles.length > 0) {
-      const lineCounts = await Promise.all(
-        untrackedFiles.map((f) => countFileLines(repoPath, f.path))
-      );
-      for (let i = 0; i < untrackedFiles.length; i++) {
-        untrackedFiles[i].insertions = lineCounts[i];
-        untrackedFiles[i].deletions = 0;
-      }
-    }
-
-    return {
-      files: processedFiles,
-      branch: {
-        current: status.current || 'HEAD',
-        tracking: status.tracking || undefined,
-        ahead: status.ahead,
-        behind: status.behind,
-      },
-      isRepo: true,
-    };
-  } catch {
+  const isRepo = await git.checkIsRepo();
+  if (!isRepo) {
     return {
       files: [],
       branch: { current: '', ahead: 0, behind: 0 },
       isRepo: false,
     };
   }
+
+  const status: StatusResult = await git.status();
+
+  // Build processed file list, filtering ignored files
+  const processedFiles: FileEntry[] = [];
+  const seen = new Set<string>();
+
+  const untrackedPaths = status.files.filter((f) => f.working_dir === '?').map((f) => f.path);
+  const ignoredFiles = await getIgnoredFiles(repoPath, untrackedPaths);
+
+  for (const file of status.files) {
+    if (file.index === '!' || file.working_dir === '!' || ignoredFiles.has(file.path)) {
+      continue;
+    }
+
+    const key = `${file.path}-${file.index !== ' ' && file.index !== '?'}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    if (file.index && file.index !== ' ' && file.index !== '?') {
+      processedFiles.push({
+        path: file.path,
+        status: parseStatusCode(file.index),
+        staged: true,
+      });
+    }
+
+    if (file.working_dir && file.working_dir !== ' ') {
+      processedFiles.push({
+        path: file.path,
+        status: file.working_dir === '?' ? 'untracked' : parseStatusCode(file.working_dir),
+        staged: false,
+      });
+    }
+  }
+
+  // Fetch line stats for staged and unstaged files
+  const [stagedNumstat, unstagedNumstat] = await Promise.all([
+    git.diff(['--cached', '--numstat']).catch(() => ''),
+    git.diff(['--numstat']).catch(() => ''),
+  ]);
+
+  const stagedStats = parseNumstat(stagedNumstat);
+  const unstagedStats = parseNumstat(unstagedNumstat);
+
+  for (const file of processedFiles) {
+    const stats = file.staged ? stagedStats.get(file.path) : unstagedStats.get(file.path);
+    if (stats) {
+      file.insertions = stats.insertions;
+      file.deletions = stats.deletions;
+    }
+  }
+
+  // Count lines for untracked files (not in numstat output)
+  const untrackedFiles = processedFiles.filter((f) => f.status === 'untracked');
+  if (untrackedFiles.length > 0) {
+    const lineCounts = await Promise.all(
+      untrackedFiles.map((f) => countFileLines(repoPath, f.path))
+    );
+    for (let i = 0; i < untrackedFiles.length; i++) {
+      untrackedFiles[i].insertions = lineCounts[i];
+      untrackedFiles[i].deletions = 0;
+    }
+  }
+
+  return {
+    files: processedFiles,
+    branch: {
+      current: status.current || 'HEAD',
+      tracking: status.tracking || undefined,
+      ahead: status.ahead,
+      behind: status.behind,
+    },
+    isRepo: true,
+  };
 }
 
 export async function stageFile(repoPath: string, filePath: string): Promise<void> {
