@@ -1,10 +1,10 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with this repository. Last reviewed: 2026-02.
+This file provides guidance to Claude Code (claude.ai/code) when working with this repository. Last reviewed: 2026-07.
 
 ## Project Overview
 
-diffstalker is a terminal UI for interactive git staging and committing, built with TypeScript and blessed (neo-blessed). It follows a push-based architecture where external tools write repository paths to a watched file.
+diffstalker is a terminal UI for interactive git staging and committing, built with TypeScript and neo-blessed. It follows a push-based architecture where external tools write repository paths to a watched file (follow mode).
 
 ## Feature Documentation
 
@@ -12,138 +12,158 @@ diffstalker is a terminal UI for interactive git staging and committing, built w
 
 ## Tech Stack
 
-- **TypeScript** with ESM modules
-- **Ink v6** (React for terminal UIs)
-- **React 19** hooks for state management
-- **chokidar** for file watching
+- **TypeScript** with ESM modules, compiled with `tsc`, run with **bun** in development
+- **neo-blessed** for terminal rendering (patched at runtime for 24-bit RGB, see `src/utils/blessedRgbPatch.ts`)
+- **chokidar** for file watching (follow hook file, git dir, working tree)
 - **simple-git** for git operations
 - **fast-diff** for word-level diff highlighting
+- **emphasize** for syntax highlighting in the explorer
+- **fzf** for file finder matching
+- Event-driven state management with Node `EventEmitter` (no React)
 
 ## Build Commands
 
 ```bash
-npm run dev    # Run with tsx (development, hot reload)
-npm run build  # Compile TypeScript to dist/
-npm start      # Run compiled version
-npm run lint   # ESLint + dependency-cruiser
-npm run deps   # Dependency-cruiser only
+bun run dev           # Run with bun --watch (development)
+bun run build         # Clean dist/ and compile TypeScript
+bun run build:prod    # Build + minify dist/index.js (what npm consumers get)
+bun start             # Run compiled version
+bun test src/*.test.ts src/**/*.test.ts   # Run the test suite (or: bun run test)
+bun run lint          # ESLint + dependency-cruiser
+bun run deps          # Dependency-cruiser only
+bun run metrics       # Code quality metrics report (scripts/collect-metrics.ts)
 ```
 
 ## Releasing
 
-Use `bun run release` to publish a new version. This bumps `package.json`, commits, tags, and pushes. The pre-push hook runs the full test suite before the tag push is allowed through. CI then builds, tests again, and publishes to npm.
+Use `bun run release` to publish a new version. This bumps `package.json`, commits, tags, and pushes. The script refuses to run if the working tree is dirty or if `CHANGELOG.md` has no entry for the new version. The pre-push hook runs the full test suite before the tag push is allowed through. CI then builds, tests, publishes to npm, and commits a metrics snapshot.
 
 ```bash
-bun run release         # patch bump (0.2.2 → 0.2.3)
-bun run release:minor   # minor bump (0.2.3 → 0.3.0)
-bun run release:major   # major bump (0.3.0 → 1.0.0)
+bun run release         # patch bump (0.3.0 -> 0.3.1)
+bun run release:minor   # minor bump (0.3.1 -> 0.4.0)
+bun run release:major   # major bump (0.4.0 -> 1.0.0)
 ```
 
-The working tree must be clean before releasing. Never bump `package.json` or create version tags manually — always use the script so the version and tag stay in sync.
+Never bump `package.json` or create version tags manually — always use the script so the version, changelog, and tag stay in sync.
 
 ## Project Structure
 
 ```
 src/
-├── index.tsx           # Entry point, CLI args, terminal cleanup
-├── App.tsx             # Main component, layout, mouse handling
-├── config.ts           # Configuration loading and saving
-├── themes.ts           # Theme definitions (6 themes)
-├── components/
-│   ├── Header.tsx      # Repo path, branch info, follow status
-│   ├── FileList.tsx    # Staging area file list
-│   ├── DiffView.tsx    # Diff display with word-level highlighting
-│   ├── CommitPanel.tsx # Commit message input UI
-│   ├── Footer.tsx      # Keybinding hints and tab bar
-│   ├── HistoryView.tsx # Commit history list
-│   ├── PRListView.tsx  # PR commits and files list
-│   ├── PRView.tsx      # PR diff container
-│   ├── Modal.tsx       # Reusable modal overlay component
-│   ├── BaseBranchPicker.tsx  # Modal for selecting PR base branch
-│   ├── ThemePicker.tsx # Modal for selecting theme
-│   └── HotkeysModal.tsx # Keyboard shortcuts reference
-├── hooks/
-│   ├── useGit.ts       # Git state management, operations
-│   ├── useWatcher.ts   # File watching for target path
-│   ├── useKeymap.ts    # Keyboard handling
-│   ├── useMouse.ts     # Mouse event parsing (SGR mode)
-│   ├── useLayout.ts    # Pane sizing and scroll management
-│   ├── useCommitFlow.ts # Commit panel state machine
-│   └── useTerminalSize.ts # Terminal resize handling
-├── core/
-│   ├── GitStateManager.ts      # Git state management (non-React)
-│   ├── GitOperationQueue.ts    # Serializes git operations
-│   ├── FilePathWatcher.ts      # File watching (non-React)
-│   └── ExplorerStateManager.ts # Explorer state (non-React)
+├── index.ts                # Entry point: CLI args, terminal cleanup, crash handlers
+├── App.ts                  # Main controller: screen, managers, listeners, render loop
+├── KeyBindings.ts          # All keyboard bindings (screen-level), KeyBindingActions interface
+├── MouseHandlers.ts        # Mouse event handling against layout regions
+├── NavigationController.ts # Selection movement, scrolling, hunk navigation
+├── StagingOperations.ts    # Stage/unstage/toggle operations, pending selection intents
+├── ModalController.ts      # Single source of truth for modal state (ModalType union)
+├── FollowMode.ts           # Follow hook file -> repo switching
+├── config.ts               # Config loading/saving (~/.config/diffstalker/config.json)
+├── themes.ts               # Theme definitions (6 themes)
+├── ui/
+│   ├── Layout.ts           # LayoutManager: blessed boxes, split ratio, pane sizing
+│   ├── PaneRenderers.ts    # renderTopPane/renderBottomPane dispatch per tab
+│   ├── widgets/            # Pure formatters returning strings for blessed boxes
+│   │   ├── Header.ts, Footer.ts, FileList.ts, FlatFileList.ts
+│   │   ├── DiffView.ts, HistoryView.ts, CompareListView.ts
+│   │   ├── CommitPanel.ts, ExplorerView.ts, ExplorerContent.ts
+│   └── modals/             # Modal implementations (Modal interface: destroy/focus)
+│       ├── Modal.ts, ThemePicker.ts, HotkeysModal.ts, RepoPicker.ts
+│       ├── WorktreePicker.ts, BaseBranchPicker.ts, DiscardConfirm.ts
+│       ├── FileFinder.ts, CommitActionConfirm.ts
+├── state/
+│   ├── UIState.ts          # Panes, tabs, focus zones, selection indices, toggles
+│   ├── CommitFlowState.ts  # Commit panel state machine
+│   └── FocusRing.ts        # Tab/Shift-Tab focus zone cycling
+├── core/                   # Non-React state managers (EventEmitter-based)
+│   ├── GitStateManager.ts  # Thin coordinator: workingTree/history/compare/remote per repo
+│   ├── WorkingTreeManager.ts # Status+diff state, git/working-dir watchers ('state-change')
+│   ├── HistoryManager.ts   # Commit history ('history-state-change')
+│   ├── CompareManager.ts   # Base-branch comparison ('compare-state-change')
+│   ├── RemoteOperationManager.ts # push/fetch/pull/stash/branch ops ('remote-state-change')
+│   ├── GitOperationQueue.ts # Serializes git operations per repo, refresh scheduling
+│   ├── FilePathWatcher.ts  # Watches the follow hook file
+│   └── ExplorerStateManager.ts # Explorer tree state
+├── ipc/
+│   └── CommandServer.ts    # Unix socket JSON command server (--socket, used for testing)
 ├── services/
-│   └── commitService.ts # Git commit execution
-├── git/
-│   ├── status.ts       # Git status operations
-│   ├── diff.ts         # Diff generation
-│   └── ignoreUtils.ts  # Git ignore checking
-├── utils/
-│   ├── baseBranchCache.ts    # Cache for PR base branch per repo
-│   ├── formatPath.ts         # Path shortening utility
-│   ├── layoutCalculations.ts # UI layout math
-│   └── pathUtils.ts          # Path expansion utilities
+│   └── commitService.ts    # Git commit execution
+├── git/                    # Plain async functions wrapping simple-git / git CLI
+│   ├── status.ts           # getStatus, stage/unstage, hunk staging, commits
+│   ├── diff.ts             # Diff generation and parsing, hunk extraction
+│   ├── worktree.ts         # Worktree/bare-repo resolution and listing
+│   └── ignoreUtils.ts      # Gitignore checking
+├── utils/                  # Pure helpers (displayRows, layout math, ansi, paths...)
+└── types/                  # Shared type declarations (tabs, remote, neo-blessed shim)
 ```
 
 ## Key Patterns
 
-### Mouse Events
-Mouse handling uses SGR extended mode for accurate coordinates. Events are parsed in `useMouse.ts` and handled in `App.tsx`. The mouse handler calculates which file was clicked based on terminal row positions.
+### State Managers and Events
+
+All app state lives in EventEmitter-based managers; blessed widgets are dumb renderers. `App.ts` subscribes to manager events (`state-change`, `history-state-change`, `compare-state-change`, `remote-state-change`) and calls `render()`, which re-renders panes via `PaneRenderers`. Managers are registered per repo path (`getManagerForRepo`); switching repos disposes the old manager's listeners.
+
+Errors are surfaced by setting `error` in `WorkingTreeManager` state (`setError()`), which the header renders and the next refresh clears. Never emit unsubscribed `'error'` events — an EventEmitter `'error'` without a listener crashes the process.
 
 ### Git Operations
-All git operations go through `useGit.ts` which wraps functions from `git/status.ts` and `git/diff.ts`. Operations have error handling that displays errors in the UI rather than crashing.
 
-### Terminal Cleanup
-`index.tsx` registers handlers for `exit`, `SIGINT`, `SIGTERM`, `uncaughtException`, and `unhandledRejection` to ensure mouse mode is disabled on any exit.
-
-### Layout
-Layout uses a fixed overhead calculation (`LAYOUT_OVERHEAD = 5`) for header, separators, and footer. The remaining space is split 40/60 between the staging area and diff view.
+Plain functions in `src/git/` wrap simple-git. Mutations go through `GitOperationQueue` (one queue per repo) so operations serialize and refreshes coalesce. UI-triggered operations live on the managers (e.g. `WorkingTreeManager.stageFile`) which update state and surface errors instead of crashing. `getStatus` returns `isRepo: false` only for a genuine non-repo; other failures propagate to keep the previous status visible.
 
 ### Modals
-Ink doesn't have native modal support. Modals are implemented by:
-1. Rendering modal last (render order = z-order)
-2. Using `position="absolute"` with calculated x/y offsets
-3. The `Modal` component blankets its own area with spaces before rendering content
-4. Mouse tracking is disabled when text inputs within modals are focused
+
+All modal state lives in `ModalController` (single source of truth):
+
+- `ModalType` union identifies which modal is open; each modal implements the `Modal` interface (`destroy()`, `focus()`) from `src/ui/modals/Modal.ts`
+- Toggle pattern: if `getActiveModalType() === 'type'` then `closeActiveModal()`; else check the `hasActiveModal()` guard, then open
+- `closeActiveModal()` must call `ctx.render()` after destroying the blessed widget, otherwise visual artifacts remain
+- Trigger keys (like `?` for hotkeys, `r` for repo picker) are handled at screen level in `KeyBindings.ts`, NOT in modal box key handlers — box-level handlers fire before screen-level ones but both fire, so a box handler that destroys the modal lets the key fall through to a screen handler that no longer sees an active modal
+- `q` is guarded by `hasActiveModal()`; `C-c` always exits
+
+### Keyboard and Mouse
+
+`setupKeyBindings` receives a `KeyBindingActions` interface (implemented by App) and a read-only `KeyBindingContext`. Adding a binding means: handler in `KeyBindings.ts`, action wired in `App.setupKeyboardHandlers()`, hint in `Footer.ts` and `HotkeysModal.ts`. Mouse events are handled in `MouseHandlers.ts` against `LayoutManager` regions; terminal mouse coordinates are 1-indexed.
+
+### Single Source of Truth for Row Calculations
+
+When building UI structures with rows (diff views, file lists), always use a single exported function to build/count rows, used by both rendering and scroll calculations. Example: `buildDiffDisplayRows()` / `wrapDisplayRows()` / `getHunkBoundaries()` in `src/utils/displayRows.ts` feed `DiffView.ts` rendering AND the scroll-bounds math in App. Never duplicate row-counting logic inline — scroll limits and click detection go subtly wrong when render adds headers the counter doesn't know about.
+
+### Terminal Cleanup
+
+`index.ts` registers handlers for `exit`, `SIGINT`, `SIGTERM`, `uncaughtException`, and `unhandledRejection`. Cleanup leaves the alternate screen buffer first so crash diagnostics land on the normal buffer, then disables mouse modes and restores the cursor.
 
 ## Common Tasks
 
 ### Adding a new git operation
-1. Add the function to `src/git/status.ts`
-2. Import and wrap it in `src/hooks/useGit.ts` with error handling
-3. Add to the `UseGitResult` interface and return object
-4. Use in `App.tsx` or components
+1. Add the plain function to `src/git/status.ts` (or `diff.ts`/`worktree.ts`)
+2. Add a method on the owning manager in `src/core/` that runs it through the queue and updates state with error handling
+3. Wire it from `App.ts` (action) and `KeyBindings.ts` (key)
 
 ### Adding a keybinding
-1. Add handler in `src/hooks/useKeymap.ts`
-2. Pass callback from `App.tsx`
-3. Update `Footer.tsx` to show the hint
-
-### Adding mouse interaction
-1. Handle in `handleMouseEvent` callback in `App.tsx`
-2. Calculate boundaries based on `topPaneHeight`, `bottomPaneHeight`
+1. Add handler in `src/KeyBindings.ts` (respect the `hasActiveModal()` guard for non-modal keys)
+2. Add the action to `KeyBindingActions` and implement it in `App.setupKeyboardHandlers()`
+3. Update `Footer.ts` and `ui/modals/HotkeysModal.ts` to show the hint, and FEATURES.md
 
 ### Adding a modal
-1. Create component using `<Modal x={x} y={y} width={w} height={h}>`
-2. Use `centerModal()` helper to calculate position
-3. Add state in `App.tsx` (e.g., `showMyModal`)
-4. If modal has text input, add it to `mouseDisabled` condition in `App.tsx`
-5. Render modal last in the JSX (after other content)
+1. Create a class in `src/ui/modals/` implementing the `Modal` interface
+2. Add its `ModalType` and an `openX()` method in `ModalController.ts` (follow the toggle/guard pattern)
+3. Trigger from `KeyBindings.ts` at screen level
+4. Render happens via `ctx.render()` on close — do not skip it
 
 ## Gotchas
 
+- Blessed: after `box.destroy()`, the screen must be explicitly re-rendered to clear visual artifacts
+- Blessed: box-level key handlers fire before screen-level ones when the box has focus — but both fire (see Modals above)
+- `setImmediate` hacks for race conditions are a code smell — use proper guards at the KeyBindings level
 - Mouse coordinates from terminals are 1-indexed
 - `simple-git` status may include gitignored files in some cases; we filter with `git check-ignore`
-- Ink's flexbox can add padding if container height doesn't match content; keep `LAYOUT_OVERHEAD` accurate
+- neo-blessed truecolor only works because of the runtime patch (`applyBlessedRgbPatch()` runs before screen creation); content SGR `38;2;R;G;B` codes are otherwise downsampled
+- Tests must not create real chokidar watchers: construct `WorkingTreeManager` without calling `startWatching()`
 
 ## Code Quality Guidelines
 
 ### Pre-commit Hook
 
-A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated automatically via the `prepare` script in `package.json` after `npm install`/`bun install`.
+A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 18 pre-existing sonarjs cognitive-complexity warnings are expected (0 errors).
 
 ### Architecture Layering (dependency-cruiser)
 
@@ -152,25 +172,17 @@ A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every
 ```
 index.ts
   ↓
-App.ts, KeyBindings.ts, MouseHandlers.ts, FollowMode.ts
+App.ts, KeyBindings.ts, MouseHandlers.ts, NavigationController.ts,
+StagingOperations.ts, ModalController.ts, FollowMode.ts
   ↓
 ui/
   ↓
-state/              core/
-  ↓                   ↓
+state/    core/    ipc/
+  ↓         ↓
 git/  utils/  services/  types/  themes.ts  config.ts
 ```
 
-Circular dependencies are also forbidden. Run `npm run deps` to check, or `npm run lint` which includes it.
-
-### Single Source of Truth for Layout/Row Calculations
-When building UI structures with rows (like diff views, file lists, PR views):
-- **Always use a single exported function** to build/count rows (e.g., `buildPRDiffRows()`)
-- The same function must be used for both rendering and scroll calculations
-- Never duplicate row-counting logic inline - if rendering adds headers/separators, scroll max calculation must use the same logic
-- Example: `PRView.tsx` exports `buildPRDiffRows()` which is used by the component itself, `getFileScrollOffset()`, and `getPRDiffTotalRows()`
-
-This prevents subtle bugs where scroll limits don't match actual content, or click detection is off by N rows because header count changed.
+Circular dependencies are forbidden. Run `bun run deps` to check.
 
 ## Interactive Testing with tmux
 
@@ -185,18 +197,20 @@ tmux new-session -d -s difftest -x 100 -y 24 'bun run dev'
 # Wait for startup, then capture the screen
 sleep 2 && tmux capture-pane -t difftest -p
 
+# Capture WITH escape sequences (verify colors/SGR output)
+tmux capture-pane -t difftest -e -p
+
 # Send keystrokes (vim-style j/k work, or use Up/Down)
 tmux send-keys -t difftest j          # Move down
 tmux send-keys -t difftest k          # Move up
 tmux send-keys -t difftest Enter      # Select/enter
 tmux send-keys -t difftest '2'        # Switch to tab 2
 
-# Capture screen after interaction
-tmux capture-pane -t difftest -p
-
 # Clean up when done
 tmux kill-session -t difftest
 ```
+
+There is also a Unix socket command server for scripted control: start with `--socket /tmp/ds.sock` and send newline-delimited JSON commands (see `src/ipc/CommandServer.ts`).
 
 ### Developer: Observe Claude's Testing
 
