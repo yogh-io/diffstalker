@@ -161,9 +161,3 @@ export const themeOrder: ThemeName[] = [
 export function getTheme(name: ThemeName): Theme {
   return themes[name] ?? themes['dark'];
 }
-
-export function getNextTheme(current: ThemeName): ThemeName {
-  const currentIndex = themeOrder.indexOf(current);
-  const nextIndex = (currentIndex + 1) % themeOrder.length;
-  return themeOrder[nextIndex];
-}

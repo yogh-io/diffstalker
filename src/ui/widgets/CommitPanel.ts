@@ -123,10 +123,3 @@ export function formatCommitPanel(
 
   return allLines.join('\n');
 }
-
-/**
- * Format inactive commit panel.
- */
-export function formatCommitPanelInactive(): string {
-  return "{gray-fg}Press '2' or 'c' to open commit panel{/gray-fg}";
-}

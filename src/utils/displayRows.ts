@@ -1,7 +1,7 @@
 // Unified row model for all diff views
 // Every row = exactly 1 terminal row
 
-import { DiffResult, DiffLine, CompareDiff } from '../git/diff.js';
+import { DiffResult, DiffLine } from '../git/diff.js';
 import { CommitInfo } from '../git/status.js';
 import { formatDateAbsolute } from './formatDate.js';
 import { isDisplayableDiffLine } from './diffFilters.js';
@@ -355,24 +355,6 @@ export function buildHistoryDisplayRows(
   }
 
   rows.push(...buildDiffDisplayRows(diff));
-  return rows;
-}
-
-/**
- * Build display rows for compare view from CompareDiff.
- * Combines all file diffs into a single DisplayRow array.
- */
-export function buildCompareDisplayRows(compareDiff: CompareDiff | null): DisplayRow[] {
-  if (!compareDiff || compareDiff.files.length === 0) {
-    return [];
-  }
-
-  const rows: DisplayRow[] = [];
-
-  for (const file of compareDiff.files) {
-    rows.push(...buildDiffDisplayRows(file.diff));
-  }
-
   return rows;
 }
 

@@ -3,14 +3,6 @@ import type { RemoteOperationState } from '../../types/remote.js';
 import { abbreviateHomePath } from '../../config.js';
 
 /**
- * Calculate header height based on content.
- * Currently always returns 1 (single line header).
- */
-export function getHeaderHeight(): number {
-  return 1;
-}
-
-/**
  * Format branch info as blessed-compatible tagged string.
  */
 function formatBranch(branch: BranchInfo): string {

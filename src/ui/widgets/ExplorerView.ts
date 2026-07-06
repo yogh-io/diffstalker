@@ -198,47 +198,8 @@ function escapeContent(content: string): string {
 }
 
 /**
- * Build breadcrumb segments from a path.
- * Returns segments like ["src", "components"] for "src/components"
- */
-export function buildBreadcrumbs(currentPath: string): string[] {
-  if (!currentPath) return [];
-  return currentPath.split('/').filter(Boolean);
-}
-
-/**
- * Format breadcrumbs for display.
- */
-export function formatBreadcrumbs(currentPath: string, repoName: string): string {
-  const segments = buildBreadcrumbs(currentPath);
-  if (segments.length === 0) {
-    return `{bold}${escapeContent(repoName)}{/bold}`;
-  }
-
-  const parts = [repoName, ...segments];
-  return parts
-    .map((part, i) => {
-      if (i === parts.length - 1) {
-        return `{bold}${escapeContent(part)}{/bold}`;
-      }
-      return `{gray-fg}${escapeContent(part)}{/gray-fg}`;
-    })
-    .join('{gray-fg}/{/gray-fg}');
-}
-
-/**
  * Get total rows in explorer for scroll calculations.
  */
 export function getExplorerTotalRows(displayRows: ExplorerDisplayRow[]): number {
   return displayRows.length;
-}
-
-/**
- * Get row at index.
- */
-export function getExplorerRowAtIndex(
-  displayRows: ExplorerDisplayRow[],
-  index: number
-): ExplorerDisplayRow | null {
-  return displayRows[index] ?? null;
 }

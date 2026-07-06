@@ -82,13 +82,6 @@ function escapeContent(content: string): string {
 }
 
 /**
- * Get the total number of rows in the history view (for scroll calculation).
- */
-export function getHistoryTotalRows(commits: CommitInfo[]): number {
-  return commits.length;
-}
-
-/**
  * Get the commit at a specific index.
  */
 export function getCommitAtIndex(commits: CommitInfo[], index: number): CommitInfo | null {

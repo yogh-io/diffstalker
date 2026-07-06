@@ -1,10 +1,6 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 
-/**
- * Layout constants matching the React/Ink implementation.
- */
-export const LAYOUT_OVERHEAD = 5; // Header (1-2) + 3 separators + footer (1)
 export const SPLIT_RATIO_STEP = 0.05;
 
 export interface LayoutDimensions {

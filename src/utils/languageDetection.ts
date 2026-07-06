@@ -192,25 +192,6 @@ export function highlightLine(content: string, language: string): string {
 }
 
 /**
- * Apply syntax highlighting preserving background color.
- * Replaces full ANSI resets with foreground-only resets so that
- * the caller's background color is not cleared.
- * Returns the highlighted string, or original content if highlighting fails.
- */
-export function highlightLinePreserveBg(content: string, language: string): string {
-  if (!content || !language) return content;
-
-  try {
-    const result = emphasize.highlight(language, content);
-    // Replace full reset (\x1b[0m) with foreground-only reset (\x1b[39m)
-    // This preserves any background color set by the caller
-    return result.value.replace(/\x1b\[0m/g, ANSI_FG_RESET);
-  } catch {
-    return content;
-  }
-}
-
-/**
  * Highlight multiple lines as a block, preserving multi-line context
  * (e.g., block comments, multi-line strings).
  * Returns an array of highlighted lines.
@@ -244,15 +225,4 @@ export function highlightBlockPreserveBg(lines: string[], language: string): str
   } catch {
     return lines;
   }
-}
-
-/**
- * Apply syntax highlighting to multiple lines.
- * More efficient than calling highlightLine for each line
- * as it reuses the language detection.
- */
-export function highlightLines(lines: string[], language: string): string[] {
-  if (!language || lines.length === 0) return lines;
-
-  return lines.map((line) => highlightLine(line, language));
 }
