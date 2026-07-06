@@ -88,6 +88,21 @@ export class RepoPicker implements Modal {
       this.selectedIndex = Math.min(this.repos.length - 1, this.selectedIndex + 1);
       this.render();
     });
+
+    this.box.on('click', (_mouse: { y: number }) => {
+      const contentY = _mouse.y - (this.box.atop as number) - 1; // subtract border
+      const repoIndex = contentY - 2; // subtract header + blank line
+      if (repoIndex >= 0 && repoIndex < this.repos.length) {
+        if (repoIndex === this.selectedIndex) {
+          // Second click on already-selected item: confirm
+          this.destroy();
+          this.onSelect(this.repos[repoIndex]);
+        } else {
+          this.selectedIndex = repoIndex;
+          this.render();
+        }
+      }
+    });
   }
 
   private render(): void {
