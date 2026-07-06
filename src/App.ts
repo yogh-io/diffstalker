@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import { LayoutManager } from './ui/Layout.js';
@@ -89,6 +91,12 @@ export class App {
 
   // Auto-tab transition tracking
   private prevFileCount: number = 0;
+
+  // Auto-scroll-to-latest-change tracking (auto mode): last-seen mtime per
+  // changed file, plus the transient "flash" highlight for the newest change.
+  private lastChangeMtimes = new Map<string, number>();
+  private flashFilePath: string | null = null;
+  private flashTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Flat view mode state
   private cachedFlatFiles: FlatFileEntry[] = [];
@@ -551,6 +559,7 @@ export class App {
       if (!this.gitManager?.workingTree.state.isLoading) {
         this.reconcileSelectionAfterStateChange();
         this.applyAutoTab();
+        this.applyAutoScrollToLatestChange();
       }
       this.updateExplorerGitStatus();
       this.render();
@@ -869,6 +878,61 @@ export class App {
     }
   }
 
+  /**
+   * In auto mode, keep the most recently changed file on screen: whenever a
+   * file's on-disk content changes (a new edit lands, or a file appears),
+   * select it and reset the diff to its first hunk, then briefly flash it.
+   *
+   * Detection is by file mtime, so staging/selection (which don't touch the
+   * working file) never trigger a jump — only real content changes do. The
+   * mtime map is updated even when auto mode is off, so toggling it on later
+   * doesn't jump to a stale "newest" change.
+   */
+  private applyAutoScrollToLatestChange(): void {
+    const files = this.gitManager?.workingTree.state.status?.files ?? [];
+
+    const current = new Map<string, number>();
+    let newest: { path: string; mtime: number } | null = null;
+    for (const file of files) {
+      let mtime: number;
+      try {
+        mtime = fs.statSync(path.join(this.repoPath, file.path)).mtimeMs;
+      } catch {
+        continue; // deleted/renamed file — nothing on disk to scroll to
+      }
+      // Collapse the staged/unstaged pair for a path to a single mtime entry.
+      if (current.has(file.path)) continue;
+      current.set(file.path, mtime);
+
+      const prev = this.lastChangeMtimes.get(file.path);
+      const changed = prev === undefined || mtime > prev;
+      if (changed && (!newest || mtime > newest.mtime)) {
+        newest = { path: file.path, mtime };
+      }
+    }
+    this.lastChangeMtimes = current;
+
+    if (!this.uiState.state.autoTabEnabled || !newest) return;
+
+    // Only meaningful where the file list + diff are shown.
+    const tab = this.uiState.state.bottomTab;
+    if (tab !== 'diff' && tab !== 'commit') return;
+
+    this.navigation.navigateToFile(path.join(this.repoPath, newest.path));
+    this.triggerFlash(newest.path);
+  }
+
+  /** Briefly highlight the newly-changed file, then clear the highlight. */
+  private triggerFlash(relativePath: string): void {
+    this.flashFilePath = relativePath;
+    if (this.flashTimer) clearTimeout(this.flashTimer);
+    this.flashTimer = setTimeout(() => {
+      this.flashFilePath = null;
+      this.flashTimer = null;
+      this.render();
+    }, 900);
+  }
+
   private toggleFollow(): void {
     if (!this.followMode) {
       this.followMode = new FollowMode(this.config.targetFile, () => this.repoPath, {
@@ -970,7 +1034,8 @@ export class App {
       width,
       this.layout.dimensions.topPaneHeight,
       this.gitManager?.workingTree.state.hunkCounts,
-      state.flatViewMode ? this.cachedFlatFiles : undefined
+      state.flatViewMode ? this.cachedFlatFiles : undefined,
+      this.flashFilePath
     );
 
     this.layout.topPane.setContent(content);
@@ -1066,6 +1131,9 @@ export class App {
     }
     if (this.remoteClearTimer) {
       clearTimeout(this.remoteClearTimer);
+    }
+    if (this.flashTimer) {
+      clearTimeout(this.flashTimer);
     }
 
     // Destroy screen (this will clean up terminal)

@@ -628,3 +628,8 @@ When enabled (`a` toggle):
 - Files appearing: auto-switch to Diff view
 - Files disappearing (commit): auto-switch to History view
 - Shows newest commit after commit
+- Auto-scroll to latest change: whenever a file's content changes on disk (an
+  edit lands or a new file appears), the newest-changed file is auto-selected,
+  the diff resets to its first hunk, and the file briefly flashes. Detection is
+  by file mtime, so staging or moving the selection never triggers a jump —
+  only real content changes do.

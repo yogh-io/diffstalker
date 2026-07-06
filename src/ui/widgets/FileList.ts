@@ -85,7 +85,8 @@ function formatFileRow(
   selectedIndex: number,
   isFocused: boolean,
   maxPathLength: number,
-  hunkCounts: FileHunkCounts | null
+  hunkCounts: FileHunkCounts | null,
+  isFlash: boolean = false
 ): string {
   const isSelected = fileIndex === selectedIndex;
 
@@ -108,6 +109,10 @@ function formatFileRow(
   line += formatOriginalPath(file.originalPath);
   line += stats;
   line += hunkIndicator;
+  // Brief flash highlight for the newest change (auto mode).
+  if (isFlash) {
+    line = `{yellow-bg}{black-fg}${line}{/black-fg}{/yellow-bg}`;
+  }
   return line;
 }
 
@@ -121,7 +126,8 @@ export function formatFileList(
   width: number,
   scrollOffset: number = 0,
   maxHeight?: number,
-  hunkCounts?: FileHunkCounts | null
+  hunkCounts?: FileHunkCounts | null,
+  flashPath?: string | null
 ): string {
   if (files.length === 0) {
     return '{gray-fg} No changes{/gray-fg}';
@@ -161,7 +167,8 @@ export function formatFileList(
               selectedIndex,
               isFocused,
               maxPathLength,
-              hunkCounts ?? null
+              hunkCounts ?? null,
+              flashPath === row.file.path
             )
           );
         }

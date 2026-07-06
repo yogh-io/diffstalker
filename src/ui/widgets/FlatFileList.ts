@@ -31,7 +31,8 @@ function formatFlatFileRow(
   index: number,
   selectedIndex: number,
   isFocused: boolean,
-  maxPathLength: number
+  maxPathLength: number,
+  isFlash: boolean = false
 ): string {
   const isSelected = index === selectedIndex;
 
@@ -52,6 +53,10 @@ function formatFlatFileRow(
   line += formatOriginalPath(entry.originalPath);
   line += stats;
   line += hunkIndicator;
+  // Brief flash highlight for the newest change (auto mode).
+  if (isFlash) {
+    line = `{yellow-bg}{black-fg}${line}{/black-fg}{/yellow-bg}`;
+  }
   return line;
 }
 
@@ -65,7 +70,8 @@ export function formatFlatFileList(
   isFocused: boolean,
   width: number,
   scrollOffset: number = 0,
-  maxHeight?: number
+  maxHeight?: number,
+  flashPath?: string | null
 ): string {
   if (flatFiles.length === 0) {
     return '{gray-fg} No changes{/gray-fg}';
@@ -77,7 +83,16 @@ export function formatFlatFileList(
   const allRows: string[] = [];
   allRows.push('{bold}{gray-fg}All files (h):{/gray-fg}{/bold}');
   for (let i = 0; i < flatFiles.length; i++) {
-    allRows.push(formatFlatFileRow(flatFiles[i], i, selectedIndex, isFocused, maxPathLength));
+    allRows.push(
+      formatFlatFileRow(
+        flatFiles[i],
+        i,
+        selectedIndex,
+        isFocused,
+        maxPathLength,
+        flashPath === flatFiles[i].path
+      )
+    );
   }
 
   // Apply scroll offset and max height

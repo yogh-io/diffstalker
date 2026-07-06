@@ -34,7 +34,8 @@ export function renderTopPane(
   width: number,
   topPaneHeight: number,
   hunkCounts?: FileHunkCounts | null,
-  flatFiles?: FlatFileEntry[]
+  flatFiles?: FlatFileEntry[],
+  flashPath?: string | null
 ): string {
   if (state.bottomTab === 'history') {
     return formatHistoryView(
@@ -86,7 +87,8 @@ export function renderTopPane(
       state.currentPane === 'files',
       width,
       state.fileListScrollOffset,
-      topPaneHeight
+      topPaneHeight,
+      flashPath
     );
   }
 
@@ -97,7 +99,8 @@ export function renderTopPane(
     width,
     state.fileListScrollOffset,
     topPaneHeight,
-    hunkCounts
+    hunkCounts,
+    flashPath
   );
 }
 
