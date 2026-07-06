@@ -1,8 +1,31 @@
+import * as path from 'node:path';
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import { abbreviateHomePath } from '../../config.js';
 import type { WorktreeInfo } from '../../git/worktree.js';
 import type { Modal } from './Modal.js';
+
+const FOOTER = 'j/k: navigate | Enter: select | Esc: cancel';
+
+/** Directory shared by every worktree, or null if they don't all share one. */
+function commonParentDir(paths: string[]): string | null {
+  if (paths.length === 0) return null;
+  const dirs = paths.map((p) => path.dirname(p));
+  return dirs.every((d) => d === dirs[0]) ? dirs[0] : null;
+}
+
+/** Plain-text truncation with an ellipsis (no blessed tags in the input). */
+function truncate(text: string, max: number): string {
+  if (max <= 0) return '';
+  return text.length <= max ? text : text.slice(0, Math.max(1, max - 1)) + '…';
+}
+
+interface Row {
+  name: string; // basename (parent mode) or abbreviated full path
+  annotation: string; // branch/detached note, shown only when informative
+  isCurrent: boolean;
+  path: string;
+}
 
 /**
  * WorktreePicker modal for switching between the worktrees of the current
@@ -12,9 +35,9 @@ import type { Modal } from './Modal.js';
 export class WorktreePicker implements Modal {
   private box: Widgets.BoxElement;
   private screen: Widgets.Screen;
-  private worktrees: WorktreeInfo[];
+  private rows: Row[];
+  private parentLabel: string | null;
   private selectedIndex: number;
-  private currentPath: string;
   private onSelect: (worktreePath: string) => void;
   private onCancel: () => void;
 
@@ -26,19 +49,43 @@ export class WorktreePicker implements Modal {
     onCancel: () => void
   ) {
     this.screen = screen;
-    this.worktrees = worktrees;
-    this.currentPath = currentPath;
     this.onSelect = onSelect;
     this.onCancel = onCancel;
 
-    // Start on the current worktree if it's in the list
-    this.selectedIndex = worktrees.findIndex((w) => w.path === currentPath);
-    if (this.selectedIndex < 0) this.selectedIndex = 0;
+    // When every worktree lives in the same directory (the common bare-repo
+    // layout), show that directory once and list just the worktree names —
+    // the full path per row is redundant and causes wrapping.
+    const parent = commonParentDir(worktrees.map((w) => w.path));
+    this.parentLabel = parent ? abbreviateHomePath(parent) : null;
 
+    this.rows = worktrees.map((w) => {
+      const base = path.basename(w.path);
+      const name = parent ? base : abbreviateHomePath(w.path);
+      // Annotate the branch only when it isn't already obvious from the name.
+      let annotation = '';
+      if (!w.branch) annotation = '(detached)';
+      else if (w.branch !== base) annotation = `→ ${w.branch}`;
+      return { name, annotation, isCurrent: w.path === currentPath, path: w.path };
+    });
+
+    this.selectedIndex = Math.max(
+      0,
+      worktrees.findIndex((w) => w.path === currentPath)
+    );
+
+    // Widest rendered line (each line has a 1-char left margin / 2-char marker).
+    const rowWidth = (r: Row) =>
+      2 + r.name.length + (r.annotation ? 2 + r.annotation.length : 0) + (r.isCurrent ? 10 : 0);
     const screenWidth = screen.width as number;
-    const width = Math.min(80, screenWidth - 4);
+    const longest = Math.max(
+      ' Worktrees'.length,
+      this.parentLabel ? this.parentLabel.length + 1 : 0,
+      FOOTER.length + 1,
+      ...this.rows.map(rowWidth)
+    );
+    const width = Math.min(Math.max(longest + 4, 32), screenWidth - 4);
     const maxVisible = Math.min(worktrees.length, 15);
-    const height = maxVisible + 6; // worktrees + header + footer + borders + padding
+    const height = maxVisible + (this.parentLabel ? 7 : 6);
 
     this.box = blessed.box({
       parent: screen,
@@ -46,16 +93,11 @@ export class WorktreePicker implements Modal {
       left: 'center',
       width,
       height,
-      border: {
-        type: 'line',
-      },
-      style: {
-        border: {
-          fg: 'cyan',
-        },
-      },
+      border: { type: 'line' },
+      style: { border: { fg: 'cyan' } },
       tags: true,
       keys: true,
+      wrap: false,
       scrollable: true,
       alwaysScroll: true,
     });
@@ -80,17 +122,16 @@ export class WorktreePicker implements Modal {
     });
 
     this.box.key(['down', 'j'], () => {
-      this.selectedIndex = Math.min(this.worktrees.length - 1, this.selectedIndex + 1);
+      this.selectedIndex = Math.min(this.rows.length - 1, this.selectedIndex + 1);
       this.render();
     });
 
     this.box.on('click', (_mouse: { y: number }) => {
       const contentY = _mouse.y - (this.box.atop as number) - 1; // subtract border
-      const index = contentY - 2; // subtract header + blank line
-      if (index >= 0 && index < this.worktrees.length) {
+      const index = contentY - (this.parentLabel ? 3 : 2); // subtract header (+ parent) + blank
+      if (index >= 0 && index < this.rows.length) {
         if (index === this.selectedIndex) {
-          // Second click on already-selected item: confirm
-          this.confirm(index);
+          this.confirm(index); // second click on the selected item confirms
         } else {
           this.selectedIndex = index;
           this.render();
@@ -100,44 +141,48 @@ export class WorktreePicker implements Modal {
   }
 
   private confirm(index: number): void {
-    const selected = this.worktrees[index];
-    if (selected) {
+    const row = this.rows[index];
+    if (row) {
       this.destroy();
-      this.onSelect(selected.path);
+      this.onSelect(row.path);
     }
   }
 
   private render(): void {
+    const inner = Math.max(8, (this.box.width as number) - 4);
     const lines: string[] = [];
 
-    lines.push('{bold}{cyan-fg}     Worktrees{/cyan-fg}{/bold}');
+    lines.push('{bold}{cyan-fg} Worktrees{/cyan-fg}{/bold}');
+    if (this.parentLabel) {
+      lines.push(`{gray-fg} ${truncate(this.parentLabel, inner - 1)}{/gray-fg}`);
+    }
     lines.push('');
 
-    if (this.worktrees.length === 0) {
-      lines.push('{gray-fg}No worktrees{/gray-fg}');
+    if (this.rows.length === 0) {
+      lines.push('{gray-fg} No worktrees{/gray-fg}');
     } else {
-      const branchWidth = Math.min(
-        24,
-        Math.max(...this.worktrees.map((w) => (w.branch ?? '(detached)').length))
-      );
-
-      for (let i = 0; i < this.worktrees.length; i++) {
-        const wt = this.worktrees[i];
+      this.rows.forEach((row, i) => {
         const isSelected = i === this.selectedIndex;
-        const isCurrent = wt.path === this.currentPath;
-        const branch = (wt.branch ?? '(detached)').padEnd(branchWidth);
+        const marker = isSelected ? '> ' : '  ';
+        const suffix = row.isCurrent ? ' (current)' : '';
+        const annPlain = row.annotation ? `  ${row.annotation}` : '';
+        const nameBudget = inner - marker.length - annPlain.length - suffix.length;
+        const name = truncate(row.name, nameBudget);
 
-        let line = isSelected ? '{cyan-fg}{bold}> ' : '  ';
-        line += `{yellow-fg}${branch}{/yellow-fg}  ${abbreviateHomePath(wt.path)}`;
-        if (isSelected) line += '{/bold}{/cyan-fg}';
-        if (isCurrent) line += ' {gray-fg}(current){/gray-fg}';
-
+        let line = isSelected
+          ? `{cyan-fg}{bold}${marker}${name}{/bold}{/cyan-fg}`
+          : `${marker}${name}`;
+        if (row.annotation) {
+          const color = row.annotation.startsWith('→') ? 'yellow' : 'gray';
+          line += `  {${color}-fg}${row.annotation}{/${color}-fg}`;
+        }
+        if (suffix) line += `{gray-fg}${suffix}{/gray-fg}`;
         lines.push(line);
-      }
+      });
     }
 
     lines.push('');
-    lines.push('{gray-fg}j/k: navigate | Enter: select | Esc: cancel{/gray-fg}');
+    lines.push(`{gray-fg} ${truncate(FOOTER, inner - 1)}{/gray-fg}`);
 
     this.box.setContent(lines.join('\n'));
     this.screen.render();
