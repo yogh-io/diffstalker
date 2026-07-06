@@ -6,6 +6,10 @@ import { setDebug } from './utils/logger.js';
 
 // Cleanup function to reset terminal state on exit
 function cleanupTerminal(): void {
+  // Leave the alternate screen buffer first, so anything printed after
+  // cleanup (crash diagnostics) lands on the normal buffer instead of
+  // being discarded with the alternate one
+  process.stdout.write('\x1b[?1049l');
   // Disable SGR extended mouse mode
   process.stdout.write('\x1b[?1006l');
   // Disable button event mouse tracking

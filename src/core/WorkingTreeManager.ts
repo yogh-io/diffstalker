@@ -94,6 +94,14 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.emit('state-change', this._state);
   }
 
+  /**
+   * Surface an error in the UI. It renders in the header (via state-change)
+   * and clears on the next refresh.
+   */
+  setError(message: string): void {
+    this.updateState({ error: message });
+  }
+
   // --- Gitignore loading ---
 
   private loadGitignores(): Map<string, Ignore> {
@@ -200,7 +208,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.gitWatcher.on('unlink', scheduleRefresh);
     this.gitWatcher.on('error', (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
-      this.emit('error', `Git watcher error: ${message}`);
+      this.setError(`Git watcher error: ${message}`);
     });
 
     this.workingDirWatcher.on('change', scheduleRefresh);
@@ -208,7 +216,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.workingDirWatcher.on('unlink', scheduleRefresh);
     this.workingDirWatcher.on('error', (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
-      this.emit('error', `Working dir watcher error: ${message}`);
+      this.setError(`Working dir watcher error: ${message}`);
     });
   }
 

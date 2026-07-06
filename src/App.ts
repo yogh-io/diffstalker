@@ -284,12 +284,11 @@ export class App {
   }
 
   /**
-   * Display an error in the UI by emitting a state change with the error set.
+   * Display an error in the UI via the working tree state (rendered in the
+   * header, cleared on the next refresh).
    */
   private showError(message: string): void {
-    if (!this.gitManager) return;
-    const wt = this.gitManager.workingTree;
-    wt.emit('state-change', { ...wt.state, error: message });
+    this.gitManager?.workingTree.setError(message);
   }
 
   private setupKeyboardHandlers(): void {

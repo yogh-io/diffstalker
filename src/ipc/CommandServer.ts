@@ -6,6 +6,7 @@
 import * as net from 'net';
 import * as fs from 'fs';
 import { EventEmitter } from 'events';
+import { error as logError } from '../utils/logger.js';
 
 // App state exposed to external consumers
 export interface AppState {
@@ -184,7 +185,10 @@ export class CommandServer extends EventEmitter {
     });
 
     socket.on('error', (err) => {
-      this.emit('error', err);
+      // A dead client (e.g. ECONNRESET) is not the app's problem; without a
+      // listener the re-emitted 'error' event would crash the process.
+      logError('IPC client socket error', err);
+      socket.destroy();
     });
   }
 
