@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {
   parseDiffLine,
   parseHunkHeader,
   parseDiffWithLineNumbers,
+  countHunks,
+  extractHunkPatch,
   getDiff,
   getDiffForUntracked,
   getStagedDiff,
@@ -11,6 +15,7 @@ import {
   getDefaultBaseBranch,
   getDiffBetweenRefs,
 } from './diff.js';
+import { stageHunk, unstageHunk } from './status.js';
 import {
   createFixtureRepo,
   removeFixtureRepo,
@@ -356,5 +361,247 @@ describe('getCandidateBaseBranches / getDefaultBaseBranch / getDiffBetweenRefs (
     expect(diff.files.some((f) => f.path === 'feature.txt')).toBe(true);
     expect(diff.commits.length).toBeGreaterThanOrEqual(1);
     expect(diff.commits.some((c) => c.message === 'feature commit')).toBe(true);
+  });
+});
+
+describe('extractHunkPatch', () => {
+  const SINGLE_HUNK_DIFF = `diff --git a/file.txt b/file.txt
+index 0000000..1111111 100644
+--- a/file.txt
++++ b/file.txt
+@@ -1,3 +1,3 @@
+ line1
+-line2
++changed
+ line3
+`;
+
+  const MULTI_HUNK_DIFF = `diff --git a/multi.txt b/multi.txt
+index abc1234..def5678 100644
+--- a/multi.txt
++++ b/multi.txt
+@@ -1,3 +1,3 @@
+ a
+-b
++B
+ c
+@@ -10,3 +10,3 @@
+ j
+-k
++K
+ l
+@@ -20,2 +20,3 @@
+ t
++u
+ v
+`;
+
+  it('extracts the only hunk of a single-hunk diff unchanged', () => {
+    const patch = extractHunkPatch(SINGLE_HUNK_DIFF, 0);
+    expect(patch).toBe(SINGLE_HUNK_DIFF);
+  });
+
+  it('extracts the first hunk of a multi-hunk diff with all file headers', () => {
+    const patch = extractHunkPatch(MULTI_HUNK_DIFF, 0);
+    expect(patch).not.toBeNull();
+    expect(patch).toContain('diff --git a/multi.txt b/multi.txt');
+    expect(patch).toContain('index abc1234..def5678 100644');
+    expect(patch).toContain('--- a/multi.txt');
+    expect(patch).toContain('+++ b/multi.txt');
+    expect(patch).toContain('@@ -1,3 +1,3 @@');
+    expect(patch).toContain('+B');
+    expect(patch).not.toContain('@@ -10,3 +10,3 @@');
+    expect(patch).not.toContain('@@ -20,2 +20,3 @@');
+    expect(patch).not.toContain('+K');
+    expect(patch).not.toContain('+u');
+  });
+
+  it('extracts a middle hunk without neighboring hunks', () => {
+    const patch = extractHunkPatch(MULTI_HUNK_DIFF, 1);
+    expect(patch).not.toBeNull();
+    expect(patch).toContain('@@ -10,3 +10,3 @@');
+    expect(patch).toContain('+K');
+    expect(patch).not.toContain('+B');
+    expect(patch).not.toContain('+u');
+  });
+
+  it('extracts the last hunk and terminates with a single newline', () => {
+    const patch = extractHunkPatch(MULTI_HUNK_DIFF, 2);
+    expect(patch).not.toBeNull();
+    expect(patch).toContain('@@ -20,2 +20,3 @@');
+    expect(patch).toContain('+u');
+    expect(patch).not.toContain('+B');
+    expect(patch).not.toContain('+K');
+    expect(patch!.endsWith(' v\n')).toBe(true);
+    expect(patch!.endsWith('\n\n')).toBe(false);
+  });
+
+  it('returns null for an out-of-range hunk index', () => {
+    expect(extractHunkPatch(MULTI_HUNK_DIFF, 3)).toBeNull();
+    expect(extractHunkPatch(MULTI_HUNK_DIFF, 99)).toBeNull();
+    expect(extractHunkPatch(MULTI_HUNK_DIFF, -1)).toBeNull();
+    expect(extractHunkPatch(SINGLE_HUNK_DIFF, 1)).toBeNull();
+  });
+
+  it('returns null for an empty diff', () => {
+    expect(extractHunkPatch('', 0)).toBeNull();
+  });
+
+  it('returns null for a diff with headers but no hunks', () => {
+    const headersOnly = `diff --git a/image.png b/image.png
+Binary files a/image.png and b/image.png differ
+`;
+    expect(extractHunkPatch(headersOnly, 0)).toBeNull();
+  });
+
+  it('keeps "No newline at end of file" markers with the hunk', () => {
+    const noNewlineDiff = `diff --git a/nonl.txt b/nonl.txt
+index 1234567..89abcde 100644
+--- a/nonl.txt
++++ b/nonl.txt
+@@ -1 +1 @@
+-old
+\\ No newline at end of file
++new
+\\ No newline at end of file
+`;
+    const patch = extractHunkPatch(noNewlineDiff, 0);
+    expect(patch).not.toBeNull();
+    const markers = patch!.split('\n').filter((l) => l === '\\ No newline at end of file');
+    expect(markers).toHaveLength(2);
+    expect(patch).toBe(noNewlineDiff);
+  });
+
+  it('preserves section context after the @@ in hunk headers', () => {
+    const contextDiff = `diff --git a/code.ts b/code.ts
+index 1111111..2222222 100644
+--- a/code.ts
++++ b/code.ts
+@@ -5,3 +5,4 @@ export function test() {
+ const a = 1;
++const b = 2;
+ const c = 3;
+ }
+`;
+    const patch = extractHunkPatch(contextDiff, 0);
+    expect(patch).not.toBeNull();
+    expect(patch).toContain('@@ -5,3 +5,4 @@ export function test() {');
+    expect(patch).toBe(contextDiff);
+  });
+
+  it('preserves multi-line content and line order exactly', () => {
+    const patch = extractHunkPatch(MULTI_HUNK_DIFF, 0);
+    const lines = patch!.split('\n');
+    expect(lines[4]).toBe('@@ -1,3 +1,3 @@');
+    expect(lines.slice(5, 9)).toEqual([' a', '-b', '+B', ' c']);
+  });
+});
+
+describe('extractHunkPatch round-trip (fixture)', () => {
+  const REPO_NAME = 'hunk-patch-test';
+  let repoPath: string;
+
+  const baseLines = Array.from({ length: 30 }, (_, i) => `line${i + 1}`);
+  const baseContent = baseLines.join('\n') + '\n';
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    writeFixtureFile(repoPath, 'code.txt', baseContent);
+    gitExec(repoPath, 'add code.txt');
+    gitExec(repoPath, 'commit -m "initial"');
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  /** Reset index and working copy of code.txt back to HEAD */
+  function resetRepo(): void {
+    gitExec(repoPath, 'reset HEAD -- code.txt');
+    gitExec(repoPath, 'checkout -- code.txt');
+  }
+
+  /** Modify two well-separated lines so git produces two hunks. */
+  function modifyTwoPlaces(): void {
+    const lines = [...baseLines];
+    lines[2] = 'line3 modified';
+    lines[24] = 'line25 modified';
+    writeFixtureFile(repoPath, 'code.txt', lines.join('\n') + '\n');
+  }
+
+  it('staging the first hunk stages only that change', () => {
+    modifyTwoPlaces();
+    const raw = gitExec(repoPath, 'diff');
+    expect(countHunks(raw)).toBe(2);
+
+    const patch = extractHunkPatch(raw, 0);
+    expect(patch).not.toBeNull();
+    stageHunk(repoPath, patch!);
+
+    const cached = gitExec(repoPath, 'diff --cached');
+    expect(countHunks(cached)).toBe(1);
+    expect(cached).toContain('+line3 modified');
+    expect(cached).not.toContain('line25 modified');
+
+    const unstaged = gitExec(repoPath, 'diff');
+    expect(countHunks(unstaged)).toBe(1);
+    expect(unstaged).toContain('+line25 modified');
+    expect(unstaged).not.toContain('line3 modified');
+
+    // Working tree still has both changes
+    const content = fs.readFileSync(path.join(repoPath, 'code.txt'), 'utf-8');
+    expect(content).toContain('line3 modified');
+    expect(content).toContain('line25 modified');
+    resetRepo();
+  });
+
+  it('staging the second hunk stages only that change', () => {
+    modifyTwoPlaces();
+    const raw = gitExec(repoPath, 'diff');
+    expect(countHunks(raw)).toBe(2);
+
+    const patch = extractHunkPatch(raw, 1);
+    expect(patch).not.toBeNull();
+    stageHunk(repoPath, patch!);
+
+    const cached = gitExec(repoPath, 'diff --cached');
+    expect(countHunks(cached)).toBe(1);
+    expect(cached).toContain('+line25 modified');
+    expect(cached).not.toContain('line3 modified');
+
+    const unstaged = gitExec(repoPath, 'diff');
+    expect(countHunks(unstaged)).toBe(1);
+    expect(unstaged).toContain('+line3 modified');
+
+    const content = fs.readFileSync(path.join(repoPath, 'code.txt'), 'utf-8');
+    expect(content).toContain('line3 modified');
+    expect(content).toContain('line25 modified');
+    resetRepo();
+  });
+
+  it('unstaging one hunk via reverse apply leaves the other staged', () => {
+    modifyTwoPlaces();
+    gitExec(repoPath, 'add code.txt');
+
+    const cachedRaw = gitExec(repoPath, 'diff --cached');
+    expect(countHunks(cachedRaw)).toBe(2);
+
+    const patch = extractHunkPatch(cachedRaw, 0);
+    expect(patch).not.toBeNull();
+    unstageHunk(repoPath, patch!);
+
+    const cachedAfter = gitExec(repoPath, 'diff --cached');
+    expect(countHunks(cachedAfter)).toBe(1);
+    expect(cachedAfter).toContain('+line25 modified');
+    expect(cachedAfter).not.toContain('line3 modified');
+
+    const unstagedAfter = gitExec(repoPath, 'diff');
+    expect(countHunks(unstagedAfter)).toBe(1);
+    expect(unstagedAfter).toContain('+line3 modified');
+
+    const content = fs.readFileSync(path.join(repoPath, 'code.txt'), 'utf-8');
+    expect(content).toContain('line3 modified');
+    expect(content).toContain('line25 modified');
+    resetRepo();
   });
 });
