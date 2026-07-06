@@ -261,10 +261,16 @@ export function formatCompareListView(
   isFocused: boolean,
   width: number,
   scrollOffset: number = 0,
-  maxHeight?: number
+  maxHeight?: number,
+  includeUncommitted: boolean = false
 ): string {
+  // Checkbox header line (always shown, outside scroll area)
+  const checkbox = includeUncommitted
+    ? `{escape}${ANSI_MAGENTA}[x] Include uncommitted${ANSI_RESET} ${ANSI_GRAY}(u)${ANSI_RESET}{/escape}`
+    : `{escape}${ANSI_YELLOW}[ ] Include uncommitted${ANSI_RESET} ${ANSI_GRAY}(u)${ANSI_RESET}{/escape}`;
+
   if (commits.length === 0 && files.length === 0) {
-    return '{gray-fg}No changes compared to base branch{/gray-fg}';
+    return checkbox + '\n{gray-fg}No changes compared to base branch{/gray-fg}';
   }
 
   const rows = buildCompareListRows(commits, files);
@@ -278,7 +284,7 @@ export function formatCompareListView(
     .map((row) => formatCompareRow(row, selectedItem, isFocused, commits, files, width))
     .filter((line) => line !== null);
 
-  return lines.join('\n');
+  return checkbox + '\n' + lines.join('\n');
 }
 
 /**

@@ -58,7 +58,8 @@ export function renderTopPane(
       state.currentPane === 'compare',
       width,
       state.compareScrollOffset,
-      topPaneHeight
+      topPaneHeight - 1,
+      state.includeUncommitted
     );
   }
 

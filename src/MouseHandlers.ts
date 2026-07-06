@@ -161,9 +161,15 @@ function handleTopPaneClick(
     ctx.uiState.setHistorySelectedIndex(index);
     actions.selectHistoryCommitByIndex(index);
   } else if (state.bottomTab === 'compare') {
+    const adjustedRow = row - 1; // account for checkbox header line
+    if (adjustedRow < 0) return;
     const commits = ctx.getCompareCommits();
     const files = ctx.getCompareFiles();
-    const selection = getCompareSelectionFromRow(state.compareScrollOffset + row, commits, files);
+    const selection = getCompareSelectionFromRow(
+      state.compareScrollOffset + adjustedRow,
+      commits,
+      files
+    );
     if (selection) {
       actions.selectCompareItem(selection);
     }
@@ -232,7 +238,8 @@ function handleTopPaneScroll(delta: number, layout: LayoutManager, ctx: MouseCon
     ctx.uiState.setHistoryScrollOffset(newOffset);
   } else if (state.bottomTab === 'compare') {
     const totalRows = getCompareListTotalRows(ctx.getCompareCommits(), ctx.getCompareFiles());
-    const maxOffset = Math.max(0, totalRows - visibleHeight);
+    // Reserve one row for the "Include uncommitted" checkbox header (rendered outside the scroll area)
+    const maxOffset = Math.max(0, totalRows - (visibleHeight - 1));
     const newOffset = Math.min(maxOffset, Math.max(0, state.compareScrollOffset + delta));
     ctx.uiState.setCompareScrollOffset(newOffset);
   } else if (state.bottomTab === 'explorer') {
