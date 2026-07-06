@@ -195,6 +195,7 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 | `c` | Open commit panel (switch to Tab 2) |
 | `d` | Discard changes (unstaged modified files only, with confirmation) |
 | `r` | Open repo picker |
+| `W` (Shift+W) | Open worktree switcher (worktrees of the current repo) |
 | `q` / `Ctrl+C` | Quit application |
 
 ### History Actions (History Tab)
@@ -492,6 +493,15 @@ The app uses a **focus zone** system for full keyboard-only navigation with `Tab
 
 - Error shown in header if not in a git repo
 - Operations fail gracefully
+
+### Git Worktrees
+
+- Any opened or followed path is normalized to its containing worktree root, so
+  launching from (or following a file inside) a subdirectory or a linked
+  worktree resolves to the correct working tree automatically
+- Opening a bare-repo container (the parent of a `.bare/` + worktrees layout)
+  prompts for which worktree to open instead of failing
+- `W` (Shift+W) switches between the worktrees of the current repository
 
 ### Large Diffs
 

@@ -40,6 +40,7 @@ const hotkeyGroups: HotkeyGroup[] = [
     entries: [
       { key: 'c', description: 'Commit panel' },
       { key: 'r', description: 'Repo picker' },
+      { key: 'W', description: 'Worktree switcher' },
       { key: 'q', description: 'Quit' },
     ],
   },

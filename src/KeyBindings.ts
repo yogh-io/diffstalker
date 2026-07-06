@@ -24,6 +24,7 @@ export interface KeyBindingActions {
   focusCommitInput(): void;
   unfocusCommitInput(): void;
   openRepoPicker(): void;
+  openWorktreeSwitcher(): void;
   openThemePicker(): void;
   openHotkeysModal(): void;
   openBaseBranchPicker(): void;
@@ -245,6 +246,16 @@ export function setupKeyBindings(
     }
     if (ctx.hasActiveModal()) return;
     actions.openRepoPicker();
+  });
+
+  // Worktree switcher (toggle)
+  screen.key(['S-w'], () => {
+    if (ctx.getActiveModalType() === 'worktreePicker') {
+      actions.closeActiveModal();
+      return;
+    }
+    if (ctx.hasActiveModal()) return;
+    actions.openWorktreeSwitcher();
   });
 
   // Display toggles (guarded)

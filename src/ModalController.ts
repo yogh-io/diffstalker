@@ -12,6 +12,8 @@ import { DiscardConfirm } from './ui/modals/DiscardConfirm.js';
 import { FileFinder } from './ui/modals/FileFinder.js';
 import { CommitActionConfirm } from './ui/modals/CommitActionConfirm.js';
 import { RepoPicker } from './ui/modals/RepoPicker.js';
+import { WorktreePicker } from './ui/modals/WorktreePicker.js';
+import type { WorktreeInfo } from './git/worktree.js';
 import { saveConfig } from './config.js';
 import * as logger from './utils/logger.js';
 
@@ -22,7 +24,8 @@ export type ModalType =
   | 'discard'
   | 'fileFinder'
   | 'commitAction'
-  | 'repoPicker';
+  | 'repoPicker'
+  | 'worktreePicker';
 
 /**
  * Read-only context provided by App for modal management.
@@ -234,6 +237,24 @@ export class ModalController {
       this.ctx.screen,
       repos,
       currentRepo,
+      (selected) => {
+        this.clearModal();
+        this.ctx.onRepoSwitch(selected);
+      },
+      () => {
+        this.clearModal();
+        this.ctx.render();
+      }
+    );
+    this.activeModal.focus();
+  }
+
+  openWorktreePicker(worktrees: WorktreeInfo[], currentPath: string): void {
+    this.activeModalType = 'worktreePicker';
+    this.activeModal = new WorktreePicker(
+      this.ctx.screen,
+      worktrees,
+      currentPath,
       (selected) => {
         this.clearModal();
         this.ctx.onRepoSwitch(selected);
