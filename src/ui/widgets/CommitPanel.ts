@@ -1,6 +1,12 @@
 import type { CommitFlowStateData } from '../../state/CommitFlowState.js';
 import type { FocusZone } from '../../state/UIState.js';
 
+/**
+ * Rows inside the message input box. The blessed textarea App overlays on
+ * the drawn box must use the same height.
+ */
+export const COMMIT_INPUT_HEIGHT = 4;
+
 export interface CommitPanelOptions {
   state: CommitFlowStateData;
   stagedCount: number;
@@ -31,20 +37,29 @@ export function buildCommitPanelLines(opts: CommitPanelOptions): string[] {
   const innerWidth = Math.max(20, width - 6);
   lines.push(`{${borderColor}-fg}\u250c${'─'.repeat(innerWidth + 2)}\u2510{/${borderColor}-fg}`);
 
-  // Message content (or placeholder)
-  const displayMessage = state.message || (state.inputFocused ? '' : 'Press i or Enter to edit...');
+  // Message content rows (or placeholder on the first row). While the input
+  // is focused, the blessed textarea overlays this area and renders itself.
+  const messageLines = state.message ? state.message.split('\n') : [];
+  if (messageLines.length === 0 && !state.inputFocused) {
+    messageLines.push('Press i or Enter to edit...');
+  }
   const messageColor = state.message ? '' : '{gray-fg}';
   const messageEnd = state.message ? '' : '{/gray-fg}';
 
-  // Truncate message if needed
-  const truncatedMessage =
-    displayMessage.length > innerWidth
-      ? displayMessage.slice(0, innerWidth - 1) + '\u2026'
-      : displayMessage.padEnd(innerWidth);
-
-  lines.push(
-    `{${borderColor}-fg}\u2502{/${borderColor}-fg} ${messageColor}${truncatedMessage}${messageEnd} {${borderColor}-fg}\u2502{/${borderColor}-fg}`
-  );
+  for (let row = 0; row < COMMIT_INPUT_HEIGHT; row++) {
+    let content = messageLines[row] ?? '';
+    // Mark overflow beyond the visible rows on the last one
+    if (row === COMMIT_INPUT_HEIGHT - 1 && messageLines.length > COMMIT_INPUT_HEIGHT) {
+      content += ' \u2026';
+    }
+    const truncated =
+      content.length > innerWidth
+        ? content.slice(0, innerWidth - 1) + '\u2026'
+        : content.padEnd(innerWidth);
+    lines.push(
+      `{${borderColor}-fg}\u2502{/${borderColor}-fg} ${messageColor}${truncated}${messageEnd} {${borderColor}-fg}\u2502{/${borderColor}-fg}`
+    );
+  }
 
   // Bottom border
   lines.push(`{${borderColor}-fg}\u2514${'─'.repeat(innerWidth + 2)}\u2518{/${borderColor}-fg}`);
@@ -79,7 +94,7 @@ export function buildCommitPanelLines(opts: CommitPanelOptions): string[] {
   // Help text - context-sensitive based on focused zone
   let helpText: string;
   if (state.inputFocused) {
-    helpText = 'Enter: commit | Ctrl+a: amend | Esc: unfocus';
+    helpText = 'Ctrl+s: commit | Enter: newline | Ctrl+a: amend | Esc: unfocus';
   } else if (focusedZone === 'commitMessage') {
     helpText = 'Tab: next | Space: edit | a: amend';
   } else if (focusedZone === 'commitAmend') {

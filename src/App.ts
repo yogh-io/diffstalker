@@ -13,6 +13,7 @@ import { FollowMode, FollowModeWatcherState } from './FollowMode.js';
 import { formatHeader } from './ui/widgets/Header.js';
 
 import { formatFooter } from './ui/widgets/Footer.js';
+import { COMMIT_INPUT_HEIGHT } from './ui/widgets/CommitPanel.js';
 import {
   ExplorerStateManager,
   ExplorerOptions,
@@ -156,13 +157,16 @@ export class App {
       },
     });
 
-    // Create commit textarea (hidden initially)
+    // Create commit textarea (hidden initially). Multi-line: Enter inserts
+    // a newline (native textarea behavior); Ctrl+S submits. The blessed
+    // textarea never emits 'submit' on Enter - it has no submit key at all -
+    // so the commit must be wired to an explicit key.
     this.commitTextarea = blessed.textarea({
       parent: this.layout.bottomPane,
       top: 3,
       left: 1,
       width: '100%-4',
-      height: 1,
+      height: COMMIT_INPUT_HEIGHT,
       inputOnFocus: true,
       hidden: true,
       style: {
@@ -171,8 +175,8 @@ export class App {
       },
     });
 
-    // Handle textarea submission
-    this.commitTextarea.on('submit', () => {
+    this.commitTextarea.key(['C-s'], () => {
+      this.commitFlowState.setMessage(this.commitTextarea?.getValue() ?? '');
       this.commitFlowState.submit();
     });
 

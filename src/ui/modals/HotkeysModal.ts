@@ -89,6 +89,8 @@ const hotkeyGroups: HotkeyGroup[] = [
     title: 'Commit Panel',
     entries: [
       { key: 'i/Enter', description: 'Edit message' },
+      { key: 'Ctrl+s', description: 'Submit commit' },
+      { key: 'Enter', description: 'Newline (while typing)' },
       { key: 'a', description: 'Toggle amend' },
       { key: 'Ctrl+a', description: 'Toggle amend (typing)' },
     ],

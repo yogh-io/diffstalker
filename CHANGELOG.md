@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **npm package was uninstallable**: the postinstall hook pointed at a script
+  excluded from the published tarball, so every `npm install diffstalker`
+  failed. The neo-blessed 24-bit RGB patch is now applied at runtime, with no
+  postinstall step.
+- Commit submission: pressing Enter in the commit input never actually
+  submitted (it appended an invisible newline); the commit is now submitted
+  with Ctrl+S.
+- Transient git failures (e.g. index.lock contention) no longer wipe the file
+  list by masquerading as "not a git repository".
+- Watcher and IPC socket errors no longer crash the app; errors surface in
+  the header instead of disappearing.
+- Crash diagnostics are printed to the normal screen buffer instead of being
+  discarded with the alternate one.
+- Untracked file names containing shell metacharacters no longer break the
+  diff preview.
+
+### Added
+
+- Multi-line commit messages: the commit input is now 4 rows; Enter inserts
+  a newline, Ctrl+S commits.
+- Page scrolling (PageUp/PageDown, Ctrl+U/Ctrl+D) and jump to top/bottom
+  (g/G) in lists and diff panes.
+- `d` on an untracked file now offers to delete it (git clean) with
+  confirmation.
+- Tests for the hunk staging pipeline and WorkingTreeManager.
+
+### Changed
+
+- Published package ships via a files allowlist; requires node >= 20.
+- Releases publish to npm before pushing the metrics commit, and refuse to
+  run without a changelog entry.
+
 ## [0.3.0] - 2026-07-06
 
 ### Added

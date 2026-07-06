@@ -4,6 +4,7 @@ import { TAB_ZONES } from './state/UIState.js';
 import type { FileEntry, CommitInfo } from './git/status.js';
 import type { CompareFileDiff } from './git/diff.js';
 import type { CompareListSelection } from './ui/widgets/CompareListView.js';
+import { COMMIT_INPUT_HEIGHT } from './ui/widgets/CommitPanel.js';
 import type { ExplorerStateManager } from './core/ExplorerStateManager.js';
 import type { FlatFileEntry } from './utils/flatFileList.js';
 import { getFileListTotalRows, getFileIndexFromRow } from './ui/widgets/FileList.js';
@@ -136,11 +137,15 @@ function handleFileListClick(
 }
 
 function handleCommitPaneClick(row: number, actions: MouseActions, ctx: MouseContext): void {
-  // Commit panel layout: rows 0-4 = title + message box, row 5 = blank, row 6 = amend
+  // Commit panel layout: row 0 = title, row 1 = blank, row 2 = top border,
+  // rows 3..2+H = message content, row 3+H = bottom border, row 4+H = blank,
+  // row 5+H = amend (H = COMMIT_INPUT_HEIGHT)
   const absoluteRow = row + ctx.uiState.state.diffScrollOffset;
-  if (absoluteRow === 6) {
+  const messageBoxEnd = 3 + COMMIT_INPUT_HEIGHT;
+  const amendRow = 5 + COMMIT_INPUT_HEIGHT;
+  if (absoluteRow === amendRow) {
     ctx.uiState.setFocusedZone('commitAmend');
-  } else if (absoluteRow >= 2 && absoluteRow <= 4) {
+  } else if (absoluteRow >= 2 && absoluteRow <= messageBoxEnd) {
     ctx.uiState.setFocusedZone('commitMessage');
     actions.focusCommitInput();
   } else {

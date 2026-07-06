@@ -69,7 +69,8 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 **Bottom Pane: Commit Form**
 - Header: "Commit Message" (with "(amending)" indicator when amend enabled)
 - Text input field for commit message
-  - Single-line with border (cyan when focused, gray when unfocused)
+  - Multi-line (4 rows) with border (cyan when focused, gray when unfocused)
+  - `Enter` inserts a newline for body/trailer lines; `Ctrl+S` submits
   - Placeholder: "Press i or Enter to edit..."
 - Amend checkbox: `[ ] Amend` (toggle with `a` when unfocused, `Ctrl+a` always)
   - When checked, loads previous commit message
@@ -260,7 +261,8 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 | Key | Action |
 |-----|--------|
 | `i` / `Enter` | Edit commit message (focus input) |
-| `Enter` | Submit commit (when input focused) |
+| `Ctrl+S` | Submit commit (when input focused) |
+| `Enter` | Insert newline (when input focused; message body/trailers) |
 | `Esc` | Unfocus input / return to Diff view |
 | `a` | Toggle amend mode (when input not focused) |
 | `Ctrl+a` | Toggle amend mode (works while typing) |
