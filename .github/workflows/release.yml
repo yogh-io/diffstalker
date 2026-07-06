@@ -23,9 +23,12 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      - run: bun install
+      - run: bun install --frozen-lockfile
       - run: bun run build:prod
       - run: bun test
+      - run: npm publish --access public
+        if: ${{ !env.ACT }}
+      # After publish: a failure here must not abort the release itself
       - run: bun run metrics:snapshot
       - name: Commit metrics snapshot
         if: ${{ !env.ACT }}
@@ -35,8 +38,6 @@ jobs:
           git add metrics/
           git commit -m "Add metrics snapshot for ${{ github.ref_name }}" || true
           git push origin HEAD:main
-      - run: npm publish --access public
-        if: ${{ !env.ACT }}
 
       - name: Create GitHub Release
         if: ${{ !env.ACT }}

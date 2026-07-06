@@ -17,11 +17,17 @@
   "bin": {
     "diffstalker": "bin/diffstalker"
   },
+  "files": [
+    "dist",
+    "!dist/bundle",
+    "bin",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",
     "dev": "bun --watch src/index.ts",
-    "build": "tsc",
-    "build:prod": "tsc && bun build dist/index.js --outfile dist/index.js --minify --target node --packages external",
+    "build": "rm -rf dist && tsc",
+    "build:prod": "bun run build && bun build dist/index.js --outfile dist/index.js --minify --target node --packages external",
     "bundle": "bun run build:prod && bun build dist/index.js --outdir dist/bundle --minify --target node --external neo-blessed",
     "start": "bun dist/index.js",
     "start:bundle": "bun dist/bundle/index.js",
@@ -47,7 +53,7 @@
     "cli"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "chokidar": "^4.0.3",
