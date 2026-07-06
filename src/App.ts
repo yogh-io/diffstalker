@@ -26,12 +26,7 @@ import {
   removeManagerForRepo,
 } from './core/GitStateManager.js';
 import { Config, saveConfig, addRecentRepo } from './config.js';
-import {
-  resolveWorktreeRoot,
-  listWorktrees,
-  isPathInside,
-  type WorktreeInfo,
-} from './git/worktree.js';
+import { resolveWorktreeRoot, listWorktrees, type WorktreeInfo } from './git/worktree.js';
 import { getIndexForCategoryPosition } from './utils/fileCategories.js';
 import {
   buildFlatFileList,
@@ -435,10 +430,10 @@ export class App {
     newPath: string,
     _state: FollowModeWatcherState
   ): Promise<void> {
-    // Followed paths are often files inside the active worktree; if so there's
-    // no repo to switch to — file navigation is handled separately.
-    if (isPathInside(this.repoPath, newPath)) return;
-
+    // Resolve the followed path to its worktree root; applyRepoSwitch is a
+    // no-op when that root already matches the current repo, so following a
+    // file within the active worktree stays put while a path in a different
+    // worktree switches — even when the current repo is a parent directory.
     const target = await this.resolveRepoTarget(newPath);
     if (target.kind === 'worktree') {
       this.applyRepoSwitch(target.path, { stopFollow: false });

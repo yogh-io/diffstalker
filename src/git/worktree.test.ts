@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseWorktreePorcelain, isPathInside } from './worktree.js';
+import { parseWorktreePorcelain } from './worktree.js';
 
 describe('parseWorktreePorcelain', () => {
   it('parses a bare-repo layout with several worktrees', () => {
@@ -40,23 +40,5 @@ describe('parseWorktreePorcelain', () => {
 
   it('returns an empty array for empty output', () => {
     expect(parseWorktreePorcelain('')).toEqual([]);
-  });
-});
-
-describe('isPathInside', () => {
-  it('treats an equal path as inside', () => {
-    expect(isPathInside('/repo/main', '/repo/main')).toBe(true);
-  });
-
-  it('treats a nested path as inside', () => {
-    expect(isPathInside('/repo/main', '/repo/main/src/App.ts')).toBe(true);
-  });
-
-  it('treats a sibling worktree as outside', () => {
-    expect(isPathInside('/repo/main', '/repo/feature')).toBe(false);
-  });
-
-  it('is not fooled by a shared path prefix', () => {
-    expect(isPathInside('/repo/main', '/repo/main-2/file.ts')).toBe(false);
   });
 });

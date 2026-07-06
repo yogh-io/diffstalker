@@ -96,16 +96,6 @@ export function parseWorktreePorcelain(output: string): WorktreeInfo[] {
 }
 
 /**
- * Whether `child` is the same path as, or nested inside, `parent`.
- * Used to skip repo re-resolution when a followed file already lives inside
- * the active worktree.
- */
-export function isPathInside(parent: string, child: string): boolean {
-  const rel = path.relative(parent, child);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-}
-
-/**
  * Reduce a path to a directory: the path itself if it is a directory, otherwise
  * its parent directory. Returns null only when neither exists on disk.
  */
