@@ -21,6 +21,9 @@ const hotkeyGroups: HotkeyGroup[] = [
     title: 'Navigation',
     entries: [
       { key: 'j/k', description: 'Move up/down' },
+      { key: 'C-d/C-u', description: 'Page down/up' },
+      { key: 'PgDn/PgUp', description: 'Page down/up' },
+      { key: 'g/G', description: 'Jump to top/bottom' },
       { key: 'Tab', description: 'Next focus zone' },
       { key: 'Shift+Tab', description: 'Previous focus zone' },
     ],

@@ -196,6 +196,7 @@ export class App {
       getHunkCount: () => this.bottomPaneHunkCount,
       getHunkBoundaries: () => this.bottomPaneHunkBoundaries,
       getRepoPath: () => this.repoPath,
+      getBottomPaneTotalRows: () => this.bottomPaneTotalRows,
       onError: (message) => this.showError(message),
       resolveFileAtIndex: (index) =>
         resolveFile(
@@ -298,6 +299,10 @@ export class App {
         exit: () => this.exit(),
         navigateDown: () => this.navigation.navigateDown(),
         navigateUp: () => this.navigation.navigateUp(),
+        navigatePageDown: () => this.navigation.navigatePage(1),
+        navigatePageUp: () => this.navigation.navigatePage(-1),
+        jumpToTop: () => this.navigation.jumpToEdge(-1),
+        jumpToBottom: () => this.navigation.jumpToEdge(1),
         stageSelected: () => this.staging.stageSelected(),
         unstageSelected: () => this.staging.unstageSelected(),
         stageAll: () => this.staging.stageAll(),

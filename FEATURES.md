@@ -161,6 +161,10 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 |-----|--------|---------|
 | `Up` / `k` | Move up | All views |
 | `Down` / `j` | Move down | All views |
+| `PageDown` / `Ctrl+D` | Page down (list selection or diff scroll) | All views |
+| `PageUp` / `Ctrl+U` | Page up (list selection or diff scroll) | All views |
+| `g` | Jump to top | All views except Explorer (filter toggle there) |
+| `G` (Shift+G) | Jump to bottom | All views except Explorer |
 | `Tab` | Cycle to next focus zone | All views |
 | `Shift+Tab` | Cycle to previous focus zone | All views |
 | `1` | Switch to Diff tab | All views |
@@ -193,7 +197,7 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 | Key | Action |
 |-----|--------|
 | `c` | Open commit panel (switch to Tab 2) |
-| `d` | Discard changes (unstaged modified files only, with confirmation) |
+| `d` | Discard changes, or delete an untracked file (unstaged files, with confirmation) |
 | `r` | Open repo picker |
 | `W` (Shift+W) | Open worktree switcher (worktrees of the current repo) |
 | `q` / `Ctrl+C` | Quit application |

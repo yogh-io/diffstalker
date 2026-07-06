@@ -138,6 +138,7 @@ export class ModalController {
     this.activeModal = new DiscardConfirm(
       this.ctx.screen,
       file.path,
+      file.status === 'untracked',
       async () => {
         this.clearModal();
         await this.ctx.getGitManager()?.workingTree.discard(file);

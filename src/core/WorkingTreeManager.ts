@@ -13,6 +13,7 @@ import {
   stageAll as gitStageAll,
   unstageAll as gitUnstageAll,
   discardChanges as gitDiscardChanges,
+  deleteUntracked as gitDeleteUntracked,
   commit as gitCommit,
   stageHunk as gitStageHunk,
   unstageHunk as gitUnstageHunk,
@@ -471,10 +472,15 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   }
 
   async discard(file: FileEntry): Promise<void> {
-    if (file.staged || file.status === 'untracked') return;
+    if (file.staged) return;
+
+    const operation =
+      file.status === 'untracked'
+        ? () => gitDeleteUntracked(this.repoPath, file.path)
+        : () => gitDiscardChanges(this.repoPath, file.path);
 
     try {
-      await this.queue.enqueueMutation(() => gitDiscardChanges(this.repoPath, file.path));
+      await this.queue.enqueueMutation(operation);
       await this.refresh();
     } catch (err) {
       this.updateState({

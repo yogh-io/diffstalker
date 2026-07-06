@@ -25,6 +25,7 @@ export interface NavigationContext {
   getHunkCount(): number;
   getHunkBoundaries(): HunkBoundary[];
   getRepoPath(): string;
+  getBottomPaneTotalRows(): number;
   onError(message: string): void;
   resolveFileAtIndex(index: number): FileEntry | null;
   getFileListMaxIndex(): number;
@@ -41,12 +42,147 @@ export class NavigationController {
 
   scrollActiveDiffPane(delta: number): void {
     const state = this.ctx.uiState.state;
+    const maxOffset = Math.max(
+      0,
+      this.ctx.getBottomPaneTotalRows() - this.ctx.getBottomPaneHeight()
+    );
     if (state.bottomTab === 'explorer') {
-      const newOffset = Math.max(0, state.explorerFileScrollOffset + delta);
+      const newOffset = Math.min(maxOffset, Math.max(0, state.explorerFileScrollOffset + delta));
       this.ctx.uiState.setExplorerFileScrollOffset(newOffset);
     } else {
-      const newOffset = Math.max(0, state.diffScrollOffset + delta);
+      const newOffset = Math.min(maxOffset, Math.max(0, state.diffScrollOffset + delta));
       this.ctx.uiState.setDiffScrollOffset(newOffset);
+    }
+  }
+
+  /** Page scroll: diff pane scrolls by a page; list panes move selection by a page. */
+  navigatePage(direction: -1 | 1): void {
+    if (this.ctx.uiState.state.currentPane !== 'diff') {
+      const page = Math.max(1, this.ctx.getTopPaneHeight() - 1);
+      this.navigateActiveListBy(direction * page);
+    } else {
+      const page = Math.max(1, this.ctx.getBottomPaneHeight() - 1);
+      this.scrollActiveDiffPane(direction * page);
+    }
+  }
+
+  /** Jump to the first/last entry (g/G): list selection or diff scroll edge. */
+  jumpToEdge(direction: -1 | 1): void {
+    if (this.ctx.uiState.state.currentPane !== 'diff') {
+      this.navigateActiveListBy(direction * this.activeListLength());
+    } else {
+      // A jump of the full content height lands on the edge after clamping
+      this.scrollActiveDiffPane(direction * this.ctx.getBottomPaneTotalRows());
+    }
+  }
+
+  private activeListLength(): number {
+    const tab = this.ctx.uiState.state.bottomTab;
+    if (tab === 'history') {
+      return this.ctx.getGitManager()?.history.historyState.commits.length ?? 0;
+    }
+    if (tab === 'compare') {
+      const compareDiff = this.ctx.getGitManager()?.compare.compareState?.compareDiff;
+      return (compareDiff?.commits.length ?? 0) + (compareDiff?.files.length ?? 0);
+    }
+    if (tab === 'explorer') {
+      return this.ctx.getExplorerManager()?.state.displayRows.length ?? 0;
+    }
+    return this.ctx.getFileListMaxIndex() + 1;
+  }
+
+  private navigateActiveListBy(steps: number): void {
+    if (steps === 0) return;
+    const tab = this.ctx.uiState.state.bottomTab;
+
+    if (tab === 'history') {
+      this.navigateHistoryBy(steps);
+    } else if (tab === 'compare') {
+      this.navigateCompareBy(steps);
+    } else if (tab === 'explorer') {
+      // Explorer steps are cheap state updates; reuse the single-step logic
+      for (let i = 0; i < Math.abs(steps); i++) {
+        if (steps < 0) this.navigateExplorerUp();
+        else this.navigateExplorerDown();
+      }
+    } else {
+      this.navigateFileListBy(steps);
+    }
+  }
+
+  private navigateFileListBy(steps: number): void {
+    const state = this.ctx.uiState.state;
+    const files = this.ctx.getGitManager()?.workingTree.state.status?.files ?? [];
+    const maxIndex = this.ctx.getFileListMaxIndex();
+    if (maxIndex < 0) return;
+
+    const newIndex = Math.min(maxIndex, Math.max(0, state.selectedIndex + steps));
+    if (newIndex === state.selectedIndex) return;
+
+    this.ctx.uiState.setSelectedIndex(newIndex);
+    this.selectFileByIndex(newIndex);
+
+    const row = state.flatViewMode ? newIndex + 1 : getRowFromFileIndex(newIndex, files);
+    this.ensureRowVisible(row, state.fileListScrollOffset, (offset) =>
+      this.ctx.uiState.setFileListScrollOffset(offset)
+    );
+  }
+
+  private navigateHistoryBy(steps: number): void {
+    const state = this.ctx.uiState.state;
+    const commits = this.ctx.getGitManager()?.history.historyState.commits ?? [];
+    if (commits.length === 0) return;
+
+    const newIndex = Math.min(commits.length - 1, Math.max(0, state.historySelectedIndex + steps));
+    if (newIndex === state.historySelectedIndex) return;
+
+    this.ctx.uiState.setHistorySelectedIndex(newIndex);
+    this.ensureRowVisible(newIndex, state.historyScrollOffset, (offset) =>
+      this.ctx.uiState.setHistoryScrollOffset(offset)
+    );
+    this.selectHistoryCommitByIndex(newIndex);
+  }
+
+  private navigateCompareBy(steps: number): void {
+    const compareState = this.ctx.getGitManager()?.compare.compareState;
+    const commits = compareState?.compareDiff?.commits ?? [];
+    const files = compareState?.compareDiff?.files ?? [];
+    if (commits.length === 0 && files.length === 0) return;
+
+    if (!this.compareSelection) {
+      // No selection yet: a single step establishes one
+      if (steps < 0) this.navigateCompareUp();
+      else this.navigateCompareDown();
+      return;
+    }
+
+    const direction = steps < 0 ? 'up' : 'down';
+    let selection = this.compareSelection;
+    for (let i = 0; i < Math.abs(steps); i++) {
+      const next = getNextCompareSelection(selection, commits, files, direction);
+      if (!next || (next.type === selection.type && next.index === selection.index)) break;
+      selection = next;
+    }
+    if (selection === this.compareSelection) return;
+
+    this.selectCompareItem(selection);
+    const row = getRowFromCompareSelection(selection, commits, files);
+    this.ensureRowVisible(row, this.ctx.uiState.state.compareScrollOffset, (offset) =>
+      this.ctx.uiState.setCompareScrollOffset(offset)
+    );
+  }
+
+  /** Scroll a top-pane list so `row` is visible, for jumps in either direction. */
+  private ensureRowVisible(
+    row: number,
+    currentOffset: number,
+    setOffset: (offset: number) => void
+  ): void {
+    const height = this.ctx.getTopPaneHeight();
+    if (row < currentOffset) {
+      setOffset(row);
+    } else if (row >= currentOffset + height - 1) {
+      setOffset(row - height + 2);
     }
   }
 

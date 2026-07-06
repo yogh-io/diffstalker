@@ -13,6 +13,10 @@ export interface KeyBindingActions {
   exit(): void;
   navigateDown(): void;
   navigateUp(): void;
+  navigatePageDown(): void;
+  navigatePageUp(): void;
+  jumpToTop(): void;
+  jumpToBottom(): void;
   stageSelected(): void;
   unstageSelected(): void;
   stageAll(): void;
@@ -90,6 +94,23 @@ export function setupKeyBindings(
   screen.key(['k', 'up'], () => {
     if (ctx.hasActiveModal()) return;
     actions.navigateUp();
+  });
+
+  // Page scrolling (skip if modal is open)
+  screen.key(['pagedown', 'C-d'], () => {
+    if (ctx.hasActiveModal()) return;
+    actions.navigatePageDown();
+  });
+
+  screen.key(['pageup', 'C-u'], () => {
+    if (ctx.hasActiveModal()) return;
+    actions.navigatePageUp();
+  });
+
+  // Jump to bottom (g is bound below; on the explorer tab it stays the filter toggle)
+  screen.key(['S-g'], () => {
+    if (ctx.hasActiveModal()) return;
+    actions.jumpToBottom();
   });
 
   // Tab switching (skip if modal is open)
@@ -170,11 +191,13 @@ export function setupKeyBindings(
     }
   });
 
-  // Explorer: toggle show only changes filter
+  // g: explorer keeps its show-only-changes filter toggle; elsewhere jump to top
   screen.key(['g'], () => {
     if (ctx.hasActiveModal()) return;
     if (ctx.getBottomTab() === 'explorer') {
       ctx.getExplorerManager()?.toggleShowOnlyChanges();
+    } else {
+      actions.jumpToTop();
     }
   });
 
@@ -342,12 +365,12 @@ export function setupKeyBindings(
     }
   });
 
-  // Discard changes (with confirmation, guarded)
+  // Discard changes / delete untracked file (with confirmation, guarded)
   screen.key(['d'], () => {
     if (ctx.hasActiveModal()) return;
     if (ctx.getBottomTab() === 'diff') {
       const file = ctx.resolveFileAtIndex(ctx.getSelectedIndex());
-      if (file && !file.staged && file.status !== 'untracked') {
+      if (file && !file.staged) {
         actions.openDiscardConfirm(file);
       }
     }

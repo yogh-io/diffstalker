@@ -3,23 +3,27 @@ import type { Widgets } from 'blessed';
 import type { Modal } from './Modal.js';
 
 /**
- * DiscardConfirm modal for confirming discard of file changes.
+ * DiscardConfirm modal for confirming discard of file changes, or deletion
+ * of an untracked file.
  */
 export class DiscardConfirm implements Modal {
   private box: Widgets.BoxElement;
   private screen: Widgets.Screen;
   private filePath: string;
+  private untracked: boolean;
   private onConfirm: () => void;
   private onCancel: () => void;
 
   constructor(
     screen: Widgets.Screen,
     filePath: string,
+    untracked: boolean,
     onConfirm: () => void,
     onCancel: () => void
   ) {
     this.screen = screen;
     this.filePath = filePath;
+    this.untracked = untracked;
     this.onConfirm = onConfirm;
     this.onCancel = onCancel;
 
@@ -68,7 +72,11 @@ export class DiscardConfirm implements Modal {
     const lines: string[] = [];
 
     // Header
-    lines.push('{bold}{yellow-fg}     Discard Changes?{/yellow-fg}{/bold}');
+    lines.push(
+      this.untracked
+        ? '{bold}{red-fg}     Delete Untracked File?{/red-fg}{/bold}'
+        : '{bold}{yellow-fg}     Discard Changes?{/yellow-fg}{/bold}'
+    );
     lines.push('');
 
     // File path (truncate if needed)

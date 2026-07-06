@@ -200,6 +200,11 @@ export async function discardChanges(repoPath: string, filePath: string): Promis
   await git.checkout(['--', filePath]);
 }
 
+export async function deleteUntracked(repoPath: string, filePath: string): Promise<void> {
+  const git = simpleGit(repoPath);
+  await git.clean('f', ['--', filePath]);
+}
+
 export async function commit(
   repoPath: string,
   message: string,
