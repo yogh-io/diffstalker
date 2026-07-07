@@ -96,18 +96,20 @@ function formatDiffHunk(content: string, headerWidth: number, editedAt?: number)
     const newRange = newCount === 1 ? `${newStart}` : `${newStart}-${newEnd}`;
 
     const rangeText = `Lines ${oldRange} \u2192 ${newRange}`;
-    // Reserve room for " \u00b7 <time>" before giving the rest to the context
-    const timeReserve = timeText ? timeText.length + 3 : 0;
-    const timeSuffix =
-      timeText && headerWidth - rangeText.length - timeReserve > 0 ? ` \u00b7 ${timeText}` : '';
+    // The time is right-aligned to the pane edge; the context gets whatever
+    // room remains between the range and the time (2-space minimum gap)
+    const timeReserve = timeText ? timeText.length + 2 : 0;
     const contextMaxLen = headerWidth - rangeText.length - timeReserve - 1;
     const truncatedContext =
       context && contextMaxLen > 3 ? ' ' + truncate(context, contextMaxLen) : '';
 
+    const pad = headerWidth - rangeText.length - truncatedContext.length - timeText.length;
+    const alignedTime = timeText && pad >= 2 ? ' '.repeat(pad) + timeText : '';
+
     if (isFlash) {
-      return `{escape}${ANSI_YELLOW_BG}${ANSI_BLACK}${rangeText}${truncatedContext}${timeSuffix}${ANSI_RESET}{/escape}`;
+      return `{escape}${ANSI_YELLOW_BG}${ANSI_BLACK}${rangeText}${truncatedContext}${alignedTime}${ANSI_RESET}{/escape}`;
     }
-    return `{escape}${ANSI_CYAN}${rangeText}${ANSI_GRAY}${truncatedContext}${timeSuffix}${ANSI_RESET}{/escape}`;
+    return `{escape}${ANSI_CYAN}${rangeText}${ANSI_GRAY}${truncatedContext}${alignedTime}${ANSI_RESET}{/escape}`;
   }
   return `{escape}${ANSI_CYAN}${truncate(content, headerWidth)}${ANSI_RESET}{/escape}`;
 }
