@@ -15,7 +15,7 @@ export type { WordDiffSegment } from './wordDiff.js';
 // Unified display row types - every type renders as exactly 1 terminal row
 export type DisplayRow =
   | { type: 'diff-header'; content: string }
-  | { type: 'diff-hunk'; content: string }
+  | { type: 'diff-hunk'; content: string; editedAt?: number }
   | {
       type: 'diff-add';
       lineNum?: number;
@@ -53,7 +53,7 @@ function convertDiffLineToDisplayRow(line: DiffLine): DisplayRow {
     case 'header':
       return { type: 'diff-header', content: line.content };
     case 'hunk':
-      return { type: 'diff-hunk', content: line.content };
+      return { type: 'diff-hunk', content: line.content, editedAt: line.editedAt };
     case 'addition':
       return {
         type: 'diff-add',
@@ -434,6 +434,7 @@ export function wrapDisplayRows(
 export interface HunkBoundary {
   startRow: number; // index of the @@ row
   endRow: number; // exclusive end (next @@, diff-header, spacer, or array end)
+  editedAt?: number; // when this hunk's content was last observed to change
 }
 
 /**
@@ -443,24 +444,27 @@ export interface HunkBoundary {
 export function getHunkBoundaries(rows: (DisplayRow | WrappedDisplayRow)[]): HunkBoundary[] {
   const boundaries: HunkBoundary[] = [];
   let currentStart = -1;
+  let currentEditedAt: number | undefined;
 
   for (let i = 0; i < rows.length; i++) {
-    const type = rows[i].type;
+    const row = rows[i];
+    const type = row.type;
     if (type === 'diff-hunk') {
       if (currentStart !== -1) {
-        boundaries.push({ startRow: currentStart, endRow: i });
+        boundaries.push({ startRow: currentStart, endRow: i, editedAt: currentEditedAt });
       }
       currentStart = i;
+      currentEditedAt = row.editedAt;
     } else if (type === 'diff-header' || type === 'spacer') {
       if (currentStart !== -1) {
-        boundaries.push({ startRow: currentStart, endRow: i });
+        boundaries.push({ startRow: currentStart, endRow: i, editedAt: currentEditedAt });
         currentStart = -1;
       }
     }
   }
 
   if (currentStart !== -1) {
-    boundaries.push({ startRow: currentStart, endRow: rows.length });
+    boundaries.push({ startRow: currentStart, endRow: rows.length, editedAt: currentEditedAt });
   }
 
   return boundaries;

@@ -13,6 +13,7 @@ import {
   type CombinedHunkInfo,
 } from '../../utils/displayRows.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
+import { formatRelativeTime } from '../../utils/formatDate.js';
 import {
   ANSI_RESET,
   ANSI_BOLD,
@@ -21,6 +22,8 @@ import {
   ANSI_GREEN,
   ANSI_YELLOW,
   ANSI_INVERSE,
+  ANSI_BLACK,
+  ANSI_YELLOW_BG,
   ansiBg,
   ansiFg,
 } from '../../utils/ansi.js';
@@ -67,7 +70,17 @@ function formatDiffHeader(content: string, headerWidth: number): string {
 /**
  * Format a diff hunk header row (e.g. "Lines 10-20 → 15-25 functionName").
  */
-function formatDiffHunk(content: string, headerWidth: number): string {
+/**
+ * Hunks whose content changed within this window render with the same yellow
+ * flash the file list uses for the newest change. App schedules a re-render
+ * to clear it once the window passes.
+ */
+export const HUNK_FLASH_MS = 1500;
+
+function formatDiffHunk(content: string, headerWidth: number, editedAt?: number): string {
+  const timeText = editedAt !== undefined ? formatRelativeTime(editedAt) : '';
+  const isFlash = editedAt !== undefined && Date.now() - editedAt < HUNK_FLASH_MS;
+
   const match = content.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/);
   if (match) {
     const oldStart = parseInt(match[1], 10);
@@ -83,11 +96,18 @@ function formatDiffHunk(content: string, headerWidth: number): string {
     const newRange = newCount === 1 ? `${newStart}` : `${newStart}-${newEnd}`;
 
     const rangeText = `Lines ${oldRange} \u2192 ${newRange}`;
-    const contextMaxLen = headerWidth - rangeText.length - 1;
+    // Reserve room for " \u00b7 <time>" before giving the rest to the context
+    const timeReserve = timeText ? timeText.length + 3 : 0;
+    const timeSuffix =
+      timeText && headerWidth - rangeText.length - timeReserve > 0 ? ` \u00b7 ${timeText}` : '';
+    const contextMaxLen = headerWidth - rangeText.length - timeReserve - 1;
     const truncatedContext =
       context && contextMaxLen > 3 ? ' ' + truncate(context, contextMaxLen) : '';
 
-    return `{escape}${ANSI_CYAN}${rangeText}${ANSI_GRAY}${truncatedContext}${ANSI_RESET}{/escape}`;
+    if (isFlash) {
+      return `{escape}${ANSI_YELLOW_BG}${ANSI_BLACK}${rangeText}${truncatedContext}${timeSuffix}${ANSI_RESET}{/escape}`;
+    }
+    return `{escape}${ANSI_CYAN}${rangeText}${ANSI_GRAY}${truncatedContext}${timeSuffix}${ANSI_RESET}{/escape}`;
   }
   return `{escape}${ANSI_CYAN}${truncate(content, headerWidth)}${ANSI_RESET}{/escape}`;
 }
@@ -210,7 +230,7 @@ function formatDisplayRow(
       return formatDiffHeader(row.content, headerWidth);
 
     case 'diff-hunk':
-      return formatDiffHunk(row.content, headerWidth);
+      return formatDiffHunk(row.content, headerWidth, row.editedAt);
 
     case 'diff-add':
       return formatDiffContentLine(

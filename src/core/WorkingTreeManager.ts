@@ -30,6 +30,7 @@ import {
   DiffResult,
   FileHunkCounts,
 } from '../git/diff.js';
+import { HunkTimeTracker } from '../git/hunkTimes.js';
 
 export type { FileHunkCounts } from '../git/diff.js';
 export type { StashEntry } from '../git/status.js';
@@ -62,6 +63,7 @@ type WorkingTreeEventMap = {
 export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   private repoPath: string;
   private queue: GitOperationQueue;
+  private hunkTimes: HunkTimeTracker;
   private onRefresh: (() => Promise<void>) | null;
   private gitWatcher: FSWatcher | null = null;
   private workingDirWatcher: FSWatcher | null = null;
@@ -84,6 +86,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.repoPath = repoPath;
     this.queue = queue;
     this.onRefresh = onRefresh ?? null;
+    this.hunkTimes = new HunkTimeTracker(repoPath);
   }
 
   get state(): GitState {
@@ -91,6 +94,12 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   }
 
   private updateState(partial: Partial<GitState>): void {
+    // Any diff entering state gets hunk edit-time annotations
+    if (partial.diff) this.hunkTimes.stamp(partial.diff);
+    if (partial.combinedFileDiffs) {
+      this.hunkTimes.stamp(partial.combinedFileDiffs.unstaged);
+      this.hunkTimes.stamp(partial.combinedFileDiffs.staged);
+    }
     this._state = { ...this._state, ...partial };
     this.emit('state-change', this._state);
   }
@@ -294,6 +303,13 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         unstaged: countHunksPerFile(allUnstagedDiff.raw),
         staged: countHunksPerFile(allStagedDiff.raw),
       };
+
+      // Observe every hunk (not just the selected file's) so first-seen
+      // stamps are locked in as soon as a change appears, then drop stamps
+      // for files that no longer have changes
+      this.hunkTimes.stamp(allUnstagedDiff);
+      this.hunkTimes.stamp(allStagedDiff);
+      this.hunkTimes.prune(new Set(newStatus.files.map((f) => f.path)));
 
       const { displayDiff, combinedFileDiffs } = await this.resolveFileDiffs(
         newStatus,

@@ -14,6 +14,7 @@ import { formatHeader } from './ui/widgets/Header.js';
 
 import { formatFooter } from './ui/widgets/Footer.js';
 import { COMMIT_INPUT_HEIGHT } from './ui/widgets/CommitPanel.js';
+import { HUNK_FLASH_MS } from './ui/widgets/DiffView.js';
 import {
   ExplorerStateManager,
   ExplorerOptions,
@@ -80,6 +81,14 @@ export class App {
 
   // Auto-clear timer for remote operation status
   private remoteClearTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Self-scheduling re-render keeping relative hunk edit times fresh: 1s
+  // cadence while a visible hunk is under a minute old (seconds shown, and
+  // it also clears the yellow flash), 60s once everything ages into minutes
+  private hunkTimeTick: ReturnType<typeof setTimeout> | null = null;
+
+  // Stamp of the fresh hunk the diff pane last auto-scrolled to (auto mode)
+  private lastFreshHunkScroll: number = 0;
 
   // Cached total rows and hunk info for scroll bounds (single source of truth from render)
   private bottomPaneTotalRows: number = 0;
@@ -986,9 +995,82 @@ export class App {
       this.updateBottomPane(); // Re-render with correct hunk selection
     }
 
+    // In auto mode, keep the freshest change on screen
+    this.applyScrollToFreshHunk();
+
     this.updateSeparators();
     this.updateFooter();
     this.screen.render();
+    this.scheduleHunkTimeTick();
+  }
+
+  /**
+   * Auto mode: when a hunk's content just changed, scroll the diff pane so
+   * the change is on screen. Each distinct change stamp scrolls once, so the
+   * user can still scroll away afterwards.
+   */
+  private applyScrollToFreshHunk(): void {
+    if (!this.uiState.state.autoTabEnabled) return;
+    if (this.uiState.state.bottomTab !== 'diff') return;
+
+    let freshest: HunkBoundary | null = null;
+    for (const boundary of this.bottomPaneHunkBoundaries) {
+      if (boundary.editedAt && (!freshest || boundary.editedAt > (freshest.editedAt ?? 0))) {
+        freshest = boundary;
+      }
+    }
+    if (!freshest?.editedAt) return;
+    if (Date.now() - freshest.editedAt >= HUNK_FLASH_MS) return;
+    if (freshest.editedAt === this.lastFreshHunkScroll) return;
+    this.lastFreshHunkScroll = freshest.editedAt;
+
+    const visibleHeight = this.layout.dimensions.bottomPaneHeight;
+    const offset = this.uiState.state.diffScrollOffset;
+    if (freshest.startRow < offset || freshest.startRow >= offset + visibleHeight) {
+      const maxOffset = Math.max(0, this.bottomPaneTotalRows - visibleHeight);
+      this.uiState.setDiffScrollOffset(Math.min(freshest.startRow, maxOffset));
+      this.updateBottomPane();
+    }
+  }
+
+  /**
+   * Schedule the next time-driven re-render for the hunk edit-time display.
+   * Cadence adapts to the youngest visible hunk: 1s while any hunk is under
+   * a minute old (its "N seconds ago" text changes every second, and the
+   * yellow flash needs clearing), 60s while only minute-or-older
+   * granularities are on screen. Every render reschedules, so the tick
+   * follows tab switches and diff changes without extra bookkeeping.
+   */
+  private scheduleHunkTimeTick(): void {
+    if (this.hunkTimeTick) {
+      clearTimeout(this.hunkTimeTick);
+      this.hunkTimeTick = null;
+    }
+
+    const tab = this.uiState.state.bottomTab;
+    if (tab !== 'diff' && tab !== 'commit') return;
+    const state = this.gitManager?.workingTree.state;
+    if (!state) return;
+
+    let newest = 0;
+    const scan = (lines?: { type: string; editedAt?: number }[]): void => {
+      for (const line of lines ?? []) {
+        if (line.type === 'hunk' && line.editedAt && line.editedAt > newest) {
+          newest = line.editedAt;
+        }
+      }
+    };
+    scan(state.diff?.lines);
+    scan(state.combinedFileDiffs?.unstaged.lines);
+    scan(state.combinedFileDiffs?.staged.lines);
+    if (newest === 0) return;
+
+    const age = Date.now() - newest;
+    const delay = age < 60_000 ? 1_000 : 60_000;
+    this.hunkTimeTick = setTimeout(() => {
+      this.hunkTimeTick = null;
+      this.render();
+    }, delay);
   }
 
   private updateSeparators(): void {
@@ -1141,6 +1223,9 @@ export class App {
     }
     if (this.flashTimer) {
       clearTimeout(this.flashTimer);
+    }
+    if (this.hunkTimeTick) {
+      clearTimeout(this.hunkTimeTick);
     }
 
     // Destroy screen (this will clean up terminal)

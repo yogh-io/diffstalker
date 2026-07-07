@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-hunk edit times in the diff viewer ("just now", "5 minutes ago",
+  "2 days ago"), observed live while diffstalker runs, with file mtime as
+  the fallback for pre-session changes. Freshly-changed hunks flash yellow,
+  and in auto mode the diff pane scrolls to keep the newest change on
+  screen. Sub-minute times update every second.
 - Multi-line commit messages: the commit input is now 4 rows; Enter inserts
   a newline, Ctrl+S commits.
 - Page scrolling (PageUp/PageDown, Ctrl+U/Ctrl+D) and jump to top/bottom

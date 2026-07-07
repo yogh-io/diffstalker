@@ -60,6 +60,8 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
   - File header: `diff --git` prefix
 - Word-level highlighting within add/del lines (darker highlight for changed words)
 - Optional line wrapping (toggle with `w`)
+- **Hunk edit times**: every hunk header shows when its content last changed ("just now", "42 seconds ago", "5 minutes ago", "2 days ago"). Times come from live observation while diffstalker runs (content-keyed, so a hunk keeps its time when line numbers shift); the file's mtime is the fallback for changes that predate the session. Sub-minute times tick every second.
+- **Fresh-hunk flash and auto-scroll**: a hunk whose content just changed flashes yellow (like the file list's newest-change flash), and in auto mode the diff pane scrolls so the fresh change is always on screen.
 - **Hunk Staging**: When diff pane is focused (via `Tab`), a cyan gutter indicator (`▎`) marks the selected hunk. Footer shows `hunk 1/3` position. Use `n`/`N` to navigate between hunks and `s`/`u` to stage/unstage individual hunks instead of entire files. Disabled for untracked files and binary files.
 
 ### Tab 2: Commit Panel

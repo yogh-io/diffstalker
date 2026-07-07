@@ -19,6 +19,8 @@ export const ANSI_BLUE = '\x1b[34m';
 export const ANSI_MAGENTA = '\x1b[35m';
 export const ANSI_CYAN = '\x1b[36m';
 export const ANSI_GRAY = '\x1b[90m';
+export const ANSI_BLACK = '\x1b[30m';
+export const ANSI_YELLOW_BG = '\x1b[43m';
 
 /** Reset foreground color only (preserves background). */
 export const ANSI_FG_RESET = '\x1b[39m';

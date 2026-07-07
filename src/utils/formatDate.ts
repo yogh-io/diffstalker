@@ -22,6 +22,31 @@ export function formatDate(date: Date): string {
   }
 }
 
+function ago(count: number, unit: string): string {
+  return `${count} ${unit}${count === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * Format a timestamp as a long-form relative time:
+ * "just now", "42 seconds ago", "5 minutes ago", "3 hours ago", "2 days ago",
+ * "2 weeks ago", "3 months ago", "1 year ago".
+ */
+export function formatRelativeTime(timestampMs: number, nowMs: number = Date.now()): string {
+  const diff = Math.max(0, nowMs - timestampMs);
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 10) return 'just now';
+  if (seconds < 60) return ago(seconds, 'second');
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 60) return ago(minutes, 'minute');
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return ago(hours, 'hour');
+  const days = Math.floor(hours / 24);
+  if (days < 7) return ago(days, 'day');
+  if (days < 30) return ago(Math.floor(days / 7), 'week');
+  if (days < 365) return ago(Math.floor(days / 30), 'month');
+  return ago(Math.floor(days / 365), 'year');
+}
+
 /**
  * Format a date as an absolute date/time string.
  * Used for commit details where exact timestamp is needed.

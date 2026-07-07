@@ -5,6 +5,8 @@ import { CommitInfo } from './status.js';
 
 export interface DiffLine {
   type: 'header' | 'hunk' | 'addition' | 'deletion' | 'context';
+  /** For hunk lines: when this hunk's content was last observed to change (ms). */
+  editedAt?: number;
   content: string;
   /** Line number in the old file (for deletions and context) */
   oldLineNum?: number;

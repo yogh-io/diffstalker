@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDate, formatDateAbsolute } from './formatDate.js';
+import { formatDate, formatDateAbsolute, formatRelativeTime } from './formatDate.js';
 
 describe('formatDate', () => {
   it('formats minutes ago for recent dates', () => {
@@ -32,6 +32,53 @@ describe('formatDate', () => {
   it('formats 0 minutes for very recent dates', () => {
     const date = new Date(Date.now() - 10 * 1000);
     expect(formatDate(date)).toBe('0m ago');
+  });
+});
+
+describe('formatRelativeTime', () => {
+  const NOW = 1_700_000_000_000;
+  const at = (msAgo: number) => formatRelativeTime(NOW - msAgo, NOW);
+
+  it('says just now under 10 seconds', () => {
+    expect(at(0)).toBe('just now');
+    expect(at(9_000)).toBe('just now');
+  });
+
+  it('shows seconds under a minute', () => {
+    expect(at(10_000)).toBe('10 seconds ago');
+    expect(at(42_000)).toBe('42 seconds ago');
+  });
+
+  it('shows minutes under an hour', () => {
+    expect(at(60_000)).toBe('1 minute ago');
+    expect(at(5 * 60_000)).toBe('5 minutes ago');
+    expect(at(59 * 60_000)).toBe('59 minutes ago');
+  });
+
+  it('shows hours under a day', () => {
+    expect(at(60 * 60_000)).toBe('1 hour ago');
+    expect(at(23 * 60 * 60_000)).toBe('23 hours ago');
+  });
+
+  it('shows days under a week', () => {
+    expect(at(24 * 60 * 60_000)).toBe('1 day ago');
+    expect(at(2 * 24 * 60 * 60_000)).toBe('2 days ago');
+  });
+
+  it('shows weeks under a month', () => {
+    expect(at(14 * 24 * 60 * 60_000)).toBe('2 weeks ago');
+  });
+
+  it('shows months under a year', () => {
+    expect(at(60 * 24 * 60 * 60_000)).toBe('2 months ago');
+  });
+
+  it('shows years beyond that', () => {
+    expect(at(400 * 24 * 60 * 60_000)).toBe('1 year ago');
+  });
+
+  it('treats future timestamps as just now', () => {
+    expect(at(-5_000)).toBe('just now');
   });
 });
 
