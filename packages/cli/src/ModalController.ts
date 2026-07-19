@@ -1,8 +1,8 @@
 import type { Widgets } from 'blessed';
 import type { UIState } from './state/UIState.js';
-import type { GitStateManager } from './core/GitStateManager.js';
-import type { ExplorerStateManager } from './core/ExplorerStateManager.js';
-import type { FileEntry } from './git/status.js';
+import type { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
+import type { ExplorerStateManager } from '@diffstalker/core/managers/ExplorerStateManager';
+import type { FileEntry } from '@diffstalker/core/git/status';
 import type { ThemeName } from './themes.js';
 import type { Modal } from './ui/modals/Modal.js';
 import { ThemePicker } from './ui/modals/ThemePicker.js';
@@ -13,9 +13,9 @@ import { FileFinder } from './ui/modals/FileFinder.js';
 import { CommitActionConfirm } from './ui/modals/CommitActionConfirm.js';
 import { RepoPicker } from './ui/modals/RepoPicker.js';
 import { WorktreePicker } from './ui/modals/WorktreePicker.js';
-import type { WorktreeInfo } from './git/worktree.js';
+import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import { saveConfig } from './config.js';
-import * as logger from './utils/logger.js';
+import * as logger from '@diffstalker/core/utils/logger';
 
 export type ModalType =
   | 'theme'

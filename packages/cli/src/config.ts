@@ -122,13 +122,6 @@ export function saveConfig(
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(fileConfig, null, 2) + '\n');
 }
 
-export function ensureTargetDir(targetFile: string): void {
-  const dir = path.dirname(targetFile);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
 export function abbreviateHomePath(fullPath: string): string {
   const home = os.homedir();
   if (fullPath.startsWith(home)) {

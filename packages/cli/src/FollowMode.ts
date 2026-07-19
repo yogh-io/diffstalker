@@ -1,4 +1,7 @@
-import { FilePathWatcher, WatcherState as FileWatcherState } from './core/FilePathWatcher.js';
+import {
+  FilePathWatcher,
+  WatcherState as FileWatcherState,
+} from '@diffstalker/core/managers/FilePathWatcher';
 
 export interface FollowModeWatcherState {
   enabled: boolean;

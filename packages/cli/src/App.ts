@@ -19,16 +19,20 @@ import {
   ExplorerStateManager,
   ExplorerOptions,
   GitStatusMap,
-} from './core/ExplorerStateManager.js';
+} from '@diffstalker/core/managers/ExplorerStateManager';
 import { CommitFlowState } from './state/CommitFlowState.js';
 import { UIState } from './state/UIState.js';
 import {
   GitStateManager,
   getManagerForRepo,
   removeManagerForRepo,
-} from './core/GitStateManager.js';
+} from '@diffstalker/core/managers/GitStateManager';
 import { Config, saveConfig, addRecentRepo } from './config.js';
-import { resolveWorktreeRoot, listWorktrees, pickDefaultWorktree } from './git/worktree.js';
+import {
+  resolveWorktreeRoot,
+  listWorktrees,
+  pickDefaultWorktree,
+} from '@diffstalker/core/git/worktree';
 import { getIndexForCategoryPosition } from './utils/fileCategories.js';
 import {
   buildFlatFileList,

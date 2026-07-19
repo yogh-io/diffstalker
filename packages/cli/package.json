@@ -27,8 +27,8 @@
   ],
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "build": "rm -rf dist && tsc",
-    "build:prod": "bun run build && bun build dist/index.js --outfile dist/index.js --minify --target node --packages external",
+    "build": "rm -rf dist && tsc -b",
+    "build:prod": "bun run build && bun build dist/index.js --outfile dist/index.js --minify --target node --external chokidar --external emphasize --external fast-diff --external fzf --external ignore --external lowlight --external neo-blessed --external simple-git --external string-width",
     "bundle": "bun run build:prod && bun build dist/index.js --outdir dist/bundle --minify --target node --external neo-blessed",
     "start": "bun dist/index.js",
     "start:bundle": "bun dist/bundle/index.js",
@@ -56,11 +56,13 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "@diffstalker/core": "workspace:*",
     "chokidar": "^4.0.3",
     "emphasize": "^7.0.0",
     "fast-diff": "^1.3.0",
     "fzf": "^0.5.2",
     "ignore": "^7.0.5",
+    "lowlight": "^3.1.0",
     "neo-blessed": "0.2.0",
     "simple-git": "^3.27.0",
     "string-width": "^8.1.0"

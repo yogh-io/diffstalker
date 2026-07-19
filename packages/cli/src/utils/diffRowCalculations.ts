@@ -3,7 +3,7 @@
  * Used for accurate scroll calculations when lines exceed terminal width.
  */
 
-import { DiffLine, DiffResult } from '../git/diff.js';
+import { DiffLine, DiffResult } from '@diffstalker/core/git/diff';
 import { isDisplayableDiffLine } from './diffFilters.js';
 import { getLineRowCount } from './lineBreaking.js';
 

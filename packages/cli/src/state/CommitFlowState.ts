@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { validateCommit, formatCommitMessage } from '../services/commitService.js';
+import { validateCommit, formatCommitMessage } from '@diffstalker/core/services/commitService';
 
 export interface CommitFlowStateData {
   message: string;

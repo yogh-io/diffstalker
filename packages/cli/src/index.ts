@@ -2,7 +2,7 @@
 import { App } from './App.js';
 import { loadConfig } from './config.js';
 import { CommandServer } from './ipc/CommandServer.js';
-import { setDebug } from './utils/logger.js';
+import { setDebug } from '@diffstalker/core/utils/logger';
 
 // Cleanup function to reset terminal state on exit
 function cleanupTerminal(): void {

@@ -1,3 +1,4 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
@@ -12,6 +13,16 @@ export function expandPath(p: string): string {
     return os.homedir();
   }
   return p;
+}
+
+/**
+ * Ensure the directory containing targetFile exists.
+ */
+export function ensureTargetDir(targetFile: string): void {
+  const dir = path.dirname(targetFile);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
 }
 
 /**

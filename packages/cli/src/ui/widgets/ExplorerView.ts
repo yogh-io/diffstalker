@@ -1,5 +1,5 @@
-import type { ExplorerDisplayRow } from '../../core/ExplorerStateManager.js';
-import type { FileStatus } from '../../git/status.js';
+import type { ExplorerDisplayRow } from '@diffstalker/core/managers/ExplorerStateManager';
+import type { FileStatus } from '@diffstalker/core/git/status';
 import {
   ANSI_RESET,
   ANSI_BOLD,

@@ -1,11 +1,11 @@
 import type { UIState } from './state/UIState.js';
-import type { GitStateManager } from './core/GitStateManager.js';
-import type { FileEntry } from './git/status.js';
+import type { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
+import type { FileEntry } from '@diffstalker/core/git/status';
 import type { FlatFileEntry } from './utils/flatFileList.js';
 import type { CombinedHunkInfo } from './utils/displayRows.js';
 import { getFlatFileAtIndex } from './utils/flatFileList.js';
 import { getCategoryForIndex, type CategoryName } from './utils/fileCategories.js';
-import { extractHunkPatch } from './git/diff.js';
+import { extractHunkPatch } from '@diffstalker/core/git/diff';
 
 /**
  * Read-only context provided by App for staging decisions.

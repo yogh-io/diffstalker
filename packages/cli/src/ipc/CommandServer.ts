@@ -6,7 +6,7 @@
 import * as net from 'net';
 import * as fs from 'fs';
 import { EventEmitter } from 'events';
-import { error as logError } from '../utils/logger.js';
+import { error as logError } from '@diffstalker/core/utils/logger';
 
 // App state exposed to external consumers
 export interface AppState {

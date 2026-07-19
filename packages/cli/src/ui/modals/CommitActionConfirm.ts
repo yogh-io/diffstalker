@@ -1,6 +1,6 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
-import type { CommitInfo } from '../../git/status.js';
+import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { Modal } from './Modal.js';
 
 /**

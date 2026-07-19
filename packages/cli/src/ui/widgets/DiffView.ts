@@ -1,5 +1,5 @@
-import type { DiffResult } from '../../git/diff.js';
-import type { CommitInfo } from '../../git/status.js';
+import type { DiffResult } from '@diffstalker/core/git/diff';
+import type { CommitInfo } from '@diffstalker/core/git/status';
 import { ThemeName, getTheme, Theme } from '../../themes.js';
 import {
   WrappedDisplayRow,

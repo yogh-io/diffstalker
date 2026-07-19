@@ -7,12 +7,14 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
     "tsBuildInfoFile": "./dist/.tsbuildinfo",
     "resolveJsonModule": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/**/test-helpers.ts"],
-  "references": [{ "path": "../core" }]
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/**/test-helpers.ts"]
 }

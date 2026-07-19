@@ -5,7 +5,7 @@ import {
   wrapDisplayRows,
   getWrappedRowCount,
 } from './displayRows.js';
-import type { DiffResult, DiffLine } from '../git/diff.js';
+import type { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
 
 /** Helper to build a DiffResult from lines */
 function makeDiff(lines: DiffLine[]): DiffResult {

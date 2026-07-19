@@ -1,8 +1,8 @@
 // Unified row model for all diff views
 // Every row = exactly 1 terminal row
 
-import { DiffResult, DiffLine } from '../git/diff.js';
-import { CommitInfo } from '../git/status.js';
+import { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
+import { CommitInfo } from '@diffstalker/core/git/status';
 import { formatDateAbsolute } from './formatDate.js';
 import { isDisplayableDiffLine } from './diffFilters.js';
 import { breakLine, getLineRowCount } from './lineBreaking.js';

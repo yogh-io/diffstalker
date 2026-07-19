@@ -1,4 +1,4 @@
-import type { CommitInfo } from '../../git/status.js';
+import type { CommitInfo } from '@diffstalker/core/git/status';
 import { formatDate } from '../../utils/formatDate.js';
 import { formatCommitDisplay } from '../../utils/commitFormat.js';
 

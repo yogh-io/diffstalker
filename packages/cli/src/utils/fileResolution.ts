@@ -1,4 +1,4 @@
-import type { FileEntry } from '../git/status.js';
+import type { FileEntry } from '@diffstalker/core/git/status';
 import type { FlatFileEntry } from './flatFileList.js';
 import { getFileAtIndex } from './fileCategories.js';
 import { getFlatFileAtIndex } from './flatFileList.js';

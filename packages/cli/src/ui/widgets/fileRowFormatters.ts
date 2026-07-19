@@ -1,4 +1,4 @@
-import type { FileStatus } from '../../git/status.js';
+import type { FileStatus } from '@diffstalker/core/git/status';
 import { shortenPath } from '../../utils/formatPath.js';
 
 export function getStatusChar(status: FileStatus): string {

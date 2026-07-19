@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import { abbreviateHomePath } from '../../config.js';
-import type { WorktreeInfo } from '../../git/worktree.js';
+import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import type { Modal } from './Modal.js';
 
 const FOOTER = 'j/k: navigate | Enter: select | Esc: cancel';

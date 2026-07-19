@@ -1,15 +1,15 @@
 import type { UIStateData, FocusZone } from '../state/UIState.js';
 import type { CommitFlowStateData } from '../state/CommitFlowState.js';
-import type { FileEntry, CommitInfo } from '../git/status.js';
-import type { DiffResult, CompareDiff } from '../git/diff.js';
-import type { CombinedFileDiffs } from '../core/WorkingTreeManager.js';
-import type { ExplorerState } from '../core/ExplorerStateManager.js';
-import type { HistoryState } from '../core/HistoryManager.js';
-import type { CompareSelectionState } from '../core/CompareManager.js';
-import type { FileHunkCounts } from '../git/diff.js';
+import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
+import type { DiffResult, CompareDiff } from '@diffstalker/core/git/diff';
+import type { CombinedFileDiffs } from '@diffstalker/core/managers/WorkingTreeManager';
+import type { ExplorerState } from '@diffstalker/core/managers/ExplorerStateManager';
+import type { HistoryState } from '@diffstalker/core/managers/HistoryManager';
+import type { CompareSelectionState } from '@diffstalker/core/managers/CompareManager';
+import type { FileHunkCounts } from '@diffstalker/core/git/diff';
 import type { CompareListSelection } from './widgets/CompareListView.js';
 import type { ThemeName } from '../themes.js';
-import type { SelectedFile } from '../core/ExplorerStateManager.js';
+import type { SelectedFile } from '@diffstalker/core/managers/ExplorerStateManager';
 
 import { formatFileList } from './widgets/FileList.js';
 import { formatFlatFileList } from './widgets/FlatFileList.js';

@@ -1,5 +1,5 @@
-import type { BranchInfo } from '../../git/status.js';
-import type { RemoteOperationState } from '../../types/remote.js';
+import type { BranchInfo } from '@diffstalker/core/git/status';
+import type { RemoteOperationState } from '@diffstalker/core/types/remote';
 import { abbreviateHomePath } from '../../config.js';
 
 /**

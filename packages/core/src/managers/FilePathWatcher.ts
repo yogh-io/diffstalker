@@ -2,8 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { watch, FSWatcher } from 'chokidar';
 import { EventEmitter } from 'node:events';
-import { ensureTargetDir } from '../config.js';
-import { expandPath, getLastNonEmptyLine } from '../utils/pathUtils.js';
+import { ensureTargetDir, expandPath, getLastNonEmptyLine } from '../utils/pathUtils.js';
 
 export interface WatcherState {
   path: string | null;

@@ -1,7 +1,7 @@
 import type { Widgets } from 'blessed';
 import type { BottomTab } from './types/tabs.js';
 import type { UIState, FocusZone } from './state/UIState.js';
-import type { FileEntry } from './git/status.js';
+import type { FileEntry } from '@diffstalker/core/git/status';
 import type { ModalType } from './ModalController.js';
 import { SPLIT_RATIO_STEP } from './ui/Layout.js';
 

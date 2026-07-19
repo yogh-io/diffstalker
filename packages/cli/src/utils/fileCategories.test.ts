@@ -4,7 +4,7 @@
 
 import { describe, test, expect } from 'bun:test';
 import { categorizeFiles, getFileListSectionCounts } from './fileCategories.js';
-import { FileEntry, FileStatus } from '../git/status.js';
+import { FileEntry, FileStatus } from '@diffstalker/core/git/status';
 
 // Helper to create test FileEntry objects
 function makeFile(path: string, status: FileStatus, staged: boolean): FileEntry {

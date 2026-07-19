@@ -1,5 +1,5 @@
-import type { CommitInfo } from '../../git/status.js';
-import type { CompareFileDiff } from '../../git/diff.js';
+import type { CommitInfo } from '@diffstalker/core/git/status';
+import type { CompareFileDiff } from '@diffstalker/core/git/diff';
 import { formatDate } from '../../utils/formatDate.js';
 import { formatCommitDisplay } from '../../utils/commitFormat.js';
 import { buildFileTree, flattenTree, buildTreePrefix, TreeRowItem } from '../../utils/fileTree.js';

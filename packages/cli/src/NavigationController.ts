@@ -1,7 +1,7 @@
 import type { UIState } from './state/UIState.js';
-import type { GitStateManager } from './core/GitStateManager.js';
-import type { ExplorerStateManager } from './core/ExplorerStateManager.js';
-import type { FileEntry } from './git/status.js';
+import type { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
+import type { ExplorerStateManager } from '@diffstalker/core/managers/ExplorerStateManager';
+import type { FileEntry } from '@diffstalker/core/git/status';
 import type { FlatFileEntry } from './utils/flatFileList.js';
 import type { HunkBoundary } from './utils/displayRows.js';
 import {

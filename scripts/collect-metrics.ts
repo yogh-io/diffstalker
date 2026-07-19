@@ -119,8 +119,8 @@ function parseLinesValue(message: string): number {
 async function main() {
   const saveFlag = process.argv.includes('--save');
 
-  // Run ESLint with metrics config
-  const eslintBin = join(ROOT, 'node_modules', '.bin', 'eslint');
+  // Run ESLint with metrics config (eslint is a devDependency of packages/cli)
+  const eslintBin = join(PKG, 'node_modules', '.bin', 'eslint');
   const proc = Bun.spawn([eslintBin, '--config', 'eslint.metrics.js', '--format', 'json', 'src/'], {
     cwd: PKG,
     stderr: 'pipe',
