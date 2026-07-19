@@ -30,14 +30,33 @@ export function requireRepo(registry: RepoRegistry, id: string): RepoHandle {
   return handle;
 }
 
-/** Require a non-empty string field on a JSON body. */
-export function requireStringField(body: unknown, field: string): string {
+/**
+ * Require a string field on a JSON body. Empty strings are rejected unless
+ * `allowEmpty` is set (used when a later, more specific validation owns
+ * the emptiness error, e.g. validateCommit for commit messages).
+ */
+export function requireStringField(
+  body: unknown,
+  field: string,
+  opts?: { allowEmpty?: boolean }
+): string {
   if (typeof body !== 'object' || body === null) {
     throw new HttpError(400, `Expected a JSON body with "${field}"`);
   }
   const value = (body as Record<string, unknown>)[field];
-  if (typeof value !== 'string' || value.length === 0) {
+  if (typeof value !== 'string' || (!opts?.allowEmpty && value.length === 0)) {
     throw new HttpError(400, `Missing "${field}" (string) in body`);
+  }
+  return value;
+}
+
+/** Optional boolean field on a JSON body; absent yields false. */
+export function optionalBooleanField(body: unknown, field: string): boolean {
+  if (typeof body !== 'object' || body === null) return false;
+  const value = (body as Record<string, unknown>)[field];
+  if (value === undefined) return false;
+  if (typeof value !== 'boolean') {
+    throw new HttpError(400, `Invalid "${field}" (expected a boolean)`);
   }
   return value;
 }
