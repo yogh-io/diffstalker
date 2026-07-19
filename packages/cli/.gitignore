@@ -1,0 +1,5 @@
+# Root docs are copied in here only during `npm pack`/`publish` (prepack) and
+# removed by postpack. Ignore them so a failed postpack never commits copies.
+/README.md
+/LICENSE
+/CHANGELOG.md

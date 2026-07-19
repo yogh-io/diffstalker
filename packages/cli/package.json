@@ -21,6 +21,8 @@
     "dist",
     "!dist/bundle",
     "bin",
+    "README.md",
+    "LICENSE",
     "CHANGELOG.md"
   ],
   "scripts": {
@@ -39,7 +41,9 @@
     "deps": "depcruise src/ --config .dependency-cruiser.cjs",
     "metrics": "bun ../../scripts/collect-metrics.ts",
     "metrics:snapshot": "bun ../../scripts/collect-metrics.ts --save",
-    "prepublishOnly": "bun run build:prod"
+    "prepublishOnly": "bun run build:prod",
+    "prepack": "cp ../../README.md ../../LICENSE ../../CHANGELOG.md .",
+    "postpack": "rm -f README.md LICENSE CHANGELOG.md"
   },
   "keywords": [
     "git",
