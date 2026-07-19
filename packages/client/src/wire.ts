@@ -35,6 +35,7 @@ export type {
   CompareDiffStats,
 } from '@diffstalker/core/git/diff';
 export type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
+export type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 export type { RemoteOperationState, RemoteOperation } from '@diffstalker/core/types/remote';
 
 /** Hunk counts as JSON: core's two Maps become plain objects. */

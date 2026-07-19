@@ -33,6 +33,7 @@ import type {
   WireCommitInfo,
   WireCompareDiff,
   WireSharedState,
+  WorktreeInfo,
 } from './wire.js';
 
 /** Revive a wire commit: the ISO date string becomes a Date. */
@@ -164,6 +165,10 @@ export class DiffstalkerClient {
     await this.transport.request('DELETE', this.repoPath(id, ''));
   }
 
+  worktrees(id: string): Promise<WorktreeInfo[]> {
+    return this.transport.request('GET', this.repoPath(id, '/worktrees'));
+  }
+
   // --- Working tree ---
 
   status(id: string): Promise<WireSharedState> {
@@ -227,6 +232,15 @@ export class DiffstalkerClient {
       'GET',
       this.repoPath(id, `/commits/${encodeURIComponent(hash)}/diff`)
     );
+  }
+
+  /** HEAD commit message (amend prefill); "" when the repo has no commits. */
+  async headMessage(id: string): Promise<string> {
+    const { message } = await this.transport.request<{ message: string }>(
+      'GET',
+      this.repoPath(id, '/head-message')
+    );
+    return message;
   }
 
   branches(id: string): Promise<LocalBranch[]> {

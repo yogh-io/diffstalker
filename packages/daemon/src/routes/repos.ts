@@ -1,5 +1,6 @@
-/** Repo lifecycle: list, open (refcounted), close. */
+/** Repo lifecycle: list, open (refcounted), close, worktrees. */
 
+import { listWorktrees } from '@diffstalker/core/git/worktree';
 import { Router, HttpError, sendJson } from '../router.js';
 import { requireRepo, requireStringField, type RouteDeps } from './shared.js';
 
@@ -31,6 +32,14 @@ export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
       id: opened.handle.id,
       path: opened.handle.path,
     });
+  });
+
+  router.get('/repos/:id/worktrees', async ({ params, res }) => {
+    const handle = requireRepo(registry, params.id);
+    // WorktreeInfo[] straight from `git worktree list --porcelain`: the
+    // main worktree first, then linked ones (and a bare entry when the
+    // repo uses a bare-worktree layout).
+    sendJson(res, 200, await listWorktrees(handle.path));
   });
 
   router.delete('/repos/:id', ({ params, res }) => {

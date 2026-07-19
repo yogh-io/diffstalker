@@ -214,6 +214,20 @@ describe('history, compare, explorer, follow', () => {
     expect(await client.files(repoId)).toContain('file.txt');
   });
 
+  test('worktrees lists the main worktree', async () => {
+    const worktrees = await client.worktrees(repoId);
+    expect(worktrees.length).toBe(1);
+    expect(worktrees[0].path).toBe(repoDir);
+    expect(worktrees[0].branch).toBe('main');
+    expect(worktrees[0].head).toMatch(/^[0-9a-f]{40}$/);
+    expect(worktrees[0].isBare).toBe(false);
+  });
+
+  test('headMessage returns the HEAD commit message', async () => {
+    const [head] = await client.history(repoId, 1);
+    expect(await client.headMessage(repoId)).toBe(head.message);
+  });
+
   test('getFollow reports disabled (daemon started without a follow file)', async () => {
     expect(await client.getFollow()).toEqual({
       targetFile: null,

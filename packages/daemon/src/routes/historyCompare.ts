@@ -17,7 +17,7 @@ import {
   NoCommonHistoryError,
 } from '@diffstalker/core/git/diff';
 import type { CompareDiff } from '@diffstalker/core/git/diff';
-import { getCommitHistory, getLocalBranches } from '@diffstalker/core/git/status';
+import { getCommitHistory, getHeadMessage, getLocalBranches } from '@diffstalker/core/git/status';
 import {
   getCachedBaseBranch,
   setCachedBaseBranch,
@@ -80,6 +80,14 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     // Historical diff: deliberately NOT stamped with hunk edit times —
     // stamping only applies to the live working-tree diff.
     sendJson(res, 200, await getCommitDiff(handle.path, hash));
+  });
+
+  router.get('/repos/:id/head-message', async ({ params, res }) => {
+    const handle = requireRepo(registry, params.id);
+    // The exact `git log -1` message the TUI prefills for amend — served
+    // via core's getHeadMessage, never approximated from /history. A repo
+    // with no commits yields "" (getHeadMessage swallows the git error).
+    sendJson(res, 200, { message: await getHeadMessage(handle.path) });
   });
 
   router.get('/repos/:id/branches', async ({ params, res }) => {
