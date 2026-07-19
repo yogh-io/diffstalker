@@ -73,12 +73,15 @@ Current surface. All bodies are JSON; errors are non-2xx with `{"error": "..."}`
 | GET    | `/repos/:id/compare/base`  | Effective compare base: `{base}` (persisted choice or discovered default, null when none) |
 | PUT    | `/repos/:id/compare/base`  | Persist the compare base: `{"branch": "origin/main"}` → `{base}` |
 | GET    | `/repos/:id/compare?base=&uncommitted=` | Base-vs-HEAD `CompareDiff` (three-dot); base defaults to the effective base (400 when none resolves); `uncommitted=true` merges working-tree changes |
+| GET    | `/repos/:id/tree?dir=`     | One directory level (`name`, `path`, `type`), gitignored/hidden filtered, files annotated with `gitStatus`, changed dirs with `hasChanges` (400 outside the repo root, 404 unknown dir) |
+| GET    | `/repos/:id/file?path=`    | File content for display with flags: `{content, binary, truncated, tooLarge, size, totalLines}` — binary/oversized come back with empty content and the flag set, never prose |
+| GET    | `/repos/:id/files`         | All tracked + untracked (not ignored) paths: the fuzzy-finder source |
 | GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher |
 
-History and compare are stateless, pulled on demand: the daemon never holds
-a client's selection or loaded history. A commit or branch switch fires the
-working-tree `state-change` event (the git watcher covers HEAD/refs), which
-is the client's signal to re-pull.
+History, compare, and explorer data are stateless, pulled on demand: the
+daemon never holds a client's selection, loaded history, or tree expansion.
+A commit or branch switch fires the working-tree `state-change` event (the
+git watcher covers HEAD/refs), which is the client's signal to re-pull.
 
 Repo ids are stable hashes of the worktree root, so a cached id still
 addresses the same repo after a daemon restart.
@@ -96,5 +99,5 @@ curl --unix-socket "$SOCK" -X POST -d '{"path": "file.txt"}' http://localhost/re
 curl --unix-socket "$SOCK" -N http://localhost/repos/<id>/events
 ```
 
-Forthcoming (the daemon split lands in slices): explorer, remote
-operations, follow mode, and hunk-level staging endpoints.
+Forthcoming (the daemon split lands in slices): remote operations, follow
+mode, and hunk-level staging endpoints.

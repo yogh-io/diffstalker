@@ -18,8 +18,8 @@ import { HUNK_FLASH_MS } from './ui/widgets/DiffView.js';
 import {
   ExplorerStateManager,
   ExplorerOptions,
-  GitStatusMap,
 } from '@diffstalker/core/managers/ExplorerStateManager';
+import { buildGitStatusMap } from '@diffstalker/core/git/explorerData';
 import { CommitFlowState } from './state/CommitFlowState.js';
 import { UIState } from './state/UIState.js';
 import {
@@ -730,26 +730,7 @@ export class App {
     if (!this.explorerManager || !this.gitManager) return;
 
     const files = this.gitManager.workingTree.state.status?.files ?? [];
-    const statusMap: GitStatusMap = {
-      files: new Map(),
-      directories: new Set(),
-    };
-
-    for (const file of files) {
-      statusMap.files.set(file.path, { status: file.status, staged: file.staged });
-
-      // Mark all parent directories as having changed children
-      const parts = file.path.split('/');
-      let dirPath = '';
-      for (let i = 0; i < parts.length - 1; i++) {
-        dirPath = dirPath ? `${dirPath}/${parts[i]}` : parts[i];
-        statusMap.directories.add(dirPath);
-      }
-      // Also mark root as having changes
-      statusMap.directories.add('');
-    }
-
-    this.explorerManager.setGitStatus(statusMap);
+    this.explorerManager.setGitStatus(buildGitStatusMap(files));
   }
 
   /**

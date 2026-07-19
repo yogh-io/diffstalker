@@ -11,6 +11,7 @@
 import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
+import * as path from 'node:path';
 import type { Socket } from 'node:net';
 import {
   getDiff,
@@ -22,8 +23,13 @@ import {
   getDefaultBaseBranch,
 } from '@diffstalker/core/git/diff';
 import type { CompareDiff } from '@diffstalker/core/git/diff';
-import { getCommitHistory, getLocalBranches } from '@diffstalker/core/git/status';
+import { getCommitHistory, getLocalBranches, listAllFiles } from '@diffstalker/core/git/status';
 import type { FileEntry, GitStatus } from '@diffstalker/core/git/status';
+import {
+  buildGitStatusMap,
+  listDirectory,
+  readFileForDisplay,
+} from '@diffstalker/core/git/explorerData';
 import {
   getCachedBaseBranch,
   setCachedBaseBranch,
@@ -128,6 +134,24 @@ async function resolveFileEntry(
     throw new HttpError(404, `File not in status: ${filePath}`);
   }
   return entry;
+}
+
+/**
+ * Reject a client-supplied relative path that escapes the repo root with a
+ * 400 (same guard as getDiffForUntracked's, surfaced as a client error).
+ */
+function requireWithinRoot(repoPath: string, relPath: string): void {
+  const root = path.resolve(repoPath);
+  const resolved = path.resolve(root, relPath);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new HttpError(400, `Path escapes repository root: ${relPath}`);
+  }
+}
+
+/** True for fs errors that mean the path does not exist. */
+function isFsNotFound(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
 /** Failures that stem from a concurrent index/worktree change are 409s. */
@@ -338,6 +362,56 @@ export function createDaemon(): Daemon {
       throw err;
     }
     sendJson(res, 200, diff);
+  });
+
+  // --- Explorer: stateless data reads (directory listing with git status,
+  // file content as flags, the file-finder source). The tree/selection
+  // view-model stays client-side; explorer data is pulled on demand and the
+  // working-tree `state-change` SSE event already signals changes.
+
+  router.get('/repos/:id/tree', async ({ params, query, res }) => {
+    const handle = requireRepo(params.id);
+    const dir = query.get('dir') ?? '';
+    requireWithinRoot(handle.path, dir);
+    // Annotate from the manager's cached status (refreshing once when it
+    // has never loaded), same source the TUI uses.
+    const status = await ensureStatus(handle.manager.workingTree);
+    const statusMap = buildGitStatusMap(status.files);
+    let entries;
+    try {
+      entries = await listDirectory(handle.path, dir, undefined, statusMap);
+    } catch (err) {
+      if (isFsNotFound(err)) {
+        throw new HttpError(404, `No such directory: ${dir || '/'}`);
+      }
+      throw err;
+    }
+    sendJson(res, 200, entries);
+  });
+
+  router.get('/repos/:id/file', async ({ params, query, res }) => {
+    const handle = requireRepo(params.id);
+    const relPath = query.get('path');
+    if (!relPath) {
+      throw new HttpError(400, 'Missing "path" query parameter');
+    }
+    requireWithinRoot(handle.path, relPath);
+    try {
+      sendJson(res, 200, await readFileForDisplay(handle.path, relPath));
+    } catch (err) {
+      if (isFsNotFound(err)) {
+        throw new HttpError(404, `No such file: ${relPath}`);
+      }
+      if ((err as NodeJS.ErrnoException | null)?.code === 'EISDIR') {
+        throw new HttpError(400, `Not a file: ${relPath}`);
+      }
+      throw err;
+    }
+  });
+
+  router.get('/repos/:id/files', async ({ params, res }) => {
+    const handle = requireRepo(params.id);
+    sendJson(res, 200, await listAllFiles(handle.path));
   });
 
   router.post('/repos/:id/stage', async ({ params, body, res }) => {

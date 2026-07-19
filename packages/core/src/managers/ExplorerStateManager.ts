@@ -1,10 +1,13 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { getIgnoredFiles } from '../git/ignoreUtils.js';
+import { listDirectory, readFileForDisplay, MAX_DISPLAY_LINES } from '../git/explorerData.js';
 import { listAllFiles } from '../git/status.js';
 import * as logger from '../utils/logger.js';
 import type { FileStatus } from '../git/status.js';
+import type { GitStatusMap } from '../git/explorerData.js';
+
+export type { GitStatusMap } from '../git/explorerData.js';
 
 export interface SelectedFile {
   path: string;
@@ -52,29 +55,11 @@ export interface ExplorerOptions {
   showOnlyChanges: boolean;
 }
 
-export interface GitStatusMap {
-  files: Map<string, { status: FileStatus; staged: boolean }>;
-  directories: Set<string>; // Directories that contain changes
-}
-
 type ExplorerStateEventMap = {
   'state-change': [ExplorerState];
 };
 
-const MAX_FILE_SIZE = 1024 * 1024; // 1MB
 const WARN_FILE_SIZE = 100 * 1024; // 100KB
-
-/**
- * Check if content appears to be binary.
- */
-function isBinaryContent(buffer: Buffer): boolean {
-  // Check first 8KB for null bytes (common in binary files)
-  const checkLength = Math.min(buffer.length, 8192);
-  for (let i = 0; i < checkLength; i++) {
-    if (buffer[i] === 0) return true;
-  }
-  return false;
-}
 
 /**
  * ExplorerStateManager manages file explorer state independent of React.
@@ -251,39 +236,22 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
     if (node.childrenLoaded) return;
 
     try {
-      const fullPath = path.join(this.repoPath, node.path);
-      const entries = await fs.promises.readdir(fullPath, { withFileTypes: true });
-
-      // Build list of paths for gitignore check
-      const pathsToCheck = entries.map((e) => (node.path ? path.join(node.path, e.name) : e.name));
-
-      // Get ignored files (skip git check if not a git repo)
-      const ignoredFiles =
-        this.options.hideGitignored && this._isGitRepo
-          ? await getIgnoredFiles(this.repoPath, pathsToCheck)
-          : new Set<string>();
+      // Shared data logic: one level, hidden/gitignored filtered, dirs
+      // first then alphabetical (skip the git-ignore call off-repo).
+      const entries = await listDirectory(this.repoPath, node.path, {
+        hideHidden: this.options.hideHidden,
+        hideGitignored: this.options.hideGitignored && this._isGitRepo,
+      });
 
       const children: ExplorerTreeNode[] = [];
 
       for (const entry of entries) {
-        // Filter dot-prefixed hidden files
-        if (this.options.hideHidden && entry.name.startsWith('.')) {
-          continue;
-        }
-
-        const entryPath = node.path ? path.join(node.path, entry.name) : entry.name;
-
-        // Filter gitignored files
-        if (this.options.hideGitignored && ignoredFiles.has(entryPath)) {
-          continue;
-        }
-
-        const isDir = entry.isDirectory();
-        const isExpanded = this.expandedPaths.has(entryPath);
+        const isDir = entry.type === 'dir';
+        const isExpanded = this.expandedPaths.has(entry.path);
 
         const childNode: ExplorerTreeNode = {
           name: entry.name,
-          path: entryPath,
+          path: entry.path,
           isDirectory: isDir,
           expanded: isExpanded,
           children: [],
@@ -297,13 +265,6 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
 
         children.push(childNode);
       }
-
-      // Sort: directories first, then alphabetically
-      children.sort((a, b) => {
-        if (a.isDirectory && !b.isDirectory) return -1;
-        if (!a.isDirectory && b.isDirectory) return 1;
-        return a.name.localeCompare(b.name);
-      });
 
       // Collapse single-child directory chains
       this.collapseNode(node, children);
@@ -452,25 +413,22 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
    */
   async loadFile(itemPath: string): Promise<void> {
     try {
-      const fullPath = path.join(this.repoPath, itemPath);
-      const stats = await fs.promises.stat(fullPath);
+      // Shared data logic returns flags; this view-model layer turns them
+      // into the prose the TUI renders.
+      const file = await readFileForDisplay(this.repoPath, itemPath);
 
-      // Check file size
-      if (stats.size > MAX_FILE_SIZE) {
+      if (file.tooLarge) {
         this.updateState({
           selectedFile: {
             path: itemPath,
-            content: `File too large to display (${(stats.size / 1024 / 1024).toFixed(2)} MB).\nMaximum size: 1 MB`,
+            content: `File too large to display (${(file.size / 1024 / 1024).toFixed(2)} MB).\nMaximum size: 1 MB`,
             truncated: true,
           },
         });
         return;
       }
 
-      const buffer = await fs.promises.readFile(fullPath);
-
-      // Check if binary
-      if (isBinaryContent(buffer)) {
+      if (file.binary) {
         this.updateState({
           selectedFile: {
             path: itemPath,
@@ -480,30 +438,22 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
         return;
       }
 
-      let content = buffer.toString('utf-8');
-      let truncated = false;
+      let content = file.content;
 
-      // Warn about large files
-      if (stats.size > WARN_FILE_SIZE) {
-        const warning = `Warning: Large file (${(stats.size / 1024).toFixed(1)} KB)\n\n`;
-        content = warning + content;
+      if (file.truncated) {
+        content += `\n\n... (truncated, ${file.totalLines - MAX_DISPLAY_LINES} more lines)`;
       }
 
-      // Truncate if needed
-      const maxLines = 5000;
-      const lines = content.split('\n');
-      if (lines.length > maxLines) {
-        content =
-          lines.slice(0, maxLines).join('\n') +
-          `\n\n... (truncated, ${lines.length - maxLines} more lines)`;
-        truncated = true;
+      // Warn about large files
+      if (file.size > WARN_FILE_SIZE) {
+        content = `Warning: Large file (${(file.size / 1024).toFixed(1)} KB)\n\n` + content;
       }
 
       this.updateState({
         selectedFile: {
           path: itemPath,
           content,
-          truncated,
+          truncated: file.truncated,
         },
       });
     } catch (err) {
