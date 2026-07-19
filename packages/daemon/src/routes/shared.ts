@@ -9,6 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type * as http from 'node:http';
 import type { FileEntry, GitStatus } from '@diffstalker/core/git/status';
+import type { RemoteOperationManager } from '@diffstalker/core/managers/RemoteOperationManager';
 import type { WorkingTreeManager } from '@diffstalker/core/managers/WorkingTreeManager';
 import { HttpError, sendJson } from '../router.js';
 import type { RepoRegistry, RepoHandle } from '../repoRegistry.js';
@@ -46,6 +47,35 @@ export function requireStringField(
   const value = (body as Record<string, unknown>)[field];
   if (typeof value !== 'string' || (!opts?.allowEmpty && value.length === 0)) {
     throw new HttpError(400, `Missing "${field}" (string) in body`);
+  }
+  return value;
+}
+
+/** Optional string field on a JSON body; absent yields undefined. */
+export function optionalStringField(body: unknown, field: string): string | undefined {
+  if (typeof body !== 'object' || body === null) return undefined;
+  const value = (body as Record<string, unknown>)[field];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new HttpError(400, `Invalid "${field}" (expected a non-empty string)`);
+  }
+  return value;
+}
+
+/**
+ * Optional integer field on a JSON body with a lower bound; absent yields
+ * the fallback.
+ */
+export function optionalIntField(
+  body: unknown,
+  field: string,
+  opts: { min: number; fallback: number }
+): number {
+  if (typeof body !== 'object' || body === null) return opts.fallback;
+  const value = (body as Record<string, unknown>)[field];
+  if (value === undefined) return opts.fallback;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < opts.min) {
+    throw new HttpError(400, `Invalid "${field}" (expected an integer >= ${opts.min})`);
   }
   return value;
 }
@@ -226,4 +256,53 @@ export async function runStagingMutation(
   }
   await workingTree.refresh();
   sendJson(res, 200, serializeSharedState(workingTree.state));
+}
+
+/**
+ * Failures that mean the operation was legitimately refused by the current
+ * repo/remote state (conflicts, rejected pushes, would-be-overwritten
+ * checkouts) are 409s; anything else is a real failure, 500.
+ */
+function remoteErrorStatus(message: string): number {
+  return /conflict|rejected|non-fast-forward|would be overwritten|merge|unmerged/i.test(message)
+    ? 409
+    : 500;
+}
+
+/**
+ * Run a remote/branch/undo operation and translate the manager's
+ * swallowed-error model to HTTP. The manager guards with a silent
+ * `if (inProgress) return`, so an op that lands while another is running
+ * would otherwise report the running op's state as its own — reject it
+ * with a 409 up front (and again after, in case the ops raced between the
+ * check and the call). On failure respond 409/500 with {error}; on success
+ * 200 with the operation's result message. The manager already schedules a
+ * working-tree refresh, which fires the `state-change` SSE for other
+ * clients.
+ */
+export async function runRemoteMutation(
+  remote: RemoteOperationManager,
+  res: http.ServerResponse,
+  opName: string,
+  fn: () => Promise<void>
+): Promise<void> {
+  const busy = (): HttpError =>
+    new HttpError(
+      409,
+      `A ${remote.remoteState.operation ?? 'remote'} operation is already in progress`
+    );
+  if (remote.remoteState.inProgress) {
+    throw busy();
+  }
+  await fn();
+  const { inProgress, error, lastResult } = remote.remoteState;
+  if (inProgress) {
+    // Our call hit the manager's silent guard: another op won the race.
+    throw busy();
+  }
+  if (error) {
+    sendJson(res, remoteErrorStatus(error), { error });
+    return;
+  }
+  sendJson(res, 200, { result: lastResult, operation: opName });
 }

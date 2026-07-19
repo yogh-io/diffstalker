@@ -18,6 +18,34 @@ export function createFixtureRepo(name: string): string {
 }
 
 /**
+ * Create a bare fixture repo (used as a local `origin` so push/fetch/pull
+ * work offline).
+ */
+export function createBareFixtureRepo(name: string): string {
+  const repoPath = path.join(FIXTURES_DIR, name);
+  fs.rmSync(repoPath, { recursive: true, force: true });
+  fs.mkdirSync(repoPath, { recursive: true });
+  gitExec(repoPath, 'init --bare --initial-branch=main');
+  return repoPath;
+}
+
+/**
+ * Clone a fixture repo (typically a bare origin) into a fresh working
+ * clone, configured for committing.
+ */
+export function cloneFixtureRepo(sourcePath: string, name: string): string {
+  const repoPath = path.join(FIXTURES_DIR, name);
+  fs.rmSync(repoPath, { recursive: true, force: true });
+  execSync(`git clone "${sourcePath}" "${repoPath}"`, {
+    encoding: 'utf-8',
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  });
+  gitExec(repoPath, 'config user.email "test@test.com"');
+  gitExec(repoPath, 'config user.name "Test User"');
+  return repoPath;
+}
+
+/**
  * Remove a fixture repo directory.
  */
 export function removeFixtureRepo(name: string): void {

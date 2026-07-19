@@ -23,6 +23,7 @@ import { registerHealthRoutes } from './routes/health.js';
 import { registerRepoRoutes } from './routes/repos.js';
 import { registerWorkingTreeRoutes } from './routes/workingTree.js';
 import { registerHistoryCompareRoutes } from './routes/historyCompare.js';
+import { registerRemoteRoutes } from './routes/remote.js';
 import { registerExplorerRoutes } from './routes/explorer.js';
 
 export interface ListenOptions {
@@ -72,6 +73,7 @@ export function createDaemon(): Daemon {
   registerRepoRoutes(router, deps);
   registerWorkingTreeRoutes(router, deps);
   registerHistoryCompareRoutes(router, deps);
+  registerRemoteRoutes(router, deps);
   registerExplorerRoutes(router, deps);
 
   const server = http.createServer((req, res) => {
