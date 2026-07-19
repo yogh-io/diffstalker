@@ -3,8 +3,7 @@ import { readdir, readFile, mkdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
-const PKG = join(ROOT, 'packages', 'cli');
-const SRC = join(PKG, 'src');
+const PACKAGES_DIR = join(ROOT, 'packages');
 const METRICS_DIR = join(ROOT, 'metrics');
 
 interface ESLintMessage {
@@ -114,15 +113,27 @@ function parseLinesValue(message: string): number {
   return match ? parseInt(match[1], 10) : 0;
 }
 
-// --- Main ---
+async function findPackagesWithSrc(): Promise<string[]> {
+  const entries = await readdir(PACKAGES_DIR, { withFileTypes: true });
+  const pkgs: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const pkgDir = join(PACKAGES_DIR, entry.name);
+    try {
+      await readdir(join(pkgDir, 'src'));
+      pkgs.push(pkgDir);
+    } catch {
+      // no src/ directory, skip
+    }
+  }
+  return pkgs.sort();
+}
 
-async function main() {
-  const saveFlag = process.argv.includes('--save');
-
-  // Run ESLint with metrics config (eslint is a devDependency of packages/cli)
-  const eslintBin = join(PKG, 'node_modules', '.bin', 'eslint');
+async function runEslintMetrics(pkgDir: string): Promise<ESLintFileResult[]> {
+  // Run ESLint with the package's metrics config (eslint is a devDependency of each package)
+  const eslintBin = join(pkgDir, 'node_modules', '.bin', 'eslint');
   const proc = Bun.spawn([eslintBin, '--config', 'eslint.metrics.js', '--format', 'json', 'src/'], {
-    cwd: PKG,
+    cwd: pkgDir,
     stderr: 'pipe',
   });
   const rawOutput = await new Response(proc.stdout).text();
@@ -130,17 +141,28 @@ async function main() {
   await proc.exited;
 
   // ESLint exits non-zero when there are warnings/errors, that's expected
-  let eslintResults: ESLintFileResult[];
   try {
-    eslintResults = JSON.parse(rawOutput);
+    return JSON.parse(rawOutput);
   } catch {
-    console.error('Failed to parse ESLint output.');
+    console.error(`Failed to parse ESLint output for ${relative(ROOT, pkgDir)}.`);
     if (stderrOutput) console.error(stderrOutput);
     process.exit(1);
   }
+}
 
-  // Collect source files and line counts
-  const sourceFiles = await collectSourceFiles(SRC);
+// --- Main ---
+
+async function main() {
+  const saveFlag = process.argv.includes('--save');
+
+  const pkgDirs = await findPackagesWithSrc();
+
+  const eslintResults: ESLintFileResult[] = [];
+  const sourceFiles: string[] = [];
+  for (const pkgDir of pkgDirs) {
+    eslintResults.push(...(await runEslintMetrics(pkgDir)));
+    sourceFiles.push(...(await collectSourceFiles(join(pkgDir, 'src'))));
+  }
   const lineCounts = new Map<string, number>();
   await Promise.all(
     sourceFiles.map(async (f) => {
@@ -162,7 +184,7 @@ async function main() {
   let functionCount = 0;
 
   for (const fileResult of eslintResults) {
-    const relPath = relative(PKG, fileResult.filePath);
+    const relPath = relative(ROOT, fileResult.filePath);
 
     for (const msg of fileResult.messages) {
       if (!msg.ruleId) continue;
@@ -242,7 +264,7 @@ async function main() {
 
   const hotspots: FileHotspot[] = [...hotspotFiles]
     .map((file) => {
-      const absPath = join(PKG, file);
+      const absPath = join(ROOT, file);
       return {
         file,
         lines: lineCounts.get(absPath) ?? 0,

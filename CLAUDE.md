@@ -50,8 +50,31 @@ Never bump `package.json` or create version tags manually — always use the scr
 
 ## Project Structure
 
+The repo is a bun workspace with two packages: `@diffstalker/core` (headless git state, no UI deps) and `diffstalker` (the terminal UI, published to npm). The cli imports core via subpath imports only (e.g. `@diffstalker/core/git/status`) — there is no barrel/bare specifier.
+
 ```
-src/
+packages/core/src/
+├── git/                    # Plain async functions wrapping simple-git / git CLI
+│   ├── status.ts           # getStatus, stage/unstage, hunk staging, commits
+│   ├── diff.ts             # Diff generation and parsing, hunk extraction
+│   ├── hunkTimes.ts        # Per-hunk edit timestamps
+│   ├── worktree.ts         # Worktree/bare-repo resolution and listing
+│   └── ignoreUtils.ts      # Gitignore checking
+├── managers/               # EventEmitter-based state managers
+│   ├── GitStateManager.ts  # Thin coordinator: workingTree/history/compare/remote per repo
+│   ├── WorkingTreeManager.ts # Status+diff state, git/working-dir watchers ('state-change')
+│   ├── HistoryManager.ts   # Commit history ('history-state-change')
+│   ├── CompareManager.ts   # Base-branch comparison ('compare-state-change')
+│   ├── RemoteOperationManager.ts # push/fetch/pull/stash/branch ops ('remote-state-change')
+│   ├── GitOperationQueue.ts # Serializes git operations per repo, refresh scheduling
+│   ├── FilePathWatcher.ts  # Watches the follow hook file
+│   └── ExplorerStateManager.ts # Explorer tree state
+├── services/
+│   └── commitService.ts    # Git commit execution
+├── utils/                  # logger, path utils, base-branch cache
+└── types/                  # Shared type declarations (remote)
+
+packages/cli/src/
 ├── index.ts                # Entry point: CLI args, terminal cleanup, crash handlers
 ├── App.ts                  # Main controller: screen, managers, listeners, render loop
 ├── KeyBindings.ts          # All keyboard bindings (screen-level), KeyBindingActions interface
@@ -77,26 +100,10 @@ src/
 │   ├── UIState.ts          # Panes, tabs, focus zones, selection indices, toggles
 │   ├── CommitFlowState.ts  # Commit panel state machine
 │   └── FocusRing.ts        # Tab/Shift-Tab focus zone cycling
-├── core/                   # Non-React state managers (EventEmitter-based)
-│   ├── GitStateManager.ts  # Thin coordinator: workingTree/history/compare/remote per repo
-│   ├── WorkingTreeManager.ts # Status+diff state, git/working-dir watchers ('state-change')
-│   ├── HistoryManager.ts   # Commit history ('history-state-change')
-│   ├── CompareManager.ts   # Base-branch comparison ('compare-state-change')
-│   ├── RemoteOperationManager.ts # push/fetch/pull/stash/branch ops ('remote-state-change')
-│   ├── GitOperationQueue.ts # Serializes git operations per repo, refresh scheduling
-│   ├── FilePathWatcher.ts  # Watches the follow hook file
-│   └── ExplorerStateManager.ts # Explorer tree state
 ├── ipc/
 │   └── CommandServer.ts    # Unix socket JSON command server (--socket, used for testing)
-├── services/
-│   └── commitService.ts    # Git commit execution
-├── git/                    # Plain async functions wrapping simple-git / git CLI
-│   ├── status.ts           # getStatus, stage/unstage, hunk staging, commits
-│   ├── diff.ts             # Diff generation and parsing, hunk extraction
-│   ├── worktree.ts         # Worktree/bare-repo resolution and listing
-│   └── ignoreUtils.ts      # Gitignore checking
 ├── utils/                  # Pure helpers (displayRows, layout math, ansi, paths...)
-└── types/                  # Shared type declarations (tabs, remote, neo-blessed shim)
+└── types/                  # Shared type declarations (tabs, neo-blessed shim)
 ```
 
 ## Key Patterns
@@ -136,8 +143,8 @@ When building UI structures with rows (diff views, file lists), always use a sin
 ## Common Tasks
 
 ### Adding a new git operation
-1. Add the plain function to `src/git/status.ts` (or `diff.ts`/`worktree.ts`)
-2. Add a method on the owning manager in `src/core/` that runs it through the queue and updates state with error handling
+1. Add the plain function to `packages/core/src/git/status.ts` (or `diff.ts`/`worktree.ts`)
+2. Add a method on the owning manager in `packages/core/src/managers/` that runs it through the queue and updates state with error handling
 3. Wire it from `App.ts` (action) and `KeyBindings.ts` (key)
 
 ### Adding a keybinding
@@ -165,11 +172,13 @@ When building UI structures with rows (diff views, file lists), always use a sin
 
 ### Pre-commit Hook
 
-A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 18 pre-existing sonarjs cognitive-complexity warnings are expected (0 errors).
+A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 19 pre-existing sonarjs cognitive-complexity warnings are expected (6 in packages/core + 13 in packages/cli), 0 errors.
 
 ### Architecture Layering (dependency-cruiser)
 
-`.dependency-cruiser.cjs` enforces that lower layers do not import higher layers:
+Each package has a `.dependency-cruiser.cjs` enforcing that lower layers do not import higher layers.
+
+packages/cli:
 
 ```
 index.ts
@@ -179,12 +188,20 @@ StagingOperations.ts, ModalController.ts, FollowMode.ts
   ↓
 ui/
   ↓
-state/    core/    ipc/
-  ↓         ↓
-git/  utils/  services/  types/  themes.ts  config.ts
+state/    ipc/
+  ↓
+utils/  types/  themes.ts  config.ts
 ```
 
-Circular dependencies are forbidden. Run `bun run deps` to check.
+packages/core:
+
+```
+managers/
+  ↓
+git/  utils/  services/  types/
+```
+
+Circular dependencies are forbidden. Run `bun run deps` to check (covers both packages).
 
 ## Interactive Testing with tmux
 

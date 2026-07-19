@@ -3,8 +3,6 @@
   "version": "0.4.0",
   "private": true,
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
     "./*": {
       "bun": "./src/*.ts",
@@ -15,12 +13,14 @@
   "scripts": {
     "build": "rm -rf dist && tsc",
     "lint": "eslint src/ && depcruise src/ --config .dependency-cruiser.cjs",
+    "lint:fix": "eslint src/ --fix",
     "deps": "depcruise src/ --config .dependency-cruiser.cjs",
     "test": "bun test src/*.test.ts src/**/*.test.ts",
+    "format": "prettier --write src/",
     "format:check": "prettier --check src/"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.10.0"
   },
   "dependencies": {
     "chokidar": "^4.0.3",

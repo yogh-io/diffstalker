@@ -1,51 +1,45 @@
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
   forbidden: [
-    // --- Bottom layer: git/, utils/, services/ must not reach up ---
-    {
-      name: "git-no-upper-layers",
-      comment: "git/ must not import core/, state/, ui/, or ipc/",
-      severity: "error",
-      from: { path: "^src/git/" },
-      to: { path: "^src/(core|state|ui|ipc)/" },
-    },
+    // --- Bottom layer: utils/ and types/ must not reach up ---
     {
       name: "utils-no-upper-layers",
-      comment: "utils/ must not import core/, state/, ui/, or ipc/",
+      comment: "utils/ must not import state/, ipc/, or ui/",
       severity: "error",
       from: { path: "^src/utils/" },
-      to: { path: "^src/(core|state|ui|ipc)/" },
+      to: { path: "^src/(state|ipc|ui)/" },
     },
     {
-      name: "services-no-upper-layers",
-      comment: "services/ must not import core/, state/, ui/, or ipc/",
+      name: "types-no-upper-layers",
+      comment: "types/ must not import state/, ipc/, ui/, or utils/",
       severity: "error",
-      from: { path: "^src/services/" },
-      to: { path: "^src/(core|state|ui|ipc)/" },
+      from: { path: "^src/types/" },
+      to: { path: "^src/(state|ipc|ui|utils)/" },
     },
 
-    // --- Middle layer: core/ and state/ must not reach into each other or up ---
+    // --- Middle layer: state/ and ipc/ must not import ui/ or each other ---
     {
-      name: "core-no-state-or-ui",
-      comment: "core/ must not import state/ or ui/",
-      severity: "error",
-      from: { path: "^src/core/" },
-      to: { path: "^src/(state|ui)/" },
-    },
-    {
-      name: "state-no-core-or-ui",
-      comment: "state/ must not import core/ or ui/",
+      name: "state-no-ui-or-ipc",
+      comment: "state/ must not import ui/ or ipc/",
       severity: "error",
       from: { path: "^src/state/" },
-      to: { path: "^src/(core|ui)/" },
+      to: { path: "^src/(ui|ipc)/" },
+    },
+    {
+      name: "ipc-no-ui-or-state",
+      comment: "ipc/ must not import ui/ or state/",
+      severity: "error",
+      from: { path: "^src/ipc/" },
+      to: { path: "^src/(ui|state)/" },
     },
 
-    // --- UI layer must not import top-level orchestrators ---
+    // --- Only top-level orchestrators may import top-level orchestrators ---
     {
-      name: "ui-no-top-level",
-      comment: "ui/ must not import App, index, KeyBindings, MouseHandlers, NavigationController, or FollowMode",
+      name: "lower-layers-no-top-level",
+      comment:
+        "ui/, state/, ipc/, utils/, and types/ must not import App, index, KeyBindings, MouseHandlers, NavigationController, StagingOperations, ModalController, or FollowMode",
       severity: "error",
-      from: { path: "^src/ui/" },
+      from: { path: "^src/(ui|state|ipc|utils|types)/" },
       to: {
         path: "^src/(App|index|KeyBindings|MouseHandlers|NavigationController|StagingOperations|ModalController|FollowMode)\\.ts$",
       },
