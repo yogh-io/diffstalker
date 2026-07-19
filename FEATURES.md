@@ -507,8 +507,9 @@ The app uses a **focus zone** system for full keyboard-only navigation with `Tab
 - Any opened or followed path is normalized to its containing worktree root, so
   launching from (or following a file inside) a subdirectory or a linked
   worktree resolves to the correct working tree automatically
-- Opening a bare-repo container (the parent of a `.bare/` + worktrees layout)
-  prompts for which worktree to open instead of failing
+- Opening or following a bare-repo container (the parent of a `.bare/` +
+  worktrees layout) automatically opens its most recently active worktree
+  (by git index/HEAD activity) instead of prompting for a choice
 - `W` (Shift+W) switches between the worktrees of the current repository
 
 ### Large Diffs

@@ -60,6 +60,70 @@ export async function listWorktrees(anyRepoPath: string): Promise<WorktreeInfo[]
 }
 
 /**
+ * Pick the worktree to open when a bare container is targeted: the one with
+ * the most recent git activity, approximated by the mtime of the worktree's
+ * git `index`/`HEAD` (touched by staging, commits, and checkouts), falling
+ * back to the working directory's mtime when the git dir can't be resolved.
+ * Bare entries are skipped.
+ *
+ * Returns null when the list contains no usable worktree.
+ */
+export function pickDefaultWorktree(worktrees: WorktreeInfo[]): WorktreeInfo | null {
+  let best: WorktreeInfo | null = null;
+  let bestTime = -Infinity;
+  for (const wt of worktrees) {
+    if (wt.isBare) continue;
+    const time = lastGitActivity(wt.path);
+    if (time > bestTime) {
+      bestTime = time;
+      best = wt;
+    }
+  }
+  return best;
+}
+
+/**
+ * Most recent mtime among the worktree's git `index` and `HEAD`, or of the
+ * working directory itself when the git dir can't be resolved. -Infinity when
+ * nothing can be stat'ed.
+ */
+function lastGitActivity(worktreePath: string): number {
+  const gitDir = resolveWorktreeGitDir(worktreePath);
+  const candidates = gitDir
+    ? [path.join(gitDir, 'index'), path.join(gitDir, 'HEAD')]
+    : [worktreePath];
+
+  let latest = -Infinity;
+  for (const candidate of candidates) {
+    try {
+      const mtime = fs.statSync(candidate).mtimeMs;
+      if (mtime > latest) latest = mtime;
+    } catch {
+      // Candidate missing (e.g. no index yet) — skip it.
+    }
+  }
+  return latest;
+}
+
+/**
+ * Resolve a worktree's git dir without spawning git: `.git` itself when it is
+ * a directory (a plain repo), or the `gitdir: <path>` target when `.git` is a
+ * file (linked worktrees of a bare layout).
+ */
+function resolveWorktreeGitDir(worktreePath: string): string | null {
+  const dotGit = path.join(worktreePath, '.git');
+  try {
+    if (fs.statSync(dotGit).isDirectory()) return dotGit;
+    const match = fs.readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+)$/m);
+    if (!match) return null;
+    const target = match[1].trim();
+    return path.isAbsolute(target) ? target : path.resolve(worktreePath, target);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Parse the output of `git worktree list --porcelain` into structured entries.
  * Records are separated by blank lines; each starts with a `worktree <path>`
  * line followed by `HEAD`, `branch`, `detached`, or `bare` attribute lines.

@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { parseWorktreePorcelain } from './worktree.js';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { afterEach, describe, it, expect } from 'vitest';
+import { parseWorktreePorcelain, pickDefaultWorktree, type WorktreeInfo } from './worktree.js';
 
 describe('parseWorktreePorcelain', () => {
   it('parses a bare-repo layout with several worktrees', () => {
@@ -40,5 +43,76 @@ describe('parseWorktreePorcelain', () => {
 
   it('returns an empty array for empty output', () => {
     expect(parseWorktreePorcelain('')).toEqual([]);
+  });
+});
+
+describe('pickDefaultWorktree', () => {
+  let root: string;
+
+  afterEach(() => {
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  /**
+   * Create a fake linked worktree: a working dir whose `.git` file points at
+   * a gitdir under `<root>/.bare/worktrees/<name>` containing an index whose
+   * mtime is `indexAgeMs` in the past.
+   */
+  function makeWorktree(name: string, indexAgeMs: number): WorktreeInfo {
+    const worktreePath = path.join(root, name);
+    const gitDir = path.join(root, '.bare', 'worktrees', name);
+    fs.mkdirSync(worktreePath, { recursive: true });
+    fs.mkdirSync(gitDir, { recursive: true });
+    fs.writeFileSync(path.join(worktreePath, '.git'), `gitdir: ${gitDir}\n`);
+    fs.writeFileSync(path.join(gitDir, 'index'), '');
+    const mtime = new Date(Date.now() - indexAgeMs);
+    fs.utimesSync(path.join(gitDir, 'index'), mtime, mtime);
+    return { path: worktreePath, branch: name, head: 'abc123', isBare: false };
+  }
+
+  it('picks the worktree with the most recent git index activity', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-wt-'));
+    const stale = makeWorktree('stale', 60 * 60 * 1000);
+    const fresh = makeWorktree('fresh', 0);
+    const older = makeWorktree('older', 24 * 60 * 60 * 1000);
+
+    expect(pickDefaultWorktree([stale, fresh, older])).toBe(fresh);
+  });
+
+  it('skips bare entries', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-wt-'));
+    const only = makeWorktree('only', 0);
+    const bare: WorktreeInfo = {
+      path: path.join(root, '.bare'),
+      branch: null,
+      head: null,
+      isBare: true,
+    };
+
+    expect(pickDefaultWorktree([bare, only])).toBe(only);
+  });
+
+  it('falls back to the working directory mtime when there is no git dir', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-wt-'));
+    // No .git at all — only the directories themselves exist.
+    const oldDir = path.join(root, 'old');
+    const newDir = path.join(root, 'new');
+    fs.mkdirSync(oldDir);
+    fs.mkdirSync(newDir);
+    const past = new Date(Date.now() - 60 * 60 * 1000);
+    fs.utimesSync(oldDir, past, past);
+
+    const entries: WorktreeInfo[] = [
+      { path: oldDir, branch: 'old', head: 'a', isBare: false },
+      { path: newDir, branch: 'new', head: 'b', isBare: false },
+    ];
+    expect(pickDefaultWorktree(entries)?.path).toBe(newDir);
+  });
+
+  it('returns null for an empty list or bare-only list', () => {
+    expect(pickDefaultWorktree([])).toBeNull();
+    expect(
+      pickDefaultWorktree([{ path: '/x/.bare', branch: null, head: null, isBare: true }])
+    ).toBeNull();
   });
 });

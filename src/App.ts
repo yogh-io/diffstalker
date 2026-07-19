@@ -28,7 +28,7 @@ import {
   removeManagerForRepo,
 } from './core/GitStateManager.js';
 import { Config, saveConfig, addRecentRepo } from './config.js';
-import { resolveWorktreeRoot, listWorktrees, type WorktreeInfo } from './git/worktree.js';
+import { resolveWorktreeRoot, listWorktrees, pickDefaultWorktree } from './git/worktree.js';
 import { getIndexForCategoryPosition } from './utils/fileCategories.js';
 import {
   buildFlatFileList,
@@ -289,9 +289,10 @@ export class App {
 
     // The git manager is created in start(), once the initial path has been
     // normalized to a worktree root. A bare-repo container is never opened
-    // directly (start() prompts for a worktree instead), which avoids running
-    // git commands against a directory that has no working tree. Follow mode
-    // may create the manager earlier if the watched file already names a repo.
+    // directly (it resolves to its most recently active worktree), which
+    // avoids running git commands against a directory that has no working
+    // tree. Follow mode may create the manager earlier if the watched file
+    // already names a repo.
 
     // Initial render
     this.render();
@@ -456,14 +457,7 @@ export class App {
     // file within the active worktree stays put while a path in a different
     // worktree switches — even when the current repo is a parent directory.
     const target = await this.resolveRepoTarget(newPath);
-    if (target.kind === 'worktree') {
-      this.applyRepoSwitch(target.path, { stopFollow: false });
-    } else if (target.kind === 'bare') {
-      // A bare container was followed — we can't guess a worktree, so ask.
-      this.modals.openWorktreePicker(target.worktrees, this.repoPath);
-    } else {
-      this.applyRepoSwitch(newPath, { stopFollow: false });
-    }
+    this.applyRepoSwitch(target.path, { stopFollow: false });
   }
 
   private handleFollowFileNavigate(rawContent: string): void {
@@ -483,33 +477,24 @@ export class App {
 
   private async switchToRepo(newPath: string): Promise<void> {
     const target = await this.resolveRepoTarget(newPath);
-    if (target.kind === 'worktree') {
-      this.applyRepoSwitch(target.path, { stopFollow: true });
-    } else if (target.kind === 'bare') {
-      this.modals.openWorktreePicker(target.worktrees, this.repoPath);
-    } else {
-      this.applyRepoSwitch(newPath, { stopFollow: true });
-    }
+    this.applyRepoSwitch(target.path, { stopFollow: true });
   }
 
   /**
    * Classify an arbitrary path into what diffstalker should open:
-   * - `worktree`: a normal working tree (its resolved root)
-   * - `bare`: a bare-repo container with worktrees to choose from
+   * - `worktree`: a normal working tree (its resolved root). A bare-repo
+   *   container resolves to its most recently active worktree instead of
+   *   forcing a choice (Shift+W switches afterwards).
    * - `none`: not a git repository (open as-is; the UI shows "not a repo")
    */
   private async resolveRepoTarget(
     rawPath: string
-  ): Promise<
-    | { kind: 'worktree'; path: string }
-    | { kind: 'bare'; worktrees: WorktreeInfo[] }
-    | { kind: 'none'; path: string }
-  > {
+  ): Promise<{ kind: 'worktree'; path: string } | { kind: 'none'; path: string }> {
     const root = await resolveWorktreeRoot(rawPath);
     if (root) return { kind: 'worktree', path: root };
 
-    const worktrees = (await listWorktrees(rawPath)).filter((w) => !w.isBare);
-    if (worktrees.length > 0) return { kind: 'bare', worktrees };
+    const picked = pickDefaultWorktree(await listWorktrees(rawPath));
+    if (picked) return { kind: 'worktree', path: picked.path };
 
     return { kind: 'none', path: rawPath };
   }
@@ -533,19 +518,15 @@ export class App {
   }
 
   /**
-   * Normalize the startup repo path to its worktree root, or prompt for a
-   * worktree when launched against a bare-repo container.
+   * Normalize the startup repo path to its worktree root. A bare-repo
+   * container resolves to its most recently active worktree, so a git manager
+   * is never pointed at a directory without a working tree.
    */
   private async normalizeInitialRepo(): Promise<void> {
     // Follow mode may have already established the repo from the watched file.
     if (this.gitManager) return;
 
     const target = await this.resolveRepoTarget(this.repoPath);
-    if (target.kind === 'bare') {
-      // Never point a git manager at a bare container; ask which worktree.
-      this.modals.openWorktreePicker(target.worktrees, this.repoPath);
-      return;
-    }
     if (target.kind === 'worktree') {
       this.repoPath = target.path;
     }
