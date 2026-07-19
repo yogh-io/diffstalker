@@ -1,0 +1,76 @@
+{
+  "name": "diffstalker",
+  "version": "0.4.0",
+  "description": "Terminal application that displays git diff/status for directories",
+  "author": "yogh-io",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yogh-io/diffstalker.git"
+  },
+  "homepage": "https://github.com/yogh-io/diffstalker#readme",
+  "bugs": {
+    "url": "https://github.com/yogh-io/diffstalker/issues"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "diffstalker": "bin/diffstalker"
+  },
+  "files": [
+    "dist",
+    "!dist/bundle",
+    "bin",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "build": "rm -rf dist && tsc",
+    "build:prod": "bun run build && bun build dist/index.js --outfile dist/index.js --minify --target node --packages external",
+    "bundle": "bun run build:prod && bun build dist/index.js --outdir dist/bundle --minify --target node --external neo-blessed",
+    "start": "bun dist/index.js",
+    "start:bundle": "bun dist/bundle/index.js",
+    "test": "bun test src/*.test.ts src/**/*.test.ts",
+    "test:watch": "bun test --watch src/*.test.ts src/**/*.test.ts",
+    "lint": "eslint src/ && depcruise src/ --config .dependency-cruiser.cjs",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/",
+    "deps": "depcruise src/ --config .dependency-cruiser.cjs",
+    "metrics": "bun ../../scripts/collect-metrics.ts",
+    "metrics:snapshot": "bun ../../scripts/collect-metrics.ts --save",
+    "prepublishOnly": "bun run build:prod"
+  },
+  "keywords": [
+    "git",
+    "diff",
+    "terminal",
+    "tui",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "emphasize": "^7.0.0",
+    "fast-diff": "^1.3.0",
+    "fzf": "^0.5.2",
+    "ignore": "^7.0.5",
+    "neo-blessed": "0.2.0",
+    "simple-git": "^3.27.0",
+    "string-width": "^8.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.2",
+    "@types/blessed": "^0.1.27",
+    "@types/node": "^22.10.7",
+    "dependency-cruiser": "^17.3.7",
+    "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-sonarjs": "^3.0.6",
+    "prettier": "^3.8.0",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.53.1"
+  }
+}

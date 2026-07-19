@@ -3,7 +3,8 @@ import { readdir, readFile, mkdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..');
-const SRC = join(ROOT, 'src');
+const PKG = join(ROOT, 'packages', 'cli');
+const SRC = join(PKG, 'src');
 const METRICS_DIR = join(ROOT, 'metrics');
 
 interface ESLintMessage {
@@ -121,7 +122,7 @@ async function main() {
   // Run ESLint with metrics config
   const eslintBin = join(ROOT, 'node_modules', '.bin', 'eslint');
   const proc = Bun.spawn([eslintBin, '--config', 'eslint.metrics.js', '--format', 'json', 'src/'], {
-    cwd: ROOT,
+    cwd: PKG,
     stderr: 'pipe',
   });
   const rawOutput = await new Response(proc.stdout).text();
@@ -161,7 +162,7 @@ async function main() {
   let functionCount = 0;
 
   for (const fileResult of eslintResults) {
-    const relPath = relative(ROOT, fileResult.filePath);
+    const relPath = relative(PKG, fileResult.filePath);
 
     for (const msg of fileResult.messages) {
       if (!msg.ruleId) continue;
@@ -241,7 +242,7 @@ async function main() {
 
   const hotspots: FileHotspot[] = [...hotspotFiles]
     .map((file) => {
-      const absPath = join(ROOT, file);
+      const absPath = join(PKG, file);
       return {
         file,
         lines: lineCounts.get(absPath) ?? 0,

@@ -23,12 +23,14 @@ diffstalker is a terminal UI for interactive git staging and committing, built w
 
 ## Build Commands
 
+The app lives in the `packages/cli` workspace; root scripts delegate there, so these all work from the repo root:
+
 ```bash
 bun run dev           # Run with bun --watch (development)
 bun run build         # Clean dist/ and compile TypeScript
 bun run build:prod    # Build + minify dist/index.js (what npm consumers get)
-bun start             # Run compiled version
-bun test src/*.test.ts src/**/*.test.ts   # Run the test suite (or: bun run test)
+bun run start         # Run compiled version
+bun run test          # Run the test suite (or: cd packages/cli && bun test src/*.test.ts src/**/*.test.ts)
 bun run lint          # ESLint + dependency-cruiser
 bun run deps          # Dependency-cruiser only
 bun run metrics       # Code quality metrics report (scripts/collect-metrics.ts)

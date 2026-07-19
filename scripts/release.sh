@@ -17,8 +17,8 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
-# Read current version
-current=$(node -p "require('./package.json').version")
+# Read current version (published package lives in packages/cli)
+current=$(node -p "require('./packages/cli/package.json').version")
 
 # Compute next version
 IFS='.' read -r ma mi pa <<EOF
@@ -43,13 +43,13 @@ echo "$current -> $next"
 # Update package.json
 node -e "
   const fs = require('fs');
-  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  const pkg = JSON.parse(fs.readFileSync('packages/cli/package.json', 'utf8'));
   pkg.version = '$next';
-  fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+  fs.writeFileSync('packages/cli/package.json', JSON.stringify(pkg, null, 2) + '\n');
 "
 
 # Commit, tag, push
-git add package.json
+git add packages/cli/package.json
 git commit -m "Bump version to $next"
 git tag "v$next"
 git push

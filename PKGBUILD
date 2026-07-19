@@ -24,7 +24,7 @@ build() {
     bun install
     bun run build:prod
     # Tree-shake everything except neo-blessed (which has dynamic requires)
-    bun build dist/index.js --outdir dist/bundle --minify --target node --external neo-blessed
+    bun build packages/cli/dist/index.js --outdir packages/cli/dist/bundle --minify --target node --external neo-blessed
 }
 
 package() {
@@ -32,7 +32,7 @@ package() {
 
     # Install to /usr/lib/diffstalker (~2MB total)
     install -dm755 "$pkgdir/usr/lib/diffstalker"
-    cp dist/bundle/index.js "$pkgdir/usr/lib/diffstalker/"
+    cp packages/cli/dist/bundle/index.js "$pkgdir/usr/lib/diffstalker/"
     # Only neo-blessed needed at runtime (everything else is bundled)
     mkdir -p "$pkgdir/usr/lib/diffstalker/node_modules"
     cp -r node_modules/neo-blessed "$pkgdir/usr/lib/diffstalker/node_modules/"

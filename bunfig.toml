@@ -1,0 +1,5 @@
+# Bun 1.3+ defaults to the "isolated" linker in workspaces. Keep the hoisted
+# layout (same as the pre-monorepo single-package install): src imports
+# `lowlight`, a transitive dep of `emphasize`, which only resolves when hoisted.
+[install]
+linker = "hoisted"

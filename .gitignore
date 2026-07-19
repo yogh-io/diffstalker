@@ -1,8 +1,10 @@
 node_modules/
 dist/
+packages/cli/dist/
 *.log
 .DS_Store
 test-fixtures/
+**/test-fixtures/
 
 # makepkg artifacts
 diffstalker-git/
