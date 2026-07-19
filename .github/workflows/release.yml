@@ -24,6 +24,10 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - run: bun install --frozen-lockfile
+      # Type-check all packages (tsc -b: core -> cli, core -> daemon).
+      # bun test strips types without checking, so this is the only gate
+      # that catches type errors in core/daemon before publish.
+      - run: bun run build
       - run: bun run build:prod
         working-directory: packages/cli
       - run: bun run test

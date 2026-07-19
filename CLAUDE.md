@@ -20,10 +20,11 @@ diffstalker is a terminal UI for interactive git staging and committing, built w
 - **emphasize** for syntax highlighting in the explorer
 - **fzf** for file finder matching
 - Event-driven state management with Node `EventEmitter` (no React)
+- **Node `http`** for the daemon (REST + SSE over `@diffstalker/core`, no framework)
 
 ## Build Commands
 
-The app lives in the `packages/cli` workspace; root scripts delegate there, so these all work from the repo root:
+The repo has three packages (`packages/core`, `packages/cli`, `packages/daemon`); root scripts delegate to them, so these all work from the repo root (`dev`/`start` target the cli):
 
 ```bash
 bun run dev           # Run with bun --watch (development)
@@ -35,6 +36,10 @@ bun run lint          # ESLint + dependency-cruiser
 bun run deps          # Dependency-cruiser only
 bun run metrics       # Code quality metrics report (scripts/collect-metrics.ts)
 ```
+
+### Running the daemon
+
+`diffstalkerd` (packages/daemon) serves the core git state over REST + SSE. Run with `bun packages/daemon/src/index.ts` in development, or `node packages/daemon/dist/index.js` after a build. By default it binds a unix socket at `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock` (0600) and refuses to start if `XDG_RUNTIME_DIR` is unset; use `--socket PATH` or `--port N` to override. See `packages/daemon/README.md`.
 
 ## Releasing
 
@@ -50,7 +55,7 @@ Never bump `package.json` or create version tags manually — always use the scr
 
 ## Project Structure
 
-The repo is a bun workspace with two packages: `@diffstalker/core` (headless git state, no UI deps) and `diffstalker` (the terminal UI, published to npm). The cli imports core via subpath imports only (e.g. `@diffstalker/core/git/status`) — there is no barrel/bare specifier.
+The repo is a bun workspace with three packages: `@diffstalker/core` (headless git state, no UI deps), `diffstalker` (the terminal UI, published to npm), and `@diffstalker/daemon` (diffstalkerd, private and bin-only: Node http REST + SSE over core). The cli and daemon import core via subpath imports only (e.g. `@diffstalker/core/git/status`) — there is no barrel/bare specifier.
 
 ```
 packages/core/src/
@@ -104,6 +109,14 @@ packages/cli/src/
 │   └── CommandServer.ts    # Unix socket JSON command server (--socket, used for testing)
 ├── utils/                  # Pure helpers (displayRows, layout math, ansi, paths...)
 └── types/                  # Shared type declarations (tabs, neo-blessed shim)
+
+packages/daemon/src/
+├── index.ts                # Entry point: parseArgs, socket resolution, signals
+├── server.ts               # createDaemon: http server, routes, listen/close
+├── router.ts               # Method+path router, JSON bodies, HttpError -> {error}
+├── repoRegistry.ts         # Open repos by path, stable ids, refcounting
+├── sse.ts                  # Per-repo SSE hub fanning out state-change events
+└── serialize.ts            # Wire encoders (shared state, Dates/Maps to JSON)
 ```
 
 ## Key Patterns
@@ -201,7 +214,7 @@ managers/
 git/  utils/  services/  types/
 ```
 
-Circular dependencies are forbidden. Run `bun run deps` to check (covers both packages).
+Circular dependencies are forbidden. Run `bun run deps` to check (covers all packages).
 
 ## Interactive Testing with tmux
 

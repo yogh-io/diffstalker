@@ -14,21 +14,15 @@ export default tseslint.config(
       // Covered by @typescript-eslint/no-unused-vars
       'sonarjs/unused-import': 'off',
       'sonarjs/no-unused-vars': 'off',
-      // This is a git CLI tool — executing OS commands is core functionality
+      // Test helpers exec git to build fixture repos (test-helpers.ts)
       'sonarjs/os-command': 'off',
       'sonarjs/no-os-command-from-path': 'off',
-      // We intentionally process ANSI escape sequences
-      'no-control-regex': 'off',
-      'sonarjs/no-control-regex': 'off',
       // Tracked via metrics, not a lint gate
       'sonarjs/cognitive-complexity': 'warn',
-      // Only simple utility patterns (blessed tag stripping, ANSI); no user input
-      'sonarjs/slow-regex': 'off',
-      // Intentional empty catches for graceful fallbacks (file reads, git ops)
-      'sonarjs/no-ignored-exceptions': 'off',
       // The daemon split lands in slices; TODO markers track the later ones
+      // (e.g. the bearer-token auth TODO in server.ts)
       'sonarjs/todo-tag': 'off',
-      // Standard loop idiom (args[++i]) is clear; rule is too strict
+      // parseArgs uses the standard argv[++i] flag-value idiom
       'sonarjs/updated-loop-counter': 'off',
       // These catch real bugs — enforce as errors, not tracked warnings
       'sonarjs/no-dead-store': 'error',

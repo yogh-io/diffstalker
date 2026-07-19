@@ -4,7 +4,6 @@
   "description": "diffstalker daemon: REST API + SSE over @diffstalker/core",
   "private": true,
   "type": "module",
-  "main": "dist/index.js",
   "bin": {
     "diffstalkerd": "bin/diffstalkerd"
   },
