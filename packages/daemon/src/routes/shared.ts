@@ -13,13 +13,17 @@ import type { RemoteOperationState } from '@diffstalker/core/managers/RemoteOper
 import type { WorkingTreeManager } from '@diffstalker/core/managers/WorkingTreeManager';
 import { HttpError, sendJson } from '../router.js';
 import type { RepoRegistry, RepoHandle } from '../repoRegistry.js';
-import type { SseHub } from '../sse.js';
+import type { SseHub, DaemonEventHub } from '../sse.js';
+import type { FollowController } from '../follow.js';
 import { serializeSharedState } from '../serialize.js';
 
 /** Everything a route module needs, injected by createDaemon. */
 export interface RouteDeps {
   registry: RepoRegistry;
   sse: SseHub;
+  daemonEvents: DaemonEventHub;
+  /** Null when follow mode is disabled (--no-follow). */
+  follow: FollowController | null;
 }
 
 /** Resolve a repo id to its handle or 404. */

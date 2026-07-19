@@ -10,7 +10,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { runtimeDir } from '@diffstalker/core/utils/xdg';
+import { runtimeDir, cacheDir } from '@diffstalker/core/utils/xdg';
 import { createDaemon, ListenOptions } from './server.js';
 
 const SOCKET_NAME = 'diffstalkerd.sock';
@@ -23,11 +23,14 @@ const HELP = `diffstalkerd — diffstalker daemon (REST API + SSE over @diffstal
 Usage: diffstalkerd [options]
 
 Options:
-  --socket PATH   Bind a unix socket at PATH
-                  (default: $XDG_RUNTIME_DIR/diffstalker/${SOCKET_NAME})
-  --port N        Bind TCP port N instead of a unix socket
-  --host H        Host to bind with --port (default: 127.0.0.1)
-  --help, -h      Show this help
+  --socket PATH        Bind a unix socket at PATH
+                       (default: $XDG_RUNTIME_DIR/diffstalker/${SOCKET_NAME})
+  --port N             Bind TCP port N instead of a unix socket
+  --host H             Host to bind with --port (default: 127.0.0.1)
+  --follow-file PATH   Hook file to follow (created when missing)
+                       (default: ~/.cache/diffstalker/target)
+  --no-follow          Disable follow mode (no hook-file watcher)
+  --help, -h           Show this help
 `;
 
 function expectValue(argv: string[], index: number, flag: string): string {
@@ -38,8 +41,15 @@ function expectValue(argv: string[], index: number, flag: string): string {
   return value;
 }
 
-export function parseArgs(argv: string[]): ListenOptions | 'help' {
-  const options: ListenOptions = {};
+export interface CliOptions extends ListenOptions {
+  /** Explicit hook file from --follow-file. */
+  followFile?: string;
+  /** --no-follow: no hook-file watcher at all. */
+  noFollow?: boolean;
+}
+
+export function parseArgs(argv: string[]): CliOptions | 'help' {
+  const options: CliOptions = {};
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -59,6 +69,12 @@ export function parseArgs(argv: string[]): ListenOptions | 'help' {
       case '--host':
         options.host = expectValue(argv, ++i, '--host');
         break;
+      case '--follow-file':
+        options.followFile = expectValue(argv, ++i, '--follow-file');
+        break;
+      case '--no-follow':
+        options.noFollow = true;
+        break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -66,6 +82,9 @@ export function parseArgs(argv: string[]): ListenOptions | 'help' {
 
   if (options.socketPath !== undefined && options.port !== undefined) {
     throw new Error('--socket and --port are mutually exclusive');
+  }
+  if (options.followFile !== undefined && options.noFollow) {
+    throw new Error('--follow-file and --no-follow are mutually exclusive');
   }
   return options;
 }
@@ -104,7 +123,7 @@ function applyListenDefaults(options: ListenOptions): void {
 async function main(): Promise<void> {
   process.title = 'diffstalkerd';
 
-  let options: ListenOptions | 'help';
+  let options: CliOptions | 'help';
   try {
     options = parseArgs(process.argv.slice(2));
   } catch (err) {
@@ -120,7 +139,13 @@ async function main(): Promise<void> {
 
   applyListenDefaults(options);
 
-  const daemon = createDaemon();
+  // Follow is on by default: the daemon owns the hook file the TUI's follow
+  // mode uses today. --no-follow disables it entirely.
+  const followFile = options.noFollow
+    ? undefined
+    : (options.followFile ?? path.join(cacheDir(), 'target'));
+
+  const daemon = createDaemon({ followFile });
   await daemon.listen(options);
   // Status lines go to stderr: stdout stays clean for piping, and journald
   // captures stderr just the same.
@@ -130,6 +155,9 @@ async function main(): Promise<void> {
     console.error(`diffstalkerd listening on unix socket ${options.socketPath}`);
   } else {
     console.error(`diffstalkerd listening on ${options.host ?? '127.0.0.1'}:${options.port}`);
+  }
+  if (followFile) {
+    console.error(`diffstalkerd following ${followFile}`);
   }
 
   let shuttingDown = false;

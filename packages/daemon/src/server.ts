@@ -17,7 +17,8 @@ import * as net from 'node:net';
 import type { Socket } from 'node:net';
 import { Router } from './router.js';
 import { RepoRegistry } from './repoRegistry.js';
-import { SseHub } from './sse.js';
+import { SseHub, DaemonEventHub } from './sse.js';
+import { FollowController } from './follow.js';
 import type { RouteDeps } from './routes/shared.js';
 import { registerHealthRoutes } from './routes/health.js';
 import { registerRepoRoutes } from './routes/repos.js';
@@ -25,6 +26,7 @@ import { registerWorkingTreeRoutes } from './routes/workingTree.js';
 import { registerHistoryCompareRoutes } from './routes/historyCompare.js';
 import { registerRemoteRoutes } from './routes/remote.js';
 import { registerExplorerRoutes } from './routes/explorer.js';
+import { registerDaemonRoutes } from './routes/daemon.js';
 
 export interface ListenOptions {
   socketPath?: string;
@@ -38,6 +40,17 @@ export interface ListenOptions {
 export interface Daemon {
   listen(options: ListenOptions): Promise<void>;
   close(): Promise<void>;
+}
+
+export interface DaemonOptions {
+  /**
+   * Hook file to follow: the daemon watches it (creating it when missing)
+   * and auto-opens whatever repo path is written to it, broadcasting
+   * follow-change on the daemon-scope SSE channel. Omit to disable follow
+   * mode entirely (no watcher is created) — the CLI entry point supplies
+   * the default path unless --no-follow is given.
+   */
+  followFile?: string;
 }
 
 /** True when something accepts connections on the unix socket path. */
@@ -63,18 +76,33 @@ function isSocketLive(socketPath: string): Promise<boolean> {
   });
 }
 
-export function createDaemon(): Daemon {
-  const registry = new RepoRegistry();
+export function createDaemon(options: DaemonOptions = {}): Daemon {
   const sse = new SseHub();
+  const daemonEvents = new DaemonEventHub();
+  const registry = new RepoRegistry({
+    onOpened: (handle) => daemonEvents.broadcast('repo-opened', { id: handle.id, path: handle.path }),
+    onClosed: (id) => {
+      // Real dispose (refcount hit zero): drop the repo's own SSE channel
+      // and tell daemon-channel subscribers the repo list changed.
+      sse.closeRepo(id);
+      daemonEvents.broadcast('repo-closed', { id });
+    },
+  });
+  const follow = options.followFile
+    ? new FollowController(registry, daemonEvents, options.followFile)
+    : null;
   const router = new Router();
 
-  const deps: RouteDeps = { registry, sse };
+  const deps: RouteDeps = { registry, sse, daemonEvents, follow };
   registerHealthRoutes(router);
   registerRepoRoutes(router, deps);
   registerWorkingTreeRoutes(router, deps);
   registerHistoryCompareRoutes(router, deps);
   registerRemoteRoutes(router, deps);
   registerExplorerRoutes(router, deps);
+  registerDaemonRoutes(router, deps);
+
+  follow?.start();
 
   const server = http.createServer((req, res) => {
     // handle() never rejects (it converts errors to JSON responses), but
@@ -132,7 +160,11 @@ export function createDaemon(): Daemon {
     },
 
     close(): Promise<void> {
+      // Follow first: stops the watcher and releases its follow-ref before
+      // the hubs and registry are torn down.
+      follow?.dispose();
       sse.destroy();
+      daemonEvents.destroy();
       registry.disposeAll();
       for (const socket of sockets) {
         socket.destroy();

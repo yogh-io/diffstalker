@@ -4,7 +4,7 @@ import { Router, HttpError, sendJson } from '../router.js';
 import { requireRepo, requireStringField, type RouteDeps } from './shared.js';
 
 export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
-  const { registry, sse } = deps;
+  const { registry } = deps;
 
   router.get('/repos', ({ res }) => {
     const repos = registry.listRepos().map((handle) => ({
@@ -35,10 +35,9 @@ export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
 
   router.delete('/repos/:id', ({ params, res }) => {
     requireRepo(registry, params.id);
-    const removed = registry.closeRepo(params.id);
-    if (removed) {
-      sse.closeRepo(params.id);
-    }
+    // On actual dispose the registry's onClosed callback tears down the
+    // repo's SSE channel and broadcasts repo-closed on the daemon channel.
+    registry.closeRepo(params.id);
     sendJson(res, 200, {});
   });
 }

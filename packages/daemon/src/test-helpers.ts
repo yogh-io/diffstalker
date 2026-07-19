@@ -72,3 +72,53 @@ export function gitExec(repoPath: string, command: string): string {
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
   });
 }
+
+/** Incremental SSE reader with per-event timeout. */
+export class SseReader {
+  private reader: ReadableStreamDefaultReader<Uint8Array>;
+  private decoder = new TextDecoder();
+  private buffer = '';
+
+  constructor(body: ReadableStream<Uint8Array>) {
+    this.reader = body.getReader();
+  }
+
+  async next(timeoutMs: number): Promise<{ event: string; data: string }> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const parsed = this.takeEvent();
+      if (parsed) return parsed;
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error('Timed out waiting for SSE event');
+
+      const result = await Promise.race([
+        this.reader.read(),
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), remaining)),
+      ]);
+      if (result === 'timeout') throw new Error('Timed out waiting for SSE event');
+      if (result.done) throw new Error('SSE stream ended unexpectedly');
+      this.buffer += this.decoder.decode(result.value, { stream: true });
+    }
+  }
+
+  private takeEvent(): { event: string; data: string } | null {
+    const end = this.buffer.indexOf('\n\n');
+    if (end === -1) return null;
+    const block = this.buffer.slice(0, end);
+    this.buffer = this.buffer.slice(end + 2);
+
+    let event = '';
+    let data = '';
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event: ')) event = line.slice(7);
+      else if (line.startsWith('data: ')) data = line.slice(6);
+    }
+    if (!event && !data) return this.takeEvent(); // comment/ping block
+    return { event, data };
+  }
+
+  async close(): Promise<void> {
+    await this.reader.cancel().catch(() => {});
+  }
+}

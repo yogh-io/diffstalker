@@ -1,34 +1,41 @@
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
   forbidden: [
-    // --- Layering: index -> server -> routes/ -> router/registry/sse/serialize -> core ---
+    // --- Layering: index -> server -> routes/ -> follow -> router/registry/sse/serialize -> core ---
     {
       name: "serialize-bottom-layer",
       comment: "serialize.ts is the bottom layer; it only imports core",
       severity: "error",
       from: { path: "^src/serialize\\.ts$" },
-      to: { path: "^src/(index|server|router|repoRegistry|sse)\\.ts$|^src/routes/" },
+      to: { path: "^src/(index|server|router|repoRegistry|sse|follow)\\.ts$|^src/routes/" },
     },
     {
       name: "registry-no-upper-layers",
-      comment: "repoRegistry.ts must not import server/routes/router/index",
+      comment: "repoRegistry.ts must not import server/routes/router/follow/index",
       severity: "error",
       from: { path: "^src/repoRegistry\\.ts$" },
-      to: { path: "^src/(index|server|router)\\.ts$|^src/routes/" },
+      to: { path: "^src/(index|server|router|follow)\\.ts$|^src/routes/" },
     },
     {
       name: "sse-no-upper-layers",
-      comment: "sse.ts must not import server/routes/router/index",
+      comment: "sse.ts must not import server/routes/router/follow/index",
       severity: "error",
       from: { path: "^src/sse\\.ts$" },
-      to: { path: "^src/(index|server|router)\\.ts$|^src/routes/" },
+      to: { path: "^src/(index|server|router|follow)\\.ts$|^src/routes/" },
+    },
+    {
+      name: "follow-no-upper-layers",
+      comment: "follow.ts sits below routes/: only registry/sse/core imports",
+      severity: "error",
+      from: { path: "^src/follow\\.ts$" },
+      to: { path: "^src/(index|server|router|serialize)\\.ts$|^src/routes/" },
     },
     {
       name: "router-no-upper-layers",
-      comment: "router.ts is generic; no server/routes/index/registry/sse imports",
+      comment: "router.ts is generic; no server/routes/index/registry/sse/follow imports",
       severity: "error",
       from: { path: "^src/router\\.ts$" },
-      to: { path: "^src/(index|server|repoRegistry|sse)\\.ts$|^src/routes/" },
+      to: { path: "^src/(index|server|repoRegistry|sse|follow)\\.ts$|^src/routes/" },
     },
     {
       name: "routes-no-upper-layers",

@@ -77,12 +77,116 @@ describe('parseArgs error branches (exit 2 + message + usage)', () => {
     expect(result.stderr).toContain('--host requires a value');
   });
 
+  test('--follow-file missing its value', () => {
+    const result = runDaemon(['--follow-file']);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--follow-file requires a value');
+  });
+
+  test('--follow-file and --no-follow are mutually exclusive', () => {
+    const result = runDaemon(['--follow-file', path.join(os.tmpdir(), 'x'), '--no-follow']);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--follow-file and --no-follow are mutually exclusive');
+  });
+
   test('--help prints usage on stdout and exits 0', () => {
     const result = runDaemon(['--help']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Usage: diffstalkerd');
     expect(result.stdout).toContain('--socket PATH');
+    expect(result.stdout).toContain('--follow-file PATH');
+    expect(result.stdout).toContain('--no-follow');
   });
+});
+
+/** Spawn the daemon, wait for the listening line, hand control to `run`. */
+async function withRunningDaemon(
+  args: string[],
+  env: Record<string, string>,
+  run: (getStderr: () => string) => Promise<void>
+): Promise<void> {
+  const child = spawn(process.execPath, [ENTRY, ...args], {
+    env: cleanEnv(env),
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf-8');
+  });
+
+  try {
+    const deadline = Date.now() + 10000;
+    while (!stderr.includes('listening') && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(stderr).toContain('listening');
+    await run(() => stderr);
+  } finally {
+    const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+    child.kill('SIGTERM');
+    await exited;
+  }
+}
+
+describe('follow flags wiring', () => {
+  test(
+    'follow defaults to the cache-dir hook file (via XDG_CACHE_HOME)',
+    async () => {
+      const cacheBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-cache-'));
+      const socket = path.join(cacheBase, 'd.sock');
+      const expectedTarget = path.join(cacheBase, 'diffstalker', 'target');
+
+      try {
+        await withRunningDaemon(
+          ['--socket', socket],
+          { XDG_CACHE_HOME: cacheBase },
+          async (getStderr) => {
+            expect(getStderr()).toContain(`following ${expectedTarget}`);
+            // The watcher created the hook file.
+            expect(fs.existsSync(expectedTarget)).toBe(true);
+
+            const res = await fetch('http://localhost/follow', { unix: socket } as RequestInit);
+            expect(res.status).toBe(200);
+            const follow = (await res.json()) as { enabled: boolean; targetFile: string };
+            expect(follow.enabled).toBe(true);
+            expect(follow.targetFile).toBe(expectedTarget);
+          }
+        );
+      } finally {
+        fs.rmSync(cacheBase, { recursive: true, force: true });
+      }
+    },
+    15000
+  );
+
+  test(
+    '--no-follow: GET /follow reports enabled:false and no hook file appears',
+    async () => {
+      const cacheBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-cache-'));
+      const socket = path.join(cacheBase, 'd.sock');
+
+      try {
+        await withRunningDaemon(
+          ['--socket', socket, '--no-follow'],
+          { XDG_CACHE_HOME: cacheBase },
+          async (getStderr) => {
+            expect(getStderr()).not.toContain('following');
+
+            const res = await fetch('http://localhost/follow', { unix: socket } as RequestInit);
+            expect(res.status).toBe(200);
+            const follow = (await res.json()) as { enabled: boolean; targetFile: string | null };
+            expect(follow.enabled).toBe(false);
+            expect(follow.targetFile).toBeNull();
+            // No watcher was created: the default hook file does not exist.
+            expect(fs.existsSync(path.join(cacheBase, 'diffstalker', 'target'))).toBe(false);
+          }
+        );
+      } finally {
+        fs.rmSync(cacheBase, { recursive: true, force: true });
+      }
+    },
+    15000
+  );
 });
 
 describe('default socket resolution', () => {

@@ -22,14 +22,18 @@ packages/daemon/bin/diffstalkerd            # same, via the bin wrapper
 Options:
 
 ```
---socket PATH   Bind a unix socket at PATH
-                (default: $XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock)
---port N        Bind TCP port N instead of a unix socket
---host H        Host to bind with --port (default: 127.0.0.1)
---help, -h      Show this help
+--socket PATH        Bind a unix socket at PATH
+                     (default: $XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock)
+--port N             Bind TCP port N instead of a unix socket
+--host H             Host to bind with --port (default: 127.0.0.1)
+--follow-file PATH   Hook file to follow (created when missing)
+                     (default: ~/.cache/diffstalker/target)
+--no-follow          Disable follow mode (no hook-file watcher)
+--help, -h           Show this help
 ```
 
-`--socket` and `--port` are mutually exclusive.
+`--socket` and `--port` are mutually exclusive; so are `--follow-file` and
+`--no-follow`.
 
 Without `--socket`/`--port`, the daemon binds a unix socket at
 `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock`. The directory is created
@@ -47,6 +51,8 @@ localhost; a bearer-token check is planned before it may bind further.
 
 - `XDG_RUNTIME_DIR` — base for the default socket path. Required when no
   `--socket`/`--port` is given.
+- `XDG_CACHE_HOME` — base for the default follow hook file
+  (`$XDG_CACHE_HOME/diffstalker/target`, falling back to `~/.cache`).
 - `LISTEN_FDS` / `LISTEN_PID` — systemd socket activation. When systemd hands
   the process a pre-bound socket (`LISTEN_PID` matches and `LISTEN_FDS >= 1`),
   the daemon listens on the inherited fd (fd 3) and does not create, chmod, or
@@ -93,6 +99,8 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | GET    | `/repos/:id/file?path=`    | File content for display with flags: `{content, binary, truncated, tooLarge, size, totalLines}` — binary/oversized come back with empty content and the flag set, never prose; 400 for anything that is not a regular file (directory, FIFO, device) or resolves outside the repo root |
 | GET    | `/repos/:id/files`         | All tracked + untracked (not ignored) paths: the fuzzy-finder source |
 | GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher |
+| GET    | `/events`                  | Daemon-scope SSE: `snapshot` (open repos) on connect, then `repo-opened` / `repo-closed` / `follow-change` |
+| GET    | `/follow`                  | Follow state: `{targetFile, enabled, followedRepoId, followedPath}` |
 
 ### Mutations (all respond `{state, result?}`)
 
@@ -136,6 +144,28 @@ two: a >100KB file used to be flagged truncated regardless).
 Repo ids are stable hashes of the worktree root, so a cached id still
 addresses the same repo after a daemon restart.
 
+## Follow mode
+
+The daemon owns the truth, clients decide policy. It watches ONE hook file
+(`--follow-file`, default `~/.cache/diffstalker/target`; created when
+missing); external tools append a repo or file path to it to signal "focus
+this". On change the daemon resolves the path to a worktree root (same
+normalization as `POST /repos`, including bare containers), auto-opens the
+repo, and broadcasts `follow-change {repoId, path, rawContent}` on
+`GET /events` — `path` is the resolved hook-file content (it may point at a
+file inside the repo), `rawContent` the literal line. Content that does not
+resolve to a git repository broadcasts nothing and leaves the follow state
+untouched.
+
+The daemon holds one internal "follow" reference on the followed repo so it
+stays open with no clients attached; switching targets releases the previous
+follow-ref (closing that repo when nothing else holds it — clients see
+`repo-closed`). Whether a client reacts to `follow-change` is entirely
+client-side; the daemon keeps no per-client follow state. A daemon restart
+re-follows whatever the hook file last pointed at. `GET /follow` reports the
+current state; with `--no-follow` it reports `{enabled: false}` and no
+watcher exists.
+
 Examples over the default unix socket:
 
 ```bash
@@ -147,6 +177,6 @@ curl --unix-socket "$SOCK" http://localhost/repos/<id>/status
 curl --unix-socket "$SOCK" 'http://localhost/repos/<id>/diff?path=file.txt'
 curl --unix-socket "$SOCK" -X POST -d '{"path": "file.txt"}' http://localhost/repos/<id>/stage
 curl --unix-socket "$SOCK" -N http://localhost/repos/<id>/events
+curl --unix-socket "$SOCK" -N http://localhost/events
+curl --unix-socket "$SOCK" http://localhost/follow
 ```
-
-Forthcoming (the daemon split lands in slices): follow mode.

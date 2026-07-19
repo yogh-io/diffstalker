@@ -1,11 +1,16 @@
 /**
- * Per-repo SSE hub.
+ * SSE hubs.
  *
- * Each repo id gets one channel that subscribes to the core manager's
- * workingTree 'state-change' event and fans serialized SHARED state out to
- * every connected response. The channel is created lazily on the first
- * subscriber and torn down (listener removed, keep-alive cleared) when the
- * last subscriber disconnects.
+ * SseHub is the per-repo hub: each repo id gets one channel that subscribes
+ * to the core manager's workingTree 'state-change' event and fans serialized
+ * SHARED state out to every connected response. The channel is created
+ * lazily on the first subscriber and torn down (listener removed, keep-alive
+ * cleared) when the last subscriber disconnects.
+ *
+ * DaemonEventHub is the single daemon-scope channel (GET /events): named
+ * events about the daemon itself — repo-opened, repo-closed, follow-change —
+ * broadcast to every subscriber. It holds no per-repo state; producers
+ * (registry callbacks, the follow controller) push events into it.
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -120,5 +125,65 @@ export class SseHub {
     for (const [repoId, channel] of this.channels) {
       this.teardown(repoId, channel);
     }
+  }
+}
+
+/**
+ * The daemon-scope SSE channel: one subscriber set, named events pushed by
+ * producers via broadcast(). On connect the caller supplies a snapshot
+ * payload (the currently-open repos) sent as the initial `snapshot` event.
+ */
+export class DaemonEventHub {
+  private subscribers = new Set<ServerResponse>();
+  private keepAlive: ReturnType<typeof setInterval> | null = null;
+
+  subscribe(req: IncomingMessage, res: ServerResponse, snapshot: unknown): void {
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+    });
+
+    this.subscribers.add(res);
+    if (!this.keepAlive) {
+      this.keepAlive = setInterval(() => {
+        for (const subscriber of this.subscribers) {
+          subscriber.write(': ping\n\n');
+        }
+      }, KEEP_ALIVE_MS);
+      this.keepAlive.unref();
+    }
+
+    // Teardown on the REQUEST's close event, same as the per-repo hub:
+    // bun only fires 'close' on req, not res.
+    req.on('close', () => {
+      this.subscribers.delete(res);
+      if (this.subscribers.size === 0 && this.keepAlive) {
+        clearInterval(this.keepAlive);
+        this.keepAlive = null;
+      }
+    });
+
+    writeEvent(res, 'snapshot', JSON.stringify(snapshot));
+  }
+
+  /** Fan a named event out to every subscriber (no-op with none). */
+  broadcast(event: string, payload: unknown): void {
+    const data = JSON.stringify(payload);
+    for (const subscriber of this.subscribers) {
+      writeEvent(subscriber, event, data);
+    }
+  }
+
+  /** End every stream and stop the keep-alive (daemon shutdown). */
+  destroy(): void {
+    if (this.keepAlive) {
+      clearInterval(this.keepAlive);
+      this.keepAlive = null;
+    }
+    for (const subscriber of this.subscribers) {
+      subscriber.end();
+    }
+    this.subscribers.clear();
   }
 }

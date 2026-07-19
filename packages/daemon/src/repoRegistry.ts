@@ -40,9 +40,23 @@ export interface OpenResult {
   created: boolean;
 }
 
+/**
+ * Lifecycle callbacks, injected by createDaemon (the registry must not
+ * import the server or the SSE hubs — that would be a layering inversion).
+ * onOpened fires only when an open CREATES the handle, onClosed only when a
+ * close actually disposes it (refcount hit zero). disposeAll (daemon
+ * shutdown) is silent: the subscribers are being torn down anyway.
+ */
+export interface RegistryEvents {
+  onOpened?: (handle: RepoHandle) => void;
+  onClosed?: (id: string) => void;
+}
+
 export class RepoRegistry {
   private byId = new Map<string, RepoHandle>();
   private byPath = new Map<string, RepoHandle>();
+
+  constructor(private events: RegistryEvents = {}) {}
 
   /**
    * Open a repo by any path: a worktree root, a subdirectory, or a bare
@@ -78,6 +92,7 @@ export class RepoRegistry {
     };
     this.byId.set(handle.id, handle);
     this.byPath.set(root, handle);
+    this.events.onOpened?.(handle);
     return { handle, created: true };
   }
 
@@ -104,6 +119,7 @@ export class RepoRegistry {
     this.byId.delete(handle.id);
     this.byPath.delete(handle.path);
     removeManagerForRepo(handle.path);
+    this.events.onClosed?.(handle.id);
     return true;
   }
 
