@@ -12,8 +12,22 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import type { Socket } from 'node:net';
-import { getDiff, getDiffForUntracked } from '@diffstalker/core/git/diff';
+import {
+  getDiff,
+  getDiffForUntracked,
+  getCommitDiff,
+  getDiffBetweenRefs,
+  getCompareDiffWithUncommitted,
+  getCandidateBaseBranches,
+  getDefaultBaseBranch,
+} from '@diffstalker/core/git/diff';
+import type { CompareDiff } from '@diffstalker/core/git/diff';
+import { getCommitHistory, getLocalBranches } from '@diffstalker/core/git/status';
 import type { FileEntry, GitStatus } from '@diffstalker/core/git/status';
+import {
+  getCachedBaseBranch,
+  setCachedBaseBranch,
+} from '@diffstalker/core/utils/baseBranchCache';
 import type { WorkingTreeManager } from '@diffstalker/core/managers/WorkingTreeManager';
 import { Router, HttpError, sendJson } from './router.js';
 import { RepoRegistry, RepoHandle } from './repoRegistry.js';
@@ -119,6 +133,14 @@ async function resolveFileEntry(
 /** Failures that stem from a concurrent index/worktree change are 409s. */
 function gitErrorStatus(message: string): number {
   return /index\.lock|did not match|conflict|apply/i.test(message) ? 409 : 500;
+}
+
+/**
+ * Effective compare base for a repo: the persisted per-repo choice (shared
+ * repo-level config, not per-client selection) or the discovered default.
+ */
+async function resolveBaseBranch(repoPath: string): Promise<string | null> {
+  return getCachedBaseBranch(repoPath) ?? (await getDefaultBaseBranch(repoPath));
 }
 
 /**
@@ -228,6 +250,93 @@ export function createDaemon(): Daemon {
     }
     // Annotate hunks with edit times, same as diffs served to the TUI.
     handle.manager.workingTree.stampDiff(diff);
+    sendJson(res, 200, diff);
+  });
+
+  // --- History + compare: stateless, on-demand reads over @diffstalker/core.
+  // These call the plain git functions directly with the repo path — never
+  // the managers' loadHistory/refreshCompareDiff/selection state, which is
+  // per-client and stays client-side. Clients re-pull on the working-tree
+  // `state-change` SSE event (the git watcher covers HEAD/refs).
+
+  router.get('/repos/:id/history', async ({ params, query, res }) => {
+    const handle = requireRepo(params.id);
+    const countParam = query.get('count');
+    let count = 100;
+    if (countParam !== null) {
+      count = Number(countParam);
+      if (!Number.isInteger(count) || count < 1) {
+        throw new HttpError(400, `count must be a positive integer: ${countParam}`);
+      }
+    }
+    // CommitInfo dates are Date objects; sendJson's toWire turns them into
+    // ISO strings.
+    sendJson(res, 200, await getCommitHistory(handle.path, count));
+  });
+
+  router.get('/repos/:id/commits/:hash/diff', async ({ params, res }) => {
+    const handle = requireRepo(params.id);
+    const hash = params.hash;
+    if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
+      throw new HttpError(400, `Invalid commit hash: ${hash}`);
+    }
+    // Historical diff: deliberately NOT stamped with hunk edit times —
+    // stamping only applies to the live working-tree diff.
+    const diff = await getCommitDiff(handle.path, hash);
+    // getCommitDiff swallows git errors and returns an empty result, so an
+    // unknown hash and a truly empty commit look the same; treat empty as
+    // not-found (empty commits are the far rarer case).
+    if (diff.raw === '') {
+      throw new HttpError(404, `Unknown commit: ${hash}`);
+    }
+    sendJson(res, 200, diff);
+  });
+
+  router.get('/repos/:id/branches', async ({ params, res }) => {
+    const handle = requireRepo(params.id);
+    sendJson(res, 200, await getLocalBranches(handle.path));
+  });
+
+  router.get('/repos/:id/base-branches', async ({ params, res }) => {
+    const handle = requireRepo(params.id);
+    sendJson(res, 200, await getCandidateBaseBranches(handle.path));
+  });
+
+  router.get('/repos/:id/compare/base', async ({ params, res }) => {
+    const handle = requireRepo(params.id);
+    sendJson(res, 200, { base: await resolveBaseBranch(handle.path) });
+  });
+
+  router.put('/repos/:id/compare/base', ({ params, body, res }) => {
+    const handle = requireRepo(params.id);
+    const branch = requireStringField(body, 'branch');
+    setCachedBaseBranch(handle.path, branch);
+    sendJson(res, 200, { base: branch });
+  });
+
+  router.get('/repos/:id/compare', async ({ params, query, res }) => {
+    const handle = requireRepo(params.id);
+    const base = query.get('base') ?? (await resolveBaseBranch(handle.path));
+    if (!base) {
+      throw new HttpError(400, 'no base branch');
+    }
+    const uncommitted = query.get('uncommitted') === 'true';
+    // Response is the CompareDiff itself — consistent with /diff returning
+    // the DiffResult directly. It already carries the resolved base as
+    // `baseBranch`; uncommitted inclusion shows in `files[].isUncommitted`.
+    let diff: CompareDiff;
+    try {
+      diff = uncommitted
+        ? await getCompareDiffWithUncommitted(handle.path, base)
+        : await getDiffBetweenRefs(handle.path, base);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // merge-base rejects an unknown/invalid base ref: a client error.
+      if (/not a valid|unknown revision|bad revision/i.test(message)) {
+        throw new HttpError(400, message);
+      }
+      throw err;
+    }
     sendJson(res, 200, diff);
   });
 

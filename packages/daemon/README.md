@@ -66,7 +66,19 @@ Current surface. All bodies are JSON; errors are non-2xx with `{"error": "..."}`
 | GET    | `/repos/:id/diff?path=&staged=` | Diff; whole tree without `path`, staged side with `staged=true` |
 | POST   | `/repos/:id/stage`         | Stage a file: `{"path": "file.txt"}` → refreshed shared state |
 | POST   | `/repos/:id/unstage`       | Unstage a file: same shape                       |
+| GET    | `/repos/:id/history?count=` | Commit history (`CommitInfo[]`, default 100, ISO dates) |
+| GET    | `/repos/:id/commits/:hash/diff` | Diff introduced by one commit (404 on unknown hash) |
+| GET    | `/repos/:id/branches`      | Local branches (`name`, `current`, `tracking`)   |
+| GET    | `/repos/:id/base-branches` | Candidate compare bases (remote branches in recent history) |
+| GET    | `/repos/:id/compare/base`  | Effective compare base: `{base}` (persisted choice or discovered default, null when none) |
+| PUT    | `/repos/:id/compare/base`  | Persist the compare base: `{"branch": "origin/main"}` → `{base}` |
+| GET    | `/repos/:id/compare?base=&uncommitted=` | Base-vs-HEAD `CompareDiff` (three-dot); base defaults to the effective base (400 when none resolves); `uncommitted=true` merges working-tree changes |
 | GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher |
+
+History and compare are stateless, pulled on demand: the daemon never holds
+a client's selection or loaded history. A commit or branch switch fires the
+working-tree `state-change` event (the git watcher covers HEAD/refs), which
+is the client's signal to re-pull.
 
 Repo ids are stable hashes of the worktree root, so a cached id still
 addresses the same repo after a daemon restart.
@@ -84,5 +96,5 @@ curl --unix-socket "$SOCK" -X POST -d '{"path": "file.txt"}' http://localhost/re
 curl --unix-socket "$SOCK" -N http://localhost/repos/<id>/events
 ```
 
-Forthcoming (the daemon split lands in slices): history, compare, explorer,
-remote operations, follow mode, and hunk-level staging endpoints.
+Forthcoming (the daemon split lands in slices): explorer, remote
+operations, follow mode, and hunk-level staging endpoints.
