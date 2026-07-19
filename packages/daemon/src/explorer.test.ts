@@ -5,6 +5,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -23,6 +24,7 @@ interface WireDirEntry {
   path: string;
   type: 'file' | 'dir';
   gitStatus?: string;
+  staged?: boolean;
   hasChanges?: boolean;
 }
 
@@ -42,7 +44,11 @@ function request(pathname: string, init?: RequestInit): Promise<Response> {
 
 beforeAll(async () => {
   repoPath = createFixtureRepo(FIXTURE);
-  writeFixtureFile(repoPath, '.gitignore', '*.log\n');
+  // *.fifo is gitignored so the manager's working-dir watcher skips the
+  // FIFO the DoS test creates: bun's fs.watch blocks the whole event loop
+  // when an unignored FIFO appears in a watched dir (node does not — this
+  // is a bun-only quirk, unrelated to the /file guard under test).
+  writeFixtureFile(repoPath, '.gitignore', '*.log\n*.fifo\n');
   writeFixtureFile(repoPath, 'README.md', 'hello explorer\n');
   writeFixtureFile(repoPath, 'src/main.ts', 'const x = 1;\n');
   writeFixtureFile(repoPath, 'docs/guide.md', 'guide\n');
@@ -53,6 +59,8 @@ beforeAll(async () => {
   // Working-tree changes the tests assert on
   writeFixtureFile(repoPath, 'src/main.ts', 'const x = 2;\n'); // modified
   writeFixtureFile(repoPath, 'ignored.log', 'noise\n'); // gitignored
+  writeFixtureFile(repoPath, 'src/staged.ts', 'const s = 1;\n'); // staged addition
+  gitExec(repoPath, 'add src/staged.ts');
 
   daemon = createDaemon();
   await daemon.listen({ socketPath: SOCKET });
@@ -91,13 +99,39 @@ describe('explorer endpoints', () => {
     expect(entries.find((e) => e.name === 'docs')!.hasChanges).toBeUndefined();
   });
 
-  test('GET /tree?dir=src shows the modified file with its git status', async () => {
+  test('GET /tree?dir=src shows git status and staged per file', async () => {
     const res = await request(`/repos/${repoId}/tree?dir=src`);
     expect(res.status).toBe(200);
     const entries = (await res.json()) as WireDirEntry[];
     const main = entries.find((e) => e.path === 'src/main.ts')!;
     expect(main.type).toBe('file');
     expect(main.gitStatus).toBe('modified');
+    expect(main.staged).toBe(false);
+    const staged = entries.find((e) => e.path === 'src/staged.ts')!;
+    expect(staged.gitStatus).toBe('added');
+    expect(staged.staged).toBe(true);
+  });
+
+  test('GET /tree?hidden=true includes dot-prefixed entries', async () => {
+    const res = await request(`/repos/${repoId}/tree?hidden=true`);
+    expect(res.status).toBe(200);
+    const names = ((await res.json()) as WireDirEntry[]).map((e) => e.name);
+    expect(names).toContain('.gitignore');
+  });
+
+  test('GET /tree?ignored=true includes gitignored entries', async () => {
+    const res = await request(`/repos/${repoId}/tree?ignored=true`);
+    expect(res.status).toBe(200);
+    const names = ((await res.json()) as WireDirEntry[]).map((e) => e.name);
+    expect(names).toContain('ignored.log');
+    expect(names).not.toContain('.gitignore'); // hidden still filtered
+  });
+
+  test('GET /tree with a malformed hidden/ignored param is a 400', async () => {
+    const res = await request(`/repos/${repoId}/tree?hidden=1`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('hidden');
   });
 
   test('GET /tree rejects a path escaping the repo root with 400', async () => {
@@ -110,6 +144,13 @@ describe('explorer endpoints', () => {
   test('GET /tree on a nonexistent directory is 404', async () => {
     const res = await request(`/repos/${repoId}/tree?dir=no-such-dir`);
     expect(res.status).toBe(404);
+  });
+
+  test('GET /tree on a file is a 400 (wrong node kind)', async () => {
+    const res = await request(`/repos/${repoId}/tree?dir=README.md`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('Not a directory');
   });
 
   test('GET /file returns text content with flags off', async () => {
@@ -131,17 +172,90 @@ describe('explorer endpoints', () => {
     expect(file.content).toBe('');
   });
 
-  test('GET /file without path is 400; escape is 400; missing file is 404; a dir is 400', async () => {
-    expect((await request(`/repos/${repoId}/file`)).status).toBe(400);
+  test('GET /file without a path param is a 400', async () => {
+    const res = await request(`/repos/${repoId}/file`);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('"path"');
+  });
 
-    const escape = await request(
+  test('GET /file rejects a lexical escape with 400', async () => {
+    const res = await request(
       `/repos/${repoId}/file?path=${encodeURIComponent('../../etc/passwd')}`
     );
-    expect(escape.status).toBe(400);
-    expect(((await escape.json()) as { error: string }).error).toContain('escapes');
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('escapes');
+  });
 
-    expect((await request(`/repos/${repoId}/file?path=nope.txt`)).status).toBe(404);
-    expect((await request(`/repos/${repoId}/file?path=src`)).status).toBe(400);
+  test('GET /file on a missing file is a 404', async () => {
+    const res = await request(`/repos/${repoId}/file?path=nope.txt`);
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: string }).error).toContain('nope.txt');
+  });
+
+  test('GET /file on a directory is a 400 (wrong node kind)', async () => {
+    const res = await request(`/repos/${repoId}/file?path=src`);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('Not a regular file');
+  });
+
+  test('GET /file on a FIFO is a prompt 400 and the daemon stays responsive', async () => {
+    // A FIFO used to be read like a file: the open blocked bun's event
+    // loop until a writer appeared, freezing the daemon for ALL clients.
+    // The per-request timeouts make a regression fail fast, not hang.
+    const fifoPath = path.join(repoPath, 'pipe.fifo');
+    execSync(`mkfifo "${fifoPath}"`);
+    try {
+      const res = await request(`/repos/${repoId}/file?path=pipe.fifo`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toContain('Not a regular file');
+
+      const health = await request('/health', { signal: AbortSignal.timeout(2000) });
+      expect(health.status).toBe(200);
+    } finally {
+      fs.rmSync(fifoPath, { force: true });
+    }
+  });
+
+  test('symlinks out of the repo are 400 on /file and /tree and dropped from listings', async () => {
+    // The lexical guard passes these (the path itself stays inside the
+    // repo); only a realpath check catches the escape.
+    const linkFile = path.join(repoPath, 'link_file');
+    const linkDir = path.join(repoPath, 'link_dir');
+    fs.symlinkSync('/etc/passwd', linkFile);
+    fs.symlinkSync('/etc', linkDir);
+    try {
+      const file = await request(`/repos/${repoId}/file?path=link_file`);
+      expect(file.status).toBe(400);
+      expect(((await file.json()) as { error: string }).error).toContain('escapes');
+
+      const tree = await request(`/repos/${repoId}/tree?dir=link_dir`);
+      expect(tree.status).toBe(400);
+      expect(((await tree.json()) as { error: string }).error).toContain('escapes');
+
+      // A listing never presents entries whose real location escapes.
+      const root = await request(`/repos/${repoId}/tree`);
+      expect(root.status).toBe(200);
+      const names = ((await root.json()) as WireDirEntry[]).map((e) => e.name);
+      expect(names).not.toContain('link_file');
+      expect(names).not.toContain('link_dir');
+    } finally {
+      fs.rmSync(linkFile, { force: true });
+      fs.rmSync(linkDir, { force: true });
+    }
+  });
+
+  test('a symlink staying inside the repo still works', async () => {
+    const innerLink = path.join(repoPath, 'link_inner');
+    fs.symlinkSync(path.join(repoPath, 'README.md'), innerLink);
+    try {
+      const res = await request(`/repos/${repoId}/file?path=link_inner`);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as WireFileForDisplay).content).toBe('hello explorer\n');
+    } finally {
+      fs.rmSync(innerLink, { force: true });
+    }
   });
 
   test('GET /files returns the finder source with tracked paths', async () => {

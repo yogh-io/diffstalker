@@ -1,13 +1,16 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { listDirectory, readFileForDisplay, MAX_DISPLAY_LINES } from '../git/explorerData.js';
+import {
+  listDirectory,
+  readFileForDisplay,
+  MAX_DISPLAY_LINES,
+  MAX_FILE_SIZE,
+} from '../git/explorerData.js';
 import { listAllFiles } from '../git/status.js';
 import * as logger from '../utils/logger.js';
 import type { FileStatus } from '../git/status.js';
 import type { GitStatusMap } from '../git/explorerData.js';
-
-export type { GitStatusMap } from '../git/explorerData.js';
 
 export interface SelectedFile {
   path: string;
@@ -421,7 +424,7 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
         this.updateState({
           selectedFile: {
             path: itemPath,
-            content: `File too large to display (${(file.size / 1024 / 1024).toFixed(2)} MB).\nMaximum size: 1 MB`,
+            content: `File too large to display (${(file.size / 1024 / 1024).toFixed(2)} MB).\nMaximum size: ${MAX_FILE_SIZE / 1024 / 1024} MB`,
             truncated: true,
           },
         });
@@ -444,7 +447,10 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
         content += `\n\n... (truncated, ${file.totalLines - MAX_DISPLAY_LINES} more lines)`;
       }
 
-      // Warn about large files
+      // Warn about large files. This only prepends prose: since the
+      // extraction into readFileForDisplay, `truncated` strictly means
+      // "cut at MAX_DISPLAY_LINES" — a >100KB file within the line limit
+      // is no longer flagged truncated (more correct than the old code).
       if (file.size > WARN_FILE_SIZE) {
         content = `Warning: Large file (${(file.size / 1024).toFixed(1)} KB)\n\n` + content;
       }

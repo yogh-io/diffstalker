@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   parseDiffLine,
@@ -14,8 +15,12 @@ import {
   getCandidateBaseBranches,
   getDefaultBaseBranch,
   getDiffBetweenRefs,
+  commitExists,
+  resolveEffectiveBaseBranch,
+  NoCommonHistoryError,
 } from './diff.js';
 import { stageHunk, unstageHunk } from './status.js';
+import { setCachedBaseBranch } from '../utils/baseBranchCache.js';
 import {
   createFixtureRepo,
   removeFixtureRepo,
@@ -316,6 +321,18 @@ describe('getCommitDiff (fixture)', () => {
     expect(diff.raw).toBe('');
     expect(diff.lines).toEqual([]);
   });
+
+  it('commitExists resolves real commits, refs, and abbreviations', async () => {
+    expect(await commitExists(repoPath, commitHash)).toBe(true);
+    expect(await commitExists(repoPath, commitHash.slice(0, 7))).toBe(true);
+    expect(await commitExists(repoPath, 'HEAD')).toBe(true);
+    expect(await commitExists(repoPath, 'main')).toBe(true);
+  });
+
+  it('commitExists is false for unknown hashes and refs', async () => {
+    expect(await commitExists(repoPath, 'deadbeef000000')).toBe(false);
+    expect(await commitExists(repoPath, 'no-such-branch')).toBe(false);
+  });
 });
 
 describe('getCandidateBaseBranches / getDefaultBaseBranch / getDiffBetweenRefs (fixture)', () => {
@@ -361,6 +378,36 @@ describe('getCandidateBaseBranches / getDefaultBaseBranch / getDiffBetweenRefs (
     expect(diff.files.some((f) => f.path === 'feature.txt')).toBe(true);
     expect(diff.commits.length).toBeGreaterThanOrEqual(1);
     expect(diff.commits.some((c) => c.message === 'feature commit')).toBe(true);
+  });
+
+  it('getDiffBetweenRefs throws NoCommonHistoryError across unrelated history', async () => {
+    // An orphan branch shares no ancestor with HEAD: the empty merge-base
+    // must be an explicit error, not a silent HEAD...HEAD empty diff.
+    gitExec(repoPath, 'checkout --orphan unrelated');
+    gitExec(repoPath, 'add -A');
+    gitExec(repoPath, 'commit -m "unrelated root"');
+    gitExec(repoPath, 'checkout feature');
+    await expect(getDiffBetweenRefs(repoPath, 'unrelated')).rejects.toThrow(NoCommonHistoryError);
+  });
+
+  it('resolveEffectiveBaseBranch prefers the persisted choice over the default', async () => {
+    const savedCacheHome = process.env.XDG_CACHE_HOME;
+    const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-diff-xdg-'));
+    process.env.XDG_CACHE_HOME = cacheHome;
+    try {
+      // Empty cache: the discovered default wins.
+      expect(await resolveEffectiveBaseBranch(repoPath)).toBe('origin/main');
+      // Persisted choice: it wins over the default.
+      setCachedBaseBranch(repoPath, 'main');
+      expect(await resolveEffectiveBaseBranch(repoPath)).toBe('main');
+    } finally {
+      fs.rmSync(cacheHome, { recursive: true, force: true });
+      if (savedCacheHome === undefined) {
+        delete process.env.XDG_CACHE_HOME;
+      } else {
+        process.env.XDG_CACHE_HOME = savedCacheHome;
+      }
+    }
   });
 });
 

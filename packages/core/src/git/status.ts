@@ -31,6 +31,10 @@ export function parseNumstat(output: string): Map<string, FileStats> {
 async function countFileLines(repoPath: string, filePath: string): Promise<number> {
   try {
     const fullPath = path.join(repoPath, filePath);
+    // Never read a non-regular file: an untracked FIFO would make this
+    // readFile never resolve and wedge the refresh queue forever.
+    const stats = await fs.promises.stat(fullPath);
+    if (!stats.isFile()) return 0;
     const content = await fs.promises.readFile(fullPath, 'utf-8');
     // Count non-empty lines
     return content.split('\n').filter((line) => line.length > 0).length;

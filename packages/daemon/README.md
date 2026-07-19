@@ -67,14 +67,14 @@ Current surface. All bodies are JSON; errors are non-2xx with `{"error": "..."}`
 | POST   | `/repos/:id/stage`         | Stage a file: `{"path": "file.txt"}` → refreshed shared state |
 | POST   | `/repos/:id/unstage`       | Unstage a file: same shape                       |
 | GET    | `/repos/:id/history?count=` | Commit history (`CommitInfo[]`, default 100, ISO dates) |
-| GET    | `/repos/:id/commits/:hash/diff` | Diff introduced by one commit (404 on unknown hash) |
+| GET    | `/repos/:id/commits/:hash/diff` | Diff introduced by one commit (404 on unknown hash; merge and `--allow-empty` commits are 200 with an empty diff, matching the CLI) |
 | GET    | `/repos/:id/branches`      | Local branches (`name`, `current`, `tracking`)   |
 | GET    | `/repos/:id/base-branches` | Candidate compare bases (remote branches in recent history) |
 | GET    | `/repos/:id/compare/base`  | Effective compare base: `{base}` (persisted choice or discovered default, null when none) |
-| PUT    | `/repos/:id/compare/base`  | Persist the compare base: `{"branch": "origin/main"}` → `{base}` |
-| GET    | `/repos/:id/compare?base=&uncommitted=` | Base-vs-HEAD `CompareDiff` (three-dot); base defaults to the effective base (400 when none resolves); `uncommitted=true` merges working-tree changes |
-| GET    | `/repos/:id/tree?dir=`     | One directory level (`name`, `path`, `type`), gitignored/hidden filtered, files annotated with `gitStatus`, changed dirs with `hasChanges` (400 outside the repo root, 404 unknown dir) |
-| GET    | `/repos/:id/file?path=`    | File content for display with flags: `{content, binary, truncated, tooLarge, size, totalLines}` — binary/oversized come back with empty content and the flag set, never prose |
+| PUT    | `/repos/:id/compare/base`  | Persist the compare base: `{"branch": "origin/main"}` → `{base}`; the ref is validated first (400 on an unknown ref, nothing persisted) |
+| GET    | `/repos/:id/compare?base=&uncommitted=` | Base-vs-HEAD `CompareDiff` (three-dot); base defaults to the effective base — a stale persisted base falls back to the discovered default, 422 when nothing usable resolves; an explicit unknown `base` is a 400; a base with no common history is a 422; `uncommitted=true` merges working-tree changes |
+| GET    | `/repos/:id/tree?dir=&hidden=&ignored=` | One directory level (`name`, `path`, `type`), gitignored/hidden filtered by default (`hidden=true` / `ignored=true` include them, mirroring the TUI toggles), files annotated with `gitStatus` + `staged`, changed dirs with `hasChanges` (400 outside the repo root or on a file, 404 unknown dir) |
+| GET    | `/repos/:id/file?path=`    | File content for display with flags: `{content, binary, truncated, tooLarge, size, totalLines}` — binary/oversized come back with empty content and the flag set, never prose; 400 for anything that is not a regular file (directory, FIFO, device) or resolves outside the repo root |
 | GET    | `/repos/:id/files`         | All tracked + untracked (not ignored) paths: the fuzzy-finder source |
 | GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher |
 
@@ -82,6 +82,11 @@ History, compare, and explorer data are stateless, pulled on demand: the
 daemon never holds a client's selection, loaded history, or tree expansion.
 A commit or branch switch fires the working-tree `state-change` event (the
 git watcher covers HEAD/refs), which is the client's signal to re-pull.
+
+Note on `/file`'s `truncated` flag: it strictly means the content was cut
+at the display line limit. A merely large file that fits within the limit
+is served whole with `truncated: false` (the old TUI code conflated the
+two: a >100KB file used to be flagged truncated regardless).
 
 Repo ids are stable hashes of the worktree root, so a cached id still
 addresses the same repo after a daemon restart.
@@ -99,5 +104,5 @@ curl --unix-socket "$SOCK" -X POST -d '{"path": "file.txt"}' http://localhost/re
 curl --unix-socket "$SOCK" -N http://localhost/repos/<id>/events
 ```
 
-Forthcoming (the daemon split lands in slices): remote operations, follow
-mode, and hunk-level staging endpoints.
+Forthcoming (the daemon split lands in slices): commit, discard, remote
+operations, follow mode, and hunk-level staging endpoints.

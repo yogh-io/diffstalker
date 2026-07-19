@@ -3,13 +3,13 @@ import { GitOperationQueue } from './GitOperationQueue.js';
 import {
   getDiffBetweenRefs,
   getCompareDiffWithUncommitted,
-  getDefaultBaseBranch,
+  resolveEffectiveBaseBranch,
   getCandidateBaseBranches as gitGetCandidateBaseBranches,
   getCommitDiff,
   CompareDiff,
   DiffResult,
 } from '../git/diff.js';
-import { getCachedBaseBranch, setCachedBaseBranch } from '../utils/baseBranchCache.js';
+import { setCachedBaseBranch } from '../utils/baseBranchCache.js';
 
 export interface CompareState {
   compareDiff: CompareDiff | null;
@@ -81,7 +81,16 @@ export class CompareManager extends EventEmitter<CompareEventMap> {
    */
   async refreshIfLoaded(): Promise<void> {
     if (this._compareState.compareBaseBranch) {
-      await this.doRefreshCompareDiff(false);
+      try {
+        await this.doRefreshCompareDiff(false);
+      } catch (err) {
+        // e.g. NoCommonHistoryError after a branch switch: surface it in
+        // state instead of rejecting into the cascade refresh.
+        this.updateCompareState({
+          compareLoading: false,
+          compareError: `Failed to load compare diff: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
     }
   }
 
@@ -111,8 +120,8 @@ export class CompareManager extends EventEmitter<CompareEventMap> {
   private async doRefreshCompareDiff(includeUncommitted: boolean): Promise<void> {
     let base = this._compareState.compareBaseBranch;
     if (!base) {
-      // Try cached value first, then fall back to default detection
-      base = getCachedBaseBranch(this.repoPath) ?? (await getDefaultBaseBranch(this.repoPath));
+      // Persisted choice or discovered default (shared rule with the daemon)
+      base = await resolveEffectiveBaseBranch(this.repoPath);
       this.updateCompareState({ compareBaseBranch: base });
     }
     if (base) {

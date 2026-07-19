@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
+import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -6,6 +7,7 @@ import {
   listDirectory,
   readFileForDisplay,
   MAX_DISPLAY_LINES,
+  NotRegularFileError,
 } from './explorerData.js';
 import { getStatus } from './status.js';
 import { createFixtureRepo, removeFixtureRepo, writeFixtureFile, gitExec } from './test-helpers.js';
@@ -26,6 +28,8 @@ beforeAll(async () => {
   writeFixtureFile(repoPath, 'src/app.ts', 'const a = 2;\n'); // modified
   writeFixtureFile(repoPath, 'src/new.ts', 'const b = 1;\n'); // untracked
   writeFixtureFile(repoPath, 'ignored.log', 'noise\n'); // gitignored
+  writeFixtureFile(repoPath, 'src/staged.ts', 'const s = 1;\n'); // staged addition
+  gitExec(repoPath, 'add src/staged.ts');
 });
 
 afterAll(() => {
@@ -90,6 +94,24 @@ describe('listDirectory', () => {
     expect(srcEntries.find((e) => e.name === 'new.ts')?.gitStatus).toBe('untracked');
   });
 
+  it('carries the staged flag alongside gitStatus', async () => {
+    const status = await getStatus(repoPath);
+    const statusMap = buildGitStatusMap(status.files);
+
+    const srcEntries = await listDirectory(repoPath, 'src', undefined, statusMap);
+    const staged = srcEntries.find((e) => e.name === 'staged.ts');
+    expect(staged?.gitStatus).toBe('added');
+    expect(staged?.staged).toBe(true);
+    const unstaged = srcEntries.find((e) => e.name === 'app.ts');
+    expect(unstaged?.staged).toBe(false);
+    // Unchanged files carry neither status nor the flag.
+    const clean = (await listDirectory(repoPath, '', undefined, statusMap)).find(
+      (e) => e.name === 'README.md'
+    );
+    expect(clean?.gitStatus).toBeUndefined();
+    expect(clean?.staged).toBeUndefined();
+  });
+
   it('leaves gitStatus unset without a status map', async () => {
     const entries = await listDirectory(repoPath, 'src');
     for (const entry of entries) {
@@ -142,5 +164,21 @@ describe('readFileForDisplay', () => {
 
   it('rejects a missing file with an fs error', async () => {
     await expect(readFileForDisplay(repoPath, 'nope.txt')).rejects.toThrow();
+  });
+
+  it('rejects a directory with NotRegularFileError', async () => {
+    await expect(readFileForDisplay(repoPath, 'src')).rejects.toThrow(NotRegularFileError);
+  });
+
+  it('rejects a FIFO with NotRegularFileError instead of blocking on read', async () => {
+    // Opening a FIFO with no writer blocks forever; the stat-based guard
+    // must refuse it before any read is attempted.
+    const fifoPath = path.join(repoPath, 'pipe.fifo');
+    execSync(`mkfifo "${fifoPath}"`);
+    try {
+      await expect(readFileForDisplay(repoPath, 'pipe.fifo')).rejects.toThrow(NotRegularFileError);
+    } finally {
+      fs.rmSync(fifoPath, { force: true });
+    }
   });
 });

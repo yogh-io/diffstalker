@@ -2,6 +2,19 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { simpleGit } from 'simple-git';
 import { CommitInfo } from './status.js';
+import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
+
+/**
+ * Thrown by getDiffBetweenRefs when the base ref shares no history with
+ * HEAD (empty merge-base, e.g. an orphan branch). Without this the diff
+ * would silently collapse to HEAD...HEAD and look like "no changes".
+ */
+export class NoCommonHistoryError extends Error {
+  constructor(baseRef: string) {
+    super(`No common history with ${baseRef}`);
+    this.name = 'NoCommonHistoryError';
+  }
+}
 
 export interface DiffLine {
   type: 'header' | 'hunk' | 'addition' | 'deletion' | 'context';
@@ -377,15 +390,46 @@ export async function getDefaultBaseBranch(repoPath: string): Promise<string | n
 }
 
 /**
+ * The effective compare base for a repo: the persisted per-repo choice,
+ * or the discovered default when nothing is persisted. Single source of
+ * this rule — used by CompareManager and the daemon alike.
+ */
+export async function resolveEffectiveBaseBranch(repoPath: string): Promise<string | null> {
+  return getCachedBaseBranch(repoPath) ?? (await getDefaultBaseBranch(repoPath));
+}
+
+/**
+ * True when a revision resolves to a commit in the repo. Accepts any
+ * commit-ish: a hash (possibly abbreviated), branch, remote ref, or tag.
+ */
+export async function commitExists(repoPath: string, revision: string): Promise<boolean> {
+  const git = simpleGit(repoPath);
+  try {
+    // cat-file -e fails loudly ("Not a valid object name") on a miss.
+    // rev-parse --verify --quiet would exit 1 silently, which simple-git
+    // does not reliably surface as an error.
+    await git.raw(['cat-file', '-e', `${revision}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Get diff between HEAD and a base ref (for PR-like view).
  * Uses three-dot diff (merge-base) to show only changes on current branch.
  */
 export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Promise<CompareDiff> {
   const git = simpleGit(repoPath);
 
-  // Get merge-base for three-dot diff
+  // Get merge-base for three-dot diff. With no common ancestor git exits 1
+  // with empty output (simple-git resolves with ''); the diff would then
+  // collapse to HEAD...HEAD and silently report an empty compare.
   const mergeBase = await git.raw(['merge-base', baseRef, 'HEAD']);
   const base = mergeBase.trim();
+  if (!base) {
+    throw new NoCommonHistoryError(baseRef);
+  }
 
   // Get per-file stats with --numstat
   const numstat = await git.raw(['diff', '--numstat', `${base}...HEAD`]);

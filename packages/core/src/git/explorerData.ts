@@ -19,6 +19,19 @@ export const MAX_FILE_SIZE = 1024 * 1024; // 1MB
 /** Maximum lines kept in content before truncation kicks in. */
 export const MAX_DISPLAY_LINES = 5000;
 
+/**
+ * Thrown by readFileForDisplay when the path resolves to something other
+ * than a regular file (directory, FIFO, socket, device). Reading such a
+ * path must be refused up front: opening a FIFO blocks the event loop
+ * until a writer appears, freezing the whole process.
+ */
+export class NotRegularFileError extends Error {
+  constructor(relPath: string) {
+    super(`Not a regular file: ${relPath}`);
+    this.name = 'NotRegularFileError';
+  }
+}
+
 /** One entry of a single-level directory listing. */
 export interface DirEntry {
   name: string;
@@ -27,6 +40,8 @@ export interface DirEntry {
   type: 'file' | 'dir';
   /** For files: working-tree git status, when a status map is supplied. */
   gitStatus?: FileStatus;
+  /** For files with a gitStatus: true when the change is staged. */
+  staged?: boolean;
   /** For dirs: true when the directory contains changed files. */
   hasChanges?: boolean;
 }
@@ -138,7 +153,10 @@ export async function listDirectory(
         if (statusMap.directories.has(entryPath)) dirEntry.hasChanges = true;
       } else {
         const status = statusMap.files.get(entryPath);
-        if (status) dirEntry.gitStatus = status.status;
+        if (status) {
+          dirEntry.gitStatus = status.status;
+          dirEntry.staged = status.staged;
+        }
       }
     }
 
@@ -173,7 +191,14 @@ function isBinaryContent(buffer: Buffer): boolean {
  * matching flag set; text longer than MAX_DISPLAY_LINES is cut there with
  * truncated set (totalLines tells the caller how much was dropped).
  *
- * Throws the raw fs error (ENOENT, EISDIR) when relPath is unreadable.
+ * Throws the raw fs error (ENOENT, ENOTDIR) when relPath is unreadable and
+ * NotRegularFileError when it is not a regular file (a FIFO/socket/device
+ * would block the event loop on read; a directory is not displayable).
+ *
+ * Note on the truncated flag: it means exactly "content was cut at
+ * MAX_DISPLAY_LINES". A merely large file (over the caller's warn
+ * threshold) that fits within the line limit is NOT marked truncated —
+ * unlike the pre-extraction TUI code, which conflated the two.
  */
 export async function readFileForDisplay(
   repoPath: string,
@@ -181,6 +206,10 @@ export async function readFileForDisplay(
 ): Promise<FileForDisplay> {
   const fullPath = path.join(repoPath, relPath);
   const stats = await fs.promises.stat(fullPath);
+
+  if (!stats.isFile()) {
+    throw new NotRegularFileError(relPath);
+  }
 
   if (stats.size > MAX_FILE_SIZE) {
     return {
