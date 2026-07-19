@@ -8,7 +8,7 @@
  * last subscriber disconnects.
  */
 
-import type { ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
 import type { GitState } from '@diffstalker/core/managers/WorkingTreeManager';
 import { serializeSharedState } from './serialize.js';
@@ -20,6 +20,8 @@ interface Channel {
   subscribers: Set<ServerResponse>;
   listener: (state: GitState) => void;
   keepAlive: ReturnType<typeof setInterval>;
+  /** Last state-change payload fanned out; identical payloads are skipped. */
+  lastData: string | null;
 }
 
 function writeEvent(res: ServerResponse, event: string, data: string): void {
@@ -34,7 +36,12 @@ export class SseHub {
    * Sends an initial `snapshot` event with the current shared state, then
    * `state-change` events as the manager emits them.
    */
-  subscribe(repoId: string, manager: GitStateManager, res: ServerResponse): void {
+  subscribe(
+    repoId: string,
+    manager: GitStateManager,
+    req: IncomingMessage,
+    res: ServerResponse
+  ): void {
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',
@@ -44,27 +51,39 @@ export class SseHub {
     let channel = this.channels.get(repoId);
     if (!channel) {
       const subscribers = new Set<ServerResponse>();
-      const listener = (state: GitState): void => {
-        const data = JSON.stringify(serializeSharedState(state));
-        for (const subscriber of subscribers) {
-          writeEvent(subscriber, 'state-change', data);
-        }
+      const newChannel: Channel = {
+        manager,
+        subscribers,
+        listener: (state: GitState): void => {
+          const data = JSON.stringify(serializeSharedState(state));
+          // The manager emits state-change even when the shared fields did
+          // not change (e.g. the isLoading:true edge of a refresh); skip
+          // fan-out when the payload is identical to the last one sent.
+          if (data === newChannel.lastData) return;
+          newChannel.lastData = data;
+          for (const subscriber of subscribers) {
+            writeEvent(subscriber, 'state-change', data);
+          }
+        },
+        keepAlive: setInterval(() => {
+          for (const subscriber of subscribers) {
+            subscriber.write(': ping\n\n');
+          }
+        }, KEEP_ALIVE_MS),
+        lastData: null,
       };
-      manager.workingTree.on('state-change', listener);
+      manager.workingTree.on('state-change', newChannel.listener);
+      newChannel.keepAlive.unref();
 
-      const keepAlive = setInterval(() => {
-        for (const subscriber of subscribers) {
-          subscriber.write(': ping\n\n');
-        }
-      }, KEEP_ALIVE_MS);
-      keepAlive.unref();
-
-      channel = { manager, subscribers, listener, keepAlive };
+      channel = newChannel;
       this.channels.set(repoId, channel);
     }
 
     channel.subscribers.add(res);
-    res.on('close', () => this.unsubscribe(repoId, res));
+    // Hang teardown on the REQUEST's close event: node fires 'close' on
+    // both req and res, but bun only fires it on req — using res here
+    // leaks the listener and channel for every disconnected client.
+    req.on('close', () => this.unsubscribe(repoId, res));
 
     const snapshot = JSON.stringify(serializeSharedState(manager.workingTree.state));
     writeEvent(res, 'snapshot', snapshot);

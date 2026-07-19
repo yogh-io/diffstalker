@@ -3,8 +3,9 @@
  *
  * Supports `:param` path segments, query strings, and JSON bodies on
  * mutating methods. Handlers throw HttpError for expected failures; the
- * router turns any thrown error into a `{success:false, error}` JSON
- * response with the right status code.
+ * router turns any thrown error into a non-2xx `{error}` JSON response
+ * with the right status code (the HTTP status is the success signal —
+ * there is no `success` envelope).
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -52,7 +53,12 @@ function matchRoute(route: Route, segments: string[]): Record<string, string> | 
   for (let i = 0; i < route.segments.length; i++) {
     const pattern = route.segments[i];
     if (pattern.startsWith(':')) {
-      params[pattern.slice(1)] = decodeURIComponent(segments[i]);
+      try {
+        params[pattern.slice(1)] = decodeURIComponent(segments[i]);
+      } catch {
+        // Malformed percent-encoding (e.g. %zz) is a client error, not a 500
+        throw new HttpError(400, `Malformed percent-encoding in path: ${segments[i]}`);
+      }
     } else if (pattern !== segments[i]) {
       return null;
     }
@@ -139,7 +145,7 @@ export class Router {
       }
       const status = err instanceof HttpError ? err.status : 500;
       const message = err instanceof Error ? err.message : String(err);
-      sendJson(res, status, { success: false, error: message });
+      sendJson(res, status, { error: message });
     }
   }
 }

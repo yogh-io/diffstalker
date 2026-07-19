@@ -19,6 +19,8 @@ export interface WireHunkCounts {
 export interface WireSharedState {
   status: GitStatus | null;
   hunkCounts: WireHunkCounts | null;
+  /** Watcher/refresh error surfaced by the manager, null when healthy. */
+  error: string | null;
 }
 
 /** Convert a string-keyed Map to a plain object for JSON. */
@@ -44,6 +46,7 @@ export function serializeSharedState(state: GitState): WireSharedState {
   return {
     status: state.status,
     hunkCounts: serializeHunkCounts(state.hunkCounts),
+    error: state.error,
   };
 }
 

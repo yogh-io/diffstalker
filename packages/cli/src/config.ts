@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { configDir, cacheDir } from '@diffstalker/core/utils/xdg';
 import { ThemeName } from './themes.js';
 
 export interface Config {
@@ -17,13 +18,13 @@ export interface Config {
 }
 
 const defaultConfig: Config = {
-  targetFile: path.join(os.homedir(), '.cache', 'diffstalker', 'target'),
+  targetFile: path.join(cacheDir(), 'target'),
   watcherEnabled: false, // Watcher is opt-in via --follow
   debug: false,
   theme: 'dark',
 };
 
-const CONFIG_PATH = path.join(os.homedir(), '.config', 'diffstalker', 'config.json');
+const CONFIG_PATH = path.join(configDir(), 'config.json');
 
 export const VALID_THEMES: ThemeName[] = [
   'dark',

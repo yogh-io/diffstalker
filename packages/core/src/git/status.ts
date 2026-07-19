@@ -176,7 +176,8 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
 
 export async function stageFile(repoPath: string, filePath: string): Promise<void> {
   const git = simpleGit(repoPath);
-  await git.add(filePath);
+  // '--' keeps a path like '-u' or '-A' from being read as a flag
+  await git.add(['--', filePath]);
 }
 
 export async function unstageFile(repoPath: string, filePath: string): Promise<void> {

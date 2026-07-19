@@ -51,10 +51,25 @@ describe('serializeSharedState', () => {
     expect(wire).toEqual({
       status: state.status,
       hunkCounts: { staged: {}, unstaged: { 'a.ts': 1 } },
+      error: null,
     });
     expect(JSON.stringify(wire)).not.toContain('SECRET-PER-CLIENT');
     expect(wire).not.toHaveProperty('selectedFile');
     expect(wire).not.toHaveProperty('diff');
+  });
+
+  test('carries the manager error onto the wire', () => {
+    const state: GitState = {
+      status: null,
+      diff: null,
+      combinedFileDiffs: null,
+      selectedFile: null,
+      isLoading: false,
+      error: 'Git watcher error: boom',
+      hunkCounts: null,
+      stashList: [],
+    };
+    expect(serializeSharedState(state).error).toBe('Git watcher error: boom');
   });
 });
 

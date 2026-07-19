@@ -8,6 +8,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { getManagerForRepo } from '@diffstalker/core/managers/GitStateManager';
 import { createDaemon, Daemon } from './server.js';
 import { createFixtureRepo, removeFixtureRepo, writeFixtureFile, gitExec } from './test-helpers.js';
 
@@ -47,6 +48,7 @@ interface WireStatus {
     staged: Record<string, number>;
     unstaged: Record<string, number>;
   } | null;
+  error: string | null;
 }
 
 /** Poll GET status until the predicate holds (staging refreshes are async). */
@@ -145,19 +147,27 @@ describe('daemon over unix socket', () => {
     expect(await res.json()).toEqual({ ok: true, ready: true });
   });
 
-  test('unknown route is a JSON 404', async () => {
+  test('unknown route is a JSON 404 with {error} only', async () => {
     const res = await request('/nope');
     expect(res.status).toBe(404);
-    const body = (await res.json()) as { success: boolean; error: string };
-    expect(body.success).toBe(false);
+    const body = (await res.json()) as { error: string };
     expect(body.error).toContain('/nope');
+    expect(body).not.toHaveProperty('success');
+  });
+
+  test('malformed percent-encoding in a path param is a 400, not a 500', async () => {
+    const res = await request('/repos/%zz/status');
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('percent-encoding');
   });
 
   test('POST /repos opens the repo and GET /repos lists it', async () => {
     const res = await postJson('/repos', { path: repoPath });
     expect(res.status).toBe(201);
     const body = (await res.json()) as { id: string; path: string };
-    expect(body.id).toMatch(/^r\d+$/);
+    // Stable id: a path hash, not a counter (survives daemon restart)
+    expect(body.id).toMatch(/^[0-9a-f]{12}$/);
     expect(fs.realpathSync(body.path)).toBe(fs.realpathSync(repoPath));
     repoId = body.id;
 
@@ -181,8 +191,8 @@ describe('daemon over unix socket', () => {
   test('POST /repos rejects a non-repo path', async () => {
     const res = await postJson('/repos', { path: '/definitely/not/a/repo' });
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { success: boolean };
-    expect(body.success).toBe(false);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBeTruthy();
   });
 
   test('GET /repos/:id/status reflects modified and untracked files', async () => {
@@ -222,26 +232,57 @@ describe('daemon over unix socket', () => {
     expect(diff.raw).toContain('+hello untracked');
   });
 
-  test('POST stage moves a file to staged; unstage reverses it', async () => {
+  test('POST stage returns the refreshed shared state; unstage reverses it', async () => {
     const stageRes = await postJson(`/repos/${repoId}/stage`, { path: 'file.txt' });
     expect(stageRes.status).toBe(200);
-    expect(await stageRes.json()).toEqual({ success: true });
-
-    await pollStatus(repoId, (w) =>
-      (w.status?.files ?? []).some((f) => f.path === 'file.txt' && f.staged)
-    );
+    const staged = (await stageRes.json()) as WireStatus & Record<string, unknown>;
+    // No success envelope; the body IS the post-mutation shared state
+    expect(staged).not.toHaveProperty('success');
+    expect(staged.error).toBeNull();
+    expect((staged.status?.files ?? []).some((f) => f.path === 'file.txt' && f.staged)).toBe(true);
 
     const unstageRes = await postJson(`/repos/${repoId}/unstage`, { path: 'file.txt' });
     expect(unstageRes.status).toBe(200);
-
-    await pollStatus(repoId, (w) =>
-      (w.status?.files ?? []).some((f) => f.path === 'file.txt' && !f.staged)
+    const unstaged = (await unstageRes.json()) as WireStatus;
+    expect((unstaged.status?.files ?? []).some((f) => f.path === 'file.txt' && !f.staged)).toBe(
+      true
     );
   });
 
   test('staging a file that is not in status is 404', async () => {
     const res = await postJson(`/repos/${repoId}/stage`, { path: 'no-such-file.txt' });
     expect(res.status).toBe(404);
+  });
+
+  test('a git failure during stage surfaces as 409/500 {error}, not success', async () => {
+    // Deterministic git failure: hold the index lock while staging
+    const lockPath = path.join(repoPath, '.git', 'index.lock');
+    fs.writeFileSync(lockPath, '');
+    try {
+      const res = await postJson(`/repos/${repoId}/stage`, { path: 'file.txt' });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain('index.lock');
+      expect(body).not.toHaveProperty('success');
+    } finally {
+      fs.rmSync(lockPath, { force: true });
+    }
+
+    // And the error does not stick: the next mutation succeeds cleanly
+    const retry = await postJson(`/repos/${repoId}/stage`, { path: 'file.txt' });
+    expect(retry.status).toBe(200);
+    expect(((await retry.json()) as WireStatus).error).toBeNull();
+    await postJson(`/repos/${repoId}/unstage`, { path: 'file.txt' });
+    await pollStatus(repoId, (w) =>
+      (w.status?.files ?? []).some((f) => f.path === 'file.txt' && !f.staged)
+    );
+  });
+
+  test('staged=true for an untracked file is a 400', async () => {
+    const res = await request(`/repos/${repoId}/diff?path=untracked.txt&staged=true`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('untracked');
   });
 
   test('SSE: snapshot on connect, state-change from the real file watcher', async () => {
@@ -274,10 +315,53 @@ describe('daemon over unix socket', () => {
     }
   }, 20000);
 
+  test('SSE teardown: dropping the connection frees the manager listener (bun-safe)', async () => {
+    // Own fixture repo so lingering channels from other tests can't skew
+    // the listener counts.
+    const ownPath = createFixtureRepo(`${FIXTURE}-sse-teardown`);
+    writeFixtureFile(ownPath, 'a.txt', 'a\n');
+    gitExec(ownPath, 'add .');
+    gitExec(ownPath, 'commit -m "init"');
+    try {
+      const open = await postJson('/repos', { path: ownPath });
+      expect(open.status).toBe(201);
+      const opened = (await open.json()) as { id: string; path: string };
+
+      const manager = getManagerForRepo(opened.path);
+      const baseline = manager.workingTree.listenerCount('state-change');
+
+      const controller = new AbortController();
+      const res = await request(`/repos/${opened.id}/events`, { signal: controller.signal });
+      expect(res.status).toBe(200);
+
+      // Wait for the snapshot so the subscription is fully established
+      const sse = new SseReader(res.body!);
+      const first = await sse.next(3000);
+      expect(first.event).toBe('snapshot');
+      expect(manager.workingTree.listenerCount('state-change')).toBe(baseline + 1);
+
+      // Drop the client connection and wait for the server to notice
+      controller.abort();
+      const deadline = Date.now() + 5000;
+      while (
+        manager.workingTree.listenerCount('state-change') > baseline &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(manager.workingTree.listenerCount('state-change')).toBe(baseline);
+
+      await request(`/repos/${opened.id}`, { method: 'DELETE' });
+    } finally {
+      removeFixtureRepo(`${FIXTURE}-sse-teardown`);
+    }
+  }, 15000);
+
   test('DELETE /repos/:id refcounts down, then removes', async () => {
     // Opened twice above: first delete only decrements.
     const first = await request(`/repos/${repoId}`, { method: 'DELETE' });
     expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({});
     let repos = (await (await request('/repos')).json()) as unknown[];
     expect(repos).toHaveLength(1);
 
@@ -291,5 +375,14 @@ describe('daemon over unix socket', () => {
 
     const alreadyGone = await request(`/repos/${repoId}`, { method: 'DELETE' });
     expect(alreadyGone.status).toBe(404);
+  });
+
+  test('repo id is stable: reopening the same path yields the same id', async () => {
+    // The id is a hash of the worktree root, so a client's cached id
+    // addresses the same repo even across a daemon restart.
+    const res = await postJson('/repos', { path: repoPath });
+    expect(res.status).toBe(201); // fully removed above, so this recreates
+    const body = (await res.json()) as { id: string };
+    expect(body.id).toBe(repoId);
   });
 });

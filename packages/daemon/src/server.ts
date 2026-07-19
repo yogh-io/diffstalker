@@ -10,6 +10,7 @@
 
 import * as http from 'node:http';
 import * as fs from 'node:fs';
+import * as net from 'node:net';
 import type { Socket } from 'node:net';
 import { getDiff, getDiffForUntracked } from '@diffstalker/core/git/diff';
 import type { FileEntry, GitStatus } from '@diffstalker/core/git/status';
@@ -23,11 +24,37 @@ export interface ListenOptions {
   socketPath?: string;
   port?: number;
   host?: string;
+  /** Inherited listening fd (systemd socket activation). The daemon does
+   *  not create, chmod, or unlink anything for an inherited socket. */
+  fd?: number;
 }
 
 export interface Daemon {
   listen(options: ListenOptions): Promise<void>;
   close(): Promise<void>;
+}
+
+/** True when something accepts connections on the unix socket path. */
+function isSocketLive(socketPath: string): Promise<boolean> {
+  if (!fs.existsSync(socketPath)) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    // bun can throw connection errors synchronously (node emits them
+    // async), so the connect call itself needs the try/catch too.
+    try {
+      const probe = net.connect(socketPath);
+      probe.once('connect', () => {
+        probe.destroy();
+        resolve(true);
+      });
+      probe.once('error', () => {
+        // ENOENT / ECONNREFUSED / EACCES: nothing live is answering there.
+        probe.destroy();
+        resolve(false);
+      });
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 function requireStringField(body: unknown, field: string): string {
@@ -58,14 +85,64 @@ async function ensureStatus(workingTree: WorkingTreeManager): Promise<GitStatus>
 /**
  * Find the status entry for a path. Prefers the side the operation targets
  * (unstaged entry for stage, staged entry for unstage) when a file appears
- * on both sides.
+ * on both sides. Returns null when the path is not in status.
  */
-function resolveFileEntry(status: GitStatus, filePath: string, preferStaged: boolean): FileEntry {
+function findFileEntry(status: GitStatus, filePath: string, preferStaged: boolean): FileEntry | null {
   const entries = status.files.filter((f) => f.path === filePath);
-  if (entries.length === 0) {
+  if (entries.length === 0) return null;
+  return entries.find((f) => f.staged === preferStaged) ?? entries[0];
+}
+
+/**
+ * Resolve a path to a status entry, refreshing once when it is missing
+ * from the cached status (the watcher may simply not have caught up yet)
+ * before concluding 404.
+ */
+async function resolveFileEntry(
+  workingTree: WorkingTreeManager,
+  filePath: string,
+  preferStaged: boolean
+): Promise<FileEntry> {
+  let status = await ensureStatus(workingTree);
+  let entry = findFileEntry(status, filePath, preferStaged);
+  if (!entry) {
+    await workingTree.refresh();
+    status = await ensureStatus(workingTree);
+    entry = findFileEntry(status, filePath, preferStaged);
+  }
+  if (!entry) {
     throw new HttpError(404, `File not in status: ${filePath}`);
   }
-  return entries.find((f) => f.staged === preferStaged) ?? entries[0];
+  return entry;
+}
+
+/** Failures that stem from a concurrent index/worktree change are 409s. */
+function gitErrorStatus(message: string): number {
+  return /index\.lock|did not match|conflict|apply/i.test(message) ? 409 : 500;
+}
+
+/**
+ * Run a staging mutation and translate the manager's swallowed-error model
+ * to HTTP: the manager never rethrows, it records failures in state.error.
+ * On failure respond 409/500 with {error}; on success refresh so the
+ * response reflects the committed state, and return the shared state.
+ */
+async function runStagingMutation(
+  workingTree: WorkingTreeManager,
+  res: http.ServerResponse,
+  mutate: () => Promise<void>
+): Promise<void> {
+  // Reset the error slot first so a stale message from an earlier failure
+  // is not mistaken for this mutation's outcome.
+  workingTree.clearError();
+  await mutate();
+  const error = workingTree.state.error;
+  if (error) {
+    sendJson(res, gitErrorStatus(error), { error });
+    return;
+  }
+  await workingTree.refresh();
+  sendJson(res, 200, serializeSharedState(workingTree.state));
 }
 
 export function createDaemon(): Daemon {
@@ -118,7 +195,7 @@ export function createDaemon(): Daemon {
     if (removed) {
       sse.closeRepo(params.id);
     }
-    sendJson(res, 200, { success: true });
+    sendJson(res, 200, {});
   });
 
   router.get('/repos/:id/status', async ({ params, res }) => {
@@ -137,36 +214,42 @@ export function createDaemon(): Daemon {
     if (filePath) {
       const status = await ensureStatus(handle.manager.workingTree);
       const isUntracked = status.files.some((f) => f.path === filePath && f.status === 'untracked');
+      if (isUntracked && staged) {
+        throw new HttpError(
+          400,
+          `staged=true is meaningless for untracked file: ${filePath} (untracked files have no staged diff)`
+        );
+      }
       diff = isUntracked
         ? await getDiffForUntracked(handle.path, filePath)
         : await getDiff(handle.path, filePath, staged);
     } else {
       diff = await getDiff(handle.path, undefined, staged);
     }
+    // Annotate hunks with edit times, same as diffs served to the TUI.
+    handle.manager.workingTree.stampDiff(diff);
     sendJson(res, 200, diff);
   });
 
   router.post('/repos/:id/stage', async ({ params, body, res }) => {
     const handle = requireRepo(params.id);
     const filePath = requireStringField(body, 'path');
-    const status = await ensureStatus(handle.manager.workingTree);
-    const entry = resolveFileEntry(status, filePath, false);
-    await handle.manager.workingTree.stage(entry);
-    sendJson(res, 200, { success: true });
+    const workingTree = handle.manager.workingTree;
+    const entry = await resolveFileEntry(workingTree, filePath, false);
+    await runStagingMutation(workingTree, res, () => workingTree.stage(entry));
   });
 
   router.post('/repos/:id/unstage', async ({ params, body, res }) => {
     const handle = requireRepo(params.id);
     const filePath = requireStringField(body, 'path');
-    const status = await ensureStatus(handle.manager.workingTree);
-    const entry = resolveFileEntry(status, filePath, true);
-    await handle.manager.workingTree.unstage(entry);
-    sendJson(res, 200, { success: true });
+    const workingTree = handle.manager.workingTree;
+    const entry = await resolveFileEntry(workingTree, filePath, true);
+    await runStagingMutation(workingTree, res, () => workingTree.unstage(entry));
   });
 
-  router.get('/repos/:id/events', ({ params, res }) => {
+  router.get('/repos/:id/events', ({ params, req, res }) => {
     const handle = requireRepo(params.id);
-    sse.subscribe(params.id, handle.manager, res);
+    sse.subscribe(params.id, handle.manager, req, res);
   });
 
   const server = http.createServer((req, res) => {
@@ -185,24 +268,41 @@ export function createDaemon(): Daemon {
   let boundSocketPath: string | null = null;
 
   return {
-    listen(options: ListenOptions): Promise<void> {
+    async listen(options: ListenOptions): Promise<void> {
+      if (options.socketPath) {
+        // Refuse to clobber a live daemon: only unlink the socket file
+        // when connecting to it fails (genuinely stale).
+        if (await isSocketLive(options.socketPath)) {
+          throw new Error(`diffstalkerd already running at ${options.socketPath}`);
+        }
+        fs.rmSync(options.socketPath, { force: true });
+      }
+
       return new Promise((resolve, reject) => {
         const onError = (err: Error): void => reject(err);
         server.once('error', onError);
         const onListening = (): void => {
           server.removeListener('error', onError);
+          if (boundSocketPath) {
+            // Owner-only, like the old CommandServer (umask covers the
+            // creation race; chmod makes the final mode explicit).
+            fs.chmodSync(boundSocketPath, 0o600);
+          }
           resolve();
         };
 
-        if (options.socketPath) {
-          // Remove a stale socket file from a previous run.
-          fs.rmSync(options.socketPath, { force: true });
+        if (options.fd !== undefined) {
+          // Inherited socket (systemd activation): the caller owns the
+          // socket file — no unlink, no chmod.
+          server.listen({ fd: options.fd }, onListening);
+        } else if (options.socketPath) {
           boundSocketPath = options.socketPath;
+          process.umask(0o077);
           server.listen(options.socketPath, onListening);
         } else if (options.port !== undefined) {
           server.listen(options.port, options.host ?? '127.0.0.1', onListening);
         } else {
-          reject(new Error('listen() requires a socketPath or a port'));
+          reject(new Error('listen() requires a socketPath, a port, or an fd'));
         }
       });
     },

@@ -183,6 +183,24 @@ describe('git status operations (fixture)', () => {
       resetRepo();
     });
 
+    it('stages only a file named -u, not the whole tree (no arg injection)', async () => {
+      // A tracked file with unstaged modifications that '-u' WOULD stage
+      // if the path were read as a flag (git add -u = update tracked files)
+      writeFixtureFile(repoPath, 'initial.txt', 'bystander edit\n');
+      // The hostile path: an untracked file literally named '-u'
+      writeFixtureFile(repoPath, '-u', 'flag-named file\n');
+
+      await stageFile(repoPath, '-u');
+
+      const status = await getStatus(repoPath);
+      expect(status.files.some((f) => f.path === '-u' && f.staged)).toBe(true);
+      // The bystander must remain unstaged
+      const bystander = status.files.find((f) => f.path === 'initial.txt' && f.staged);
+      expect(bystander).toBeUndefined();
+
+      resetRepo();
+    });
+
     it('unstages a specific file', async () => {
       writeFixtureFile(repoPath, 'initial.txt', 'to unstage\n');
       gitExec(repoPath, 'add initial.txt');

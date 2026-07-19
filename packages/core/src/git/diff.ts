@@ -269,8 +269,15 @@ export async function getDiff(
 
 export async function getDiffForUntracked(repoPath: string, file: string): Promise<DiffResult> {
   try {
+    // Defense-in-depth: this branch reads the filesystem directly (git is
+    // not involved), so refuse paths that escape the repo root.
+    const root = path.resolve(repoPath);
+    const resolved = path.resolve(root, file);
+    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+      return { raw: '', lines: [] };
+    }
     // For untracked files, show the entire file as additions
-    const content = fs.readFileSync(path.join(repoPath, file), 'utf-8');
+    const content = fs.readFileSync(resolved, 'utf-8');
     const lines: DiffLine[] = [
       { type: 'header', content: `diff --git a/${file} b/${file}` },
       { type: 'header', content: 'new file mode 100644' },

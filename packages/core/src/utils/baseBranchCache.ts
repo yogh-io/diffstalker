@@ -1,15 +1,17 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
+import { cacheDir } from './xdg.js';
 
-const CACHE_PATH = path.join(os.homedir(), '.cache', 'diffstalker', 'base-branches.json');
+function cachePath(): string {
+  return path.join(cacheDir(), 'base-branches.json');
+}
 
 interface BaseBranchCache {
   [repoPath: string]: string;
 }
 
 function ensureCacheDir(): void {
-  const dir = path.dirname(CACHE_PATH);
+  const dir = path.dirname(cachePath());
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -17,8 +19,9 @@ function ensureCacheDir(): void {
 
 function loadCache(): BaseBranchCache {
   try {
-    if (fs.existsSync(CACHE_PATH)) {
-      return JSON.parse(fs.readFileSync(CACHE_PATH, 'utf-8'));
+    const file = cachePath();
+    if (fs.existsSync(file)) {
+      return JSON.parse(fs.readFileSync(file, 'utf-8'));
     }
   } catch {
     // Ignore read errors, return empty cache
@@ -28,7 +31,7 @@ function loadCache(): BaseBranchCache {
 
 function saveCache(cache: BaseBranchCache): void {
   ensureCacheDir();
-  fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2) + '\n');
+  fs.writeFileSync(cachePath(), JSON.stringify(cache, null, 2) + '\n');
 }
 
 /**

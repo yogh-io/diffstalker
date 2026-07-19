@@ -112,6 +112,26 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.updateState({ error: message });
   }
 
+  /**
+   * Clear a surfaced error. Lets callers (e.g. the daemon) reset the error
+   * slot before a mutation so a stale message is not mistaken for a fresh
+   * failure. No-op (no emit) when there is nothing to clear.
+   */
+  clearError(): void {
+    if (this._state.error !== null) {
+      this.updateState({ error: null });
+    }
+  }
+
+  /**
+   * Annotate a diff with hunk edit-time stamps, exactly as diffs entering
+   * this manager's own state are. Lets external consumers (the daemon's
+   * stateless /diff endpoint) keep the hunk-edit-time feature.
+   */
+  stampDiff(diff: DiffResult): void {
+    this.hunkTimes.stamp(diff);
+  }
+
   // --- Gitignore loading ---
 
   private loadGitignores(): Map<string, Ignore> {

@@ -2,10 +2,13 @@
  * Repo registry: opens repositories, normalizes their path to a worktree
  * root, and refcounts opens so multiple clients share one core manager.
  *
- * Repos get short opaque ids (r1, r2, ...) so URLs stay clean — the raw
- * filesystem path never appears in a URL.
+ * Repos get short opaque ids so URLs stay clean — the raw filesystem path
+ * never appears in a URL. The id is a stable hash of the normalized
+ * worktree root, so a client's cached id addresses the same repo after a
+ * daemon restart.
  */
 
+import { createHash } from 'node:crypto';
 import {
   getManagerForRepo,
   removeManagerForRepo,
@@ -17,8 +20,13 @@ import {
   pickDefaultWorktree,
 } from '@diffstalker/core/git/worktree';
 
+/** Stable repo id: first 12 hex chars of sha256 of the worktree root. */
+export function repoId(root: string): string {
+  return createHash('sha256').update(root).digest('hex').slice(0, 12);
+}
+
 export interface RepoHandle {
-  /** Short opaque id used in URLs (r1, r2, ...). */
+  /** Short opaque id used in URLs: a stable hash of the worktree root. */
   id: string;
   /** Normalized worktree root. */
   path: string;
@@ -35,7 +43,6 @@ export interface OpenResult {
 export class RepoRegistry {
   private byId = new Map<string, RepoHandle>();
   private byPath = new Map<string, RepoHandle>();
-  private nextId = 1;
 
   /**
    * Open a repo by any path: a worktree root, a subdirectory, or a bare
@@ -64,7 +71,7 @@ export class RepoRegistry {
     manager.workingTree.startWatching();
 
     const handle: RepoHandle = {
-      id: `r${this.nextId++}`,
+      id: repoId(root),
       path: root,
       manager,
       refCount: 1,
