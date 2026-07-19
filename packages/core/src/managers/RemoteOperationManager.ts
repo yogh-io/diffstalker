@@ -12,6 +12,8 @@ import {
   softResetHead as gitSoftResetHead,
   cherryPick as gitCherryPick,
   revertCommit as gitRevertCommit,
+  abortOperation as gitAbortOperation,
+  rebaseContinue as gitRebaseContinue,
   LocalBranch,
 } from '../git/status.js';
 import type { RemoteOperationState, RemoteOperation } from '../types/remote.js';
@@ -62,10 +64,15 @@ export class RemoteOperationManager extends EventEmitter<RemoteEventMap> {
     this.emit('remote-state-change', this._remoteState);
   }
 
+  /**
+   * Run one operation and return THIS call's final state snapshot. Callers
+   * (the daemon) must read the returned snapshot, not `remoteState`: by the
+   * time they look, the shared slot may already describe a later operation.
+   */
   private async runRemoteOperation(
     operation: RemoteOperation,
     fn: () => Promise<string>
-  ): Promise<void> {
+  ): Promise<RemoteOperationState> {
     this.updateRemoteState({ operation, inProgress: true, error: null, lastResult: null });
 
     try {
@@ -76,6 +83,9 @@ export class RemoteOperationManager extends EventEmitter<RemoteEventMap> {
       const message = err instanceof Error ? err.message : String(err);
       this.updateRemoteState({ inProgress: false, error: message });
     }
+    // updateRemoteState replaced the object synchronously above; this
+    // reference is this operation's own outcome, immune to later ops.
+    return this._remoteState;
   }
 
   /**
@@ -86,34 +96,42 @@ export class RemoteOperationManager extends EventEmitter<RemoteEventMap> {
   }
 
   // --- Remote operations ---
+  // Every operation returns its own final state snapshot, or null when it
+  // was refused because another operation was already in progress.
 
-  async push(): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('push', () => gitPush(this.repoPath));
+  async push(): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    return this.runRemoteOperation('push', () => gitPush(this.repoPath));
   }
 
-  async fetchRemote(): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('fetch', () => gitFetchRemote(this.repoPath));
+  async fetchRemote(): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    return this.runRemoteOperation('fetch', () => gitFetchRemote(this.repoPath));
   }
 
-  async pullRebase(): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('pull', () => gitPullRebase(this.repoPath));
+  async pullRebase(): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    return this.runRemoteOperation('pull', () => gitPullRebase(this.repoPath));
   }
 
   // --- Stash operations ---
 
-  async stash(message?: string): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('stash', () => gitStashSave(this.repoPath, message));
+  async stash(message?: string): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    const outcome = await this.runRemoteOperation('stash', () =>
+      gitStashSave(this.repoPath, message)
+    );
     await this.callbacks.loadStashList();
+    return outcome;
   }
 
-  async stashPop(index: number = 0): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('stashPop', () => gitStashPop(this.repoPath, index));
+  async stashPop(index: number = 0): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    const outcome = await this.runRemoteOperation('stashPop', () =>
+      gitStashPop(this.repoPath, index)
+    );
     await this.callbacks.loadStashList();
+    return outcome;
   }
 
   // --- Branch operations ---
@@ -122,32 +140,50 @@ export class RemoteOperationManager extends EventEmitter<RemoteEventMap> {
     return this.queue.enqueue(() => gitGetLocalBranches(this.repoPath));
   }
 
-  async switchBranch(name: string): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('branchSwitch', () => gitSwitchBranch(this.repoPath, name));
+  async switchBranch(name: string): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    const outcome = await this.runRemoteOperation('branchSwitch', () =>
+      gitSwitchBranch(this.repoPath, name)
+    );
     this.callbacks.resetCompareBaseBranch();
+    return outcome;
   }
 
-  async createBranch(name: string): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('branchCreate', () => gitCreateBranch(this.repoPath, name));
+  async createBranch(name: string): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    const outcome = await this.runRemoteOperation('branchCreate', () =>
+      gitCreateBranch(this.repoPath, name)
+    );
     this.callbacks.resetCompareBaseBranch();
+    return outcome;
   }
 
   // --- Undo operations ---
 
-  async softReset(count: number = 1): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('softReset', () => gitSoftResetHead(this.repoPath, count));
+  async softReset(count: number = 1): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    return this.runRemoteOperation('softReset', () => gitSoftResetHead(this.repoPath, count));
   }
 
-  async cherryPick(hash: string): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('cherryPick', () => gitCherryPick(this.repoPath, hash));
+  async cherryPick(hash: string): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    return this.runRemoteOperation('cherryPick', () => gitCherryPick(this.repoPath, hash));
   }
 
-  async revertCommit(hash: string): Promise<void> {
-    if (this._remoteState.inProgress) return;
-    await this.runRemoteOperation('revert', () => gitRevertCommit(this.repoPath, hash));
+  async revertCommit(hash: string): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    return this.runRemoteOperation('revert', () => gitRevertCommit(this.repoPath, hash));
+  }
+
+  // --- In-progress operation recovery ---
+
+  async abortOperation(): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    return this.runRemoteOperation('abort', () => gitAbortOperation(this.repoPath));
+  }
+
+  async rebaseContinue(): Promise<RemoteOperationState | null> {
+    if (this._remoteState.inProgress) return null;
+    return this.runRemoteOperation('rebaseContinue', () => gitRebaseContinue(this.repoPath));
   }
 }

@@ -1,7 +1,8 @@
-import { simpleGit, SimpleGit, StatusResult } from 'simple-git';
+import { SimpleGit, StatusResult } from 'simple-git';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createGit, gitEnv } from './gitClient.js';
 import { getIgnoredFiles } from './ignoreUtils.js';
 
 export type FileStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed' | 'copied';
@@ -91,7 +92,7 @@ export function parseStatusCode(code: string): FileStatus {
  * it without wiping the previous status.
  */
 export async function getStatus(repoPath: string): Promise<GitStatus> {
-  const git: SimpleGit = simpleGit(repoPath);
+  const git: SimpleGit = createGit(repoPath);
 
   const isRepo = await git.checkIsRepo();
   if (!isRepo) {
@@ -179,34 +180,34 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
 }
 
 export async function stageFile(repoPath: string, filePath: string): Promise<void> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   // '--' keeps a path like '-u' or '-A' from being read as a flag
   await git.add(['--', filePath]);
 }
 
 export async function unstageFile(repoPath: string, filePath: string): Promise<void> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   await git.reset(['HEAD', '--', filePath]);
 }
 
 export async function stageAll(repoPath: string): Promise<void> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   await git.add('-A');
 }
 
 export async function unstageAll(repoPath: string): Promise<void> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   await git.reset(['HEAD']);
 }
 
 export async function discardChanges(repoPath: string, filePath: string): Promise<void> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   // Restore the file to its state in HEAD (discard working directory changes)
   await git.checkout(['--', filePath]);
 }
 
 export async function deleteUntracked(repoPath: string, filePath: string): Promise<void> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   await git.clean('f', ['--', filePath]);
 }
 
@@ -215,12 +216,18 @@ export async function commit(
   message: string,
   amend: boolean = false
 ): Promise<void> {
-  const git = simpleGit(repoPath);
-  await git.commit(message, undefined, amend ? { '--amend': null } : undefined);
+  const git = createGit(repoPath);
+  const result = await git.commit(message, undefined, amend ? { '--amend': null } : undefined);
+  // simple-git swallows "nothing to commit" (exit 1) and resolves with an
+  // empty commit hash. Reporting success for a commit that never happened
+  // is data loss from the caller's perspective — fail loud instead.
+  if (!result.commit) {
+    throw new Error('Nothing to commit: no staged changes');
+  }
 }
 
 export async function getHeadMessage(repoPath: string): Promise<string> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   try {
     const log = await git.log({ n: 1 });
     return log.latest?.message || '';
@@ -243,6 +250,7 @@ export function stageHunk(repoPath: string, patch: string): void {
     cwd: repoPath,
     input: patch,
     encoding: 'utf-8',
+    env: gitEnv(),
   });
 }
 
@@ -251,11 +259,12 @@ export function unstageHunk(repoPath: string, patch: string): void {
     cwd: repoPath,
     input: patch,
     encoding: 'utf-8',
+    env: gitEnv(),
   });
 }
 
 export async function push(repoPath: string): Promise<string> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   const result = await git.push();
   // Build a summary string from the push result
   const pushed = result.pushed;
@@ -264,13 +273,13 @@ export async function push(repoPath: string): Promise<string> {
 }
 
 export async function fetchRemote(repoPath: string): Promise<string> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   await git.fetch();
   return 'Fetch complete';
 }
 
 export async function pullRebase(repoPath: string): Promise<string> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   const result = await git.pull(['--rebase']);
   if (
     result.summary.changes === 0 &&
@@ -286,7 +295,7 @@ export async function getCommitHistory(
   repoPath: string,
   count: number = 50
 ): Promise<CommitInfo[]> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   try {
     const log = await git.log({ n: count });
     return log.all.map((entry) => ({
@@ -310,7 +319,7 @@ export interface StashEntry {
 }
 
 export async function getStashList(repoPath: string): Promise<StashEntry[]> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   try {
     const result = await git.stashList();
     return result.all.map((entry, i) => ({
@@ -323,7 +332,7 @@ export async function getStashList(repoPath: string): Promise<StashEntry[]> {
 }
 
 export async function stashSave(repoPath: string, message?: string): Promise<string> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   const args = ['push'];
   if (message) args.push('-m', message);
   await git.stash(args);
@@ -331,8 +340,16 @@ export async function stashSave(repoPath: string, message?: string): Promise<str
 }
 
 export async function stashPop(repoPath: string, index: number = 0): Promise<string> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   await git.stash(['pop', `stash@{${index}}`]);
+  // A conflicting pop exits 1 but simple-git resolves anyway (proven
+  // empirically), which would report success for a working tree full of
+  // conflict markers. Detect unmerged paths and fail loud; git keeps the
+  // stash entry, so nothing is lost.
+  const unmerged = (await git.raw(['diff', '--name-only', '--diff-filter=U'])).trim();
+  if (unmerged) {
+    throw new Error(`Stash pop hit conflicts in: ${unmerged.split('\n').join(', ')}`);
+  }
   return 'Stash popped';
 }
 
@@ -345,7 +362,7 @@ export interface LocalBranch {
 }
 
 export async function getLocalBranches(repoPath: string): Promise<LocalBranch[]> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   const result = await git.branchLocal();
   return result.all.map((name) => ({
     name,
@@ -355,21 +372,26 @@ export async function getLocalBranches(repoPath: string): Promise<LocalBranch[]>
 }
 
 export async function switchBranch(repoPath: string, name: string): Promise<string> {
-  const git = simpleGit(repoPath);
-  await git.checkout(name);
+  const git = createGit(repoPath);
+  // '--' keeps a name like '-f' from being read as a flag: `git checkout -f`
+  // would hard-discard the working tree. `git switch -- <name>` refuses it.
+  await git.raw(['switch', '--', name]);
   return `Switched to ${name}`;
 }
 
 export async function createBranch(repoPath: string, name: string): Promise<string> {
-  const git = simpleGit(repoPath);
-  await git.checkoutLocalBranch(name);
+  const git = createGit(repoPath);
+  // `-c` consumes the next argv as the branch name, and git rejects any
+  // name starting with '-' as an invalid ref — so a flag-shaped name
+  // ('-f', '--detach') can never be parsed as an option here.
+  await git.raw(['switch', '-c', name]);
   return `Created ${name}`;
 }
 
 // Undo operations
 
 export async function softResetHead(repoPath: string, count: number = 1): Promise<string> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   await git.reset(['--soft', `HEAD~${count}`]);
   return 'Reset done';
 }
@@ -377,15 +399,67 @@ export async function softResetHead(repoPath: string, count: number = 1): Promis
 // History actions
 
 export async function cherryPick(repoPath: string, hash: string): Promise<string> {
-  const git = simpleGit(repoPath);
-  await git.raw(['cherry-pick', hash]);
+  const git = createGit(repoPath);
+  // --end-of-options: a hash like '--abort' must never be read as a flag
+  await git.raw(['cherry-pick', '--end-of-options', hash]);
   return 'Cherry-picked';
 }
 
 export async function revertCommit(repoPath: string, hash: string): Promise<string> {
-  const git = simpleGit(repoPath);
-  await git.revert(hash);
+  const git = createGit(repoPath);
+  await git.raw(['revert', '--no-edit', '--end-of-options', hash]);
   return 'Reverted';
+}
+
+// In-progress operations (conflicted rebase/cherry-pick/revert/merge)
+
+export type InProgressOperation = 'rebase' | 'cherry-pick' | 'revert' | 'merge';
+
+/**
+ * Which multi-step git operation the repo is currently stopped in, if any.
+ * Detected from the git dir markers git itself uses.
+ */
+export async function getInProgressOperation(
+  repoPath: string
+): Promise<InProgressOperation | null> {
+  const git = createGit(repoPath);
+  let gitDir: string;
+  try {
+    gitDir = (await git.raw(['rev-parse', '--absolute-git-dir'])).trim();
+  } catch {
+    return null;
+  }
+  const has = (marker: string): boolean => fs.existsSync(path.join(gitDir, marker));
+  if (has('rebase-merge') || has('rebase-apply')) return 'rebase';
+  if (has('CHERRY_PICK_HEAD')) return 'cherry-pick';
+  if (has('REVERT_HEAD')) return 'revert';
+  if (has('MERGE_HEAD')) return 'merge';
+  return null;
+}
+
+/**
+ * Abort whatever multi-step operation the repo is stopped in, returning it
+ * to the pre-operation state. Throws when nothing is in progress.
+ */
+export async function abortOperation(repoPath: string): Promise<string> {
+  const operation = await getInProgressOperation(repoPath);
+  if (!operation) {
+    throw new Error('No operation in progress to abort');
+  }
+  const git = createGit(repoPath);
+  await git.raw([operation, '--abort']);
+  return `Aborted ${operation}`;
+}
+
+/**
+ * Continue a stopped rebase after conflicts have been resolved and staged.
+ * core.editor=true accepts the prepared commit message — a headless caller
+ * cannot open an editor.
+ */
+export async function rebaseContinue(repoPath: string): Promise<string> {
+  const git = createGit(repoPath);
+  await git.raw(['-c', 'core.editor=true', 'rebase', '--continue']);
+  return 'Rebase continued';
 }
 
 /**
@@ -393,7 +467,7 @@ export async function revertCommit(repoPath: string, hash: string): Promise<stri
  * Uses git ls-files which is fast (git already has the index in memory).
  */
 export async function listAllFiles(repoPath: string): Promise<string[]> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   const result = await git.raw(['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
   return result.split('\0').filter((f) => f.length > 0);
 }

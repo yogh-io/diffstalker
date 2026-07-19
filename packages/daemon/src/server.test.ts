@@ -232,18 +232,20 @@ describe('daemon over unix socket', () => {
     expect(diff.raw).toContain('+hello untracked');
   });
 
-  test('POST stage returns the refreshed shared state; unstage reverses it', async () => {
+  test('POST stage returns {state} with the refreshed shared state; unstage reverses it', async () => {
     const stageRes = await postJson(`/repos/${repoId}/stage`, { path: 'file.txt' });
     expect(stageRes.status).toBe(200);
-    const staged = (await stageRes.json()) as WireStatus & Record<string, unknown>;
-    // No success envelope; the body IS the post-mutation shared state
-    expect(staged).not.toHaveProperty('success');
+    const stagedBody = (await stageRes.json()) as { state: WireStatus } & Record<string, unknown>;
+    // Unified mutation envelope: no success flag, the post-mutation shared
+    // state under `state`
+    expect(stagedBody).not.toHaveProperty('success');
+    const staged = stagedBody.state;
     expect(staged.error).toBeNull();
     expect((staged.status?.files ?? []).some((f) => f.path === 'file.txt' && f.staged)).toBe(true);
 
     const unstageRes = await postJson(`/repos/${repoId}/unstage`, { path: 'file.txt' });
     expect(unstageRes.status).toBe(200);
-    const unstaged = (await unstageRes.json()) as WireStatus;
+    const unstaged = ((await unstageRes.json()) as { state: WireStatus }).state;
     expect((unstaged.status?.files ?? []).some((f) => f.path === 'file.txt' && !f.staged)).toBe(
       true
     );
@@ -271,7 +273,7 @@ describe('daemon over unix socket', () => {
     // And the error does not stick: the next mutation succeeds cleanly
     const retry = await postJson(`/repos/${repoId}/stage`, { path: 'file.txt' });
     expect(retry.status).toBe(200);
-    expect(((await retry.json()) as WireStatus).error).toBeNull();
+    expect(((await retry.json()) as { state: WireStatus }).state.error).toBeNull();
     await postJson(`/repos/${repoId}/unstage`, { path: 'file.txt' });
     await pollStatus(repoId, (w) =>
       (w.status?.files ?? []).some((f) => f.path === 'file.txt' && !f.staged)

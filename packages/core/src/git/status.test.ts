@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {
   parseStatusCode,
   parseNumstat,
@@ -10,6 +12,15 @@ import {
   discardChanges,
   getHeadMessage,
   getCommitHistory,
+  switchBranch,
+  createBranch,
+  cherryPick,
+  revertCommit,
+  commit,
+  stashPop,
+  getInProgressOperation,
+  abortOperation,
+  rebaseContinue,
 } from './status.js';
 import { createFixtureRepo, removeFixtureRepo, writeFixtureFile, gitExec } from './test-helpers.js';
 
@@ -270,5 +281,173 @@ describe('git status operations (fixture)', () => {
       expect(one.length).toBe(1);
       expect(one[0].message).toBe('second commit');
     });
+  });
+});
+
+/**
+ * Fresh single-commit repo for the guard/recovery tests below. Each test
+ * gets its own so a wedged state can never leak between tests.
+ */
+function makeGuardRepo(name: string): string {
+  removeFixtureRepo(name);
+  const repoPath = createFixtureRepo(name);
+  writeFixtureFile(repoPath, 'base.txt', 'line one\n');
+  gitExec(repoPath, 'add .');
+  gitExec(repoPath, 'commit -m "initial"');
+  return repoPath;
+}
+
+describe('flag injection guards (fixture)', () => {
+  it('switchBranch refuses a flag-shaped name and the working tree survives', async () => {
+    const name = 'status-guard-switch';
+    const repoPath = makeGuardRepo(name);
+    try {
+      // Uncommitted work that `git checkout -f` would have destroyed.
+      writeFixtureFile(repoPath, 'base.txt', 'precious uncommitted change\n');
+
+      await expect(switchBranch(repoPath, '-f')).rejects.toThrow();
+      await expect(switchBranch(repoPath, '--detach')).rejects.toThrow();
+
+      expect(fs.readFileSync(path.join(repoPath, 'base.txt'), 'utf-8')).toBe(
+        'precious uncommitted change\n'
+      );
+      expect(gitExec(repoPath, 'branch --show-current').trim()).toBe('main');
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+
+  it('createBranch refuses flag-shaped names', async () => {
+    const name = 'status-guard-create';
+    const repoPath = makeGuardRepo(name);
+    try {
+      await expect(createBranch(repoPath, '-f')).rejects.toThrow();
+      await expect(createBranch(repoPath, '--detach')).rejects.toThrow();
+      expect(gitExec(repoPath, 'branch --show-current').trim()).toBe('main');
+      // And a legitimate name still works.
+      expect(await createBranch(repoPath, 'feat-ok')).toBe('Created feat-ok');
+      expect(gitExec(repoPath, 'branch --show-current').trim()).toBe('feat-ok');
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+
+  it('cherryPick and revertCommit refuse flag-shaped hashes', async () => {
+    const name = 'status-guard-pick';
+    const repoPath = makeGuardRepo(name);
+    try {
+      await expect(cherryPick(repoPath, '--abort')).rejects.toThrow();
+      await expect(revertCommit(repoPath, '-n')).rejects.toThrow();
+      expect(gitExec(repoPath, 'rev-list --count HEAD').trim()).toBe('1');
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+});
+
+describe('commit failure surfacing (fixture)', () => {
+  it('throws when there is nothing to commit instead of reporting success', async () => {
+    const name = 'status-guard-emptycommit';
+    const repoPath = makeGuardRepo(name);
+    try {
+      await expect(commit(repoPath, 'phantom commit')).rejects.toThrow(/nothing to commit/i);
+      expect(gitExec(repoPath, 'rev-list --count HEAD').trim()).toBe('1');
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+
+  it('still commits normally when changes are staged', async () => {
+    const name = 'status-guard-realcommit';
+    const repoPath = makeGuardRepo(name);
+    try {
+      writeFixtureFile(repoPath, 'base.txt', 'line one\nline two\n');
+      gitExec(repoPath, 'add base.txt');
+      await commit(repoPath, 'real commit');
+      expect(gitExec(repoPath, 'log -1 --format=%s').trim()).toBe('real commit');
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+});
+
+describe('stashPop conflict detection (fixture)', () => {
+  it('throws on a conflicting pop and git keeps the stash entry', async () => {
+    const name = 'status-guard-stashpop';
+    const repoPath = makeGuardRepo(name);
+    try {
+      writeFixtureFile(repoPath, 'base.txt', 'stashed version\n');
+      gitExec(repoPath, 'stash push -m "wip"');
+      writeFixtureFile(repoPath, 'base.txt', 'committed version\n');
+      gitExec(repoPath, 'commit -am "diverge"');
+
+      await expect(stashPop(repoPath)).rejects.toThrow(/conflict/i);
+      expect(gitExec(repoPath, 'stash list')).toContain('wip');
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+});
+
+describe('in-progress operation detection and recovery (fixture)', () => {
+  it('reports null on a clean repo', async () => {
+    const name = 'status-guard-clean';
+    const repoPath = makeGuardRepo(name);
+    try {
+      expect(await getInProgressOperation(repoPath)).toBeNull();
+      await expect(abortOperation(repoPath)).rejects.toThrow(/no operation in progress/i);
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+
+  it('detects and aborts a conflicted cherry-pick', async () => {
+    const name = 'status-guard-pickabort';
+    const repoPath = makeGuardRepo(name);
+    try {
+      gitExec(repoPath, 'checkout -b other');
+      writeFixtureFile(repoPath, 'base.txt', 'other version\n');
+      gitExec(repoPath, 'commit -am "other version"');
+      const otherHash = gitExec(repoPath, 'rev-parse HEAD').trim();
+      gitExec(repoPath, 'checkout main');
+      writeFixtureFile(repoPath, 'base.txt', 'main version\n');
+      gitExec(repoPath, 'commit -am "main version"');
+
+      await expect(cherryPick(repoPath, otherHash)).rejects.toThrow(/conflict/i);
+      expect(await getInProgressOperation(repoPath)).toBe('cherry-pick');
+
+      expect(await abortOperation(repoPath)).toBe('Aborted cherry-pick');
+      expect(await getInProgressOperation(repoPath)).toBeNull();
+      expect(gitExec(repoPath, 'status --porcelain').trim()).toBe('');
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+
+  it('detects a conflicted rebase; rebaseContinue finishes it after resolution', async () => {
+    const name = 'status-guard-rebase';
+    const repoPath = makeGuardRepo(name);
+    try {
+      gitExec(repoPath, 'checkout -b side');
+      writeFixtureFile(repoPath, 'base.txt', 'side version\n');
+      gitExec(repoPath, 'commit -am "side version"');
+      gitExec(repoPath, 'checkout main');
+      writeFixtureFile(repoPath, 'base.txt', 'main version\n');
+      gitExec(repoPath, 'commit -am "main version"');
+      gitExec(repoPath, 'checkout side');
+
+      expect(() => gitExec(repoPath, 'rebase main')).toThrow();
+      expect(await getInProgressOperation(repoPath)).toBe('rebase');
+
+      writeFixtureFile(repoPath, 'base.txt', 'merged version\n');
+      gitExec(repoPath, 'add base.txt');
+      expect(await rebaseContinue(repoPath)).toBe('Rebase continued');
+
+      expect(await getInProgressOperation(repoPath)).toBeNull();
+      expect(gitExec(repoPath, 'branch --show-current').trim()).toBe('side');
+      expect(gitExec(repoPath, 'log -1 --format=%s').trim()).toBe('side version');
+    } finally {
+      removeFixtureRepo(name);
+    }
   });
 });

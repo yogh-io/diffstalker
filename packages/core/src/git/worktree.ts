@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { simpleGit } from 'simple-git';
+import { createGit } from './gitClient.js';
 
 /**
  * A single git worktree, as reported by `git worktree list --porcelain`.
@@ -29,7 +29,7 @@ export async function resolveWorktreeRoot(inputPath: string): Promise<string | n
   if (!dir) return null;
 
   try {
-    const git = simpleGit(dir);
+    const git = createGit(dir);
     const isBare = (await git.raw(['rev-parse', '--is-bare-repository'])).trim() === 'true';
     if (isBare) return null;
     const top = (await git.raw(['rev-parse', '--show-toplevel'])).trim();
@@ -51,7 +51,7 @@ export async function listWorktrees(anyRepoPath: string): Promise<WorktreeInfo[]
   if (!dir) return [];
 
   try {
-    const git = simpleGit(dir);
+    const git = createGit(dir);
     const out = await git.raw(['worktree', 'list', '--porcelain']);
     return parseWorktreePorcelain(out);
   } catch {

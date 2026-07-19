@@ -6,6 +6,7 @@ import { EventEmitter } from 'node:events';
 import ignore, { Ignore } from 'ignore';
 import * as logger from '../utils/logger.js';
 import { GitOperationQueue } from './GitOperationQueue.js';
+import { gitEnv } from '../git/gitClient.js';
 import {
   getStatus,
   stageFile,
@@ -18,9 +19,11 @@ import {
   stageHunk as gitStageHunk,
   unstageHunk as gitUnstageHunk,
   getStashList as gitGetStashList,
+  getInProgressOperation,
   GitStatus,
   FileEntry,
   StashEntry,
+  InProgressOperation,
 } from '../git/status.js';
 import {
   getDiff,
@@ -33,7 +36,7 @@ import {
 import { HunkTimeTracker } from '../git/hunkTimes.js';
 
 export type { FileHunkCounts } from '../git/diff.js';
-export type { StashEntry } from '../git/status.js';
+export type { StashEntry, InProgressOperation } from '../git/status.js';
 
 export interface CombinedFileDiffs {
   unstaged: DiffResult;
@@ -49,6 +52,8 @@ export interface GitState {
   error: string | null;
   hunkCounts: FileHunkCounts | null;
   stashList: StashEntry[];
+  /** Multi-step git operation the repo is stopped in (conflicted rebase, cherry-pick, ...). */
+  operationInProgress: InProgressOperation | null;
 }
 
 type WorkingTreeEventMap = {
@@ -79,6 +84,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     error: null,
     hunkCounts: null,
     stashList: [],
+    operationInProgress: null,
   };
 
   constructor(repoPath: string, queue: GitOperationQueue, onRefresh?: () => Promise<void>) {
@@ -156,7 +162,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       const output = execFileSync(
         'git',
         ['ls-files', '-z', '--cached', '--others', '**/.gitignore'],
-        { cwd: this.repoPath, encoding: 'utf-8' }
+        { cwd: this.repoPath, encoding: 'utf-8', env: gitEnv() }
       );
 
       for (const entry of output.split('\0')) {
@@ -314,9 +320,15 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         return;
       }
 
-      const [allUnstagedDiff, allStagedDiff] = await Promise.all([
+      // Stash list and in-progress operation are shared repo state (they
+      // cross the daemon wire), so a full refresh recomputes them too.
+      // Plain git functions, not loadStashList: this already runs inside
+      // the queue, so re-enqueueing would deadlock.
+      const [allUnstagedDiff, allStagedDiff, stashList, operationInProgress] = await Promise.all([
         getDiff(this.repoPath, undefined, false),
         getDiff(this.repoPath, undefined, true),
+        gitGetStashList(this.repoPath),
+        getInProgressOperation(this.repoPath),
       ]);
 
       const hunkCounts: FileHunkCounts = {
@@ -341,6 +353,8 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         diff: displayDiff,
         combinedFileDiffs,
         hunkCounts,
+        stashList,
+        operationInProgress,
         isLoading: false,
       });
     } catch (err) {

@@ -27,7 +27,7 @@ import {
   parseBoolParam,
   parsePositiveIntParam,
   requireRepo,
-  requireStringField,
+  requireRefField,
   type RouteDeps,
 } from './shared.js';
 
@@ -99,7 +99,7 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
 
   router.put('/repos/:id/compare/base', async ({ params, body, res }) => {
     const handle = requireRepo(registry, params.id);
-    const branch = requireStringField(body, 'branch');
+    const branch = requireRefField(body, 'branch');
     // Validate before persisting: the cache is shared repo-level state
     // (the TUI's compare tab reads it too), so garbage must never land.
     if (!(await commitExists(handle.path, branch))) {

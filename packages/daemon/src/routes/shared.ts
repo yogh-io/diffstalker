@@ -9,7 +9,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type * as http from 'node:http';
 import type { FileEntry, GitStatus } from '@diffstalker/core/git/status';
-import type { RemoteOperationManager } from '@diffstalker/core/managers/RemoteOperationManager';
+import type { RemoteOperationState } from '@diffstalker/core/managers/RemoteOperationManager';
 import type { WorkingTreeManager } from '@diffstalker/core/managers/WorkingTreeManager';
 import { HttpError, sendJson } from '../router.js';
 import type { RepoRegistry, RepoHandle } from '../repoRegistry.js';
@@ -47,6 +47,21 @@ export function requireStringField(
   const value = (body as Record<string, unknown>)[field];
   if (typeof value !== 'string' || (!opts?.allowEmpty && value.length === 0)) {
     throw new HttpError(400, `Missing "${field}" (string) in body`);
+  }
+  return value;
+}
+
+/**
+ * Require a ref-like string field (branch name, commit hash). Flag-shaped
+ * values (leading '-') are rejected so a name can never be parsed as a git
+ * option — defense in depth on top of the end-of-options guards in core
+ * (a branch "name" of -f once reached `git checkout -f` and discarded the
+ * working tree).
+ */
+export function requireRefField(body: unknown, field: string): string {
+  const value = requireStringField(body, field);
+  if (value.startsWith('-')) {
+    throw new HttpError(400, `Invalid "${field}" (must not start with "-"): ${value}`);
   }
   return value;
 }
@@ -231,14 +246,15 @@ export function fsErrorCode(err: unknown): string | null {
 
 /** Failures that stem from a concurrent index/worktree change are 409s. */
 function gitErrorStatus(message: string): number {
-  return /index\.lock|did not match|conflict|apply/i.test(message) ? 409 : 500;
+  return /index\.lock|did not match|conflict|apply|nothing to commit/i.test(message) ? 409 : 500;
 }
 
 /**
  * Run a staging mutation and translate the manager's swallowed-error model
  * to HTTP: the manager never rethrows, it records failures in state.error.
  * On failure respond 409/500 with {error}; on success refresh so the
- * response reflects the committed state, and return the shared state.
+ * response reflects the committed state, and return the unified mutation
+ * envelope {state}.
  */
 export async function runStagingMutation(
   workingTree: WorkingTreeManager,
@@ -255,7 +271,7 @@ export async function runStagingMutation(
     return;
   }
   await workingTree.refresh();
-  sendJson(res, 200, serializeSharedState(workingTree.state));
+  sendJson(res, 200, { state: serializeSharedState(workingTree.state) });
 }
 
 /**
@@ -271,21 +287,20 @@ function remoteErrorStatus(message: string): number {
 
 /**
  * Run a remote/branch/undo operation and translate the manager's
- * swallowed-error model to HTTP. The manager guards with a silent
- * `if (inProgress) return`, so an op that lands while another is running
- * would otherwise report the running op's state as its own — reject it
- * with a 409 up front (and again after, in case the ops raced between the
- * check and the call). On failure respond 409/500 with {error}; on success
- * 200 with the operation's result message. The manager already schedules a
- * working-tree refresh, which fires the `state-change` SSE for other
- * clients.
+ * swallowed-error model to HTTP. Manager methods return their own outcome
+ * snapshot, or null when another operation was already in progress — a
+ * null (or an up-front inProgress read) is a 409; the snapshot is never
+ * read from the shared slot, so a racing call can never claim another
+ * operation's result as its own. On failure respond 409/500 with {error};
+ * on success refresh the working tree and respond with the unified
+ * mutation envelope {state, result}.
  */
 export async function runRemoteMutation(
-  remote: RemoteOperationManager,
+  handle: RepoHandle,
   res: http.ServerResponse,
-  opName: string,
-  fn: () => Promise<void>
+  fn: () => Promise<RemoteOperationState | null>
 ): Promise<void> {
+  const remote = handle.manager.remote;
   const busy = (): HttpError =>
     new HttpError(
       409,
@@ -294,15 +309,22 @@ export async function runRemoteMutation(
   if (remote.remoteState.inProgress) {
     throw busy();
   }
-  await fn();
-  const { inProgress, error, lastResult } = remote.remoteState;
-  if (inProgress) {
-    // Our call hit the manager's silent guard: another op won the race.
+  const outcome = await fn();
+  if (outcome === null) {
+    // Our call hit the manager's guard: another op won the race.
     throw busy();
   }
-  if (error) {
-    sendJson(res, remoteErrorStatus(error), { error });
+  if (outcome.error) {
+    sendJson(res, remoteErrorStatus(outcome.error), { error: outcome.error });
     return;
   }
-  sendJson(res, 200, { result: lastResult, operation: opName });
+  // Unified mutation envelope: the client wants fresh status after a
+  // pull/reset/cherry-pick, not just a result string. The manager only
+  // *schedules* a refresh; await a real one so the state is current.
+  const workingTree = handle.manager.workingTree;
+  await workingTree.refresh();
+  sendJson(res, 200, {
+    state: serializeSharedState(workingTree.state),
+    result: outcome.lastResult,
+  });
 }

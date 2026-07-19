@@ -13,7 +13,9 @@ export type RemoteOperation =
   | 'branchCreate'
   | 'softReset'
   | 'cherryPick'
-  | 'revert';
+  | 'revert'
+  | 'abort'
+  | 'rebaseContinue';
 
 export interface RemoteOperationState {
   operation: RemoteOperation | null;

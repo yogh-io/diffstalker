@@ -4,6 +4,7 @@
  */
 
 import { getDiff, getDiffForUntracked } from '@diffstalker/core/git/diff';
+import { getInProgressOperation } from '@diffstalker/core/git/status';
 import {
   validateCommit,
   formatCommitMessage,
@@ -43,7 +44,12 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
   router.get('/repos/:id/status', async ({ params, res }) => {
     const handle = requireRepo(registry, params.id);
     await ensureStatus(handle.manager.workingTree);
-    sendJson(res, 200, serializeSharedState(handle.manager.workingTree.state));
+    const state = serializeSharedState(handle.manager.workingTree.state);
+    // Live override: the cached state may predate a pull that just wedged
+    // the repo mid-rebase (the error path schedules no refresh), and a
+    // polling client must see the wedge immediately, not on watcher timing.
+    state.operationInProgress = await getInProgressOperation(handle.path);
+    sendJson(res, 200, state);
   });
 
   router.get('/repos/:id/diff', async ({ params, query, res }) => {

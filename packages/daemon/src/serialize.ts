@@ -7,7 +7,7 @@
  * /repos/:id/diff endpoint instead.
  */
 
-import type { GitStatus } from '@diffstalker/core/git/status';
+import type { GitStatus, StashEntry, InProgressOperation } from '@diffstalker/core/git/status';
 import type { FileHunkCounts } from '@diffstalker/core/git/diff';
 import type { GitState } from '@diffstalker/core/managers/WorkingTreeManager';
 
@@ -21,6 +21,14 @@ export interface WireSharedState {
   hunkCounts: WireHunkCounts | null;
   /** Watcher/refresh error surfaced by the manager, null when healthy. */
   error: string | null;
+  /** Stash entries ({index, message}), refreshed with the working tree. */
+  stashList: StashEntry[];
+  /**
+   * Multi-step git operation the repo is stopped in (a conflicted rebase,
+   * cherry-pick, revert, or merge), null when none. When set, mutations
+   * will keep failing until POST /abort (or /rebase-continue) resolves it.
+   */
+  operationInProgress: InProgressOperation | null;
 }
 
 /** Convert a string-keyed Map to a plain object for JSON. */
@@ -47,6 +55,8 @@ export function serializeSharedState(state: GitState): WireSharedState {
     status: state.status,
     hunkCounts: serializeHunkCounts(state.hunkCounts),
     error: state.error,
+    stashList: state.stashList,
+    operationInProgress: state.operationInProgress,
   };
 }
 

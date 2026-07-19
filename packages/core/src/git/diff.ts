@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { simpleGit } from 'simple-git';
+import { createGit } from './gitClient.js';
 import { CommitInfo } from './status.js';
 import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
 
@@ -261,7 +261,7 @@ export async function getDiff(
   file?: string,
   staged: boolean = false
 ): Promise<DiffResult> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
 
   try {
     const args: string[] = [];
@@ -322,7 +322,7 @@ export async function getStagedDiff(repoPath: string): Promise<DiffResult> {
  * Uses git log to find branches that appear in recent history (likely PR targets).
  */
 export async function getCandidateBaseBranches(repoPath: string): Promise<string[]> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   const seen = new Set<string>();
   const candidates: string[] = [];
 
@@ -403,12 +403,13 @@ export async function resolveEffectiveBaseBranch(repoPath: string): Promise<stri
  * commit-ish: a hash (possibly abbreviated), branch, remote ref, or tag.
  */
 export async function commitExists(repoPath: string, revision: string): Promise<boolean> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   try {
     // cat-file -e fails loudly ("Not a valid object name") on a miss.
     // rev-parse --verify --quiet would exit 1 silently, which simple-git
-    // does not reliably surface as an error.
-    await git.raw(['cat-file', '-e', `${revision}^{commit}`]);
+    // does not reliably surface as an error. --end-of-options keeps a
+    // flag-shaped revision from being parsed as an option.
+    await git.raw(['cat-file', '-e', '--end-of-options', `${revision}^{commit}`]);
     return true;
   } catch {
     return false;
@@ -420,12 +421,12 @@ export async function commitExists(repoPath: string, revision: string): Promise<
  * Uses three-dot diff (merge-base) to show only changes on current branch.
  */
 export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Promise<CompareDiff> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
 
   // Get merge-base for three-dot diff. With no common ancestor git exits 1
   // with empty output (simple-git resolves with ''); the diff would then
   // collapse to HEAD...HEAD and silently report an empty compare.
-  const mergeBase = await git.raw(['merge-base', baseRef, 'HEAD']);
+  const mergeBase = await git.raw(['merge-base', '--end-of-options', baseRef, 'HEAD']);
   const base = mergeBase.trim();
   if (!base) {
     throw new NoCommonHistoryError(baseRef);
@@ -552,11 +553,12 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
  * Shows the changes introduced by that commit.
  */
 export async function getCommitDiff(repoPath: string, hash: string): Promise<DiffResult> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
 
   try {
-    // git show <hash> --format="" gives just the diff without commit metadata
-    const raw = await git.raw(['show', hash, '--format=']);
+    // git show --format="" gives just the diff without commit metadata;
+    // --end-of-options keeps a flag-shaped hash from being read as an option
+    const raw = await git.raw(['show', '--format=', '--end-of-options', hash]);
     const lines = parseDiffWithLineNumbers(raw);
     return { raw, lines };
   } catch {
@@ -572,7 +574,7 @@ export async function getCompareDiffWithUncommitted(
   repoPath: string,
   baseRef: string
 ): Promise<CompareDiff> {
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
 
   const committedDiff = await getDiffBetweenRefs(repoPath, baseRef);
 

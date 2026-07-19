@@ -84,6 +84,8 @@ export function formatHeader(
         softReset: 'resetting...',
         cherryPick: 'cherry-picking...',
         revert: 'reverting...',
+        abort: 'aborting...',
+        rebaseContinue: 'continuing rebase...',
       };
       const label = labels[remoteState.operation] ?? '';
       remoteStatus = ` {yellow-fg}${label}{/yellow-fg}`;

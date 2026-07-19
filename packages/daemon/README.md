@@ -56,16 +56,32 @@ localhost; a bearer-token check is planned before it may bind further.
 
 Current surface. All bodies are JSON; errors are non-2xx with `{"error": "..."}`.
 
+Naming rule: mutations are `POST /repos/:id/<verb-kebab>` (`switch-branch`,
+`soft-reset`, `stage-hunk`); nouns with GET/PUT (`/branches`,
+`/compare/base`) are resources.
+
+Every mutation responds with the unified envelope `{state, result?}`:
+`state` is the refreshed shared state (same shape as `GET /status`) and
+`result` is the optional human-readable outcome text of remote/branch/undo
+operations. Status codes: 400 for invalid input (missing fields,
+flag-shaped refs, resets past the root), 404 for unknown repo ids / files
+not in status, 409 when the repo state refuses the operation (conflicts,
+rejected pushes, an operation already in progress, nothing to abort), 500
+for real failures.
+
+Ref-like fields (`name`, `hash`, `branch`) must not start with `-`; such
+values are rejected with a 400 so they can never be parsed as git flags.
+
+### Reads
+
 | Method | Path                       | What                                             |
 | ------ | -------------------------- | ------------------------------------------------ |
 | GET    | `/health`                  | `{ok, ready}`                                    |
 | GET    | `/repos`                   | List open repos (`id`, `path`, `branch`)         |
 | POST   | `/repos`                   | Open a repo: `{"path": "/abs/path"}` → `{id, path}` (201 created, 200 already open) |
 | DELETE | `/repos/:id`               | Close a repo (refcounted per open)               |
-| GET    | `/repos/:id/status`        | Shared state: status, hunk counts, error         |
+| GET    | `/repos/:id/status`        | Shared state: status, hunk counts, stash list, in-progress operation, error |
 | GET    | `/repos/:id/diff?path=&staged=` | Diff; whole tree without `path`, staged side with `staged=true` |
-| POST   | `/repos/:id/stage`         | Stage a file: `{"path": "file.txt"}` → refreshed shared state |
-| POST   | `/repos/:id/unstage`       | Unstage a file: same shape                       |
 | GET    | `/repos/:id/history?count=` | Commit history (`CommitInfo[]`, default 100, ISO dates) |
 | GET    | `/repos/:id/commits/:hash/diff` | Diff introduced by one commit (404 on unknown hash; merge and `--allow-empty` commits are 200 with an empty diff, matching the CLI) |
 | GET    | `/repos/:id/branches`      | Local branches (`name`, `current`, `tracking`)   |
@@ -77,6 +93,35 @@ Current surface. All bodies are JSON; errors are non-2xx with `{"error": "..."}`
 | GET    | `/repos/:id/file?path=`    | File content for display with flags: `{content, binary, truncated, tooLarge, size, totalLines}` — binary/oversized come back with empty content and the flag set, never prose; 400 for anything that is not a regular file (directory, FIFO, device) or resolves outside the repo root |
 | GET    | `/repos/:id/files`         | All tracked + untracked (not ignored) paths: the fuzzy-finder source |
 | GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher |
+
+### Mutations (all respond `{state, result?}`)
+
+| Method | Path                       | Body / behavior                                  |
+| ------ | -------------------------- | ------------------------------------------------ |
+| POST   | `/repos/:id/stage`         | `{"path": "file.txt"}` — stage one file (404 when not in status) |
+| POST   | `/repos/:id/unstage`       | `{"path": "file.txt"}` — unstage one file        |
+| POST   | `/repos/:id/stage-all`     | Stage everything                                 |
+| POST   | `/repos/:id/unstage-all`   | Unstage everything                               |
+| POST   | `/repos/:id/discard`       | `{"path": "file.txt"}` — discard an unstaged change / delete an untracked file; 409 on a staged file (unstage first) |
+| POST   | `/repos/:id/stage-hunk`    | `{"patch": "<unified diff>"}` — apply one hunk to the index; a stale patch is a 409 |
+| POST   | `/repos/:id/unstage-hunk`  | `{"patch": "<unified diff>"}` — reverse-apply one hunk |
+| POST   | `/repos/:id/commit`        | `{"message": "...", "amend"?: bool}` — 400 on an empty message or nothing staged; a commit that creates no commit is never a 200 |
+| POST   | `/repos/:id/push`          | Push the current branch; rejected push is a 409  |
+| POST   | `/repos/:id/fetch`         | Fetch from the remote                            |
+| POST   | `/repos/:id/pull`          | Pull with rebase; a conflict is a 409 and leaves the repo mid-rebase — see `/abort` |
+| POST   | `/repos/:id/stash`         | `{"message"?: "..."}` — stash the working tree   |
+| POST   | `/repos/:id/stash-pop`     | `{"index"?: 0}` — pop a stash entry (see `stashList` in the state); a conflicting pop is a 409 and keeps the entry |
+| POST   | `/repos/:id/switch-branch` | `{"name": "main"}` — switch branches             |
+| POST   | `/repos/:id/create-branch` | `{"name": "feat-x"}` — create and switch         |
+| POST   | `/repos/:id/soft-reset`    | `{"count"?: 1}` — move HEAD back, keep changes staged; past the root commit is a 400 |
+| POST   | `/repos/:id/cherry-pick`   | `{"hash": "abc123"}` — apply a commit; a conflict is a 409 |
+| POST   | `/repos/:id/revert`        | `{"hash": "abc123"}` — revert a commit with a new commit |
+| POST   | `/repos/:id/abort`         | Abort whatever multi-step operation the repo is stopped in (rebase, cherry-pick, revert, merge); 409 when nothing is in progress |
+| POST   | `/repos/:id/rebase-continue` | Continue a stopped rebase after conflicts are resolved and staged; 409 when no rebase is in progress |
+
+A conflicted `pull`/`cherry-pick` leaves the repo stopped mid-operation;
+`GET /status` reports it in `operationInProgress` and `POST /abort`
+returns the repo to its pre-operation state — no shell required.
 
 History, compare, and explorer data are stateless, pulled on demand: the
 daemon never holds a client's selection, loaded history, or tree expansion.
@@ -104,5 +149,4 @@ curl --unix-socket "$SOCK" -X POST -d '{"path": "file.txt"}' http://localhost/re
 curl --unix-socket "$SOCK" -N http://localhost/repos/<id>/events
 ```
 
-Forthcoming (the daemon split lands in slices): commit, discard, remote
-operations, follow mode, and hunk-level staging endpoints.
+Forthcoming (the daemon split lands in slices): follow mode.

@@ -44,7 +44,8 @@ describe('serializeSharedState', () => {
       isLoading: false,
       error: null,
       hunkCounts: { staged: new Map(), unstaged: new Map([['a.ts', 1]]) },
-      stashList: [],
+      stashList: [{ index: 0, message: 'WIP on main' }],
+      operationInProgress: null,
     };
 
     const wire = serializeSharedState(state);
@@ -52,13 +53,15 @@ describe('serializeSharedState', () => {
       status: state.status,
       hunkCounts: { staged: {}, unstaged: { 'a.ts': 1 } },
       error: null,
+      stashList: [{ index: 0, message: 'WIP on main' }],
+      operationInProgress: null,
     });
     expect(JSON.stringify(wire)).not.toContain('SECRET-PER-CLIENT');
     expect(wire).not.toHaveProperty('selectedFile');
     expect(wire).not.toHaveProperty('diff');
   });
 
-  test('carries the manager error onto the wire', () => {
+  test('carries the manager error and in-progress operation onto the wire', () => {
     const state: GitState = {
       status: null,
       diff: null,
@@ -68,8 +71,11 @@ describe('serializeSharedState', () => {
       error: 'Git watcher error: boom',
       hunkCounts: null,
       stashList: [],
+      operationInProgress: 'rebase',
     };
-    expect(serializeSharedState(state).error).toBe('Git watcher error: boom');
+    const wire = serializeSharedState(state);
+    expect(wire.error).toBe('Git watcher error: boom');
+    expect(wire.operationInProgress).toBe('rebase');
   });
 });
 

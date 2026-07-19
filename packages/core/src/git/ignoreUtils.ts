@@ -1,4 +1,4 @@
-import { simpleGit } from 'simple-git';
+import { createGit } from './gitClient.js';
 
 /**
  * Check which files from a list are ignored by git.
@@ -7,14 +7,16 @@ import { simpleGit } from 'simple-git';
 export async function getIgnoredFiles(repoPath: string, files: string[]): Promise<Set<string>> {
   if (files.length === 0) return new Set();
 
-  const git = simpleGit(repoPath);
+  const git = createGit(repoPath);
   const ignoredFiles = new Set<string>();
   const batchSize = 100;
 
   for (let i = 0; i < files.length; i += batchSize) {
     const batch = files.slice(i, i + batchSize);
     try {
-      const result = await git.raw(['check-ignore', ...batch]);
+      // '--' keeps a flag-shaped path (a file literally named '-q') from
+      // being read as an option
+      const result = await git.raw(['check-ignore', '--', ...batch]);
       const ignored = result
         .trim()
         .split('\n')

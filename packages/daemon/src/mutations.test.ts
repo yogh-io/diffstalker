@@ -46,6 +46,11 @@ interface WireSharedState {
   error: string | null;
 }
 
+/** Unwrap the unified mutation envelope: the shared state under `state`. */
+async function stateOf(res: Response): Promise<WireSharedState> {
+  return ((await res.json()) as { state: WireSharedState }).state;
+}
+
 /** Open a fixture repo on the daemon; returns its id. */
 async function openRepo(repoPath: string): Promise<string> {
   const res = await postJson('/repos', { path: repoPath });
@@ -115,7 +120,7 @@ describe('stage-all / unstage-all', () => {
     try {
       const stageRes = await postJson(`/repos/${repoId}/stage-all`, {});
       expect(stageRes.status).toBe(200);
-      const staged = (await stageRes.json()) as WireSharedState;
+      const staged = await stateOf(stageRes);
       expect(staged.error).toBeNull();
       const files = staged.status?.files ?? [];
       expect(files.length).toBeGreaterThan(0);
@@ -125,7 +130,7 @@ describe('stage-all / unstage-all', () => {
 
       const unstageRes = await postJson(`/repos/${repoId}/unstage-all`, {});
       expect(unstageRes.status).toBe(200);
-      const unstaged = (await unstageRes.json()) as WireSharedState;
+      const unstaged = await stateOf(unstageRes);
       expect(unstaged.error).toBeNull();
       const after = unstaged.status?.files ?? [];
       expect(after.length).toBeGreaterThan(0);
@@ -145,7 +150,7 @@ describe('discard', () => {
     try {
       const res = await postJson(`/repos/${repoId}/discard`, { path: 'base.txt' });
       expect(res.status).toBe(200);
-      const state = (await res.json()) as WireSharedState;
+      const state = await stateOf(res);
       expect(state.error).toBeNull();
       expect(entries(state, 'base.txt')).toHaveLength(0);
       expect(fs.readFileSync(path.join(repoPath, 'base.txt'), 'utf-8')).toBe('line one\n');
@@ -162,7 +167,7 @@ describe('discard', () => {
     try {
       const res = await postJson(`/repos/${repoId}/discard`, { path: 'untracked.txt' });
       expect(res.status).toBe(200);
-      const state = (await res.json()) as WireSharedState;
+      const state = await stateOf(res);
       expect(state.error).toBeNull();
       expect(entries(state, 'untracked.txt')).toHaveLength(0);
       expect(fs.existsSync(path.join(repoPath, 'untracked.txt'))).toBe(false);
@@ -216,7 +221,7 @@ describe('commit', () => {
     try {
       const res = await postJson(`/repos/${repoId}/commit`, { message: 'add line two' });
       expect(res.status).toBe(200);
-      const state = (await res.json()) as WireSharedState;
+      const state = await stateOf(res);
       expect(state.error).toBeNull();
       expect((state.status?.files ?? []).every((f) => !f.staged)).toBe(true);
 
@@ -265,6 +270,33 @@ describe('commit', () => {
     }
   });
 
+  test('commit with an index emptied out-of-band is not a false 200', async () => {
+    const name = 'daemon-mut-commit-raced';
+    const repoPath = makeDirtyRepo(name);
+    gitExec(repoPath, 'add base.txt');
+    const repoId = await openRepo(repoPath);
+    try {
+      // Warm the cached status: it now shows base.txt staged.
+      const statusRes = await request(`/repos/${repoId}/status`);
+      expect(statusRes.status).toBe(200);
+      const warm = (await statusRes.json()) as WireSharedState;
+      expect((warm.status?.files ?? []).some((f) => f.staged)).toBe(true);
+
+      // Out-of-band reset: the index is empty but the cache says staged.
+      gitExec(repoPath, 'reset');
+
+      // Depending on watcher timing this is either caught by the staged
+      // count validation (400) or by the commit itself failing loud (409).
+      // What it must NEVER be is a 200 with no commit created.
+      const res = await postJson(`/repos/${repoId}/commit`, { message: 'phantom' });
+      expect(res.status).not.toBe(200);
+      expect(gitExec(repoPath, 'rev-list --count HEAD').trim()).toBe('1');
+    } finally {
+      await closeRepo(repoId);
+      removeFixtureRepo(name);
+    }
+  });
+
   test('amend:true rewrites the top commit', async () => {
     const name = 'daemon-mut-commit-amend';
     const repoPath = makeDirtyRepo(name);
@@ -279,7 +311,7 @@ describe('commit', () => {
         amend: true,
       });
       expect(res.status).toBe(200);
-      expect(((await res.json()) as WireSharedState).error).toBeNull();
+      expect((await stateOf(res)).error).toBeNull();
 
       // Same commit count, new top message, and the staged change is in it.
       expect(gitExec(repoPath, 'rev-list --count HEAD').trim()).toBe('2');
@@ -321,7 +353,7 @@ describe('stage-hunk / unstage-hunk', () => {
     try {
       const res = await postJson(`/repos/${repoId}/stage-hunk`, { patch });
       expect(res.status).toBe(200);
-      const state = (await res.json()) as WireSharedState;
+      const state = await stateOf(res);
       expect(state.error).toBeNull();
 
       // Partially staged: the file appears on both sides of status.
@@ -338,7 +370,7 @@ describe('stage-hunk / unstage-hunk', () => {
 
       const undoRes = await postJson(`/repos/${repoId}/unstage-hunk`, { patch });
       expect(undoRes.status).toBe(200);
-      const undone = (await undoRes.json()) as WireSharedState;
+      const undone = await stateOf(undoRes);
       expect(undone.error).toBeNull();
       expect(entries(undone, 'big.txt').every((f) => !f.staged)).toBe(true);
       expect(gitExec(repoPath, 'diff --cached -- big.txt').trim()).toBe('');

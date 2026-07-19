@@ -1,7 +1,8 @@
 /**
  * Remote / branch / undo endpoints over a real unix socket: push, fetch,
  * pull, stash round-trip, branch create/switch, soft reset, cherry-pick,
- * revert, plus the conflict->409 and in-progress->409 paths.
+ * revert, abort/rebase-continue recovery, plus the conflict->409,
+ * in-progress->409, and flag-injection->400 paths.
  *
  * All remotes are local bare repos (file paths) and GIT_TERMINAL_PROMPT=0
  * is forced, so nothing can hang on credentials or the network.
@@ -20,6 +21,7 @@ import type { RemoteOperationManager } from '@diffstalker/core/managers/RemoteOp
 import { createDaemon, Daemon } from './server.js';
 import { HttpError } from './router.js';
 import { runRemoteMutation } from './routes/shared.js';
+import type { RepoHandle } from './repoRegistry.js';
 import {
   createFixtureRepo,
   createBareFixtureRepo,
@@ -48,9 +50,19 @@ function postJson(pathname: string, body: unknown): Promise<Response> {
   });
 }
 
-interface WireOpResult {
+/** The unified mutation envelope: refreshed shared state + result text. */
+interface WireEnvelope {
+  state: {
+    status: {
+      files: { path: string; staged: boolean }[];
+      branch: { current: string };
+      isRepo: boolean;
+    } | null;
+    stashList: { index: number; message: string }[];
+    operationInProgress: string | null;
+    error: string | null;
+  };
   result: string | null;
-  operation: string;
 }
 
 /** Open a fixture repo on the daemon; returns its id. */
@@ -119,9 +131,12 @@ describe('push / fetch / pull', () => {
 
       const res = await postJson(`/repos/${repoId}/push`, {});
       expect(res.status).toBe(200);
-      const body = (await res.json()) as WireOpResult;
-      expect(body.operation).toBe('push');
+      const body = (await res.json()) as WireEnvelope;
       expect(typeof body.result).toBe('string');
+      // The envelope carries the refreshed shared state, not just a string.
+      expect(body.state.status?.isRepo).toBe(true);
+      expect(body.state.status?.branch.current).toBe('main');
+      expect(body.state.error).toBeNull();
 
       const originHead = gitExec(originPath, 'rev-parse main').trim();
       expect(originHead).toBe(headOf(repoPath));
@@ -141,8 +156,7 @@ describe('push / fetch / pull', () => {
 
       const res = await postJson(`/repos/${repoId}/fetch`, {});
       expect(res.status).toBe(200);
-      const body = (await res.json()) as WireOpResult;
-      expect(body.operation).toBe('fetch');
+      const body = (await res.json()) as WireEnvelope;
       expect(body.result).toBe('Fetch complete');
 
       // origin/main advanced, local HEAD untouched.
@@ -164,8 +178,7 @@ describe('push / fetch / pull', () => {
 
       const res = await postJson(`/repos/${repoId}/pull`, {});
       expect(res.status).toBe(200);
-      const body = (await res.json()) as WireOpResult;
-      expect(body.operation).toBe('pull');
+      const body = (await res.json()) as WireEnvelope;
       expect(typeof body.result).toBe('string');
 
       expect(headOf(repoPath)).toBe(externalHash);
@@ -211,13 +224,20 @@ describe('stash / stash-pop', () => {
 
       const stashRes = await postJson(`/repos/${repoId}/stash`, { message: 'wip from test' });
       expect(stashRes.status).toBe(200);
-      expect(((await stashRes.json()) as WireOpResult).operation).toBe('stash');
+      const stashed = (await stashRes.json()) as WireEnvelope;
+      expect(stashed.result).toBe('Stashed');
+      // The wire state exposes the stash list, so stash-pop {index} is
+      // actually usable by a client.
+      expect(stashed.state.stashList).toHaveLength(1);
+      expect(stashed.state.stashList[0].message).toContain('wip from test');
       expect(gitExec(repoPath, 'status --porcelain').trim()).toBe('');
       expect(gitExec(repoPath, 'stash list')).toContain('wip from test');
 
       const popRes = await postJson(`/repos/${repoId}/stash-pop`, {});
       expect(popRes.status).toBe(200);
-      expect(((await popRes.json()) as WireOpResult).operation).toBe('stash-pop');
+      const popped = (await popRes.json()) as WireEnvelope;
+      expect(popped.result).toBe('Stash popped');
+      expect(popped.state.stashList).toHaveLength(0);
       expect(gitExec(repoPath, 'status --porcelain').trim()).not.toBe('');
       expect(fs.readFileSync(path.join(repoPath, 'base.txt'), 'utf-8')).toBe(
         'line one\nline two\n'
@@ -253,9 +273,11 @@ describe('branch create / switch', () => {
     const { repoPath } = makeRepoWithOrigin(name);
     const repoId = await openRepo(repoPath);
     try {
-      const createRes = await postJson(`/repos/${repoId}/branch/create`, { name: 'feat-x' });
+      const createRes = await postJson(`/repos/${repoId}/create-branch`, { name: 'feat-x' });
       expect(createRes.status).toBe(200);
-      expect(((await createRes.json()) as WireOpResult).result).toBe('Created feat-x');
+      const created = (await createRes.json()) as WireEnvelope;
+      expect(created.result).toBe('Created feat-x');
+      expect(created.state.status?.branch.current).toBe('feat-x');
       expect(gitExec(repoPath, 'branch --show-current').trim()).toBe('feat-x');
 
       const branchesRes = await request(`/repos/${repoId}/branches`);
@@ -264,9 +286,11 @@ describe('branch create / switch', () => {
       expect(branches.find((b) => b.current)?.name).toBe('feat-x');
       expect(branches.map((b) => b.name)).toContain('main');
 
-      const switchRes = await postJson(`/repos/${repoId}/branch/switch`, { name: 'main' });
+      const switchRes = await postJson(`/repos/${repoId}/switch-branch`, { name: 'main' });
       expect(switchRes.status).toBe(200);
-      expect(((await switchRes.json()) as WireOpResult).result).toBe('Switched to main');
+      const switched = (await switchRes.json()) as WireEnvelope;
+      expect(switched.result).toBe('Switched to main');
+      expect(switched.state.status?.branch.current).toBe('main');
       expect(gitExec(repoPath, 'branch --show-current').trim()).toBe('main');
     } finally {
       await closeRepo(repoId);
@@ -280,9 +304,9 @@ describe('branch create / switch', () => {
     const { repoPath } = makeRepoWithOrigin(name);
     const repoId = await openRepo(repoPath);
     try {
-      const switchRes = await postJson(`/repos/${repoId}/branch/switch`, {});
+      const switchRes = await postJson(`/repos/${repoId}/switch-branch`, {});
       expect(switchRes.status).toBe(400);
-      const createRes = await postJson(`/repos/${repoId}/branch/create`, { name: '' });
+      const createRes = await postJson(`/repos/${repoId}/create-branch`, { name: '' });
       expect(createRes.status).toBe(400);
     } finally {
       await closeRepo(repoId);
@@ -303,9 +327,14 @@ describe('soft reset', () => {
       gitExec(repoPath, 'add .');
       gitExec(repoPath, 'commit -m "second"');
 
-      const res = await postJson(`/repos/${repoId}/reset/soft`, { count: 1 });
+      const res = await postJson(`/repos/${repoId}/soft-reset`, { count: 1 });
       expect(res.status).toBe(200);
-      expect(((await res.json()) as WireOpResult).operation).toBe('soft-reset');
+      const body = (await res.json()) as WireEnvelope;
+      expect(body.result).toBe('Reset done');
+      // The refreshed state already shows the re-staged file.
+      expect(
+        body.state.status?.files.some((f) => f.path === 'second.txt' && f.staged)
+      ).toBe(true);
 
       expect(headOf(repoPath)).toBe(firstHead);
       expect(gitExec(repoPath, 'diff --cached --name-only').trim()).toBe('second.txt');
@@ -322,8 +351,26 @@ describe('soft reset', () => {
     const { repoPath } = makeRepoWithOrigin(name);
     const repoId = await openRepo(repoPath);
     try {
-      const res = await postJson(`/repos/${repoId}/reset/soft`, { count: 0 });
+      const res = await postJson(`/repos/${repoId}/soft-reset`, { count: 0 });
       expect(res.status).toBe(400);
+    } finally {
+      await closeRepo(repoId);
+      removeFixtureRepo(name);
+      removeFixtureRepo(`${name}-origin`);
+    }
+  });
+
+  test('resetting past the root commit is a clear 400, not a git 500', async () => {
+    const name = 'daemon-rem-reset-pastroot';
+    const { repoPath } = makeRepoWithOrigin(name);
+    const repoId = await openRepo(repoPath);
+    try {
+      // One commit exists; HEAD~1 does not.
+      const res = await postJson(`/repos/${repoId}/soft-reset`, { count: 1 });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain('HEAD~1');
+      expect(gitExec(repoPath, 'rev-list --count HEAD').trim()).toBe('1');
     } finally {
       await closeRepo(repoId);
       removeFixtureRepo(name);
@@ -348,7 +395,7 @@ describe('cherry-pick / revert', () => {
 
       const res = await postJson(`/repos/${repoId}/cherry-pick`, { hash: otherHash });
       expect(res.status).toBe(200);
-      expect(((await res.json()) as WireOpResult).result).toBe('Cherry-picked');
+      expect(((await res.json()) as WireEnvelope).result).toBe('Cherry-picked');
 
       expect(fs.existsSync(path.join(repoPath, 'other.txt'))).toBe(true);
       expect(gitExec(repoPath, 'log -1 --format=%s').trim()).toBe('other work');
@@ -371,7 +418,7 @@ describe('cherry-pick / revert', () => {
 
       const res = await postJson(`/repos/${repoId}/revert`, { hash });
       expect(res.status).toBe(200);
-      expect(((await res.json()) as WireOpResult).result).toBe('Reverted');
+      expect(((await res.json()) as WireEnvelope).result).toBe('Reverted');
 
       expect(fs.existsSync(path.join(repoPath, 'extra.txt'))).toBe(false);
       expect(gitExec(repoPath, 'log -1 --format=%s').trim()).toContain('Revert');
@@ -408,43 +455,226 @@ describe('cherry-pick / revert', () => {
   });
 });
 
+describe('flag injection guards', () => {
+  test('a flag-shaped branch name is a 400 and the working tree survives', async () => {
+    const name = 'daemon-rem-inject-switch';
+    const { repoPath } = makeRepoWithOrigin(name);
+    const repoId = await openRepo(repoPath);
+    try {
+      // Uncommitted work that `git checkout -f` would have destroyed.
+      writeFixtureFile(repoPath, 'base.txt', 'precious uncommitted change\n');
+
+      for (const evil of ['-f', '--detach', '--force']) {
+        const res = await postJson(`/repos/${repoId}/switch-branch`, { name: evil });
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { error: string };
+        expect(body.error).toContain('must not start with "-"');
+      }
+
+      // The uncommitted content is untouched and HEAD never moved.
+      expect(fs.readFileSync(path.join(repoPath, 'base.txt'), 'utf-8')).toBe(
+        'precious uncommitted change\n'
+      );
+      expect(gitExec(repoPath, 'branch --show-current').trim()).toBe('main');
+    } finally {
+      await closeRepo(repoId);
+      removeFixtureRepo(name);
+      removeFixtureRepo(`${name}-origin`);
+    }
+  });
+
+  test('flag-shaped create-branch names and cherry-pick/revert hashes are 400s', async () => {
+    const name = 'daemon-rem-inject-rest';
+    const { repoPath } = makeRepoWithOrigin(name);
+    const repoId = await openRepo(repoPath);
+    try {
+      const create = await postJson(`/repos/${repoId}/create-branch`, { name: '-f' });
+      expect(create.status).toBe(400);
+
+      // '--abort' as a "hash" would have run `git cherry-pick --abort`.
+      const pick = await postJson(`/repos/${repoId}/cherry-pick`, { hash: '--abort' });
+      expect(pick.status).toBe(400);
+
+      const revert = await postJson(`/repos/${repoId}/revert`, { hash: '--continue' });
+      expect(revert.status).toBe(400);
+
+      expect(gitExec(repoPath, 'branch --show-current').trim()).toBe('main');
+    } finally {
+      await closeRepo(repoId);
+      removeFixtureRepo(name);
+      removeFixtureRepo(`${name}-origin`);
+    }
+  });
+});
+
+describe('conflicting pull: wedge detection and recovery', () => {
+  /**
+   * A repo wedged mid-rebase: origin and local both rewrote base.txt, then
+   * pull --rebase hit the conflict. Returns the repo paths and open id.
+   */
+  async function makeWedgedRepo(name: string): Promise<{ repoPath: string; repoId: string }> {
+    const { repoPath, originPath } = makeRepoWithOrigin(name);
+    pushExternalCommit(originPath, `${name}-ext`, 'base.txt', 'external version\n');
+    writeFixtureFile(repoPath, 'base.txt', 'local version\n');
+    gitExec(repoPath, 'commit -am "local version"');
+    const repoId = await openRepo(repoPath);
+
+    const pullRes = await postJson(`/repos/${repoId}/pull`, {});
+    expect(pullRes.status).toBe(409);
+    const body = (await pullRes.json()) as { error: string };
+    expect(body.error.toLowerCase()).toContain('conflict');
+    return { repoPath, repoId };
+  }
+
+  test('conflicting pull is a 409; /status shows the wedge; /abort recovers', async () => {
+    const name = 'daemon-rem-wedge-abort';
+    const { repoPath, repoId } = await makeWedgedRepo(name);
+    try {
+      // The client can SEE it is wedged.
+      const statusRes = await request(`/repos/${repoId}/status`);
+      expect(statusRes.status).toBe(200);
+      const wire = (await statusRes.json()) as { operationInProgress: string | null };
+      expect(wire.operationInProgress).toBe('rebase');
+      expect(fs.existsSync(path.join(repoPath, '.git', 'rebase-merge'))).toBe(true);
+
+      // And recover from it through the API.
+      const abortRes = await postJson(`/repos/${repoId}/abort`, {});
+      expect(abortRes.status).toBe(200);
+      const aborted = (await abortRes.json()) as WireEnvelope;
+      expect(aborted.result).toBe('Aborted rebase');
+      expect(aborted.state.operationInProgress).toBeNull();
+
+      // HEAD is reattached to the branch and the rebase dir is gone.
+      expect(gitExec(repoPath, 'branch --show-current').trim()).toBe('main');
+      expect(fs.existsSync(path.join(repoPath, '.git', 'rebase-merge'))).toBe(false);
+      expect(fs.readFileSync(path.join(repoPath, 'base.txt'), 'utf-8')).toBe('local version\n');
+    } finally {
+      await closeRepo(repoId);
+      removeFixtureRepo(name);
+      removeFixtureRepo(`${name}-origin`);
+    }
+  });
+
+  test('abort with nothing in progress is a 409', async () => {
+    const name = 'daemon-rem-noop-abort';
+    const { repoPath } = makeRepoWithOrigin(name);
+    const repoId = await openRepo(repoPath);
+    try {
+      const res = await postJson(`/repos/${repoId}/abort`, {});
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain('No operation in progress');
+
+      const cont = await postJson(`/repos/${repoId}/rebase-continue`, {});
+      expect(cont.status).toBe(409);
+    } finally {
+      await closeRepo(repoId);
+      removeFixtureRepo(name);
+      removeFixtureRepo(`${name}-origin`);
+    }
+  });
+
+  test('rebase-continue finishes the rebase after conflicts are resolved', async () => {
+    const name = 'daemon-rem-wedge-continue';
+    const { repoPath, repoId } = await makeWedgedRepo(name);
+    try {
+      // Resolve the conflict out-of-band, the way a client edit would.
+      writeFixtureFile(repoPath, 'base.txt', 'merged version\n');
+      gitExec(repoPath, 'add base.txt');
+
+      const contRes = await postJson(`/repos/${repoId}/rebase-continue`, {});
+      expect(contRes.status).toBe(200);
+      const cont = (await contRes.json()) as WireEnvelope;
+      expect(cont.result).toBe('Rebase continued');
+      expect(cont.state.operationInProgress).toBeNull();
+
+      expect(gitExec(repoPath, 'branch --show-current').trim()).toBe('main');
+      expect(fs.readFileSync(path.join(repoPath, 'base.txt'), 'utf-8')).toBe('merged version\n');
+      // The local commit was replayed on top of the external one.
+      expect(gitExec(repoPath, 'log --format=%s').trim().split('\n')).toEqual([
+        'local version',
+        'external',
+        'initial',
+      ]);
+    } finally {
+      await closeRepo(repoId);
+      removeFixtureRepo(name);
+      removeFixtureRepo(`${name}-origin`);
+    }
+  });
+});
+
+describe('conflicting stash pop', () => {
+  test('a pop that conflicts is a 409 and the stash entry is kept', async () => {
+    const name = 'daemon-rem-stash-conflict';
+    const { repoPath } = makeRepoWithOrigin(name);
+    const repoId = await openRepo(repoPath);
+    try {
+      // Stash a change to base.txt, then move the branch so the pop conflicts.
+      writeFixtureFile(repoPath, 'base.txt', 'stashed version\n');
+      gitExec(repoPath, 'stash push -m "conflicting wip"');
+      writeFixtureFile(repoPath, 'base.txt', 'committed version\n');
+      gitExec(repoPath, 'commit -am "diverge"');
+
+      const res = await postJson(`/repos/${repoId}/stash-pop`, {});
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as { error: string };
+      expect(body.error.toLowerCase()).toContain('conflict');
+      expect(body).not.toHaveProperty('result');
+
+      // git keeps the entry on a conflicting pop — nothing was lost.
+      expect(gitExec(repoPath, 'stash list')).toContain('conflicting wip');
+    } finally {
+      await closeRepo(repoId);
+      removeFixtureRepo(name);
+      removeFixtureRepo(`${name}-origin`);
+    }
+  });
+});
+
 describe('runRemoteMutation in-progress guard', () => {
   // A real race (two HTTP requests hitting the manager at the same moment)
   // is timing-dependent, so the guard branches are exercised directly with
   // a stubbed manager state instead.
 
-  const stubRemote = (state: Partial<RemoteOperationManager['remoteState']>) =>
+  const stubHandle = (state: Partial<RemoteOperationManager['remoteState']>) =>
     ({
-      remoteState: {
-        operation: null,
-        inProgress: false,
-        error: null,
-        lastResult: null,
-        ...state,
+      id: 'stub',
+      path: '/nowhere',
+      refCount: 1,
+      manager: {
+        remote: {
+          remoteState: {
+            operation: null,
+            inProgress: false,
+            error: null,
+            lastResult: null,
+            ...state,
+          },
+        },
+        workingTree: {},
       },
-    }) as RemoteOperationManager;
+    }) as unknown as RepoHandle;
 
   const fakeRes = {} as http.ServerResponse;
 
   test('rejects with 409 when an operation is already in progress', async () => {
-    const remote = stubRemote({ operation: 'push', inProgress: true });
+    const handle = stubHandle({ operation: 'push', inProgress: true });
     let called = false;
-    const attempt = runRemoteMutation(remote, fakeRes, 'fetch', async () => {
+    const attempt = runRemoteMutation(handle, fakeRes, async () => {
       called = true;
+      return null;
     });
     await expect(attempt).rejects.toBeInstanceOf(HttpError);
     await expect(attempt).rejects.toMatchObject({ status: 409 });
     expect(called).toBe(false);
   });
 
-  test('rejects with 409 when the call hit the manager silent guard (race)', async () => {
-    // fn resolves, but the state still shows another op in flight: our call
-    // returned without doing anything (the manager's `if (inProgress) return`).
-    const remote = stubRemote({ operation: 'pull', inProgress: false });
-    const attempt = runRemoteMutation(remote, fakeRes, 'push', async () => {
-      (remote.remoteState as { inProgress: boolean }).inProgress = true;
-      (remote.remoteState as { operation: string }).operation = 'pull';
-    });
+  test('rejects with 409 when the manager refused the call (lost race)', async () => {
+    // The manager returns null when another op won the race — the loser
+    // must get a clean 409, never another operation's result.
+    const handle = stubHandle({ operation: 'pull', inProgress: false });
+    const attempt = runRemoteMutation(handle, fakeRes, async () => null);
     await expect(attempt).rejects.toBeInstanceOf(HttpError);
     await expect(attempt).rejects.toMatchObject({ status: 409 });
   });
