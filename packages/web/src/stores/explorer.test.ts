@@ -5,7 +5,9 @@
  * filter, filter-toggle races (a stale in-flight expand cannot stomp
  * the post-toggle cache; a failed reload reverts the flag and keeps the
  * old tree), repo-switch reset, file loads with the FileForDisplay
- * flags, and connection-error collapse into the calm reconnect line.
+ * flags, connection-error collapse into the calm reconnect line, and
+ * revealFile (ancestor expansion with lazy level loads + selection,
+ * directory targets, ancestor-failure bail, hidden/ignored visibility).
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -414,5 +416,149 @@ describe('connection loss', () => {
     await explorer.openFile('src/a.ts');
     expect(explorer.fileError).toBe(CONNECTION_LOST_MESSAGE);
     expect(explorer.fileLoading).toBe(false);
+  });
+});
+
+describe('revealFile', () => {
+  test('a top-level file needs no expansion: root load + file load only', async () => {
+    const { explorer } = setup();
+    await explorer.revealFile('README.md');
+
+    expect(treeCalls()).toHaveLength(1); // just the root
+    expect(params(treeCalls()[0]).get('dir')).toBe('');
+    expect(explorer.selectedPath).toBe('README.md');
+    expect(explorer.file).toEqual(TEXT_FILE);
+    expect(explorer.rows.some((r) => r.isExpanded)).toBe(false);
+  });
+
+  test('a deep path expands each ancestor, lazy-loading every level', async () => {
+    onRequest = (call) => {
+      if (!call.url.startsWith('/repos/r1/tree?')) return undefined;
+      const dir = params(call).get('dir');
+      if (dir === '') return { body: [{ name: 'src', path: 'src', type: 'dir' }] };
+      if (dir === 'src') return { body: [{ name: 'utils', path: 'src/utils', type: 'dir' }] };
+      if (dir === 'src/utils') {
+        return { body: [{ name: 'deep.ts', path: 'src/utils/deep.ts', type: 'file' }] };
+      }
+      return { status: 404, body: { error: `no such dir: ${dir}` } };
+    };
+    const { explorer } = setup();
+    await explorer.revealFile('src/utils/deep.ts');
+
+    // Root, then each ancestor level, in order.
+    expect(treeCalls().map((c) => params(c).get('dir'))).toEqual(['', 'src', 'src/utils']);
+    expect(explorer.rows.map((r) => `${r.depth}:${r.entry.name}`)).toEqual([
+      '0:src',
+      '1:utils',
+      '2:deep.ts',
+    ]);
+    expect(explorer.rows[0].isExpanded).toBe(true);
+    expect(explorer.rows[1].isExpanded).toBe(true);
+    expect(explorer.selectedPath).toBe('src/utils/deep.ts');
+    expect(explorer.file).toEqual(TEXT_FILE);
+  });
+
+  test('already-expanded ancestors are served from the cache (no refetch)', async () => {
+    const { explorer } = setup();
+    await explorer.ensureRoot();
+    await explorer.toggleDir('src');
+    const callsBefore = treeCalls().length;
+
+    await explorer.revealFile('src/a.ts');
+
+    expect(treeCalls()).toHaveLength(callsBefore);
+    expect(explorer.selectedPath).toBe('src/a.ts');
+  });
+
+  test('without a repo, revealFile stays inert', async () => {
+    const repo = useRepoStore();
+    repo.repoId = null;
+    const explorer = useExplorerStore();
+    await explorer.revealFile('src/a.ts');
+    expect(fake.calls).toHaveLength(0);
+    expect(explorer.selectedPath).toBeNull();
+  });
+
+  test('a DIRECTORY target is expanded, never opened as a file', async () => {
+    const { explorer } = setup();
+    await explorer.revealFile('src');
+
+    expect(explorer.rows.find((r) => r.entry.path === 'src')?.isExpanded).toBe(true);
+    expect(explorer.rows.map((r) => r.entry.name)).toContain('a.ts');
+    expect(explorer.selectedPath).toBeNull();
+    expect(fake.callsTo('/file')).toHaveLength(0);
+  });
+
+  test('a failed ancestor listing stops the reveal: error stays, file NOT opened', async () => {
+    const { explorer } = setup();
+    onRequest = (call) =>
+      call.url.includes('/tree') && params(call).get('dir') === 'src'
+        ? { status: 500, body: { error: 'boom' } }
+        : undefined;
+
+    await explorer.revealFile('src/a.ts');
+
+    expect(explorer.error).toBe('boom');
+    expect(explorer.selectedPath).toBeNull();
+    expect(fake.callsTo('/file')).toHaveLength(0);
+    // Coherent state: the broken dir collapsed back.
+    expect(explorer.rows.find((r) => r.entry.path === 'src')?.isExpanded).toBe(false);
+  });
+
+  test('a dotfile path flips showHidden so the tree can actually show it', async () => {
+    onRequest = (call) => {
+      if (!call.url.includes('/tree')) return undefined;
+      const dir = params(call).get('dir');
+      const hidden = params(call).get('hidden') === 'true';
+      if (dir === '') {
+        return hidden
+          ? { body: [{ name: '.github', path: '.github', type: 'dir' }, ...ROOT_ENTRIES] }
+          : { body: ROOT_ENTRIES };
+      }
+      if (dir === '.github' && hidden) {
+        return { body: [{ name: 'ci.yml', path: '.github/ci.yml', type: 'file' }] };
+      }
+      return undefined;
+    };
+    const { explorer } = setup();
+
+    await explorer.revealFile('.github/ci.yml');
+
+    expect(explorer.showHidden).toBe(true);
+    expect(explorer.rows.map((r) => r.entry.path)).toContain('.github');
+    expect(explorer.rows.map((r) => r.entry.path)).toContain('.github/ci.yml');
+    expect(explorer.selectedPath).toBe('.github/ci.yml');
+    expect(explorer.file).toEqual(TEXT_FILE);
+  });
+
+  test('a gitignored path missing from the listing flips showIgnored and retries', async () => {
+    onRequest = (call) => {
+      if (!call.url.includes('/tree')) return undefined;
+      const dir = params(call).get('dir');
+      const ignored = params(call).get('ignored') === 'true';
+      if (dir === '') {
+        return ignored
+          ? { body: [...ROOT_ENTRIES, { name: 'gen.ts', path: 'gen.ts', type: 'file' }] }
+          : { body: ROOT_ENTRIES };
+      }
+      return undefined;
+    };
+    const { explorer } = setup();
+
+    await explorer.revealFile('gen.ts');
+
+    expect(explorer.showIgnored).toBe(true);
+    expect(explorer.selectedPath).toBe('gen.ts');
+    expect(explorer.file).toEqual(TEXT_FILE);
+  });
+
+  test('a path that exists nowhere reveals nothing (no phantom selection)', async () => {
+    const { explorer } = setup();
+    await explorer.revealFile('nope/missing.ts');
+
+    expect(explorer.selectedPath).toBeNull();
+    expect(fake.callsTo('/file')).toHaveLength(0);
+    // The one showIgnored retry ran, then gave up.
+    expect(explorer.showIgnored).toBe(true);
   });
 });

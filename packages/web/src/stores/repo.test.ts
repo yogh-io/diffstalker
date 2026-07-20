@@ -221,6 +221,38 @@ describe('open + applyWireState', () => {
     expect(deletes.map((c) => c.url)).toEqual(['/repos/r1']);
   });
 
+  test('a superseded open releases its own just-acquired ref; nothing leaks under churn', async () => {
+    const { store } = await openStore(); // holds r1
+
+    // open('/a') hangs on its POST; open('/b') supersedes it and wins.
+    const slow = new Deferred<FakeResponse>();
+    onRequest = (call) => {
+      if (call.method === 'POST' && call.url === '/repos') {
+        const { path } = call.body as { path: string };
+        if (path === '/a') return slow.promise;
+        return { body: { id: 'rb', path } };
+      }
+      if (call.url.startsWith('/repos/rb/')) {
+        return { body: call.url.endsWith('/status') ? wireState() : { state: wireState() } };
+      }
+      return undefined;
+    };
+
+    const superseded = store.open('/a');
+    const ref = await store.open('/b');
+    expect(ref).toEqual({ id: 'rb', path: '/b' });
+
+    slow.resolve({ body: { id: 'ra', path: '/a' } }); // resolves out of order
+    await expect(superseded).resolves.toBeNull();
+    await flush();
+
+    // The winner released the previously held r1; the superseded open
+    // released ONLY the ref it acquired (ra) — never the winner's rb.
+    const deletes = fake.calls.filter((c) => c.method === 'DELETE').map((c) => c.url);
+    expect(deletes).toEqual(['/repos/r1', '/repos/ra']);
+    expect(store.repoId).toBe('rb');
+  });
+
   test('re-opening the same repo releases the extra ref (net one hold)', async () => {
     const { store } = await openStore();
 

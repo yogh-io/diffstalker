@@ -170,6 +170,16 @@ watch(
   }
 );
 
+// Keep the selected row visible: a reveal (fuzzy finder, follow mode)
+// can select a row far outside the current scroll position.
+watch(selectedPath, () => {
+  void nextTick(() => {
+    treeEl.value
+      ?.querySelector<HTMLElement>('.tree-row.selected')
+      ?.scrollIntoView({ block: 'nearest' });
+  });
+});
+
 // --- Row presentation ---
 
 function statusClass(row: ExplorerRow): string | null {

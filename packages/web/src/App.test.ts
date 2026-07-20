@@ -1,9 +1,10 @@
 /**
  * App shell integration tests: theme stamping, empty state, repo
  * selection (open-by-path + switcher), warm-daemon auto-activation,
- * view routing via the rail, and the status bar readout. Stores run for
- * real against the Slice-3 fakes (fake fetch + FakeEventSource) — no
- * daemon.
+ * view routing via the rail, the global keyboard layer + overlays
+ * (finder on Ctrl+P, hotkeys help on ?), and the status bar readout.
+ * Stores run for real against the Slice-3 fakes (fake fetch +
+ * FakeEventSource) — no daemon.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -45,17 +46,21 @@ const SHARED_STATE = {
 let fake: FakeFetch;
 let serverRepos: { id: string; path: string; branch: string | null }[];
 
+function openRepoRoute(call: FetchCall): FakeResponse {
+  const { path } = call.body as { path: string };
+  const known = serverRepos.find((repo) => repo.path === path);
+  if (known) return { body: { id: known.id, path: known.path } };
+  const opened = { id: `id-${path.replaceAll('/', '_')}`, path, branch: null };
+  serverRepos.push(opened);
+  return { body: { id: opened.id, path: opened.path } };
+}
+
 function routes(call: FetchCall): FakeResponse {
   if (call.method === 'GET' && call.url === '/repos') {
     return { body: serverRepos };
   }
   if (call.method === 'POST' && call.url === '/repos') {
-    const { path } = call.body as { path: string };
-    const known = serverRepos.find((repo) => repo.path === path);
-    if (known) return { body: { id: known.id, path: known.path } };
-    const opened = { id: `id-${path.replaceAll('/', '_')}`, path, branch: null };
-    serverRepos.push(opened);
-    return { body: { id: opened.id, path: opened.path } };
+    return openRepoRoute(call);
   }
   if (call.method === 'DELETE' && call.url.startsWith('/repos/')) {
     return { body: null };
@@ -66,6 +71,10 @@ function routes(call: FetchCall): FakeResponse {
   // The History / Compare views pull these on activation.
   if (call.method === 'GET' && /^\/repos\/[^/]+\/history/.test(call.url)) {
     return { body: [] };
+  }
+  // The fuzzy finder pulls the full file list on open.
+  if (call.method === 'GET' && /^\/repos\/[^/]+\/files$/.test(call.url)) {
+    return { body: ['README.md', 'src/a.ts', 'src/b.ts'] };
   }
   if (call.method === 'GET' && /^\/repos\/[^/]+\/base-branches$/.test(call.url)) {
     return { body: ['origin/main'] };
@@ -310,6 +319,62 @@ describe('view routing', () => {
     await flushPromises();
     expect(wrapper.text()).toContain('include uncommitted');
     expect(wrapper.find('button[aria-current="page"]').attributes('title')).toBe('Compare');
+    wrapper.unmount();
+  });
+});
+
+describe('global keyboard + overlays', () => {
+  function press(key: string, init: KeyboardEventInit = {}): void {
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', { key, cancelable: true, bubbles: true, ...init })
+    );
+  }
+
+  test('Ctrl+P opens the finder over the shell; Esc closes it', async () => {
+    const wrapper = await mountWithRepos([REPO_ONE]);
+
+    press('p', { ctrlKey: true });
+    await flushPromises();
+
+    const overlay = wrapper.find('[data-testid="finder-overlay"]');
+    expect(overlay.exists()).toBe(true);
+    expect(overlay.find('[role="dialog"]').exists()).toBe(true);
+    // The repo's file list arrived and focus sits in the input.
+    expect(overlay.text()).toContain('src/a.ts');
+    expect(document.activeElement).toBe(overlay.find('input').element);
+
+    press('Escape');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="finder-overlay"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  test('? toggles the hotkeys help', async () => {
+    const wrapper = await mountWithRepos([REPO_ONE]);
+
+    press('?');
+    await flushPromises();
+    const overlay = wrapper.find('[data-testid="hotkeys-overlay"]');
+    expect(overlay.exists()).toBe(true);
+    expect(overlay.text()).toContain('Keyboard shortcuts');
+    expect(overlay.text()).toContain('Find file');
+
+    press('?');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="hotkeys-overlay"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  test('view keys 1-4 switch views from anywhere outside a text field', async () => {
+    const wrapper = await mountWithRepos([REPO_ONE]);
+
+    press('4');
+    await flushPromises();
+    expect(wrapper.find('button[aria-current="page"]').attributes('title')).toBe('Explorer');
+
+    press('1');
+    await flushPromises();
+    expect(wrapper.find('button[aria-current="page"]').attributes('title')).toBe('Changes');
     wrapper.unmount();
   });
 });

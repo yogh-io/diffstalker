@@ -1,7 +1,9 @@
 /**
- * useUiStore: app-level UI state — theme, active view, recent repos.
- * Everything persists through prefs (localStorage); the theme lands on
+ * useUiStore: app-level UI state — theme, active view, recent repos,
+ * and the active overlay (fuzzy finder / hotkeys help). Theme, view and
+ * recents persist through prefs (localStorage); the theme lands on
  * <html data-theme="..."> so the CSS custom-property sets select.
+ * Overlay state is session-only — never persisted.
  *
  * The initial theme honors prefers-color-scheme when no explicit choice
  * is stored (dark unless the browser asks for light).
@@ -21,6 +23,9 @@ export const VIEWS: { name: ViewName; label: string }[] = [
   { name: 'explorer', label: 'Explorer' },
 ];
 
+/** The app's modal overlays. At most one is open at a time. */
+export type OverlayName = 'finder' | 'help';
+
 function systemTheme(): ThemeName {
   if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
     if (window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
@@ -38,6 +43,7 @@ export const useUiStore = defineStore('ui', () => {
   const theme = shallowRef<ThemeName>(stored.theme ?? systemTheme());
   const activeView = shallowRef<ViewName>(stored.activeView);
   const recentRepos = shallowRef<string[]>(stored.recentRepos);
+  const activeOverlay = shallowRef<OverlayName | null>(null);
 
   /** Stamp the current theme onto <html>. Called once at app setup. */
   function init(): void {
@@ -65,13 +71,32 @@ export const useUiStore = defineStore('ui', () => {
     savePrefs({ recentRepos: next });
   }
 
+  // --- Overlays (finder / help) ---
+
+  function openOverlay(name: OverlayName): void {
+    activeOverlay.value = name;
+  }
+
+  /** Open when closed or another overlay is up; close when it's the one open. */
+  function toggleOverlay(name: OverlayName): void {
+    activeOverlay.value = activeOverlay.value === name ? null : name;
+  }
+
+  function closeOverlay(): void {
+    activeOverlay.value = null;
+  }
+
   return {
     theme,
     activeView,
     recentRepos,
+    activeOverlay,
     init,
     setTheme,
     setActiveView,
     addRecentRepo,
+    openOverlay,
+    toggleOverlay,
+    closeOverlay,
   };
 });

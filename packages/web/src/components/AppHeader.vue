@@ -1,19 +1,29 @@
 <script setup lang="ts">
 /**
  * Global header: wordmark, repo switcher, branch + tracking + ahead/behind
- * (mono, diff-colored counts), one calm error line, follow indicator,
- * stubbed remote-op / finder controls (wired in later slices), theme
- * switcher.
+ * (mono, diff-colored counts), one calm error line, the follow toggle,
+ * stubbed remote-op controls (wired in the mutation phase), the fuzzy
+ * finder trigger, theme switcher.
+ *
+ * Follow: the daemon owns the watcher; the button flips the CLIENT-side
+ * followEnabled policy toggle (useFollowMode acts on follow-change only
+ * while it is on — same split as the CLI's FollowMode). Honest states:
+ * "no follow target" when the daemon runs without a hook file (the
+ * toggle would do nothing — disabled), "follow off" when the client
+ * toggle is off, "following <target>" when on (the followed worktree,
+ * from daemon.follow, once the first hit lands).
  */
 
 import { computed } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore } from '../stores/repo';
+import { useUiStore } from '../stores/ui';
 import RepoSwitcher from './RepoSwitcher.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
 
 const daemon = useDaemonStore();
 const repo = useRepoStore();
+const ui = useUiStore();
 
 const branch = computed(() => repo.shared.status?.branch ?? null);
 
@@ -26,12 +36,30 @@ const errorLine = computed(() =>
   daemon.activeRepoId !== null ? repo.shared.error : (daemon.error ?? repo.shared.error)
 );
 
-/**
- * Real, loaded daemon-side follow state only. The web does not
- * auto-switch on follow-change yet (that lands in a later slice), so the
- * indicator only reports what the daemon does.
- */
-const followOn = computed(() => daemon.follow?.enabled ?? false);
+/** Daemon-side: is there a hook file to follow at all? */
+const hasFollowTarget = computed(() => (daemon.follow?.targetFile ?? null) !== null);
+
+/** The followed worktree root, once the first hook hit landed. */
+const followedPath = computed(() => daemon.follow?.followedPath ?? null);
+
+const followActive = computed(() => hasFollowTarget.value && daemon.followEnabled);
+
+const followLabel = computed(() => {
+  if (!hasFollowTarget.value) return 'no follow target';
+  if (!daemon.followEnabled) return 'follow off';
+  const target = followedPath.value;
+  return target !== null ? `following ${target.split('/').pop()}` : 'follow on';
+});
+
+const followTitle = computed(() => {
+  if (!hasFollowTarget.value) {
+    return 'The daemon is not watching a follow hook file (started with --no-follow)';
+  }
+  const target = followedPath.value !== null ? `Following ${followedPath.value}. ` : '';
+  return daemon.followEnabled
+    ? `${target}Click to stop switching repos on follow changes`
+    : `${target}Click to switch repos when the follow hook changes`;
+});
 </script>
 
 <template>
@@ -60,9 +88,18 @@ const followOn = computed(() => daemon.follow?.enabled ?? false);
 
     <div class="spacer"></div>
 
-    <span v-if="followOn" class="follow mono" title="Follow mode is enabled on the daemon; the web UI does not auto-switch repos yet">
-      <span class="dot"></span>follow
-    </span>
+    <button
+      v-if="daemon.follow"
+      class="follow mono"
+      data-testid="follow-toggle"
+      :class="{ on: followActive }"
+      :disabled="!hasFollowTarget"
+      :aria-pressed="followActive"
+      :title="followTitle"
+      @click="daemon.toggleFollow()"
+    >
+      <span class="dot" aria-hidden="true"></span>{{ followLabel }}
+    </button>
 
     <div class="stub-actions" aria-label="Remote operations (land in a later slice)">
       <button disabled title="Lands in a later slice">fetch</button>
@@ -70,7 +107,17 @@ const followOn = computed(() => daemon.follow?.enabled ?? false);
       <button disabled title="Lands in a later slice">push</button>
     </div>
 
-    <button class="finder-stub" disabled title="Lands in a later slice">
+    <button
+      class="finder-btn"
+      data-testid="finder-open"
+      :disabled="daemon.activeRepoId === null"
+      :title="
+        daemon.activeRepoId === null
+          ? 'Open a repository to find files'
+          : 'Find a file in the active repository'
+      "
+      @click="ui.openOverlay('finder')"
+    >
       Find file <kbd class="mono">Ctrl P</kbd>
     </button>
 
@@ -165,14 +212,30 @@ const followOn = computed(() => daemon.follow?.enabled ?? false);
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
   font-size: var(--fs-small);
   color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.follow:hover:not(:disabled) {
+  border-color: var(--text-dim);
 }
 
 .follow .dot {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.follow.on {
+  color: var(--text);
+}
+
+.follow.on .dot {
   background: var(--add);
 }
 
@@ -182,7 +245,7 @@ const followOn = computed(() => daemon.follow?.enabled ?? false);
 }
 
 .stub-actions button,
-.finder-stub {
+.finder-btn {
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -191,7 +254,12 @@ const followOn = computed(() => daemon.follow?.enabled ?? false);
   background: transparent;
 }
 
-.finder-stub kbd {
+.finder-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.finder-btn kbd {
   font-size: var(--fs-micro);
   padding: 0 0.25rem;
   border: 1px solid var(--border);
@@ -200,7 +268,7 @@ const followOn = computed(() => daemon.follow?.enabled ?? false);
 
 @media (max-width: 56rem) {
   .stub-actions,
-  .finder-stub,
+  .finder-btn,
   .follow {
     display: none;
   }

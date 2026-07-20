@@ -123,6 +123,15 @@ export const useRepoStore = defineStore('repo', () => {
   // --- Non-reactive internals ---
 
   let generation = 0;
+  /**
+   * The repo id whose daemon-side ref this store currently holds — the
+   * last successful open's ref, not yet released. Tracked separately
+   * from repoId because open() nulls repoId up front: during rapid
+   * open churn (open A, open B before A resolves) repoId is already
+   * null when the second open starts, but the previously held ref
+   * still must be released after the next successful open.
+   */
+  let heldRepoId: string | null = null;
   let subscription: SseHandle | null = null;
   let diffDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -156,15 +165,19 @@ export const useRepoStore = defineStore('repo', () => {
    * subscribe to its SSE stream. Resets all per-repo state first. After a
    * successful open, the previous repo's ref is released: net-zero on a
    * switch (release old, hold new) AND on a re-open of the same repo (the
-   * POST bumped it to 2, the release brings it back to 1). Returns the
-   * opened ref, or null when the open failed. When the daemon refuses the
-   * path, the store lands in not-a-repo mode: repoId stays null, the
-   * reason sits in shared.error, and every operation below no-ops. A
-   * connection error routes into the reconnect loop instead.
+   * POST bumped it to 2, the release brings it back to 1). A superseded
+   * open (a newer open() started while this one's POST was in flight)
+   * releases the ref it just acquired instead — no refcount leaks under
+   * churn. Returns the opened ref, or null when the open failed or was
+   * superseded. When the daemon refuses the path, the store lands in
+   * not-a-repo mode: repoId stays null, the reason sits in shared.error,
+   * and every operation below no-ops. A connection error routes into the
+   * reconnect loop instead.
    */
   async function open(path: string): Promise<RepoRef | null> {
     const gen = ++generation;
-    const previousId = repoId.value;
+    // Adopt a directly-assigned repoId (tests) into the held tracking.
+    heldRepoId ??= repoId.value;
     subscription?.close();
     subscription = null;
     clearTimers();
@@ -183,12 +196,18 @@ export const useRepoStore = defineStore('repo', () => {
 
     try {
       const ref = await client.openRepo(path);
-      if (gen !== generation) return null;
-      if (previousId !== null) {
+      if (gen !== generation) {
+        // Superseded by a newer open(): release the ref THIS call just
+        // acquired — the newer open owns releasing whatever is held.
+        client.closeRepo(ref.id).catch(() => {});
+        return null;
+      }
+      if (heldRepoId !== null) {
         // Release the prior ref (fire-and-forget): the switch (or same-repo
         // re-open) must not leak a daemon-side refcount.
-        client.closeRepo(previousId).catch(() => {});
+        client.closeRepo(heldRepoId).catch(() => {});
       }
+      heldRepoId = ref.id;
       repoId.value = ref.id;
       repoPath.value = ref.path;
       connect();
@@ -230,7 +249,8 @@ export const useRepoStore = defineStore('repo', () => {
     subscription = null;
     clearTimers();
     recovering = false;
-    const id = repoId.value;
+    const id = repoId.value ?? heldRepoId;
+    heldRepoId = null;
     if (id !== null) {
       await client.closeRepo(id).catch(() => {});
       if (gen !== generation) return;
@@ -280,6 +300,9 @@ export const useRepoStore = defineStore('repo', () => {
     try {
       const ref = await client.openRepo(path);
       if (gen !== generation) return;
+      // Track the ref when nothing was held (a held id stays: it is a
+      // still-unreleased older repo the next successful open releases).
+      heldRepoId ??= ref.id;
       repoId.value = ref.id;
       connect();
       const state = await client.status(ref.id);

@@ -144,6 +144,38 @@ input::placeholder {
   color: var(--del);
 }
 
+/* --- Overlay dialogs (finder, hotkeys help) --- */
+
+.overlay-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: clamp(2rem, 12vh, 8rem);
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.overlay-dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  animation: overlay-in 120ms ease-out;
+}
+
+.overlay-dialog:focus-visible {
+  outline: none;
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+    transform: translateY(-0.25rem);
+  }
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;

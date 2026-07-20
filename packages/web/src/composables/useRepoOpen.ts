@@ -36,11 +36,14 @@ export function useRepoOpen() {
     return true;
   }
 
-  /** Make an already-open repo the active one. */
+  /** Make an already-open repo the active one. A failed or superseded
+   * open must NOT be tracked active — that would desync activeRepoId
+   * from the repo store. */
   async function activate(ref: RepoRef): Promise<void> {
-    await repo.open(ref.path);
-    daemon.trackActive(ref);
-    ui.addRecentRepo(ref.path);
+    const opened = await repo.open(ref.path);
+    if (!opened) return;
+    daemon.trackActive(opened);
+    ui.addRecentRepo(opened.path);
   }
 
   return { openByPath, activate };

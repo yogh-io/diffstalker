@@ -10,17 +10,24 @@
  *   (page load) with open repos and nothing active, activate the
  *   followed repo, else the first open one. Latched after that first
  *   list — a later repo-opened (say, the CLI opening a repo) must never
- *   hijack a user sitting at the empty state.
+ *   hijack a user sitting at the empty state;
+ * - the global keyboard layer (useGlobalKeys) and follow-mode policy
+ *   (useFollowMode) mount here, and the two overlays (fuzzy finder,
+ *   hotkeys help) render at the shell level from ui.activeOverlay.
  */
 
 import { computed, onMounted, watch } from 'vue';
 import { useDaemonStore } from './stores/daemon';
 import { useUiStore } from './stores/ui';
 import { useRepoOpen } from './composables/useRepoOpen';
+import { useGlobalKeys } from './composables/useGlobalKeys';
+import { useFollowMode } from './composables/useFollowMode';
 import AppHeader from './components/AppHeader.vue';
 import ActivityRail from './components/ActivityRail.vue';
 import StatusBar from './components/StatusBar.vue';
 import RepoEmptyState from './components/RepoEmptyState.vue';
+import FinderOverlay from './components/FinderOverlay.vue';
+import HotkeysOverlay from './components/HotkeysOverlay.vue';
 import ChangesView from './views/ChangesView.vue';
 import HistoryView from './views/HistoryView.vue';
 import CompareView from './views/CompareView.vue';
@@ -33,6 +40,9 @@ const { activate } = useRepoOpen();
 
 // Stamp the theme before first paint (setup runs before mount).
 ui.init();
+
+useGlobalKeys();
+useFollowMode();
 
 const VIEW_COMPONENTS: Record<ViewName, unknown> = {
   changes: ChangesView,
@@ -74,6 +84,9 @@ watch(
       <component :is="activeViewComponent" v-else />
     </main>
     <StatusBar />
+
+    <FinderOverlay v-if="ui.activeOverlay === 'finder'" />
+    <HotkeysOverlay v-else-if="ui.activeOverlay === 'help'" />
   </div>
 </template>
 

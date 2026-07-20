@@ -14,6 +14,13 @@
  * default false (dotfiles and ignored files hidden). changedOnly is a
  * pure client-side row filter (the CLI's `g`) — no refetch.
  *
+ * revealFile (fuzzy finder, follow mode) walks a repo-relative path:
+ * root first, then each ancestor directory is expanded (lazy-loading the
+ * levels not yet cached), then the target is opened (a file) or just
+ * expanded (a directory). Paths the current filters would hide flip
+ * showHidden/showIgnored on first; a failed ancestor listing stops the
+ * walk with the error visible.
+ *
  * Toggling hidden/ignored invalidates every cached listing, so the tree
  * reloads root + all expanded dirs with the new params (expansion is
  * kept). A repoId change resets the whole tree and selection; the view
@@ -189,24 +196,32 @@ export const useExplorerStore = defineStore('explorer', () => {
 
   // --- Expansion ---
 
-  async function loadChildren(path: string): Promise<void> {
+  /**
+   * Fetch one directory's listing into the cache. Returns true only
+   * when the listing was applied — false on failure OR when the result
+   * was dropped as stale — so callers walking ancestors (revealFile)
+   * can bail instead of expanding past a broken level.
+   */
+  async function loadChildren(path: string): Promise<boolean> {
     const gen = treeGeneration;
     loadingDirs.value = new Set([...loadingDirs.value, path]);
     try {
       const entries = await fetchDir(path);
-      if (gen !== treeGeneration) return;
+      if (gen !== treeGeneration) return false;
       const map = new Map(children.value);
       map.set(path, entries);
       children.value = map;
       // The tree is reachable again — an earlier failure line is stale.
       error.value = null;
+      return true;
     } catch (err) {
-      if (gen !== treeGeneration) return;
+      if (gen !== treeGeneration) return false;
       // Failed expand: collapse back so the chevron stays truthful.
       const next = new Set(expanded.value);
       next.delete(path);
       expanded.value = next;
       setTreeError(err);
+      return false;
     } finally {
       // Always clear the per-dir spinner — even when the result was
       // dropped as stale, THIS was the fetch that set it (a reset
@@ -286,6 +301,90 @@ export const useExplorerStore = defineStore('explorer', () => {
     }
   }
 
+  /**
+   * Find `target` in the (already loaded) listing of `dir`. A miss with
+   * showIgnored off retries once with ignored entries shown — the
+   * finder lists gitignored paths the filtered tree does not.
+   */
+  async function findEntry(dir: string, target: string, gen: number): Promise<DirEntry | null> {
+    const entry = children.value.get(dir)?.find((e) => e.path === target);
+    if (entry !== undefined) return entry;
+    if (showIgnored.value) return null;
+    await setShowIgnored(true);
+    // Reload failed → flag reverted → the entry still cannot be shown.
+    if (gen !== generation || !showIgnored.value) return null;
+    return children.value.get(dir)?.find((e) => e.path === target) ?? null;
+  }
+
+  /**
+   * Reveal a repo-relative path: make sure the root is loaded, walk the
+   * segments expanding each ancestor directory (lazy-loading listings
+   * not yet cached), then act on the target — a FILE is selected and
+   * loaded, a DIRECTORY is just expanded (follow mode can hand us a
+   * subdir). The view scrolls the selection into view.
+   *
+   * Visibility: a dot-segment path is invisible under the default
+   * filters, so showHidden flips on first; a segment missing from its
+   * parent listing retries once with showIgnored on. The reveal never
+   * selects a file its own tree rows cannot show.
+   *
+   * A failed ancestor listing stops the walk: the error stays visible
+   * and the file is NOT opened past a broken level. A repo switch
+   * mid-reveal drops the rest (generation guard).
+   */
+  async function revealFile(path: string): Promise<void> {
+    if (repo.repoId === null) return;
+    const gen = generation;
+
+    if (!showHidden.value && path.split('/').some((seg) => seg.startsWith('.'))) {
+      await setShowHidden(true);
+      // Reload failed (flag reverted): the tree cannot show the path.
+      if (gen !== generation || !showHidden.value) return;
+    }
+
+    await ensureRoot();
+    if (gen !== generation || !rootLoaded.value) return;
+
+    const parts = path.split('/');
+    let prefix = '';
+    for (let i = 0; i < parts.length; i++) {
+      const current = prefix === '' ? parts[i] : `${prefix}/${parts[i]}`;
+      const step = await revealStep(prefix, current, i === parts.length - 1, gen);
+      if (step !== 'descend') return;
+      prefix = current;
+    }
+    // Every segment was a directory: the target is a dir, now expanded.
+  }
+
+  /**
+   * One segment of the reveal walk: resolve the entry in its parent's
+   * listing, open a file target, expand a directory (lazy-loading its
+   * listing). 'bail' stops the walk (failure or staleness) with the
+   * error left visible; 'done' means the target was handled.
+   */
+  async function revealStep(
+    prefix: string,
+    current: string,
+    isLast: boolean,
+    gen: number
+  ): Promise<'descend' | 'done' | 'bail'> {
+    const entry = await findEntry(prefix, current, gen);
+    if (entry === null || gen !== generation) return 'bail';
+    if (entry.type !== 'dir') {
+      // A file: only valid as the last segment (a file mid-path is bogus).
+      if (isLast) await openFile(current);
+      return 'done';
+    }
+    if (!expanded.value.has(current)) {
+      expanded.value = new Set([...expanded.value, current]);
+    }
+    if (!children.value.has(current)) {
+      const ok = await loadChildren(current);
+      if (gen !== generation || !ok) return 'bail';
+    }
+    return 'descend';
+  }
+
   function clearSelection(): void {
     selectedPath.value = null;
     file.value = null;
@@ -348,6 +447,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     setChangedOnly,
     // file
     openFile,
+    revealFile,
     clearSelection,
   };
 });

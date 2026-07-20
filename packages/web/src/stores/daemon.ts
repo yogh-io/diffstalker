@@ -10,10 +10,11 @@
  * flips the status back to 'connected'.
  *
  * Follow: this store only RECORDS follow state and the latest
- * follow-change event (plus a client-side enabled toggle). Nothing in
- * the web app auto-switches repos on follow-change yet — a later slice
- * wires an app-layer watcher on `lastFollowChange` that switches the
- * active repo when `followEnabled` is on.
+ * follow-change event (plus the client-side followEnabled policy
+ * toggle, flipped by the header indicator). The ACTING lives in
+ * composables/useFollowMode, which watches `lastFollowChange` and
+ * switches the active repo / reveals the followed file while
+ * `followEnabled` is on.
  */
 
 import { shallowRef } from 'vue';

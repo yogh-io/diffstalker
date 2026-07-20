@@ -1,6 +1,7 @@
 /**
  * useUiStore tests: theme defaulting (prefers-color-scheme), theme
- * application + persistence, view routing persistence, recent repos.
+ * application + persistence, view routing persistence, recent repos,
+ * and the overlay state (finder/help, session-only).
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -73,6 +74,34 @@ describe('active view', () => {
   test('restores the stored view', () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ activeView: 'explorer' }));
     expect(useUiStore().activeView).toBe('explorer');
+  });
+});
+
+describe('overlays', () => {
+  test('opens, toggles, and closes; at most one overlay at a time', () => {
+    const store = useUiStore();
+    expect(store.activeOverlay).toBeNull();
+
+    store.openOverlay('finder');
+    expect(store.activeOverlay).toBe('finder');
+
+    // Toggling another overlay replaces the open one.
+    store.toggleOverlay('help');
+    expect(store.activeOverlay).toBe('help');
+
+    // Toggling the open overlay closes it.
+    store.toggleOverlay('help');
+    expect(store.activeOverlay).toBeNull();
+
+    store.openOverlay('help');
+    store.closeOverlay();
+    expect(store.activeOverlay).toBeNull();
+  });
+
+  test('overlay state is never persisted', () => {
+    const store = useUiStore();
+    store.openOverlay('finder');
+    expect(localStorage.getItem(PREFS_KEY)).toBeNull();
   });
 });
 
