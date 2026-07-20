@@ -547,7 +547,7 @@ The app uses a **focus zone** system for full keyboard-only navigation with `Tab
 |----------|-------------|
 | `[path]` | Fixed repository path |
 | `-f, --follow [FILE]` | Enable follow mode, optionally with custom file |
-| `--once` | Show status once and exit |
+| `-s, --socket PATH` | diffstalkerd socket to attach to or spawn on |
 | `-d, --debug` | Enable debug logging |
 | `-h, --help` | Show help message |
 

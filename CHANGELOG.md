@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   choice through the picker; the most recently active worktree (by git
   index/HEAD activity) is opened automatically. Shift+W still switches
   worktrees explicitly.
+- **A leaner `diffstalker`.** The published UI no longer depends on a git
+  library: the pure diff/patch parsers it needs (hunk extraction, status
+  maps) were split into dependency-free core modules, so `simple-git` is now
+  a `diffstalkerd`-only dependency. The two published packages are the lean
+  `diffstalker` (which pulls in `diffstalkerd`) and `diffstalkerd` itself.
 
 ### Added
 
@@ -41,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   background — re-spawning the daemon if needed and re-opening repos by their
   stable path-hashed id (no ENOENT screen spam).
 - `scripts/rmrf.sh` helper for safe recursive deletes.
+
+### Removed
+
+- The `--once` flag (show status once and exit). The UI is always a live,
+  daemon-backed view now.
+- The in-process command server and follow-file watcher, which moved into
+  `diffstalkerd`.
 
 ## [0.4.0] - 2026-07-07
 

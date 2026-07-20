@@ -32,18 +32,32 @@ A terminal git UI that lives on your second monitor. It watches your repositorie
 - **Line wrapping** - Toggle with `w` for long lines
 - **6 themes** - Dark, light, colorblind-friendly (blue/red palette), and ANSI-only variants that use your terminal's colors
 
+## Architecture
+
+The git engine runs in a background daemon, **diffstalkerd**, which serves
+`@diffstalker/core` (headless git state) over REST + Server-Sent Events. The
+terminal UI is a lean client: it installs `diffstalkerd` as a dependency and
+auto-spawns it on a unix socket, opening repos over REST and following live
+state over SSE. It holds no in-process git of its own. The UX is unchanged —
+the split just means the same daemon can back other clients (a web client is
+web-ready) with the identical feature set.
+
 ## Installation
 
 ```bash
 npm install -g diffstalker
 ```
 
-Or from source:
+Installing `diffstalker` pulls in `diffstalkerd` automatically; the UI spawns
+it for you on first run.
+
+Or from source (the repo is a bun workspace of several packages):
 ```bash
 git clone https://github.com/yogh-io/diffstalker.git
 cd diffstalker
-npm install && npm run build:prod
-npm link
+bun install && bun run build       # builds all packages
+cd packages/cli && npm link        # link the `diffstalker` bin
+# or run it directly: bun run start
 ```
 
 ## Quick Start
@@ -152,7 +166,7 @@ diffstalker [options] [path]
 
 Options:
   -f, --follow [FILE]  Watch file for repo paths
-  --once               Show status once and exit
+  -s, --socket PATH    diffstalkerd socket to attach to or spawn on
   -d, --debug          Log path changes to stderr
   -h, --help           Show help
 ```

@@ -130,9 +130,12 @@ async function findPackagesWithSrc(): Promise<string[]> {
 }
 
 async function runEslintMetrics(pkgDir: string): Promise<ESLintFileResult[]> {
-  // Run ESLint with the package's metrics config (eslint is a devDependency of each package)
+  // Run ESLint with the shared root metrics config (eslint is a devDependency
+  // of each package). The config resolves the package's own base config via
+  // cwd, so it must run with cwd set to the package dir.
   const eslintBin = join(pkgDir, 'node_modules', '.bin', 'eslint');
-  const proc = Bun.spawn([eslintBin, '--config', 'eslint.metrics.js', '--format', 'json', 'src/'], {
+  const metricsConfig = join(ROOT, 'eslint.metrics.js');
+  const proc = Bun.spawn([eslintBin, '--config', metricsConfig, '--format', 'json', 'src/'], {
     cwd: pkgDir,
     stderr: 'pipe',
   });
