@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 ## Project Overview
 
-diffstalker is a terminal UI for interactive git staging and committing, built with TypeScript and neo-blessed. It follows a push-based architecture where external tools write repository paths to a watched file (follow mode).
+diffstalker is a terminal UI for interactive git staging and committing, built with TypeScript and neo-blessed.
+
+The git state engine now lives in a **daemon** (`diffstalkerd`): a Node http server exposing `@diffstalker/core` over REST + Server-Sent Events. The terminal UI is a **client** of that daemon — it holds no in-process git. On launch the CLI attaches to a running daemon or spawns one on a unix socket, opens repos over REST, and follows live state over SSE. The daemon owns follow mode: it watches ONE hook file external tools append repo/file paths to, and broadcasts `follow-change` so clients can switch focus. The same daemon can back other clients (a web UI is planned).
 
 ## Feature Documentation
 
@@ -13,33 +15,43 @@ diffstalker is a terminal UI for interactive git staging and committing, built w
 ## Tech Stack
 
 - **TypeScript** with ESM modules, compiled with `tsc`, run with **bun** in development
-- **neo-blessed** for terminal rendering (patched at runtime for 24-bit RGB, see `src/utils/blessedRgbPatch.ts`)
-- **chokidar** for file watching (follow hook file, git dir, working tree)
-- **simple-git** for git operations
-- **fast-diff** for word-level diff highlighting
-- **emphasize** for syntax highlighting in the explorer
-- **fzf** for file finder matching
-- Event-driven state management with Node `EventEmitter` (no React)
 - **Node `http`** for the daemon (REST + SSE over `@diffstalker/core`, no framework)
+- **simple-git** for git operations — **core/daemon only** (the CLI never runs git in-process)
+- **chokidar** for file watching (follow hook file, git dir, working tree) — **core/daemon only**
+- **neo-blessed** for terminal rendering (CLI; patched at runtime for 24-bit RGB, see `packages/cli/src/utils/blessedRgbPatch.ts`)
+- **fast-diff** for word-level diff highlighting (CLI)
+- **emphasize** for syntax highlighting in the explorer (CLI)
+- **fzf** for file finder matching (CLI)
+- Event-driven state: Node `EventEmitter` inside the daemon (managers) and inside the CLI's `RepoSession` (no React)
 
 ## Build Commands
 
-The repo has three packages (`packages/core`, `packages/cli`, `packages/daemon`); root scripts delegate to them, so these all work from the repo root (`dev`/`start` target the cli):
+The repo has four packages (`packages/core`, `packages/daemon`, `packages/client`, `packages/cli`); root scripts delegate to them, so these all work from the repo root (`dev`/`start` target the cli):
 
 ```bash
-bun run dev           # Run with bun --watch (development)
-bun run build         # Clean dist/ and compile TypeScript
-bun run build:prod    # Build + minify dist/index.js (what npm consumers get)
-bun run start         # Run compiled version
-bun run test          # Run the test suite (or: cd packages/cli && bun test src/*.test.ts src/**/*.test.ts)
-bun run lint          # ESLint + dependency-cruiser
-bun run deps          # Dependency-cruiser only
-bun run metrics       # Code quality metrics report (scripts/collect-metrics.ts)
+bun run dev           # Run the CLI with bun --watch (development)
+bun run build         # Clean dist/ and compile TypeScript (all packages)
+bun run build:prod    # Build + minify the CLI's dist/index.js (what npm consumers get)
+bun run start         # Run the compiled CLI
+bun run test          # Run the full suite across all packages
+bun run lint          # ESLint + dependency-cruiser (all packages)
+bun run deps          # Dependency-cruiser only (all packages)
+bun run metrics       # Code quality metrics report (scripts/collect-metrics.ts, all packages)
 ```
 
-### Running the daemon
+### Running
 
-`diffstalkerd` (packages/daemon) serves the core git state over REST + SSE. Run with `bun packages/daemon/src/index.ts` in development, or `node packages/daemon/dist/index.js` after a build. By default it binds a unix socket at `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock` (0600) and refuses to start if `XDG_RUNTIME_DIR` is unset; use `--socket PATH` or `--port N` to override. See `packages/daemon/README.md`.
+`diffstalker` (the CLI) auto-spawns the daemon: on launch it looks for a live `diffstalkerd` on the socket (`--socket PATH`, then `$DIFFSTALKER_SOCKET`, then `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock`), attaches if one answers, and otherwise spawns one that outlives the TUI. The CLI never stops the daemon; on exit it just releases its repos (`DELETE /repos`, refcounted).
+
+To run the daemon standalone (for a non-TUI client, or to keep it warm):
+
+```bash
+bun packages/daemon/src/index.ts            # development (source)
+node packages/daemon/dist/index.js          # after bun run build
+diffstalkerd --socket /path/to.sock         # explicit socket
+```
+
+By default the daemon binds a unix socket at `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock` (dir `0700`, socket `0600`) and refuses to start if `XDG_RUNTIME_DIR` is unset; use `--socket PATH` or `--port N` to override. See `packages/daemon/README.md` for the full endpoint table and follow-mode notes.
 
 ## Releasing
 
@@ -55,46 +67,77 @@ Never bump `package.json` or create version tags manually — always use the scr
 
 ## Project Structure
 
-The repo is a bun workspace with three packages: `@diffstalker/core` (headless git state, no UI deps), `diffstalker` (the terminal UI, published to npm), and `@diffstalker/daemon` (diffstalkerd, private and bin-only: Node http REST + SSE over core). The cli and daemon import core via subpath imports only (e.g. `@diffstalker/core/git/status`) — there is no barrel/bare specifier.
+The repo is a bun workspace with four packages:
+
+- **`@diffstalker/core`** — headless git state (plain git fns + a small set of managers), no UI deps. Consumed only by the daemon; the CLI imports pure helpers/types from it (`git/diff`, `git/explorerData`, `git/status`/`worktree` types, `services/commitService`, `utils`, `types`) but **not** its managers.
+- **`@diffstalker/daemon`** — diffstalkerd, private and bin-only (not published, not importable): Node http REST + SSE over core. Owns git state and follow mode.
+- **`@diffstalker/client`** — a typed REST + SSE client for the daemon. Private; consumed by the CLI (and, later, a web client).
+- **`diffstalker`** (`packages/cli`) — the terminal UI, published to npm. A pure daemon client: `RepoSession` fed by REST + SSE, `DaemonLifecycle` to attach/spawn.
+
+Everything imports core via subpath imports only (e.g. `@diffstalker/core/git/status`) — there is no barrel/bare specifier. A dependency-cruiser rule forbids the CLI from importing `@diffstalker/core/managers/*`, `simple-git`, or `chokidar` (see Architecture Layering).
 
 ```
 packages/core/src/
 ├── git/                    # Plain async functions wrapping simple-git / git CLI
+│   ├── gitClient.ts        # Shared simple-git instance factory
 │   ├── status.ts           # getStatus, stage/unstage, hunk staging, commits
-│   ├── diff.ts             # Diff generation and parsing, hunk extraction
+│   ├── diff.ts             # Diff generation/parsing, hunk extraction (extractHunkPatch)
+│   ├── explorerData.ts     # Tree listing + buildGitStatusMap for the file explorer
 │   ├── hunkTimes.ts        # Per-hunk edit timestamps
 │   ├── worktree.ts         # Worktree/bare-repo resolution and listing
 │   └── ignoreUtils.ts      # Gitignore checking
-├── managers/               # EventEmitter-based state managers
-│   ├── GitStateManager.ts  # Thin coordinator: workingTree/history/compare/remote per repo
+├── managers/               # EventEmitter-based state managers (daemon-side only)
+│   ├── GitStateManager.ts  # Thin coordinator: workingTree + remote per repo
 │   ├── WorkingTreeManager.ts # Status+diff state, git/working-dir watchers ('state-change')
-│   ├── HistoryManager.ts   # Commit history ('history-state-change')
-│   ├── CompareManager.ts   # Base-branch comparison ('compare-state-change')
 │   ├── RemoteOperationManager.ts # push/fetch/pull/stash/branch ops ('remote-state-change')
 │   ├── GitOperationQueue.ts # Serializes git operations per repo, refresh scheduling
-│   ├── FilePathWatcher.ts  # Watches the follow hook file
-│   └── ExplorerStateManager.ts # Explorer tree state
+│   └── FilePathWatcher.ts  # Watches the follow hook file
 ├── services/
 │   └── commitService.ts    # Git commit execution
-├── utils/                  # logger, path utils, base-branch cache
+├── utils/                  # logger, path utils, base-branch cache, xdg dirs
 └── types/                  # Shared type declarations (remote)
+```
+
+The History, Compare, and Explorer **managers were deleted** in the daemon split. History/compare/explorer data are stateless now: the daemon serves them on demand with plain git fns (`git/status`, `git/diff`, `git/explorerData`) and holds no per-client selection or tree expansion.
+
+```
+packages/daemon/src/
+├── index.ts                # Entry point: parseArgs, socket resolution, signals
+├── server.ts               # createDaemon: http server, wiring, listen/close
+├── router.ts               # Method+path router, JSON bodies, HttpError -> {error}
+├── repoRegistry.ts         # Open repos by path, stable ids, refcounting, follow-ref
+├── follow.ts               # Hook-file watcher -> resolve path -> open repo -> broadcast
+├── sse.ts                  # Per-repo + daemon-scope SSE hubs fanning out events
+├── serialize.ts            # Wire encoders (shared state, Dates/Maps to JSON)
+└── routes/                 # One module per endpoint group
+    ├── health.ts, repos.ts, workingTree.ts, remote.ts
+    ├── historyCompare.ts, explorer.ts, daemon.ts, shared.ts
+
+packages/client/src/
+├── index.ts                # Public exports (DiffstalkerClient, wire types, isConnectionError)
+├── client.ts               # DiffstalkerClient: typed methods for every endpoint + subscribe
+├── transport.ts            # http-over-unix-socket / TCP fetch + SSE stream reader
+└── wire.ts                 # Wire types + decoders (JSON dates/maps back to rich types)
 
 packages/cli/src/
-├── index.ts                # Entry point: CLI args, terminal cleanup, crash handlers
-├── App.ts                  # Main controller: screen, managers, listeners, render loop
+├── index.ts                # Entry point: CLI args, ensureDaemon, terminal cleanup, crash handlers
+├── App.ts                  # Main controller: screen, RepoSession, listeners, render loop
+├── daemon/
+│   ├── DaemonLifecycle.ts  # ensureDaemon: resolve socket, attach or spawn diffstalkerd
+│   └── RepoSession.ts      # Client-side store for one repo: SSE + on-demand pulls, reconnect
 ├── KeyBindings.ts          # All keyboard bindings (screen-level), KeyBindingActions interface
 ├── MouseHandlers.ts        # Mouse event handling against layout regions
 ├── NavigationController.ts # Selection movement, scrolling, hunk navigation
 ├── StagingOperations.ts    # Stage/unstage/toggle operations, pending selection intents
 ├── ModalController.ts      # Single source of truth for modal state (ModalType union)
-├── FollowMode.ts           # Follow hook file -> repo switching
+├── FollowMode.ts           # Reacts to the daemon's follow-change SSE -> repo switching
 ├── config.ts               # Config loading/saving (~/.config/diffstalker/config.json)
 ├── themes.ts               # Theme definitions (6 themes)
 ├── ui/
 │   ├── Layout.ts           # LayoutManager: blessed boxes, split ratio, pane sizing
 │   ├── PaneRenderers.ts    # renderTopPane/renderBottomPane dispatch per tab
 │   ├── widgets/            # Pure formatters returning strings for blessed boxes
-│   │   ├── Header.ts, Footer.ts, FileList.ts, FlatFileList.ts
+│   │   ├── Header.ts, Footer.ts, FileList.ts, FlatFileList.ts, fileRowFormatters.ts
 │   │   ├── DiffView.ts, HistoryView.ts, CompareListView.ts
 │   │   ├── CommitPanel.ts, ExplorerView.ts, ExplorerContent.ts
 │   └── modals/             # Modal implementations (Modal interface: destroy/focus)
@@ -104,32 +147,34 @@ packages/cli/src/
 ├── state/
 │   ├── UIState.ts          # Panes, tabs, focus zones, selection indices, toggles
 │   ├── CommitFlowState.ts  # Commit panel state machine
+│   ├── ExplorerViewModel.ts # Explorer tree state, fed by daemon tree/file endpoints
 │   └── FocusRing.ts        # Tab/Shift-Tab focus zone cycling
-├── ipc/
-│   └── CommandServer.ts    # Unix socket JSON command server (--socket, used for testing)
 ├── utils/                  # Pure helpers (displayRows, layout math, ansi, paths...)
-└── types/                  # Shared type declarations (tabs, neo-blessed shim)
-
-packages/daemon/src/
-├── index.ts                # Entry point: parseArgs, socket resolution, signals
-├── server.ts               # createDaemon: http server, routes, listen/close
-├── router.ts               # Method+path router, JSON bodies, HttpError -> {error}
-├── repoRegistry.ts         # Open repos by path, stable ids, refcounting
-├── sse.ts                  # Per-repo SSE hub fanning out state-change events
-└── serialize.ts            # Wire encoders (shared state, Dates/Maps to JSON)
+└── types/                  # Shared type declarations (tabs, session, neo-blessed shim)
 ```
 
 ## Key Patterns
 
-### State Managers and Events
+### Daemon-backed state (CLI)
 
-All app state lives in EventEmitter-based managers; blessed widgets are dumb renderers. `App.ts` subscribes to manager events (`state-change`, `history-state-change`, `compare-state-change`, `remote-state-change`) and calls `render()`, which re-renders panes via `PaneRenderers`. Managers are registered per repo path (`getManagerForRepo`); switching repos disposes the old manager's listeners.
+The CLI holds no git. One `RepoSession` per open repo is the client-side store:
 
-Errors are surfaced by setting `error` in `WorkingTreeManager` state (`setError()`), which the header renders and the next refresh clears. Never emit unsubscribed `'error'` events — an EventEmitter `'error'` without a listener crashes the process.
+- **shared state** (status, hunk counts, stash list, in-progress op, error) is fed by the per-repo SSE stream (`GET /repos/:id/events`) and by mutation response envelopes (`{state, result?}`);
+- **selection** (the picked file + its diffs) is per-client, fetched on demand via `GET /diff` with a 20ms debounce + stale-guard;
+- **history and compare** are pulled on demand and re-pulled on `state-change` when previously loaded;
+- **remote-operation progress** (cherry-pick/revert) is synthesized locally around the mutation call — there is no remote SSE channel.
+
+`RepoSession` re-emits `state-change` / `history-change` / `compare-change` / `remote-change`; `App.ts` subscribes and calls `render()`, which re-renders panes via `PaneRenderers`. All getters return cached state synchronously (blessed renders synchronously) — nothing hands the UI a promise. Errors collapse into `shared.error` (surfaced in the header); they never throw to the UI.
+
+**Reconnect:** when the SSE stream drops, the session sets one calm `daemon connection lost — reconnecting…` line in `shared.error` and retries in the background — it re-runs `ensureDaemon` (spawns a fresh daemon if the socket is gone), re-POSTs `/repos` (the path-hashed id is stable across a daemon restart), and resubscribes. A fresh snapshot clears the error.
+
+### Daemon-side managers and events
+
+Inside the daemon, `@diffstalker/core` keeps the EventEmitter managers: `GitStateManager` coordinates `WorkingTreeManager` (status+diff, git/working-dir watchers, `state-change`) and `RemoteOperationManager` (push/fetch/pull/stash/branch, `remote-state-change`) per repo. The daemon's per-repo SSE hub fans `state-change` out to clients. History, compare, and explorer have **no** managers — they are served statelessly from plain git fns. Never emit unsubscribed `'error'` events — an EventEmitter `'error'` without a listener crashes the process.
 
 ### Git Operations
 
-Plain functions in `src/git/` wrap simple-git. Mutations go through `GitOperationQueue` (one queue per repo) so operations serialize and refreshes coalesce. UI-triggered operations live on the managers (e.g. `WorkingTreeManager.stageFile`) which update state and surface errors instead of crashing. `getStatus` returns `isRepo: false` only for a genuine non-repo; other failures propagate to keep the previous status visible.
+Plain functions in `packages/core/src/git/` wrap simple-git. Mutations go through `GitOperationQueue` (one queue per repo) so operations serialize and refreshes coalesce; daemon route handlers call the owning manager (e.g. `WorkingTreeManager.stageFile`), which updates state and surfaces errors instead of crashing, then respond with the `{state, result?}` envelope. `getStatus` returns `isRepo: false` only for a genuine non-repo; other failures propagate to keep the previous status visible.
 
 ### Modals
 
@@ -157,8 +202,10 @@ When building UI structures with rows (diff views, file lists), always use a sin
 
 ### Adding a new git operation
 1. Add the plain function to `packages/core/src/git/status.ts` (or `diff.ts`/`worktree.ts`)
-2. Add a method on the owning manager in `packages/core/src/managers/` that runs it through the queue and updates state with error handling
-3. Wire it from `App.ts` (action) and `KeyBindings.ts` (key)
+2. Add a method on the owning manager in `packages/core/src/managers/` that runs it through the queue and updates state with error handling (only when the op needs live/queued state; stateless reads stay plain fns)
+3. Add a daemon route in `packages/daemon/src/routes/` that calls it and returns the `{state, result?}` envelope
+4. Add a typed method to `DiffstalkerClient` in `packages/client/src/client.ts`
+5. Call it from `RepoSession` (apply the returned envelope) and wire it from `App.ts` (action) + `KeyBindings.ts` (key)
 
 ### Adding a keybinding
 1. Add handler in `src/KeyBindings.ts` (respect the `hasActiveModal()` guard for non-modal keys)
@@ -177,15 +224,16 @@ When building UI structures with rows (diff views, file lists), always use a sin
 - Blessed: box-level key handlers fire before screen-level ones when the box has focus — but both fire (see Modals above)
 - `setImmediate` hacks for race conditions are a code smell — use proper guards at the KeyBindings level
 - Mouse coordinates from terminals are 1-indexed
-- `simple-git` status may include gitignored files in some cases; we filter with `git check-ignore`
-- neo-blessed truecolor only works because of the runtime patch (`applyBlessedRgbPatch()` runs before screen creation); content SGR `38;2;R;G;B` codes are otherwise downsampled
-- Tests must not create real chokidar watchers: construct `WorkingTreeManager` without calling `startWatching()`
+- `simple-git` status may include gitignored files in some cases; we filter with `git check-ignore` (core/daemon)
+- neo-blessed truecolor only works because of the runtime patch (`applyBlessedRgbPatch()` runs before screen creation); content SGR `38;2;R;G;B` codes are otherwise downsampled (CLI)
+- Core/daemon tests must not create real chokidar watchers: construct `WorkingTreeManager` without calling `startWatching()`, and construct the daemon with follow disabled (or point `--follow-file` at a temp path). CLI tests spin up no watchers — the daemon owns them.
+- CLI tests must not hit a real daemon: `RepoSession`/`App` tests drive a fake `DiffstalkerClient`; `DaemonLifecycle` tests point at a throwaway socket and tear it down with `fuser -k <socket>` (never `pkill diffstalkerd` — that kills the user's live daemon)
 
 ## Code Quality Guidelines
 
 ### Pre-commit Hook
 
-A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 19 pre-existing sonarjs cognitive-complexity warnings are expected (6 in packages/core + 13 in packages/cli), 0 errors.
+A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 19 pre-existing sonarjs cognitive-complexity warnings are expected (6 in packages/core + 13 in packages/cli; daemon and client 0), 0 errors.
 
 ### Architecture Layering (dependency-cruiser)
 
@@ -199,12 +247,14 @@ index.ts
 App.ts, KeyBindings.ts, MouseHandlers.ts, NavigationController.ts,
 StagingOperations.ts, ModalController.ts, FollowMode.ts
   ↓
-ui/
+daemon/   ui/
   ↓
-state/    ipc/
+state/
   ↓
 utils/  types/  themes.ts  config.ts
 ```
+
+The CLI is locked as a pure daemon client (severity `error`): `src/` may **not** import `@diffstalker/core/managers/*` (no in-process managers), nor `simple-git` / `chokidar` (daemon/core-only). It may still import the pure core helpers it uses (`git/diff`, `git/explorerData`, `git/status`/`worktree` types, `services/commitService`, `utils`, `types`).
 
 packages/core:
 
@@ -214,7 +264,7 @@ managers/
 git/  utils/  services/  types/
 ```
 
-Circular dependencies are forbidden. Run `bun run deps` to check (covers all packages).
+Circular dependencies are forbidden. Run `bun run deps` to check (covers all four packages).
 
 ## Interactive Testing with tmux
 
@@ -242,7 +292,7 @@ tmux send-keys -t difftest '2'        # Switch to tab 2
 tmux kill-session -t difftest
 ```
 
-There is also a Unix socket command server for scripted control: start with `--socket /tmp/ds.sock` and send newline-delimited JSON commands (see `src/ipc/CommandServer.ts`).
+Note: `--socket PATH` now points the CLI at a `diffstalkerd` socket to attach to or spawn on (the old in-process JSON command server is gone). For scripted control against the daemon directly, `curl --unix-socket` its REST endpoints (see `packages/daemon/README.md`).
 
 ### Developer: Observe Claude's Testing
 

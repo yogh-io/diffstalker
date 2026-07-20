@@ -1,5 +1,7 @@
-# Root docs are copied in here only during `npm pack`/`publish` (prepack) and
-# removed by postpack. Ignore them so a failed postpack never commits copies.
-/README.md
+# LICENSE and CHANGELOG are copied in here only during `npm pack`/`publish`
+# (prepack) and removed by postpack. Ignore them so a failed postpack never
+# commits copies. README.md IS committed (a developer-facing doc); prepack
+# swaps in the root marketing README for the npm tarball and postpack restores
+# the committed one via `git checkout`.
 /LICENSE
 /CHANGELOG.md

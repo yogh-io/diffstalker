@@ -455,11 +455,14 @@ export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
     } catch (err) {
       // Rendered into the preview pane (not stderr), so no garble either way;
       // on connection loss show the calm reconnect line instead of raw ENOENT.
-      const content = isConnectionError(err)
-        ? 'daemon connection lost — reconnecting…'
-        : err instanceof Error
-          ? `Error: ${err.message}`
-          : 'Failed to read file';
+      let content: string;
+      if (isConnectionError(err)) {
+        content = 'daemon connection lost — reconnecting…';
+      } else if (err instanceof Error) {
+        content = `Error: ${err.message}`;
+      } else {
+        content = 'Failed to read file';
+      }
       this.updateState({ selectedFile: { path: itemPath, content } });
     }
   }

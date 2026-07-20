@@ -45,6 +45,24 @@ module.exports = {
       },
     },
 
+    // --- CLI is a pure daemon client: no in-process git ---
+    {
+      name: "cli-no-core-managers",
+      comment:
+        "The CLI is a daemon client — it must not import @diffstalker/core managers (in-process git state). Talk to diffstalkerd over REST/SSE instead. Pure core helpers (git/diff, git/explorerData, git/status + worktree types, services/commitService, utils, types) are fine.",
+      severity: "error",
+      from: { path: "^src/" },
+      to: { path: "^@diffstalker/core/managers/" },
+    },
+    {
+      name: "cli-no-git-libs",
+      comment:
+        "The CLI must not import simple-git or chokidar — those are daemon/core-only. The CLI drives git through diffstalkerd, not in-process.",
+      severity: "error",
+      from: { path: "^src/" },
+      to: { path: "node_modules/(simple-git|chokidar)/" },
+    },
+
     // --- No circular dependencies ---
     {
       name: "no-circular",

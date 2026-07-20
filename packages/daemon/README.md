@@ -8,6 +8,10 @@ scripts) talk to the same git state engine the TUI uses.
 The package is private and bin-only: it is not published and not importable.
 The only entry point is the `diffstalkerd` executable.
 
+Its primary client is the `diffstalker` CLI (`packages/cli`), which spawns or
+attaches to this daemon over a unix socket and consumes it through the typed
+`@diffstalker/client`. A web client is planned against the same API.
+
 ## Running
 
 From the repo root:

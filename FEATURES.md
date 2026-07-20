@@ -4,6 +4,12 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 
 ---
 
+## Architecture
+
+Every feature below is preserved; only the plumbing moved. The git state engine now lives in a **daemon** (`diffstalkerd`) that serves `@diffstalker/core` over REST + Server-Sent Events. The terminal UI (`diffstalker`) is a **client** of that daemon — it spawns or attaches to the daemon on a unix socket, opens repos over REST, and follows live state over SSE, holding no in-process git. The same daemon can back other clients (a web client is planned) with the identical feature set. See CLAUDE.md and `packages/daemon/README.md` for the split.
+
+---
+
 ## Table of Contents
 
 1. [Views](#views)

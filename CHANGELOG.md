@@ -7,12 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-20
+
 ### Changed
 
+- **Daemon architecture.** The single npm package was split into a bun
+  monorepo of four packages: `@diffstalker/core` (headless git state),
+  `@diffstalker/daemon` (`diffstalkerd`: a Node http REST + SSE server over
+  core), `@diffstalker/client` (a typed REST + SSE client), and `diffstalker`
+  (the terminal UI). Same features, new plumbing.
+- **The CLI is now a daemon-backed client.** It holds no in-process git: on
+  launch it attaches to a running `diffstalkerd` or spawns one on a unix
+  socket, opens repos over REST, and follows live state over SSE. A new
+  `RepoSession` is the client-side store (shared state over SSE + mutation
+  envelopes; selection/history/compare pulled on demand).
+- **The daemon owns git state and follow mode.** It watches the follow hook
+  file and broadcasts `follow-change` so any client can switch focus; the CLI
+  reacts to it as policy. The in-process command server and follow-file
+  watcher were removed from the CLI.
 - Opening or following a bare-repo container no longer forces a worktree
   choice through the picker; the most recently active worktree (by git
   index/HEAD activity) is opened automatically. Shift+W still switches
   worktrees explicitly.
+
+### Added
+
+- **`diffstalkerd` binary** (`@diffstalker/daemon`): REST + SSE over
+  `@diffstalker/core`, unix-socket by default (`0600` under
+  `$XDG_RUNTIME_DIR`), with follow mode and systemd socket activation. See
+  `packages/daemon/README.md`.
+- **Graceful daemon reconnect.** When the SSE stream drops, the CLI shows one
+  calm "daemon connection lost — reconnecting…" line and recovers in the
+  background — re-spawning the daemon if needed and re-opening repos by their
+  stable path-hashed id (no ENOENT screen spam).
+- `scripts/rmrf.sh` helper for safe recursive deletes.
 
 ## [0.4.0] - 2026-07-07
 
