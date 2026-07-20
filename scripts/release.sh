@@ -40,16 +40,21 @@ fi
 
 echo "$current -> $next"
 
-# Update package.json
-node -e "
-  const fs = require('fs');
-  const pkg = JSON.parse(fs.readFileSync('packages/cli/package.json', 'utf8'));
-  pkg.version = '$next';
-  fs.writeFileSync('packages/cli/package.json', JSON.stringify(pkg, null, 2) + '\n');
-"
+# Update BOTH published manifests to the same version. They release in
+# lockstep: the cli depends on diffstalkerd via workspace:* (published as the
+# exact version), so a version skew would ship an uninstallable cli.
+for manifest in packages/cli/package.json packages/daemon/package.json; do
+  node -e "
+    const fs = require('fs');
+    const p = '$manifest';
+    const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+    pkg.version = '$next';
+    fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
+  "
+done
 
 # Commit, tag, push
-git add packages/cli/package.json
+git add packages/cli/package.json packages/daemon/package.json
 git commit -m "Bump version to $next"
 git tag "v$next"
 git push

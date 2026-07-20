@@ -1,7 +1,93 @@
 import { describe, test, expect } from 'bun:test';
 import * as path from 'node:path';
 import type { DiffstalkerClient } from '@diffstalker/client';
-import { resolveSocketPath, assertFollowFileMatches } from './DaemonLifecycle.js';
+import {
+  resolveSocketPath,
+  assertFollowFileMatches,
+  resolveDaemonBin,
+  type DaemonBinDeps,
+} from './DaemonLifecycle.js';
+
+/** Default injected deps: nothing resolvable anywhere. Override per test. */
+function binDeps(overrides: Partial<DaemonBinDeps> = {}): Partial<DaemonBinDeps> {
+  return {
+    env: {},
+    isExecutable: () => false,
+    findOnPath: () => null,
+    resolveInstalled: () => null,
+    workspaceBin: '/workspace/packages/daemon/bin/diffstalkerd',
+    ...overrides,
+  };
+}
+
+describe('resolveDaemonBin', () => {
+  test('$DIFFSTALKERD_BIN wins over everything', () => {
+    expect(
+      resolveDaemonBin(
+        binDeps({
+          env: { DIFFSTALKERD_BIN: '/env/diffstalkerd' },
+          resolveInstalled: () => '/node_modules/diffstalkerd/bin/diffstalkerd',
+          isExecutable: () => true,
+          findOnPath: () => '/usr/bin/diffstalkerd',
+        })
+      )
+    ).toBe('/env/diffstalkerd');
+  });
+
+  test('prefers the installed dependency over a diffstalkerd on PATH', () => {
+    const installed = '/node_modules/diffstalkerd/bin/diffstalkerd';
+    expect(
+      resolveDaemonBin(
+        binDeps({
+          resolveInstalled: () => installed,
+          isExecutable: (c) => c === installed,
+          // A stray daemon on PATH must NOT be chosen when the dep resolves.
+          findOnPath: () => '/usr/bin/diffstalkerd',
+        })
+      )
+    ).toBe(installed);
+  });
+
+  test('falls back to PATH when the dependency is not resolvable', () => {
+    expect(
+      resolveDaemonBin(
+        binDeps({
+          resolveInstalled: () => null,
+          findOnPath: () => '/usr/bin/diffstalkerd',
+        })
+      )
+    ).toBe('/usr/bin/diffstalkerd');
+  });
+
+  test('falls back to the workspace bin (dev checkout) when nothing else resolves', () => {
+    const workspaceBin = '/workspace/packages/daemon/bin/diffstalkerd';
+    expect(
+      resolveDaemonBin(
+        binDeps({
+          workspaceBin,
+          isExecutable: (c) => c === workspaceBin,
+        })
+      )
+    ).toBe(workspaceBin);
+  });
+
+  test('throws a reinstall hint when the daemon cannot be found anywhere', () => {
+    expect(() => resolveDaemonBin(binDeps())).toThrow(/reinstall diffstalker.*DIFFSTALKERD_BIN/s);
+  });
+
+  test('ignores a resolved-but-non-executable installed path, uses PATH next', () => {
+    // resolveInstalled returns a path, but it is not executable -> skip to PATH.
+    expect(
+      resolveDaemonBin(
+        binDeps({
+          resolveInstalled: () => '/node_modules/diffstalkerd/bin/diffstalkerd',
+          isExecutable: () => false,
+          findOnPath: () => '/usr/bin/diffstalkerd',
+        })
+      )
+    ).toBe('/usr/bin/diffstalkerd');
+  });
+});
 
 describe('resolveSocketPath', () => {
   test('an explicit path always wins', () => {

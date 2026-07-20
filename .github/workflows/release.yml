@@ -28,10 +28,22 @@ jobs:
       # bun test strips types without checking, so this is the only gate
       # that catches type errors in core/daemon before publish.
       - run: bun run build
+      # Self-contained production bundles: cli bundles core+client, daemon
+      # bundles core. Each keeps only its own npm deps external.
       - run: bun run build:prod
         working-directory: packages/cli
+      - run: bun run build:prod
+        working-directory: packages/daemon
       - run: bun run test
-      - run: npm publish --access public
+      # Publish BOTH with `bun publish`: bun resolves the cli's
+      # `diffstalkerd: workspace:*` to the concrete version, which plain
+      # `npm publish` does NOT (it would ship an uninstallable workspace:*).
+      # Order matters — the cli depends on diffstalkerd, so publish the
+      # daemon first.
+      - run: bun publish --access public
+        if: ${{ !env.ACT }}
+        working-directory: packages/daemon
+      - run: bun publish --access public
         if: ${{ !env.ACT }}
         working-directory: packages/cli
       # After publish: a failure here must not abort the release itself

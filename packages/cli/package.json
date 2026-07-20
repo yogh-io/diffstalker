@@ -18,8 +18,7 @@
     "diffstalker": "bin/diffstalker"
   },
   "files": [
-    "dist",
-    "!dist/bundle",
+    "dist/index.js",
     "bin",
     "README.md",
     "LICENSE",
@@ -28,7 +27,7 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "rm -rf dist && tsc -b",
-    "build:prod": "bun run build && bun build dist/index.js --outfile dist/index.js --minify --target node --external chokidar --external emphasize --external fast-diff --external fzf --external ignore --external lowlight --external neo-blessed --external simple-git --external string-width",
+    "build:prod": "bun run build && bun build dist/index.js --outfile dist/index.js --minify --target node --external emphasize --external fast-diff --external fzf --external lowlight --external neo-blessed --external simple-git",
     "bundle": "bun run build:prod && bun build dist/index.js --outdir dist/bundle --minify --target node --external neo-blessed",
     "start": "bun dist/index.js",
     "start:bundle": "bun dist/bundle/index.js",
@@ -42,8 +41,8 @@
     "metrics": "bun ../../scripts/collect-metrics.ts",
     "metrics:snapshot": "bun ../../scripts/collect-metrics.ts --save",
     "prepublishOnly": "bun run build:prod",
-    "prepack": "cp ../../README.md ../../LICENSE ../../CHANGELOG.md .",
-    "postpack": "rm -f LICENSE CHANGELOG.md && (git checkout -- README.md 2>/dev/null || rm -f README.md)"
+    "prepack": "cp ../../README.md ../../LICENSE ../../CHANGELOG.md . && cp package.json package.json.orig && node ../../scripts/strip-devdeps.mjs",
+    "postpack": "rm -f LICENSE CHANGELOG.md && (git checkout -- README.md 2>/dev/null || rm -f README.md) && mv package.json.orig package.json"
   },
   "keywords": [
     "git",
@@ -56,15 +55,13 @@
     "node": ">=20.10.0"
   },
   "dependencies": {
-    "chokidar": "^4.0.3",
+    "diffstalkerd": "workspace:*",
     "emphasize": "^7.0.0",
     "fast-diff": "^1.3.0",
     "fzf": "^0.5.2",
-    "ignore": "^7.0.5",
     "lowlight": "^3.1.0",
     "neo-blessed": "0.2.0",
-    "simple-git": "^3.27.0",
-    "string-width": "^8.1.0"
+    "simple-git": "^3.27.0"
   },
   "devDependencies": {
     "@diffstalker/client": "workspace:*",

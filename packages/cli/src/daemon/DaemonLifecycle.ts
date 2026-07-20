@@ -15,6 +15,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { DiffstalkerClient } from '@diffstalker/client';
 
 const SOCKET_NAME = 'diffstalkerd.sock';
@@ -97,22 +98,73 @@ function findOnPath(name: string): string | null {
 }
 
 /**
- * Locate the diffstalkerd executable: $DIFFSTALKERD_BIN, then $PATH, then
- * the workspace copy (development checkout).
+ * Resolve the `diffstalkerd` bin from the installed npm dependency. The CLI
+ * declares `diffstalkerd` as a runtime dependency, so `npm i -g diffstalker`
+ * drops it into node_modules; find its package.json, read its `bin`, and
+ * point at the wrapper. Returns null when the dependency is not resolvable
+ * (e.g. a stripped install) so the caller can fall through to PATH.
  */
-export function resolveDaemonBin(): string {
-  const fromEnv = process.env.DIFFSTALKERD_BIN;
+function resolveInstalledDaemonBin(): string | null {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkgPath = require.resolve('diffstalkerd/package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as {
+      bin?: string | Record<string, string>;
+    };
+    const binRel = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin?.diffstalkerd;
+    if (!binRel) return null;
+    return path.join(path.dirname(pkgPath), binRel);
+  } catch {
+    return null;
+  }
+}
+
+/** Injectable resolution steps, so the order can be unit-tested in isolation. */
+export interface DaemonBinDeps {
+  env: NodeJS.ProcessEnv;
+  isExecutable: (candidate: string) => boolean;
+  findOnPath: (name: string) => string | null;
+  resolveInstalled: () => string | null;
+  workspaceBin: string;
+}
+
+function defaultDaemonBinDeps(): DaemonBinDeps {
+  return {
+    env: process.env,
+    isExecutable,
+    findOnPath,
+    resolveInstalled: resolveInstalledDaemonBin,
+    // packages/cli/{src,dist}/daemon/ -> packages/daemon/bin/diffstalkerd
+    workspaceBin: fileURLToPath(new URL('../../../daemon/bin/diffstalkerd', import.meta.url)),
+  };
+}
+
+/**
+ * Locate the diffstalkerd executable, in order:
+ *   1. $DIFFSTALKERD_BIN (explicit override)
+ *   2. the installed `diffstalkerd` dependency in node_modules (the normal
+ *      path — installing diffstalker installs diffstalkerd alongside it)
+ *   3. `diffstalkerd` on $PATH
+ *   4. the workspace copy (development checkout, dev fallback)
+ * The installed dependency is preferred over PATH so a global install always
+ * runs its own pinned daemon, not a stray one on the user's PATH.
+ */
+export function resolveDaemonBin(overrides: Partial<DaemonBinDeps> = {}): string {
+  const deps = { ...defaultDaemonBinDeps(), ...overrides };
+
+  const fromEnv = deps.env.DIFFSTALKERD_BIN;
   if (fromEnv) return fromEnv;
 
-  const onPath = findOnPath('diffstalkerd');
+  const installed = deps.resolveInstalled();
+  if (installed && deps.isExecutable(installed)) return installed;
+
+  const onPath = deps.findOnPath('diffstalkerd');
   if (onPath) return onPath;
 
-  // packages/cli/{src,dist}/daemon/ -> packages/daemon/bin/diffstalkerd
-  const workspace = fileURLToPath(new URL('../../../daemon/bin/diffstalkerd', import.meta.url));
-  if (isExecutable(workspace)) return workspace;
+  if (deps.isExecutable(deps.workspaceBin)) return deps.workspaceBin;
 
   throw new Error(
-    'diffstalkerd not found: set DIFFSTALKERD_BIN, or install diffstalkerd on your PATH.'
+    'diffstalkerd not found — reinstall diffstalker, or set DIFFSTALKERD_BIN.'
   );
 }
 

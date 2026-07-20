@@ -1,5 +1,5 @@
 /**
- * End-to-end tests: a REAL daemon (via @diffstalker/daemon, dev-dep) on a
+ * End-to-end tests: a REAL daemon (via diffstalkerd, dev-dep) on a
  * /tmp unix socket against temp git repos, driven entirely through
  * DiffstalkerClient — REST methods, mutation envelopes, SSE subscriptions,
  * and typed DaemonError failures.
@@ -10,7 +10,7 @@ import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { createDaemon, type Daemon } from '@diffstalker/daemon/src/server.ts';
+import { createDaemon, type Daemon } from 'diffstalkerd/src/server.ts';
 import { DiffstalkerClient, DaemonError, isConnectionError } from './index.js';
 import type { RepoRef, WireSharedState } from './index.js';
 

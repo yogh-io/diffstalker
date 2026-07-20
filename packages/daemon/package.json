@@ -1,15 +1,33 @@
 {
-  "name": "@diffstalker/daemon",
+  "name": "diffstalkerd",
   "version": "0.4.0",
-  "description": "diffstalker daemon: REST API + SSE over @diffstalker/core",
-  "private": true,
+  "description": "diffstalker daemon: REST API + SSE git state over a unix socket",
+  "author": "yogh-io",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yogh-io/diffstalker.git"
+  },
+  "homepage": "https://github.com/yogh-io/diffstalker#readme",
+  "bugs": {
+    "url": "https://github.com/yogh-io/diffstalker/issues"
+  },
   "type": "module",
   "bin": {
     "diffstalkerd": "bin/diffstalkerd"
   },
+  "files": [
+    "dist/index.js",
+    "bin",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "rm -rf dist && tsc -b",
+    "build:prod": "bun run build && bun build dist/index.js --outfile dist/index.js --minify --target node --external chokidar --external simple-git --external ignore",
     "start": "bun dist/index.js",
     "test": "bun test src/*.test.ts src/**/*.test.ts",
     "test:watch": "bun test --watch src/*.test.ts src/**/*.test.ts",
@@ -17,15 +35,27 @@
     "lint:fix": "eslint src/ --fix",
     "deps": "depcruise src/ --config .dependency-cruiser.cjs",
     "format": "prettier --write src/",
-    "format:check": "prettier --check src/"
+    "format:check": "prettier --check src/",
+    "prepublishOnly": "bun run build:prod",
+    "prepack": "cp package.json package.json.orig && node ../../scripts/strip-devdeps.mjs",
+    "postpack": "mv package.json.orig package.json"
   },
+  "keywords": [
+    "git",
+    "diff",
+    "daemon",
+    "diffstalker"
+  ],
   "engines": {
     "node": ">=20.10.0"
   },
   "dependencies": {
-    "@diffstalker/core": "workspace:*"
+    "chokidar": "^4.0.3",
+    "ignore": "^7.0.5",
+    "simple-git": "^3.27.0"
   },
   "devDependencies": {
+    "@diffstalker/core": "workspace:*",
     "@eslint/js": "^9.39.2",
     "@types/node": "^22.10.7",
     "dependency-cruiser": "^17.3.7",

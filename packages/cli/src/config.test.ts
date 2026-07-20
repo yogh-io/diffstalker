@@ -2,7 +2,16 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { isValidTheme, VALID_THEMES, loadConfig, saveConfig, addRecentRepo } from './config.js';
+import {
+  isValidTheme,
+  VALID_THEMES,
+  loadConfig,
+  saveConfig,
+  addRecentRepo,
+  resolveFollowFile,
+  defaultConfig,
+  type Config,
+} from './config.js';
 
 describe('isValidTheme', () => {
   it('returns true for dark theme', () => {
@@ -151,6 +160,96 @@ describe('loadConfig/saveConfig toggle fields', () => {
     const config = loadConfig();
     expect(config.autoTabEnabled).toBe(true);
     expect(config.mouseEnabled).toBe(false);
+  });
+});
+
+describe('back-compat: pre-0.5 config load', () => {
+  const configDir = path.join(os.homedir(), '.config', 'diffstalker');
+  const configPath = path.join(configDir, 'config.json');
+  let originalContent: string | null = null;
+
+  beforeEach(() => {
+    fs.mkdirSync(configDir, { recursive: true });
+    try {
+      originalContent = fs.readFileSync(configPath, 'utf-8');
+    } catch {
+      originalContent = null;
+    }
+  });
+
+  afterEach(() => {
+    if (originalContent !== null) {
+      fs.writeFileSync(configPath, originalContent);
+    } else {
+      try {
+        fs.unlinkSync(configPath);
+      } catch {
+        // Ignore if already gone
+      }
+    }
+  });
+
+  it('loads a full pre-0.5 config without error and honors every field', () => {
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        theme: 'light',
+        splitRatio: 0.4,
+        watcherEnabled: true,
+        targetFile: '/home/user/.cache/diffstalker/target',
+        autoTabEnabled: true,
+        wrapMode: false,
+        mouseEnabled: true,
+        recentRepos: ['/home/user/repoA'],
+        maxRecentRepos: 15,
+        debug: true,
+      })
+    );
+
+    const config = loadConfig();
+    expect(config.theme).toBe('light');
+    expect(config.splitRatio).toBe(0.4);
+    expect(config.watcherEnabled).toBe(true);
+    expect(config.targetFile).toBe('/home/user/.cache/diffstalker/target');
+    expect(config.autoTabEnabled).toBe(true);
+    expect(config.wrapMode).toBe(false);
+    expect(config.mouseEnabled).toBe(true);
+    expect(config.recentRepos).toEqual(['/home/user/repoA']);
+    expect(config.maxRecentRepos).toBe(15);
+    expect(config.debug).toBe(true);
+  });
+
+  it('reads watcherEnabled=true from a persisted config (follow stays on)', () => {
+    fs.writeFileSync(configPath, JSON.stringify({ watcherEnabled: true }));
+    expect(loadConfig().watcherEnabled).toBe(true);
+  });
+
+  it('defaults watcherEnabled to false when absent', () => {
+    fs.writeFileSync(configPath, JSON.stringify({ theme: 'dark' }));
+    expect(loadConfig().watcherEnabled).toBe(false);
+  });
+});
+
+describe('resolveFollowFile (watcherEnabled -> follow-file mapping)', () => {
+  const base: Config = { ...defaultConfig };
+
+  it('passes an explicit --follow FILE through unchanged', () => {
+    expect(resolveFollowFile({ ...base, watcherEnabled: false }, '/hook')).toBe('/hook');
+  });
+
+  it('maps a persisted watcherEnabled + custom targetFile to the daemon follow-file', () => {
+    const config: Config = { ...base, watcherEnabled: true, targetFile: '/custom/target' };
+    expect(resolveFollowFile(config, undefined)).toBe('/custom/target');
+  });
+
+  it('leaves a default target implicit even with follow on (graceful attach)', () => {
+    const config: Config = { ...base, watcherEnabled: true };
+    expect(resolveFollowFile(config, undefined)).toBeUndefined();
+  });
+
+  it('returns undefined when follow is off, even with a custom target', () => {
+    const config: Config = { ...base, watcherEnabled: false, targetFile: '/custom/target' };
+    expect(resolveFollowFile(config, undefined)).toBeUndefined();
   });
 });
 

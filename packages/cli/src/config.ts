@@ -17,7 +17,7 @@ export interface Config {
   maxRecentRepos?: number;
 }
 
-const defaultConfig: Config = {
+export const defaultConfig: Config = {
   targetFile: path.join(cacheDir(), 'target'),
   watcherEnabled: false, // Watcher is opt-in via --follow
   debug: false,
@@ -47,6 +47,14 @@ export function loadConfig(): Config {
     try {
       const fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
       if (fileConfig.targetFile) config.targetFile = fileConfig.targetFile;
+      // Back-compat: a pre-0.5 config persisted watcherEnabled/debug. Keep
+      // honoring them so an existing config that turned follow on still does.
+      if (typeof fileConfig.watcherEnabled === 'boolean') {
+        config.watcherEnabled = fileConfig.watcherEnabled;
+      }
+      if (typeof fileConfig.debug === 'boolean') {
+        config.debug = fileConfig.debug;
+      }
       if (isValidTheme(fileConfig.theme)) config.theme = fileConfig.theme;
       if (
         typeof fileConfig.splitRatio === 'number' &&
@@ -121,6 +129,25 @@ export function saveConfig(
 
   // Write back
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(fileConfig, null, 2) + '\n');
+}
+
+/**
+ * Which hook file the daemon should be told to follow (--follow-file), given
+ * the loaded config and an explicit --follow FILE (if any).
+ *
+ * - An explicit --follow FILE always wins.
+ * - Otherwise, when follow is enabled (config.watcherEnabled — set by --follow
+ *   or persisted from a pre-0.5 config) and the config points at a NON-default
+ *   target, that target is returned so the daemon follows the user's file.
+ * - A default target is left implicit (undefined) to preserve the graceful
+ *   attach to an already-running daemon (no follow-file conflict on default).
+ */
+export function resolveFollowFile(config: Config, explicitFollowFile?: string): string | undefined {
+  if (explicitFollowFile !== undefined) return explicitFollowFile;
+  if (config.watcherEnabled && config.targetFile !== defaultConfig.targetFile) {
+    return config.targetFile;
+  }
+  return undefined;
 }
 
 export function abbreviateHomePath(fullPath: string): string {

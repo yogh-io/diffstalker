@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { App } from './App.js';
-import { loadConfig } from './config.js';
+import { loadConfig, resolveFollowFile } from './config.js';
 import { ensureDaemon } from './daemon/DaemonLifecycle.js';
 import { setDebug } from '@diffstalker/core/utils/logger';
 
@@ -142,14 +142,22 @@ async function main(): Promise<void> {
   }
   if (args.debug) {
     config.debug = true;
+  }
+  // Debug can come from --debug or a persisted config.debug.
+  if (config.debug) {
     setDebug(true);
   }
+
+  // Which hook file the daemon should follow (see resolveFollowFile): an
+  // explicit --follow FILE, else a persisted non-default config target when
+  // follow is on, else implicit (the daemon's default).
+  const followFile = resolveFollowFile(config, args.followFile);
 
   // Attach to (or spawn) diffstalkerd before the screen exists, so any
   // failure prints on the normal buffer.
   let client;
   try {
-    ({ client } = await ensureDaemon({ socketPath: args.socket, followFile: args.followFile }));
+    ({ client } = await ensureDaemon({ socketPath: args.socket, followFile }));
   } catch (err) {
     console.error(
       `Failed to reach diffstalkerd: ${err instanceof Error ? err.message : String(err)}`
@@ -166,7 +174,7 @@ async function main(): Promise<void> {
     client,
     initialPath: args.initialPath,
     reconnect: () =>
-      ensureDaemon({ socketPath: args.socket, followFile: args.followFile }).then((r) => r.client),
+      ensureDaemon({ socketPath: args.socket, followFile }).then((r) => r.client),
   });
 
   // Wait for app to exit
