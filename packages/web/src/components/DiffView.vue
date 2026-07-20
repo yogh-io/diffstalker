@@ -1,11 +1,15 @@
 <script setup lang="ts">
 /**
  * DiffView: renders ONE DiffResult as a DOM diff. Self-contained and
- * data-driven — Changes uses it now; History and Compare reuse it later.
+ * data-driven — shared by Changes, History (commit diffs), and Compare
+ * (per-file diffs).
  *
  * Layout: per hunk, a sticky header (readable ranges + relative edit
  * time) and a run of grid rows: old line number | new line number |
  * marker | content. All color comes from the --diff-* theme vars.
+ * Multi-file diffs (a commit's diff, the whole-tree staged diff) get a
+ * sticky per-file section header; single-file diffs show none unless
+ * `showFileHeaders` forces them.
  *
  * Virtualization: rows get `content-visibility: auto` with a
  * `contain-intrinsic-size` estimate, so off-screen rows skip layout and
@@ -34,12 +38,30 @@ const props = defineProps<{
   filePath?: string;
   /** Unified is the only mode this slice; side-by-side comes with Compare. */
   mode?: 'unified';
+  /**
+   * Force per-file section headers on (History's commit diffs). Left
+   * off, headers still show automatically when the diff spans more
+   * than one file (a whole-tree diff); a single-file diff shows none —
+   * the pane chrome above the diff already names the file.
+   */
+  showFileHeaders?: boolean;
 }>();
 
 /** Hunks edited within this window get the flash background (CLI parity). */
 const HUNK_FLASH_MS = 1500;
 
 const model = computed(() => buildDiffModel(props.diff));
+
+/**
+ * Header policy: the prop forces them on; otherwise only multi-file
+ * diffs show them. (An absent boolean prop arrives as false — Vue's
+ * boolean casting — so this is force-on OR auto, not a tri-state.)
+ */
+const showHeaders = computed(
+  () =>
+    props.showFileHeaders ||
+    model.value.sections.filter((s) => s.filePath !== null).length > 1
+);
 
 // Relative hunk times tick: one light 1s interval, only while the
 // newest editedAt stamp is in the sub-minute range — that is the only
@@ -116,11 +138,16 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
   <div
     v-else
     class="diff-scroll mono"
+    :class="{ 'with-file-headers': showHeaders }"
     data-testid="diff-view"
     :style="{ '--ln-w': `${model.lineNumWidth}ch` }"
   >
     <section v-for="s in model.sections" :key="s.key" class="file-section">
-      <div v-if="s.filePath" class="file-header">
+      <div
+        v-if="showHeaders && s.filePath"
+        class="file-header"
+        data-testid="file-section-header"
+      >
         <span class="pin-x">{{ s.filePath }}</span>
       </div>
       <div v-for="(note, i) in s.notes" :key="i" class="file-note">
@@ -185,6 +212,9 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
 }
 
 .diff-scroll {
+  /* File-section header height — fixed so the hunk headers below can
+     stick exactly underneath it in multi-file mode. */
+  --fh-h: 1.75rem;
   height: 100%;
   overflow: auto;
   background: var(--bg);
@@ -205,10 +235,18 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
   margin-top: 0.75rem;
 }
 
-/* Not sticky: the hunk header is the one sticky line (the file path is
-   also in the pane chrome above the diff), so hunk info never hides. */
+/* Multi-file mode only (single-file diffs render no file header — the
+   pane chrome names the file). Sticky above the hunk headers: within
+   its own section it pins to the top; the next section's header pushes
+   it away. Fixed height so .hunk-header can stick right below it. */
 .file-header {
-  padding: 0.25rem 0.75rem;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  height: var(--fh-h);
+  padding: 0 0.75rem;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   font-weight: 600;
@@ -238,6 +276,11 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
 
 .hunk:last-child {
   border-bottom: none;
+}
+
+/* With file headers shown, hunk headers stick just below them. */
+.with-file-headers .hunk-header {
+  top: var(--fh-h);
 }
 
 .hunk-header {

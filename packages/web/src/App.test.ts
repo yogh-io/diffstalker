@@ -63,6 +63,24 @@ function routes(call: FetchCall): FakeResponse {
   if (call.url === '/follow') {
     return { body: FOLLOW_STATE };
   }
+  // The History / Compare views pull these on activation.
+  if (call.method === 'GET' && /^\/repos\/[^/]+\/history/.test(call.url)) {
+    return { body: [] };
+  }
+  if (call.method === 'GET' && /^\/repos\/[^/]+\/base-branches$/.test(call.url)) {
+    return { body: ['origin/main'] };
+  }
+  if (call.method === 'GET' && /^\/repos\/[^/]+\/compare\?/.test(call.url)) {
+    return {
+      body: {
+        baseBranch: 'origin/main',
+        stats: { filesChanged: 0, additions: 0, deletions: 0 },
+        files: [],
+        commits: [],
+        uncommittedCount: 0,
+      },
+    };
+  }
   return { status: 404, body: { error: `no fake route: ${call.method} ${call.url}` } };
 }
 
@@ -265,17 +283,19 @@ describe('view routing', () => {
     return target;
   }
 
-  test('the rail switches the view, renders the placeholder, and persists', async () => {
+  test('the rail switches the view, renders it, and persists', async () => {
     const wrapper = await mountWithRepos([REPO_ONE]);
     // Changes view: no repo snapshot yet, so the files column is loading.
     expect(wrapper.text()).toContain('Loading status');
 
     await (await railButton(wrapper, 'History')).trigger('click');
-    expect(wrapper.text()).toContain('Load history');
+    await flushPromises(); // history loads on activation (empty log here)
+    expect(wrapper.text()).toContain('No commits yet.');
     expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).activeView).toBe('history');
 
     await (await railButton(wrapper, 'Compare')).trigger('click');
-    expect(wrapper.text()).toContain('Against base');
+    await flushPromises(); // compare refreshes on activation (clean here)
+    expect(wrapper.text()).toContain('No changes compared to origin/main.');
 
     await (await railButton(wrapper, 'Explorer')).trigger('click');
     expect(wrapper.text()).toContain('The file tree and viewer land in a later slice.');
@@ -285,7 +305,8 @@ describe('view routing', () => {
   test('the stored view is restored on mount', async () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ activeView: 'compare' }));
     const wrapper = await mountWithRepos([REPO_ONE]);
-    expect(wrapper.text()).toContain('Against base');
+    await flushPromises();
+    expect(wrapper.text()).toContain('include uncommitted');
     expect(wrapper.find('button[aria-current="page"]').attributes('title')).toBe('Compare');
     wrapper.unmount();
   });

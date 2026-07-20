@@ -43,7 +43,7 @@ import { DaemonError, isConnectionError } from '../api/errors';
 import type { SseHandle } from '../api/transport';
 import type { MutationEnvelope, RepoRef, WireSharedState } from '@diffstalker/client';
 import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
-import type { DiffResult } from '@diffstalker/core/git/diff';
+import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import type { RemoteOperation, RemoteOperationState } from '@diffstalker/core/types/remote';
 import type {
@@ -51,6 +51,7 @@ import type {
   RepoSelectionState,
   RepoHistoryState,
   RepoCompareState,
+  CompareSelectionState,
 } from './types';
 
 /** How long two selectFile calls coalesce into one diff fetch. */
@@ -129,6 +130,13 @@ export const useRepoStore = defineStore('repo', () => {
   let historyPullInFlight = false;
   let lastIncludeUncommitted = false;
   let historyCount = 100;
+  /**
+   * Monotonic refreshCompare sequence: each request captures the counter
+   * and only the latest one may apply its response, so a slow older pull
+   * (e.g. uncommitted ON) landing after a fast newer one (uncommitted
+   * OFF) cannot overwrite the state the UI's controls reflect.
+   */
+  let compareRequestSeq = 0;
 
   function clearTimers(): void {
     if (diffDebounceTimer) {
@@ -583,24 +591,49 @@ export const useRepoStore = defineStore('repo', () => {
 
   // --- Compare ---
 
+  /** The include-uncommitted flag of the most recent compare pull — lets
+   * the view's toggle survive a tab switch (the ref is component-local). */
+  function getLastIncludeUncommitted(): boolean {
+    return lastIncludeUncommitted;
+  }
+
+  /**
+   * Re-anchor a file selection by path after the file set changed: same
+   * file → its new index + diff; file gone → selection cleared so the
+   * highlight cannot land on a different file.
+   */
+  function reanchoredCompareSelection(
+    prev: RepoCompareState,
+    next: CompareDiff
+  ): CompareSelectionState {
+    const sel = prev.selection;
+    if (sel.type !== 'file') return sel;
+    const path = prev.compareDiff?.files[sel.index]?.path;
+    const index = path === undefined ? -1 : next.files.findIndex((f) => f.path === path);
+    if (index === -1) return { type: null, index: 0, diff: null };
+    return { type: 'file', index, diff: next.files[index].diff };
+  }
+
   async function refreshCompare(includeUncommitted: boolean = false): Promise<void> {
+    lastIncludeUncommitted = includeUncommitted;
     const id = repoId.value;
     if (id === null) return;
     const gen = generation;
-    lastIncludeUncommitted = includeUncommitted;
+    const seq = ++compareRequestSeq;
     compare.value = { ...compare.value, loading: true, error: null, noBaseBranch: false };
     try {
       const diff = await client.compare(id, { uncommitted: includeUncommitted });
-      if (gen !== generation) return;
+      if (gen !== generation || seq !== compareRequestSeq) return;
       compare.value = {
         ...compare.value,
         compareDiff: diff,
         baseBranch: diff.baseBranch,
         loading: false,
         noBaseBranch: false,
+        selection: reanchoredCompareSelection(compare.value, diff),
       };
     } catch (err) {
-      if (gen !== generation) return;
+      if (gen !== generation || seq !== compareRequestSeq) return;
       applyCompareFailure(err);
     }
   }
@@ -815,6 +848,7 @@ export const useRepoStore = defineStore('repo', () => {
     getHeadCommitMessage,
     // compare
     refreshCompare,
+    getLastIncludeUncommitted,
     getCandidateBaseBranches,
     setCompareBaseBranch,
     selectCompareCommit,

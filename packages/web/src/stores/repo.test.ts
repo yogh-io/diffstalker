@@ -653,6 +653,91 @@ describe('compare', () => {
     expect(fake.callsTo('/compare')[1].url).toBe('/repos/r1/compare?uncommitted=true');
   });
 
+  test('out-of-order refreshCompare responses apply only the latest request', async () => {
+    const { store } = await openStore();
+
+    // Request A (uncommitted ON) is slow; request B (OFF) resolves fast.
+    const slow = new Deferred<FakeResponse>();
+    onRequest = (call) =>
+      call.url === '/repos/r1/compare?uncommitted=true' ? slow.promise : undefined;
+
+    const first = store.refreshCompare(true);
+    const second = store.refreshCompare(false);
+    await second;
+    await flush();
+    expect(store.compare.compareDiff!.baseBranch).toBe('origin/main');
+    expect(store.compare.loading).toBe(false);
+
+    // A lands LAST — stale, must not overwrite B's state.
+    slow.resolve({ body: { ...(compareBody() as object), baseBranch: 'STALE' } });
+    await first;
+    await flush();
+    expect(store.compare.compareDiff!.baseBranch).toBe('origin/main');
+  });
+
+  test('a stale refreshCompare failure cannot error out the newer result', async () => {
+    const { store } = await openStore();
+
+    const slow = new Deferred<FakeResponse>();
+    onRequest = (call) =>
+      call.url === '/repos/r1/compare?uncommitted=true' ? slow.promise : undefined;
+
+    const first = store.refreshCompare(true);
+    await store.refreshCompare(false);
+    slow.resolve({ status: 500, body: { error: 'git exploded' } });
+    await first;
+    await flush();
+    expect(store.compare.error).toBeNull();
+    expect(store.compare.compareDiff!.baseBranch).toBe('origin/main');
+  });
+
+  test('a refresh re-anchors the file selection by path, clearing it when the file is gone', async () => {
+    const { store } = await openStore();
+    await store.refreshCompare();
+    store.selectCompareFile(0); // a.ts at index 0
+    expect(store.compare.selection).toMatchObject({ type: 'file', index: 0 });
+
+    // The file set grows/reorders: a.ts moves to index 1.
+    const reordered = compareBody() as { files: unknown[] };
+    reordered.files = [
+      {
+        path: 'b.ts',
+        status: 'added',
+        additions: 1,
+        deletions: 0,
+        diff: { raw: 'b-diff', lines: [] },
+      },
+      ...reordered.files,
+    ];
+    onRequest = (call) =>
+      call.url.startsWith('/repos/r1/compare') ? { body: reordered } : undefined;
+    await store.refreshCompare();
+    expect(store.compare.selection).toMatchObject({ type: 'file', index: 1 });
+    expect(store.compare.selection.diff!.raw).toBe('compare-file-diff');
+
+    // a.ts vanishes: the selection clears instead of pointing elsewhere.
+    const without = compareBody() as { files: unknown[] };
+    without.files = [
+      {
+        path: 'b.ts',
+        status: 'added',
+        additions: 1,
+        deletions: 0,
+        diff: { raw: 'b-diff', lines: [] },
+      },
+    ];
+    onRequest = (call) => (call.url.startsWith('/repos/r1/compare') ? { body: without } : undefined);
+    await store.refreshCompare();
+    expect(store.compare.selection).toEqual({ type: null, index: 0, diff: null });
+  });
+
+  test('getLastIncludeUncommitted remembers the last requested flag', async () => {
+    const { store } = await openStore();
+    expect(store.getLastIncludeUncommitted()).toBe(false);
+    await store.refreshCompare(true);
+    expect(store.getLastIncludeUncommitted()).toBe(true);
+  });
+
   test('setCompareBaseBranch persists then reloads; selectCompareFile picks from the loaded diff', async () => {
     const { store } = await openStore();
     onRequest = (call) =>

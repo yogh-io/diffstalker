@@ -1,7 +1,8 @@
 /**
  * DiffView tests: line-type rendering (markers, dual line-number
- * gutters, diff bg classes), hunk headers with relative edit times and
- * the fresh-hunk flash, word-level highlighting for similar del/add
+ * gutters, diff bg classes), file-section headers (auto for multi-file
+ * diffs, prop-forced/suppressed), hunk headers with relative edit times
+ * and the fresh-hunk flash, word-level highlighting for similar del/add
  * pairs (positional pairing within a run, none for dissimilar lines),
  * empty/binary states, and a large diff rendering without error.
  */
@@ -35,8 +36,8 @@ function makeDiff(lines: DiffLine[]): DiffResult {
   return { raw: lines.map((l) => l.content).join('\n') + '\n', lines };
 }
 
-function mountDiff(diff: DiffResult | null) {
-  return mount(DiffView, { props: { diff } });
+function mountDiff(diff: DiffResult | null, props: { showFileHeaders?: boolean } = {}) {
+  return mount(DiffView, { props: { diff, ...props } });
 }
 
 afterEach(() => {
@@ -83,9 +84,10 @@ describe('line rendering', () => {
     expect(wrapper.find('.row.context').classes()).not.toContain('del');
   });
 
-  test('the file header shows the path from the diff --git line', () => {
+  test('a single-file diff renders no file-section header by default', () => {
+    // The pane chrome above the diff already names the file.
     const wrapper = mountDiff(diff);
-    expect(wrapper.find('.file-header').text()).toBe('src/foo.ts');
+    expect(wrapper.findAll('[data-testid="file-section-header"]')).toHaveLength(0);
   });
 
   test('the line-number gutter width follows the largest line number', () => {
@@ -98,6 +100,50 @@ describe('line rendering', () => {
     const wrapper = mountDiff(wide);
     expect(wrapper.find('[data-testid="diff-view"]').attributes('style')).toContain(
       '--ln-w: 5ch'
+    );
+  });
+});
+
+describe('file section headers (multi-file diffs)', () => {
+  const twoFileDiff = makeDiff([
+    header('src/foo.ts'),
+    hunk('@@ -1 +1 @@'),
+    del('old foo', 1),
+    add('new foo', 1),
+    header('src/bar.ts'),
+    hunk('@@ -5 +5 @@'),
+    add('new bar', 5),
+  ]);
+
+  test('a multi-file diff renders one header per file section, in order', () => {
+    const wrapper = mountDiff(twoFileDiff);
+    const headers = wrapper.findAll('[data-testid="file-section-header"]');
+    expect(headers.map((h) => h.text())).toEqual(['src/foo.ts', 'src/bar.ts']);
+    // The hunk-header sticky offset class rides along.
+    expect(wrapper.find('[data-testid="diff-view"]').classes()).toContain('with-file-headers');
+  });
+
+  test('every file section keeps its own rows under its header', () => {
+    const wrapper = mountDiff(twoFileDiff);
+    const sections = wrapper.findAll('.file-section');
+    expect(sections).toHaveLength(2);
+    expect(sections[0].find('.row.del .content').text()).toBe('old foo');
+    expect(sections[1].find('.row.add .content').text()).toBe('new bar');
+  });
+
+  test('showFileHeaders forces the header on a single-file diff', () => {
+    const single = makeDiff([header('a.ts'), hunk('@@ -1 +1 @@'), ctx('x', 1, 1)]);
+    const wrapper = mountDiff(single, { showFileHeaders: true });
+    const headers = wrapper.findAll('[data-testid="file-section-header"]');
+    expect(headers).toHaveLength(1);
+    expect(headers[0].text()).toBe('a.ts');
+  });
+
+  test('a single-file diff without the prop has no sticky-offset class either', () => {
+    const single = makeDiff([header('a.ts'), hunk('@@ -1 +1 @@'), ctx('x', 1, 1)]);
+    const wrapper = mountDiff(single);
+    expect(wrapper.find('[data-testid="diff-view"]').classes()).not.toContain(
+      'with-file-headers'
     );
   });
 });
