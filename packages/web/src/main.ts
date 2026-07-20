@@ -1,11 +1,16 @@
 /**
- * Web UI entry point: create the Vue app, install Pinia, mount.
- * Stores and views land in later slices; this is the scaffold.
+ * Web UI entry point: install the generated theme stylesheet, create the
+ * Vue app, install Pinia, mount. The theme attribute itself is stamped in
+ * App setup (uiStore.init) so tests mounting App get it too.
  */
 
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import App from './App.vue';
+import { installThemeStyles } from './theme/css';
+import './style.css';
+
+installThemeStyles();
 
 const app = createApp(App);
 app.use(createPinia());

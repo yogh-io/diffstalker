@@ -31,9 +31,9 @@
  * Deviations from RepoSession, both singleton-store realities:
  * - a generation counter guards async completions across open() calls
  *   (RepoSession is one instance per repo; this store is reused);
- * - open() does not DELETE the previous repo (a browser has no reliable
- *   teardown hook; repos stay open on the daemon, released explicitly via
- *   the daemon store or dispose()).
+ * - open() is the ONE place a repo ref is taken (POST /repos) and it
+ *   releases the previous repo's ref after a successful switch, so the
+ *   daemon's refcount stays truthful and daemon-side close stays possible.
  */
 
 import { computed, shallowRef } from 'vue';
@@ -41,7 +41,7 @@ import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import { DaemonError, isConnectionError } from '../api/errors';
 import type { SseHandle } from '../api/transport';
-import type { MutationEnvelope, WireSharedState } from '@diffstalker/client';
+import type { MutationEnvelope, RepoRef, WireSharedState } from '@diffstalker/client';
 import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
 import type { DiffResult } from '@diffstalker/core/git/diff';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
@@ -144,13 +144,19 @@ export const useRepoStore = defineStore('repo', () => {
   // --- Lifecycle ---
 
   /**
-   * Open a repo (POST /repos) and subscribe to its SSE stream. Resets all
-   * per-repo state first. When the daemon refuses the path, the store
-   * lands in not-a-repo mode: repoId stays null, the reason sits in
-   * shared.error, and every operation below no-ops.
+   * Open a repo — the SOLE place a repo ref is taken (POST /repos) — and
+   * subscribe to its SSE stream. Resets all per-repo state first. After a
+   * successful open, the previous repo's ref is released: net-zero on a
+   * switch (release old, hold new) AND on a re-open of the same repo (the
+   * POST bumped it to 2, the release brings it back to 1). Returns the
+   * opened ref, or null when the open failed. When the daemon refuses the
+   * path, the store lands in not-a-repo mode: repoId stays null, the
+   * reason sits in shared.error, and every operation below no-ops. A
+   * connection error routes into the reconnect loop instead.
    */
-  async function open(path: string): Promise<void> {
+  async function open(path: string): Promise<RepoRef | null> {
     const gen = ++generation;
+    const previousId = repoId.value;
     subscription?.close();
     subscription = null;
     clearTimers();
@@ -169,13 +175,26 @@ export const useRepoStore = defineStore('repo', () => {
 
     try {
       const ref = await client.openRepo(path);
-      if (gen !== generation) return;
+      if (gen !== generation) return null;
+      if (previousId !== null) {
+        // Release the prior ref (fire-and-forget): the switch (or same-repo
+        // re-open) must not leak a daemon-side refcount.
+        client.closeRepo(previousId).catch(() => {});
+      }
       repoId.value = ref.id;
       repoPath.value = ref.path;
       connect();
+      return ref;
     } catch (err) {
-      if (gen !== generation) return;
+      if (gen !== generation) return null;
+      if (isConnectionError(err)) {
+        // Daemon unreachable mid-open: one calm line + background retry,
+        // not a raw transport error with no recovery.
+        handleConnectionLoss();
+        return null;
+      }
       shared.value = { ...shared.value, error: errorMessage(err), isLoading: false };
+      return null;
     }
   }
 
@@ -217,9 +236,11 @@ export const useRepoStore = defineStore('repo', () => {
     subscription?.close();
     subscription = null;
     // Set the message exactly once so the header doesn't flicker on every
-    // failed call; recovery clears it when a fresh snapshot lands.
+    // failed call; recovery clears it when a fresh snapshot lands. Also
+    // drop isLoading so a pre-first-snapshot drop doesn't leave a view
+    // stuck on a loading state beside the error line.
     if (shared.value.error !== CONNECTION_LOST_MESSAGE) {
-      shared.value = { ...shared.value, error: CONNECTION_LOST_MESSAGE };
+      shared.value = { ...shared.value, error: CONNECTION_LOST_MESSAGE, isLoading: false };
     }
     scheduleRecovery();
   }
@@ -237,6 +258,11 @@ export const useRepoStore = defineStore('repo', () => {
    * empty registry; the path-hashed id is stable), resubscribe, and apply
    * a fresh /status snapshot — which clears the connection error. On any
    * failure, keep the error and retry. Never throws.
+   *
+   * The re-POST deliberately does NOT release anything: against a
+   * restarted daemon there is nothing to release, and against a
+   * live-daemon blip the extra count is an accepted minor over-count
+   * (matching the CLI's RepoSession).
    */
   async function recover(): Promise<void> {
     const path = repoPath.value;

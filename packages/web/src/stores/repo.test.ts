@@ -92,6 +92,9 @@ function defaultPostRoutes(call: FetchCall): FakeResponse | undefined {
 }
 
 function defaultRoutes(call: FetchCall): FakeResponse {
+  if (call.method === 'DELETE' && call.url.startsWith('/repos/')) {
+    return { body: null };
+  }
   const matched = call.method === 'GET' ? defaultGetRoutes(call.url) : defaultPostRoutes(call);
   return matched ?? { status: 404, body: { error: `no fake route: ${call.method} ${call.url}` } };
 }
@@ -190,6 +193,78 @@ describe('open + applyWireState', () => {
     source.emit('state-change', wireState([fileEntry('new.ts')], { error: 'watcher hiccup' }));
     expect(store.shared.status!.files.map((f) => f.path)).toEqual(['new.ts']);
     expect(store.shared.error).toBe('watcher hiccup');
+  });
+
+  test('open returns the ref; the first open releases nothing', async () => {
+    const store = useRepoStore();
+    await expect(store.open('/repo')).resolves.toEqual({ id: 'r1', path: '/repo' });
+    expect(fake.calls.filter((c) => c.method === 'DELETE')).toHaveLength(0);
+  });
+
+  test('switching repos releases the previous ref after the new open succeeds', async () => {
+    const { store } = await openStore();
+
+    onRequest = (call) => {
+      if (call.method === 'POST' && call.url === '/repos') {
+        return { body: { id: 'r2', path: (call.body as { path: string }).path } };
+      }
+      if (call.url.startsWith('/repos/r2/')) {
+        return { body: call.url.endsWith('/status') ? wireState() : { state: wireState() } };
+      }
+      return undefined;
+    };
+
+    const ref = await store.open('/repo2');
+    expect(ref).toEqual({ id: 'r2', path: '/repo2' });
+    await flush();
+    const deletes = fake.calls.filter((c) => c.method === 'DELETE');
+    expect(deletes.map((c) => c.url)).toEqual(['/repos/r1']);
+  });
+
+  test('re-opening the same repo releases the extra ref (net one hold)', async () => {
+    const { store } = await openStore();
+
+    await store.open('/repo'); // POST bumps the daemon refcount to 2...
+    await flush();
+    // ...and the release brings it back to 1.
+    const deletes = fake.calls.filter((c) => c.method === 'DELETE');
+    expect(deletes.map((c) => c.url)).toEqual(['/repos/r1']);
+    expect(store.repoId).toBe('r1');
+  });
+
+  test('a refused open releases nothing', async () => {
+    const { store } = await openStore();
+    onRequest = (call) =>
+      call.method === 'POST' && call.url === '/repos'
+        ? { status: 400, body: { error: 'Not a git repository' } }
+        : undefined;
+
+    await expect(store.open('/not-a-repo')).resolves.toBeNull();
+    expect(fake.calls.filter((c) => c.method === 'DELETE')).toHaveLength(0);
+    expect(store.shared.error).toBe('Not a git repository');
+  });
+
+  test('a connection error during open sets the calm line and recovery brings the repo up', async () => {
+    let down = true;
+    onRequest = (call) => {
+      if (down && call.method === 'POST' && call.url === '/repos') {
+        throw new TypeError('Failed to fetch');
+      }
+      return undefined;
+    };
+
+    const store = useRepoStore();
+    await expect(store.open('/repo')).resolves.toBeNull();
+
+    // Not a raw transport dump: the ONE calm line, no stuck loading state.
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+    expect(store.shared.isLoading).toBe(false);
+
+    // Recovery was scheduled: once the daemon answers, the repo comes up.
+    down = false;
+    await advance(1000);
+    expect(store.repoId).toBe('r1');
+    expect(store.shared.error).toBeNull();
   });
 });
 
@@ -676,6 +751,16 @@ describe('remote operations', () => {
 // --- Reconnect ---
 
 describe('reconnect', () => {
+  test('a drop before the first snapshot clears isLoading beside the error line', async () => {
+    const store = useRepoStore();
+    await store.open('/repo');
+    expect(store.shared.isLoading).toBe(true); // no snapshot yet
+
+    FakeEventSource.latest().fail();
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+    expect(store.shared.isLoading).toBe(false); // no stuck "Loading…" beside the error
+  });
+
   test('an SSE drop sets ONE calm line and recovery clears it', async () => {
     const { store, source } = await openStore([fileEntry('a.ts')]);
 

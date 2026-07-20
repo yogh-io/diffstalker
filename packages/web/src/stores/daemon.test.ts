@@ -24,10 +24,6 @@ function defaultRoutes(call: FetchCall): FakeResponse {
   if (call.method === 'GET' && call.url === '/repos') {
     return { body: [{ id: 'r1', path: '/repo', branch: 'main' }] };
   }
-  if (call.method === 'POST' && call.url === '/repos') {
-    const body = call.body as { path: string };
-    return { body: { id: 'r2', path: body.path } };
-  }
   if (call.method === 'DELETE' && call.url.startsWith('/repos/')) {
     return { body: null };
   }
@@ -127,30 +123,25 @@ describe('useDaemonStore', () => {
     expect(after).toBe(listCalls + 1);
   });
 
-  test('openRepo posts the path, adds the repo, and makes it active', async () => {
+  test('trackActive records the repo, makes it active, clears error — and never POSTs', () => {
     const store = useDaemonStore();
-    const ref = await store.openRepo('/other');
-    expect(ref).toEqual({ id: 'r2', path: '/other' });
+    store.error = 'stale refusal';
+
+    store.trackActive({ id: 'r2', path: '/other' });
     expect(store.repos.map((r) => r.id)).toEqual(['r2']);
     expect(store.activeRepoId).toBe('r2');
     expect(store.error).toBeNull();
-  });
+    // repoStore.open owns the POST; the daemon store only tracks.
+    expect(fake.calls).toHaveLength(0);
 
-  test('openRepo failure surfaces the daemon message in error, returns null', async () => {
-    onRequest = (call) =>
-      call.method === 'POST' && call.url === '/repos'
-        ? { status: 400, body: { error: 'Not a git repository' } }
-        : undefined;
-    const store = useDaemonStore();
-    const ref = await store.openRepo('/not-a-repo');
-    expect(ref).toBeNull();
-    expect(store.error).toBe('Not a git repository');
-    expect(store.repos).toEqual([]);
+    // Tracking the same repo again adds no duplicate.
+    store.trackActive({ id: 'r2', path: '/other' });
+    expect(store.repos).toHaveLength(1);
   });
 
   test('closeRepo DELETEs, drops the repo, and clears an active pointer', async () => {
     const store = useDaemonStore();
-    await store.openRepo('/other');
+    store.trackActive({ id: 'r2', path: '/other' });
     await store.closeRepo('r2');
     expect(fake.calls.some((c) => c.method === 'DELETE' && c.url === '/repos/r2')).toBe(true);
     expect(store.repos).toEqual([]);

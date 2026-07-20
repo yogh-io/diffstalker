@@ -1,55 +1,96 @@
 <script setup lang="ts">
 /**
- * Placeholder shell: proves the SPA is served and can reach the daemon's
- * API same-origin. The real layout (header / rail / views) lands in the
- * next slices.
+ * App shell: header / activity rail / workspace / status bar on a CSS
+ * grid. Owns the daemon connection and the warm-daemon auto-activation:
+ *
+ * - onMounted: daemonStore.connect() (daemon-scope SSE);
+ * - activation flows through useRepoOpen (switcher, open-by-path, and
+ *   the auto-activation below) — repoStore.open() is the sole opener;
+ * - one-shot auto-activation: when the FIRST daemon repo list arrives
+ *   (page load) with open repos and nothing active, activate the
+ *   followed repo, else the first open one. Latched after that first
+ *   list — a later repo-opened (say, the CLI opening a repo) must never
+ *   hijack a user sitting at the empty state.
  */
 
-import { ref, onMounted } from 'vue';
+import { computed, onMounted, watch } from 'vue';
+import { useDaemonStore } from './stores/daemon';
+import { useUiStore } from './stores/ui';
+import { useRepoOpen } from './composables/useRepoOpen';
+import AppHeader from './components/AppHeader.vue';
+import ActivityRail from './components/ActivityRail.vue';
+import StatusBar from './components/StatusBar.vue';
+import RepoEmptyState from './components/RepoEmptyState.vue';
+import ChangesView from './views/ChangesView.vue';
+import HistoryView from './views/HistoryView.vue';
+import CompareView from './views/CompareView.vue';
+import ExplorerView from './views/ExplorerView.vue';
+import type { ViewName } from './prefs';
 
-interface HealthWire {
-  ok: boolean;
-  ready: boolean;
-}
+const daemon = useDaemonStore();
+const ui = useUiStore();
+const { activate } = useRepoOpen();
 
-const health = ref<HealthWire | null>(null);
-const healthError = ref<string | null>(null);
+// Stamp the theme before first paint (setup runs before mount).
+ui.init();
 
-onMounted(async () => {
-  try {
-    const res = await fetch('/health');
-    if (!res.ok) throw new Error(`GET /health -> ${res.status}`);
-    health.value = (await res.json()) as HealthWire;
-  } catch (err) {
-    healthError.value = err instanceof Error ? err.message : String(err);
-  }
+const VIEW_COMPONENTS: Record<ViewName, unknown> = {
+  changes: ChangesView,
+  history: HistoryView,
+  compare: CompareView,
+  explorer: ExplorerView,
+};
+
+const activeViewComponent = computed(() => VIEW_COMPONENTS[ui.activeView]);
+
+const hasActiveRepo = computed(() => daemon.activeRepoId !== null);
+
+onMounted(() => {
+  daemon.connect();
 });
+
+// Warm daemon on page load: activate the followed repo, else the first.
+// One-shot — the latch disarms on the FIRST repo list, even an empty one,
+// so nothing auto-activates later (repo-opened SSE, post-close arrivals).
+let autoActivateArmed = true;
+watch(
+  () => daemon.repos,
+  (repos) => {
+    if (!autoActivateArmed) return;
+    autoActivateArmed = false;
+    if (daemon.activeRepoId !== null || repos.length === 0) return;
+    const followed = repos.find((r) => r.id === daemon.follow?.followedRepoId);
+    void activate(followed ?? repos[0]);
+  }
+);
 </script>
 
 <template>
-  <main class="shell">
-    <h1>diffstalker</h1>
-    <p class="tagline">web UI scaffold — views land in the next slices</p>
-    <p v-if="health" class="health">daemon health: ok={{ health.ok }} ready={{ health.ready }}</p>
-    <p v-else-if="healthError" class="health error">daemon unreachable: {{ healthError }}</p>
-    <p v-else class="health">checking daemon health…</p>
-  </main>
+  <div class="shell">
+    <AppHeader />
+    <ActivityRail />
+    <main class="workspace">
+      <RepoEmptyState v-if="!hasActiveRepo" />
+      <component :is="activeViewComponent" v-else />
+    </main>
+    <StatusBar />
+  </div>
 </template>
 
 <style scoped>
 .shell {
-  font-family: system-ui, sans-serif;
-  max-width: 40rem;
-  margin: 4rem auto;
-  padding: 0 1rem;
+  height: 100%;
+  display: grid;
+  grid-template:
+    'header header' auto
+    'rail main' 1fr
+    'status status' auto
+    / auto 1fr;
 }
-.tagline {
-  color: #888;
-}
-.health {
-  font-family: monospace;
-}
-.health.error {
-  color: #c66;
+
+.workspace {
+  grid-area: main;
+  overflow: auto;
+  background: var(--bg);
 }
 </style>

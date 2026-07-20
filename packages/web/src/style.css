@@ -1,0 +1,164 @@
+/*
+ * Global chrome styles. All color comes from the theme custom properties
+ * (see src/theme/) — nothing here hardcodes a palette. Two type families:
+ * mono for anything git speaks (paths, branches, counts, hashes), sans
+ * for chrome labels and copy.
+ */
+
+:root {
+  --font-mono:
+    ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* Type scale */
+  --fs-micro: 0.6875rem; /* 11px: eyebrows, uppercase labels */
+  --fs-small: 0.75rem; /* 12px: status bar, hints */
+  --fs-base: 0.8125rem; /* 13px: chrome default */
+  --fs-content: 0.875rem; /* 14px: readouts, inputs */
+  --fs-title: 1rem; /* 16px: panel titles */
+  --fs-display: 1.375rem; /* 22px: empty-state heading */
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  /* The page never scrolls sideways; wide content clamps or scrolls
+     inside its own container. */
+  overflow-x: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+input {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.375rem 0.5rem;
+}
+
+input::placeholder {
+  color: var(--text-dim);
+}
+
+:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: 1px;
+}
+
+/* --- Shared view scaffold (placeholder views, replaced by later slices) --- */
+
+.view {
+  padding: 1.25rem 1.5rem;
+  max-width: 64rem;
+}
+
+.view-eyebrow {
+  margin: 0 0 0.25rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.view-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+
+.view-hint {
+  margin: 0.25rem 0 1rem;
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+}
+
+.view-empty {
+  margin: 1rem 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-content);
+}
+
+.view-error {
+  margin: 0.75rem 0 0;
+  color: var(--del);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+}
+
+.view-action {
+  display: inline-block;
+  padding: 0.375rem 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  font-size: var(--fs-base);
+}
+
+.view-action:hover:not(:disabled) {
+  border-color: var(--text-dim);
+}
+
+/* Diff-language inline counts, used across the chrome. */
+.count-add {
+  color: var(--add);
+}
+
+.count-del {
+  color: var(--del);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

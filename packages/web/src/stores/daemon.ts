@@ -9,10 +9,11 @@
  * daemon sends a fresh `snapshot`, which repopulates the repo list and
  * flips the status back to 'connected'.
  *
- * Follow policy stays client-side (like the CLI's FollowMode): the store
- * records the latest follow-change event and a client-side enabled
- * toggle; the app layer watches `lastFollowChange` and switches the
- * active repo when the toggle is on.
+ * Follow: this store only RECORDS follow state and the latest
+ * follow-change event (plus a client-side enabled toggle). Nothing in
+ * the web app auto-switches repos on follow-change yet — a later slice
+ * wires an app-layer watcher on `lastFollowChange` that switches the
+ * active repo when `followEnabled` is on.
  */
 
 import { shallowRef } from 'vue';
@@ -114,24 +115,15 @@ export const useDaemonStore = defineStore('daemon', () => {
   }
 
   /**
-   * Open a repo by absolute path. Returns the ref (and makes it active)
-   * or null when the daemon refused; the reason lands in `error`.
+   * Record a successfully-opened repo and make it active. Does NOT POST:
+   * repoStore.open() is the sole opener (one POST /repos per open); this
+   * just tracks the result daemon-side state-wise and clears a stale
+   * daemon error.
    */
-  async function openRepo(path: string): Promise<RepoRef | null> {
-    try {
-      const ref = await client.openRepo(path);
-      upsertRepo(ref);
-      activeRepoId.value = ref.id;
-      error.value = null;
-      return ref;
-    } catch (err) {
-      error.value = errorMessage(err);
-      return null;
-    }
-  }
-
-  function setActiveRepo(id: string | null): void {
-    activeRepoId.value = id;
+  function trackActive(ref: RepoRef): void {
+    upsertRepo(ref);
+    activeRepoId.value = ref.id;
+    error.value = null;
   }
 
   /** Release a repo (refcounted daemon-side) and drop it locally. */
@@ -165,8 +157,7 @@ export const useDaemonStore = defineStore('daemon', () => {
     disconnect,
     refreshRepos,
     loadFollow,
-    openRepo,
-    setActiveRepo,
+    trackActive,
     closeRepo,
     toggleFollow,
   };
