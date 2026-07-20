@@ -1,0 +1,271 @@
+{
+  "timestamp": "2026-07-20T13:44:31.579Z",
+  "gitRef": "v0.5.1",
+  "gitSha": "b7bd612",
+  "summary": {
+    "files": 143,
+    "lines": 27189,
+    "functions": 1987,
+    "avgCyclomaticComplexity": 4.4,
+    "maxCyclomaticComplexity": {
+      "value": 34,
+      "function": "reconcileSelectionAfterStateChange",
+      "file": "packages/cli/src/App.ts:599"
+    },
+    "avgCognitiveComplexity": 5.7,
+    "maxCognitiveComplexity": {
+      "value": 41,
+      "function": "(anonymous)",
+      "file": "packages/core/src/git/diff.ts:376"
+    },
+    "smells": 0
+  },
+  "hotspots": [
+    {
+      "file": "packages/cli/src/App.ts",
+      "lines": 1134,
+      "cyclomaticMax": 34,
+      "cognitiveMax": 19,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/utils/flatFileList.ts",
+      "lines": 100,
+      "cyclomaticMax": 29,
+      "cognitiveMax": 14,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/diff.ts",
+      "lines": 515,
+      "cyclomaticMax": 26,
+      "cognitiveMax": 41,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/utils/displayRows.ts",
+      "lines": 600,
+      "cyclomaticMax": 25,
+      "cognitiveMax": 39,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/CommitPanel.ts",
+      "lines": 141,
+      "cyclomaticMax": 23,
+      "cognitiveMax": 23,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/status.ts",
+      "lines": 474,
+      "cyclomaticMax": 21,
+      "cognitiveMax": 24,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/PaneRenderers.ts",
+      "lines": 247,
+      "cyclomaticMax": 20,
+      "cognitiveMax": 8,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/ExplorerContent.ts",
+      "lines": 126,
+      "cyclomaticMax": 20,
+      "cognitiveMax": 24,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/config.ts",
+      "lines": 181,
+      "cyclomaticMax": 18,
+      "cognitiveMax": 26,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/Header.ts",
+      "lines": 128,
+      "cyclomaticMax": 18,
+      "cognitiveMax": 22,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/diffParse.ts",
+      "lines": 221,
+      "cyclomaticMax": 18,
+      "cognitiveMax": 17,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/MouseHandlers.ts",
+      "lines": 288,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/NavigationController.ts",
+      "lines": 488,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/ExplorerView.ts",
+      "lines": 204,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 21,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/explorerData.ts",
+      "lines": 226,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 26,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/utils/ansiTruncate.ts",
+      "lines": 118,
+      "cyclomaticMax": 16,
+      "cognitiveMax": 24,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/index.ts",
+      "lines": 191,
+      "cyclomaticMax": 15,
+      "cognitiveMax": 16,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/DiffView.ts",
+      "lines": 515,
+      "cyclomaticMax": 15,
+      "cognitiveMax": 21,
+      "smells": 0
+    },
+    {
+      "file": "packages/daemon/src/index.ts",
+      "lines": 198,
+      "cyclomaticMax": 15,
+      "cognitiveMax": 10,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/CompareListView.ts",
+      "lines": 410,
+      "cyclomaticMax": 14,
+      "cognitiveMax": 16,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/utils/diffRowCalculations.ts",
+      "lines": 136,
+      "cyclomaticMax": 13,
+      "cognitiveMax": 24,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/FileList.ts",
+      "lines": 216,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/utils/lineBreaking.ts",
+      "lines": 114,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 17,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/StagingOperations.ts",
+      "lines": 220,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 10,
+      "smells": 0
+    },
+    {
+      "file": "packages/daemon/src/router.ts",
+      "lines": 156,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/managers/WorkingTreeManager.ts",
+      "lines": 444,
+      "cyclomaticMax": 10,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/state/ExplorerViewModel.ts",
+      "lines": 697,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/HistoryView.ts",
+      "lines": 90,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/utils/formatPath.ts",
+      "lines": 72,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 11,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/worktree.ts",
+      "lines": 175,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 11,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/utils/explorerDisplayRows.ts",
+      "lines": 206,
+      "cyclomaticMax": 8,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "packages/client/src/transport.ts",
+      "lines": 227,
+      "cyclomaticMax": 8,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/modals/FileFinder.ts",
+      "lines": 236,
+      "cyclomaticMax": 7,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/modals/BaseBranchPicker.ts",
+      "lines": 132,
+      "cyclomaticMax": 6,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/modals/RepoPicker.ts",
+      "lines": 149,
+      "cyclomaticMax": 6,
+      "cognitiveMax": 13,
+      "smells": 0
+    }
+  ],
+  "smellsByRule": {}
+}
