@@ -11,6 +11,12 @@ case "$bump" in
   *) echo "Usage: $0 [patch|minor|major]" >&2; exit 1 ;;
 esac
 
+# The publishable manifests, bumped in lockstep to the SAME version. They release
+# together because the cli depends on diffstalkerd via workspace:* (published as
+# the exact version), so any version skew would ship an uninstallable cli. Add the
+# coming web http package here (one line) when it becomes publishable.
+MANIFESTS="packages/cli/package.json packages/daemon/package.json"
+
 # Ensure clean working tree
 if [ -n "$(git status --porcelain)" ]; then
   echo "Error: working tree is not clean" >&2
@@ -40,10 +46,8 @@ fi
 
 echo "$current -> $next"
 
-# Update BOTH published manifests to the same version. They release in
-# lockstep: the cli depends on diffstalkerd via workspace:* (published as the
-# exact version), so a version skew would ship an uninstallable cli.
-for manifest in packages/cli/package.json packages/daemon/package.json; do
+# Bump every published manifest to the same version (see MANIFESTS above).
+for manifest in $MANIFESTS; do
   node -e "
     const fs = require('fs');
     const p = '$manifest';
@@ -54,7 +58,7 @@ for manifest in packages/cli/package.json packages/daemon/package.json; do
 done
 
 # Commit, tag, push
-git add packages/cli/package.json packages/daemon/package.json
+git add $MANIFESTS
 git commit -m "Bump version to $next"
 git tag "v$next"
 git push

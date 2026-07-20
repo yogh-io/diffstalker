@@ -36,9 +36,7 @@
     "deps": "depcruise src/ --config .dependency-cruiser.cjs",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
-    "prepublishOnly": "bun run build:prod",
-    "prepack": "cp package.json package.json.orig && node ../../scripts/strip-devdeps.mjs",
-    "postpack": "mv package.json.orig package.json"
+    "prepublishOnly": "bun run build:prod"
   },
   "keywords": [
     "git",

@@ -1,7 +1,9 @@
-# LICENSE and CHANGELOG are copied in here only during `npm pack`/`publish`
-# (prepack) and removed by postpack. Ignore them so a failed postpack never
-# commits copies. README.md IS committed (a developer-facing doc); prepack
-# swaps in the root marketing README for the npm tarball and postpack restores
-# the committed one via `git checkout`.
+# README.md, LICENSE and CHANGELOG are copied in here from the repo root only
+# during `bun pm pack` / `npm publish` (prepack) and removed by postpack. None
+# are tracked, so a hard-killed pack never leaves a dirty *tracked* file — the
+# leftovers are inert, git-ignored copies. The developer-facing doc for this
+# package lives in DEVELOPMENT.md (committed); the npm tarball ships only the
+# root marketing README, copied in by prepack.
+/README.md
 /LICENSE
 /CHANGELOG.md

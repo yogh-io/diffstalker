@@ -1,13 +1,15 @@
-# diffstalker (CLI)
+# diffstalker (CLI) — developer notes
 
 `diffstalker` is the terminal UI for interactive git staging and committing —
 the package published to npm as `diffstalker`. It is a **pure client** of
 `diffstalkerd`: it holds no in-process git and drives everything over the
 daemon's REST + SSE API through `@diffstalker/client`.
 
-> This is the developer-facing README for the `packages/cli` workspace. The
-> npm package page ships the repo-root `README.md` (swapped in at publish time
-> by `prepack`).
+> This is the developer-facing doc for the `packages/cli` workspace
+> (`DEVELOPMENT.md`). The npm package page ships the repo-root `README.md`,
+> copied in at pack time by `prepack` (as an untracked file) and removed by
+> `postpack`. It is named `DEVELOPMENT.md` (not `README*`) so it never leaks
+> into the published tarball.
 
 ## What it does
 

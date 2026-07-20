@@ -39,8 +39,8 @@
     "metrics": "bun ../../scripts/collect-metrics.ts",
     "metrics:snapshot": "bun ../../scripts/collect-metrics.ts --save",
     "prepublishOnly": "bun run build:prod",
-    "prepack": "cp ../../README.md ../../LICENSE ../../CHANGELOG.md . && cp package.json package.json.orig && node ../../scripts/strip-devdeps.mjs",
-    "postpack": "rm -f LICENSE CHANGELOG.md && (git checkout -- README.md 2>/dev/null || rm -f README.md) && mv package.json.orig package.json"
+    "prepack": "cp ../../README.md ../../LICENSE ../../CHANGELOG.md .",
+    "postpack": "rm -f README.md LICENSE CHANGELOG.md"
   },
   "keywords": [
     "git",

@@ -5,52 +5,130 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  id-token: write  # Required for OIDC
-  contents: write  # Required for GitHub release
+# Publishable packages, in DEPENDENCY ORDER (a dependency before its dependents).
+# This one list drives the whole flow: build:prod + pack (gate job) and publish
+# (publish job) all iterate it. Adding the coming web http package is a one-line
+# change here — nothing else in this file needs to know about it.
+#   - `dir`  : workspace directory (build:prod + bun pm pack run here)
+#   - `name` : published npm package name (used for the idempotency check + tarball glob)
+env:
+  # Space-separated "dir:name" pairs. daemon before cli: the cli depends on
+  # diffstalkerd (workspace:*, published as the exact version), so the daemon
+  # must reach the registry first. Add e.g. "packages/web:@diffstalker/web" here.
+  PUBLISHABLE: "packages/daemon:diffstalkerd packages/cli:diffstalker"
 
 jobs:
-  publish:
+  # ── Gate ──────────────────────────────────────────────────────────────────
+  # Everything must build and test green BEFORE anything ships. This job type-
+  # checks all packages, prod-bundles + packs each publishable one, runs the
+  # full test suite, and uploads the tarballs. If ANY step fails the job fails
+  # and `publish` (which `needs` it) never starts — no partial release.
+  build-test:
     runs-on: ubuntu-latest
-    environment: npm
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
 
+      - run: bun install --frozen-lockfile
+
+      # tsc -b across all packages (core -> cli, core -> daemon). bun test strips
+      # types without checking, so this is the only gate that catches type errors.
+      - run: bun run build
+
+      # Prod bundles (cli bundles core+client, daemon bundles core), then pack
+      # each publishable package with `bun pm pack` — run INSIDE this job while
+      # the workspace is present, so bun resolves every `workspace:*` (deps AND
+      # devDeps) to the concrete version. The tarballs are the exact bytes we
+      # publish later. Loop is driven by $PUBLISHABLE (see top of file).
+      - name: Build prod bundles and pack tarballs
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/dist-tarballs"
+          for entry in $PUBLISHABLE; do
+            dir="${entry%%:*}"
+            echo "::group::pack $dir"
+            (cd "$dir" && bun run build:prod)
+            (cd "$dir" && bun pm pack --destination "$GITHUB_WORKSPACE/dist-tarballs")
+            echo "::endgroup::"
+          done
+          ls -l "$GITHUB_WORKSPACE/dist-tarballs"
+
+      # Full suite (core + cli + daemon + client).
+      - run: bun run test
+
+      # Hand the built tarballs to the publish job. Skipped under `act` (the
+      # pre-push dry-run has no artifact server) — the gate's value there is the
+      # build+test+pack above, not the plumbing.
+      - name: Upload tarballs
+        if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-tarballs
+          path: dist-tarballs/*.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  # ── Publish ───────────────────────────────────────────────────────────────
+  # `needs: build-test` — this job literally cannot start unless the gate passed.
+  # It publishes the tarballs the gate produced (never re-packs), idempotently,
+  # via `npm publish` to keep npm's OIDC trusted publishing + provenance.
+  publish:
+    needs: build-test
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      id-token: write   # OIDC trusted publishing (npm) + provenance
+      contents: write   # metrics-snapshot commit + GitHub release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      # npmjs registry for OIDC trusted publishing (no NODE_AUTH_TOKEN needed).
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       - run: bun install --frozen-lockfile
-      # Type-check all packages (tsc -b: core -> cli, core -> daemon).
-      # bun test strips types without checking, so this is the only gate
-      # that catches type errors in core/daemon before publish.
-      - run: bun run build
-      # Self-contained production bundles: cli bundles core+client, daemon
-      # bundles core. Each keeps only its own npm deps external.
-      - run: bun run build:prod
-        working-directory: packages/cli
-      - run: bun run build:prod
-        working-directory: packages/daemon
-      - run: bun run test
-      # Publish BOTH with `bun publish`: bun resolves the cli's
-      # `diffstalkerd: workspace:*` to the concrete version, which plain
-      # `npm publish` does NOT (it would ship an uninstallable workspace:*).
-      # Order matters — the cli depends on diffstalkerd, so publish the
-      # daemon first.
-      - run: bun publish --access public
+
+      - name: Download tarballs
         if: ${{ !env.ACT }}
-        working-directory: packages/daemon
-      - run: bun publish --access public
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-tarballs
+          path: dist-tarballs
+
+      # Idempotent publish, in dependency order (see $PUBLISHABLE). For each
+      # package: if that exact version is already on the registry, skip it;
+      # otherwise `npm publish <tarball> --provenance`. This makes a partial
+      # release safely re-runnable — re-pushing the tag republishes only what
+      # didn't make it, and never double-publishes what did.
+      - name: Publish tarballs
         if: ${{ !env.ACT }}
-        working-directory: packages/cli
-      # After publish: a failure here must not abort the release itself
-      - run: bun run metrics:snapshot
+        run: |
+          set -euo pipefail
+          for entry in $PUBLISHABLE; do
+            name="${entry##*:}"
+            tgz=$(ls dist-tarballs/${name}-*.tgz)
+            version=$(tar -xzOf "$tgz" package/package.json \
+              | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+            existing=$(npm view "${name}@${version}" version 2>/dev/null || true)
+            if [ -n "$existing" ]; then
+              echo "skip: ${name}@${version} already published"
+            else
+              echo "publish: ${name}@${version}"
+              npm publish "$tgz" --provenance --access public
+            fi
+          done
+
+      # Post-publish bookkeeping (never in the act dry-run). A metrics failure
+      # must not un-publish the release, hence `|| true` on the commit.
       - name: Commit metrics snapshot
         if: ${{ !env.ACT }}
         run: |
+          bun run metrics:snapshot
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add metrics/
