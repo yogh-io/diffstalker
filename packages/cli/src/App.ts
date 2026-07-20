@@ -17,7 +17,7 @@ import { formatFooter } from './ui/widgets/Footer.js';
 import { COMMIT_INPUT_HEIGHT } from './ui/widgets/CommitPanel.js';
 import { HUNK_FLASH_MS } from './ui/widgets/DiffView.js';
 import { ExplorerViewModel, ExplorerOptions } from './state/ExplorerViewModel.js';
-import { buildGitStatusMap } from '@diffstalker/core/git/explorerData';
+import { buildGitStatusMap } from '@diffstalker/core/git/explorerStatus';
 import { CommitFlowState } from './state/CommitFlowState.js';
 import { UIState } from './state/UIState.js';
 import { RepoSession, openRepoSession } from './daemon/RepoSession.js';

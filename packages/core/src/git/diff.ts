@@ -3,6 +3,21 @@ import * as path from 'node:path';
 import { createGit } from './gitClient.js';
 import { CommitInfo } from './status.js';
 import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
+import { parseDiffWithLineNumbers } from './diffParse.js';
+import type { DiffLine, DiffResult } from './diffParse.js';
+
+// Re-export the pure diff/patch parsers so existing importers (the daemon,
+// tests) keep working through `git/diff`. The CLI imports them straight from
+// `git/diffParse` to avoid pulling this module's simple-git dependency.
+export {
+  parseDiffLine,
+  parseHunkHeader,
+  parseDiffWithLineNumbers,
+  countHunks,
+  countHunksPerFile,
+  extractHunkPatch,
+} from './diffParse.js';
+export type { DiffLine, DiffResult } from './diffParse.js';
 
 /**
  * Thrown by getDiffBetweenRefs when the base ref shares no history with
@@ -14,22 +29,6 @@ export class NoCommonHistoryError extends Error {
     super(`No common history with ${baseRef}`);
     this.name = 'NoCommonHistoryError';
   }
-}
-
-export interface DiffLine {
-  type: 'header' | 'hunk' | 'addition' | 'deletion' | 'context';
-  /** For hunk lines: when this hunk's content was last observed to change (ms). */
-  editedAt?: number;
-  content: string;
-  /** Line number in the old file (for deletions and context) */
-  oldLineNum?: number;
-  /** Line number in the new file (for additions and context) */
-  newLineNum?: number;
-}
-
-export interface DiffResult {
-  raw: string;
-  lines: DiffLine[];
 }
 
 export interface CompareDiffStats {
@@ -58,202 +57,6 @@ export interface CompareDiff {
 export interface FileHunkCounts {
   staged: Map<string, number>;
   unstaged: Map<string, number>;
-}
-
-export function parseDiffLine(line: string): DiffLine {
-  if (
-    line.startsWith('diff --git') ||
-    line.startsWith('index ') ||
-    line.startsWith('---') ||
-    line.startsWith('+++') ||
-    line.startsWith('new file') ||
-    line.startsWith('deleted file')
-  ) {
-    return { type: 'header', content: line };
-  }
-  if (line.startsWith('@@')) {
-    return { type: 'hunk', content: line };
-  }
-  if (line.startsWith('+')) {
-    return { type: 'addition', content: line };
-  }
-  if (line.startsWith('-')) {
-    return { type: 'deletion', content: line };
-  }
-  return { type: 'context', content: line };
-}
-
-/**
- * Parse a hunk header to extract line numbers.
- * Format: @@ -oldStart,oldCount +newStart,newCount @@
- * Example: @@ -1,5 +1,7 @@ or @@ -10 +10,2 @@
- */
-export function parseHunkHeader(line: string): { oldStart: number; newStart: number } | null {
-  const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-  if (match) {
-    return {
-      oldStart: parseInt(match[1], 10),
-      newStart: parseInt(match[2], 10),
-    };
-  }
-  return null;
-}
-
-/**
- * Parse diff output with line numbers.
- * Tracks line numbers through hunks for proper display.
- */
-export function parseDiffWithLineNumbers(raw: string): DiffLine[] {
-  const lines = raw.split('\n');
-  // Remove trailing empty string from the final newline in git output,
-  // otherwise it gets parsed as a phantom context line on the last hunk
-  if (lines.length > 1 && lines[lines.length - 1] === '') {
-    lines.pop();
-  }
-  const result: DiffLine[] = [];
-
-  let oldLineNum = 0;
-  let newLineNum = 0;
-
-  for (const line of lines) {
-    if (
-      line.startsWith('diff --git') ||
-      line.startsWith('index ') ||
-      line.startsWith('---') ||
-      line.startsWith('+++') ||
-      line.startsWith('new file') ||
-      line.startsWith('deleted file') ||
-      line.startsWith('Binary files') ||
-      line.startsWith('similarity index') ||
-      line.startsWith('rename from') ||
-      line.startsWith('rename to')
-    ) {
-      result.push({ type: 'header', content: line });
-    } else if (line.startsWith('@@')) {
-      const hunkInfo = parseHunkHeader(line);
-      if (hunkInfo) {
-        oldLineNum = hunkInfo.oldStart;
-        newLineNum = hunkInfo.newStart;
-      }
-      result.push({ type: 'hunk', content: line });
-    } else if (line.startsWith('+')) {
-      result.push({
-        type: 'addition',
-        content: line,
-        newLineNum: newLineNum++,
-      });
-    } else if (line.startsWith('-')) {
-      result.push({
-        type: 'deletion',
-        content: line,
-        oldLineNum: oldLineNum++,
-      });
-    } else {
-      // Context line (starts with space) or empty line
-      result.push({
-        type: 'context',
-        content: line,
-        oldLineNum: oldLineNum++,
-        newLineNum: newLineNum++,
-      });
-    }
-  }
-
-  return result;
-}
-
-/**
- * Count the number of hunks in a raw diff string.
- * A hunk starts with a line beginning with '@@'.
- */
-export function countHunks(rawDiff: string): number {
-  if (!rawDiff) return 0;
-  let count = 0;
-  for (const line of rawDiff.split('\n')) {
-    if (line.startsWith('@@')) count++;
-  }
-  return count;
-}
-
-/**
- * Extract a valid single-hunk patch from a raw diff.
- * Includes all file headers (diff --git, index, new file mode,
- * rename from/to, ---, +++) plus the Nth @@ hunk and its lines
- * (including '\ No newline at end of file' markers).
- * Returns null if hunkIndex is out of range.
- */
-export function extractHunkPatch(rawDiff: string, hunkIndex: number): string | null {
-  if (!rawDiff) return null;
-
-  const lines = rawDiff.split('\n');
-
-  // Collect file headers (everything before the first @@)
-  const headers: string[] = [];
-  let firstHunkLine = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith('@@')) {
-      firstHunkLine = i;
-      break;
-    }
-    headers.push(lines[i]);
-  }
-
-  if (firstHunkLine === -1) return null;
-
-  // Find the Nth @@ line
-  let hunkCount = -1;
-  let hunkStart = -1;
-  for (let i = firstHunkLine; i < lines.length; i++) {
-    if (lines[i].startsWith('@@')) {
-      hunkCount++;
-      if (hunkCount === hunkIndex) {
-        hunkStart = i;
-        break;
-      }
-    }
-  }
-
-  if (hunkStart === -1) return null;
-
-  // Collect from that @@ until the next @@ or end-of-content
-  const hunkLines: string[] = [lines[hunkStart]];
-  for (let i = hunkStart + 1; i < lines.length; i++) {
-    if (lines[i].startsWith('@@') || lines[i].startsWith('diff --git')) break;
-    hunkLines.push(lines[i]);
-  }
-
-  // Remove trailing empty line if present (artifact of split)
-  while (hunkLines.length > 1 && hunkLines[hunkLines.length - 1] === '') {
-    hunkLines.pop();
-  }
-
-  const patch = [...headers, ...hunkLines].join('\n') + '\n';
-  return patch;
-}
-
-/**
- * Count the number of hunks per file in a multi-file raw diff string.
- * Returns a map of file path -> hunk count.
- */
-export function countHunksPerFile(rawDiff: string): Map<string, number> {
-  const result = new Map<string, number>();
-  if (!rawDiff) return result;
-
-  let currentFile: string | null = null;
-  for (const line of rawDiff.split('\n')) {
-    if (line.startsWith('diff --git')) {
-      const match = line.match(/^diff --git a\/.+ b\/(.+)$/);
-      if (match) {
-        currentFile = match[1];
-        if (!result.has(currentFile)) {
-          result.set(currentFile, 0);
-        }
-      }
-    } else if (line.startsWith('@@') && currentFile) {
-      result.set(currentFile, (result.get(currentFile) ?? 0) + 1);
-    }
-  }
-  return result;
 }
 
 export async function getDiff(

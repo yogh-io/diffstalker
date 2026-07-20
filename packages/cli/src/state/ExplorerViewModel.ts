@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { isConnectionError } from '@diffstalker/client';
 import type { DiffstalkerClient } from '@diffstalker/client';
 import type { FileStatus } from '@diffstalker/core/git/status';
-import type { GitStatusMap } from '@diffstalker/core/git/explorerData';
+import type { GitStatusMap } from '@diffstalker/core/git/explorerStatus';
 import * as logger from '@diffstalker/core/utils/logger';
 
 /** Maximum file size served for display (mirrors the daemon's limit). */

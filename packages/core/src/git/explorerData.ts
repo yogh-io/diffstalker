@@ -12,6 +12,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getIgnoredFiles } from './ignoreUtils.js';
 import type { FileStatus } from './status.js';
+import type { GitStatusMap } from './explorerStatus.js';
+
+// Re-export the pure explorer status helpers so existing importers (the
+// daemon) keep working through `git/explorerData`. The CLI imports them
+// straight from `git/explorerStatus` to avoid pulling this module's
+// simple-git dependency (via listDirectory's git check-ignore call).
+export { buildGitStatusMap } from './explorerStatus.js';
+export type { GitStatusMap } from './explorerStatus.js';
 
 /** Maximum file size served for display (larger files get tooLarge). */
 export const MAX_FILE_SIZE = 1024 * 1024; // 1MB
@@ -46,13 +54,6 @@ export interface DirEntry {
   hasChanges?: boolean;
 }
 
-/** Git status lookup for annotating listings: per-file status plus the set
- *  of directories that contain changes. */
-export interface GitStatusMap {
-  files: Map<string, { status: FileStatus; staged: boolean }>;
-  directories: Set<string>; // Directories that contain changes
-}
-
 export interface ListDirectoryOptions {
   /** Skip dot-prefixed entries (default true). */
   hideHidden: boolean;
@@ -73,36 +74,6 @@ export interface FileForDisplay {
   size: number;
   /** Total line count of the file (0 when binary or tooLarge). */
   totalLines: number;
-}
-
-/**
- * Build a GitStatusMap from status file entries: every file keyed by path,
- * and every ancestor directory (plus the root '') marked as containing
- * changes.
- */
-export function buildGitStatusMap(
-  files: ReadonlyArray<{ path: string; status: FileStatus; staged: boolean }>
-): GitStatusMap {
-  const statusMap: GitStatusMap = {
-    files: new Map(),
-    directories: new Set(),
-  };
-
-  for (const file of files) {
-    statusMap.files.set(file.path, { status: file.status, staged: file.staged });
-
-    // Mark all parent directories as having changed children
-    const parts = file.path.split('/');
-    let dirPath = '';
-    for (let i = 0; i < parts.length - 1; i++) {
-      dirPath = dirPath ? `${dirPath}/${parts[i]}` : parts[i];
-      statusMap.directories.add(dirPath);
-    }
-    // Also mark root as having changes
-    statusMap.directories.add('');
-  }
-
-  return statusMap;
 }
 
 /**
