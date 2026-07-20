@@ -36,7 +36,8 @@ export function renderTopPane(
   topPaneHeight: number,
   hunkCounts?: FileHunkCounts | null,
   flatFiles?: FlatFileEntry[],
-  flashPath?: string | null
+  flashPath?: string | null,
+  compareNoBaseBranch: boolean = false
 ): string {
   if (state.bottomTab === 'history') {
     return formatHistoryView(
@@ -61,7 +62,8 @@ export function renderTopPane(
       width,
       state.compareScrollOffset,
       topPaneHeight - 1,
-      state.includeUncommitted
+      state.includeUncommitted,
+      compareNoBaseBranch
     );
   }
 

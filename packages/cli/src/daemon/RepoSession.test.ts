@@ -344,6 +344,18 @@ describe('RepoSession history and compare', () => {
     await session.dispose();
     await failingSession.dispose();
   });
+
+  test('refreshCompare maps a 422 to noBaseBranch (not a generic error)', async () => {
+    const fake = fakeClient({
+      compare: () => Promise.reject(new DaemonError(422, 'No usable base branch')),
+    });
+    const session = makeSession(fake);
+    await session.refreshCompare();
+    expect(session.compare.noBaseBranch).toBe(true);
+    expect(session.compare.error).toBeNull();
+    expect(session.compare.compareDiff).toBeNull();
+    await session.dispose();
+  });
 });
 
 describe('RepoSession remote operations', () => {

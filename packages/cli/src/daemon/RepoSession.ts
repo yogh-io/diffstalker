@@ -26,7 +26,7 @@
  */
 
 import { EventEmitter } from 'node:events';
-import { isConnectionError } from '@diffstalker/client';
+import { isConnectionError, DaemonError } from '@diffstalker/client';
 import type {
   DiffstalkerClient,
   MutationEnvelope,
@@ -138,6 +138,7 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     baseBranch: null,
     loading: false,
     error: null,
+    noBaseBranch: false,
     selection: { type: null, index: 0, diff: null },
   };
 
@@ -595,7 +596,7 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
   async refreshCompare(includeUncommitted: boolean = false): Promise<void> {
     if (this.id === null) return;
     this.lastIncludeUncommitted = includeUncommitted;
-    this._compare = { ...this._compare, loading: true, error: null };
+    this._compare = { ...this._compare, loading: true, error: null, noBaseBranch: false };
     this.emit('compare-change');
     try {
       const diff = await this.client.compare(this.id, { uncommitted: includeUncommitted });
@@ -604,6 +605,7 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
         compareDiff: diff,
         baseBranch: diff.baseBranch,
         loading: false,
+        noBaseBranch: false,
       };
       this.emit('compare-change');
     } catch (err) {
@@ -611,6 +613,22 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
         this._compare = { ...this._compare, loading: false };
         this.emit('compare-change');
         this.handleConnectionLoss(errorMessage(err));
+        return;
+      }
+      // A 422 means the daemon found no base branch to compare against
+      // (base detection only considers remote refs). That is a normal
+      // state, not a failure — flag it so the view shows a truthful
+      // message instead of the generic error banner.
+      if (err instanceof DaemonError && err.status === 422) {
+        this._compare = {
+          ...this._compare,
+          compareDiff: null,
+          baseBranch: null,
+          loading: false,
+          error: null,
+          noBaseBranch: true,
+        };
+        this.emit('compare-change');
         return;
       }
       this._compare = {

@@ -997,7 +997,8 @@ export class App {
       this.layout.dimensions.topPaneHeight,
       this.session?.shared.hunkCounts,
       state.flatViewMode ? this.cachedFlatFiles : undefined,
-      this.flashFilePath
+      this.flashFilePath,
+      this.session?.compare.noBaseBranch ?? false
     );
 
     this.layout.topPane.setContent(content);

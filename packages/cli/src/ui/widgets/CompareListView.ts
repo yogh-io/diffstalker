@@ -3,18 +3,21 @@ import type { CompareFileDiff } from '@diffstalker/core/git/diff';
 import { formatDate } from '../../utils/formatDate.js';
 import { formatCommitDisplay } from '../../utils/commitFormat.js';
 import { buildFileTree, flattenTree, buildTreePrefix, TreeRowItem } from '../../utils/fileTree.js';
-import {
-  ANSI_RESET,
-  ANSI_BOLD,
-  ANSI_GRAY,
-  ANSI_CYAN,
-  ANSI_YELLOW,
-  ANSI_GREEN,
-  ANSI_RED,
-  ANSI_BLUE,
-  ANSI_MAGENTA,
-  ANSI_INVERSE,
-} from '../../utils/ansi.js';
+
+/** Escape blessed tag braces in user-supplied text (names, messages, refs). */
+function escapeContent(content: string): string {
+  return content.replace(/\{/g, '{{').replace(/\}/g, '}}');
+}
+
+/** Wrap text in a blessed foreground colour tag. */
+function fg(color: string, text: string): string {
+  return `{${color}-fg}${text}{/${color}-fg}`;
+}
+
+/** Selected+focused highlight: inverse cyan. */
+function highlight(text: string): string {
+  return `{cyan-fg}{inverse}${text}{/inverse}{/cyan-fg}`;
+}
 
 export type CompareListSelectionType = 'commit' | 'file';
 
@@ -100,21 +103,22 @@ function formatCommitRow(
     remainingWidth
   );
 
-  let line = ` ${ANSI_YELLOW}${commit.shortHash}${ANSI_RESET} `;
+  let line = ` ${fg('yellow', commit.shortHash)} `;
 
   if (isHighlighted) {
-    line += `${ANSI_CYAN}${ANSI_INVERSE}${displayMessage}${ANSI_RESET}`;
+    line += highlight(escapeContent(displayMessage));
   } else {
-    line += displayMessage;
+    line += escapeContent(displayMessage);
   }
 
-  line += ` ${ANSI_GRAY}(${dateStr})${ANSI_RESET}`;
+  const dateTag = fg('gray', `(${dateStr})`);
+  line += ` ${dateTag}`;
 
   if (displayRefs) {
-    line += ` ${ANSI_GREEN}${displayRefs}${ANSI_RESET}`;
+    line += ` ${fg('green', escapeContent(displayRefs))}`;
   }
 
-  return `{escape}${line}{/escape}`;
+  return line;
 }
 
 /**
@@ -131,8 +135,8 @@ function formatDirectoryRow(treeRow: TreeRowItem, width: number): string {
     name = name.slice(0, maxNameLen - 1) + '…';
   }
 
-  const line = `${ANSI_GRAY}${prefix}${ANSI_RESET}${ANSI_BLUE}${icon}${name}${ANSI_RESET}`;
-  return `{escape}${line}{/escape}`;
+  const line = fg('gray', prefix) + fg('blue', `${icon}${escapeContent(name)}`);
+  return line;
 }
 
 /**
@@ -151,10 +155,10 @@ function formatFileRow(
   const prefix = buildTreePrefix(treeRow);
 
   const statusColors: Record<CompareFileDiff['status'], string> = {
-    added: ANSI_GREEN,
-    modified: ANSI_YELLOW,
-    deleted: ANSI_RED,
-    renamed: ANSI_BLUE,
+    added: 'green',
+    modified: 'yellow',
+    deleted: 'red',
+    renamed: 'blue',
   };
 
   // File icon based on status
@@ -165,7 +169,7 @@ function formatFileRow(
     renamed: '→',
   };
 
-  const statusColor = isUncommitted ? ANSI_MAGENTA : statusColors[file.status];
+  const statusColor = isUncommitted ? 'magenta' : statusColors[file.status];
   const icon = statusIcons[file.status];
 
   // Calculate available width for filename
@@ -179,24 +183,28 @@ function formatFileRow(
     name = name.slice(0, maxNameLen - 1) + '…';
   }
 
-  let line = `${ANSI_GRAY}${prefix}${ANSI_RESET}`;
-  line += `${statusColor}${icon}${ANSI_RESET} `;
+  let line = fg('gray', prefix);
+  line += `${fg(statusColor, icon)} `;
 
+  const safeName = escapeContent(name);
   if (isHighlighted) {
-    line += `${ANSI_CYAN}${ANSI_INVERSE}${name}${ANSI_RESET}`;
+    line += highlight(safeName);
   } else if (isUncommitted) {
-    line += `${ANSI_MAGENTA}${name}${ANSI_RESET}`;
+    line += fg('magenta', safeName);
   } else {
-    line += name;
+    line += safeName;
   }
 
-  line += ` ${ANSI_GRAY}(${ANSI_GREEN}+${file.additions}${ANSI_RESET} ${ANSI_RED}-${file.deletions}${ANSI_GRAY})${ANSI_RESET}`;
+  line +=
+    ` {gray-fg}({/gray-fg}` +
+    `{green-fg}+${file.additions}{/green-fg} {red-fg}-${file.deletions}{/red-fg}` +
+    `{gray-fg}){/gray-fg}`;
 
   if (isUncommitted) {
-    line += ` ${ANSI_MAGENTA}[uncommitted]${ANSI_RESET}`;
+    line += ` ${fg('magenta', '[uncommitted]')}`;
   }
 
-  return `{escape}${line}{/escape}`;
+  return line;
 }
 
 /**
@@ -217,7 +225,8 @@ function isRowSelected(row: RowItem, selectedItem: CompareListSelection | null):
  * Format a section header line (e.g. "▼ Commits (5)").
  */
 function formatSectionHeader(label: string, count: number): string {
-  return `{escape}${ANSI_CYAN}${ANSI_BOLD}▼ ${label}${ANSI_RESET} ${ANSI_GRAY}(${count})${ANSI_RESET}{/escape}`;
+  const countTag = fg('gray', `(${count})`);
+  return `{cyan-fg}{bold}▼ ${escapeContent(label)}{/bold}{/cyan-fg} ${countTag}`;
 }
 
 /**
@@ -262,12 +271,24 @@ export function formatCompareListView(
   width: number,
   scrollOffset: number = 0,
   maxHeight?: number,
-  includeUncommitted: boolean = false
+  includeUncommitted: boolean = false,
+  noBaseBranch: boolean = false
 ): string {
   // Checkbox header line (always shown, outside scroll area)
   const checkbox = includeUncommitted
-    ? `{escape}${ANSI_MAGENTA}[x] Include uncommitted${ANSI_RESET} ${ANSI_GRAY}(u)${ANSI_RESET}{/escape}`
-    : `{escape}${ANSI_YELLOW}[ ] Include uncommitted${ANSI_RESET} ${ANSI_GRAY}(u)${ANSI_RESET}{/escape}`;
+    ? `${fg('magenta', '[x] Include uncommitted')} ${fg('gray', '(u)')}`
+    : `${fg('yellow', '[ ] Include uncommitted')} ${fg('gray', '(u)')}`;
+
+  // No base branch to diff against is a distinct state from "diffed and found
+  // nothing". Base detection only considers remote refs (e.g. origin/main),
+  // so a repo with no remote has none — say so instead of "No changes".
+  if (noBaseBranch) {
+    return (
+      checkbox +
+      '\n{gray-fg}No base branch to compare against — base detection uses remote' +
+      ' branches (e.g. origin/main) and this repo has none. Pick one with (b).{/gray-fg}'
+    );
+  }
 
   if (commits.length === 0 && files.length === 0) {
     return checkbox + '\n{gray-fg}No changes compared to base branch{/gray-fg}';

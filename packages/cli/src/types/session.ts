@@ -69,5 +69,12 @@ export interface SessionCompareState {
   baseBranch: string | null;
   loading: boolean;
   error: string | null;
+  /**
+   * The daemon has no base branch to compare against (422): base detection
+   * only considers remote refs like origin/main, so a repo with no remote
+   * has none. Distinct from "loaded, but no changes vs the base" so the
+   * compare view can show a truthful message instead of "No changes".
+   */
+  noBaseBranch: boolean;
   selection: CompareSelectionState;
 }

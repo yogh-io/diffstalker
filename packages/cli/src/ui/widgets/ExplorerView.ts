@@ -1,17 +1,5 @@
 import type { ExplorerDisplayRow } from '../../state/ExplorerViewModel.js';
 import type { FileStatus } from '@diffstalker/core/git/status';
-import {
-  ANSI_RESET,
-  ANSI_BOLD,
-  ANSI_GRAY,
-  ANSI_CYAN,
-  ANSI_YELLOW,
-  ANSI_GREEN,
-  ANSI_RED,
-  ANSI_BLUE,
-  ANSI_MAGENTA,
-  ANSI_INVERSE,
-} from '../../utils/ansi.js';
 
 /**
  * Build tree prefix characters (│ ├ └).
@@ -64,30 +52,42 @@ function getStatusMarker(status: FileStatus | undefined): string {
 }
 
 /**
- * Get color for git status.
+ * Get the blessed tag colour name for a git status.
+ *
+ * Explorer rows are emitted as blessed tags (like every other widget), not
+ * raw ANSI. Raw ANSI wrapped in {escape} does not survive neo-blessed's cell
+ * renderer — the SGR-terminator letters (the `m` in \x1b[..m) leak onto the
+ * screen as stray glyphs and the colours are lost.
  */
-function getStatusColor(status: FileStatus | undefined): string {
-  if (!status) return ANSI_RESET;
+function getStatusColorName(status: FileStatus | undefined): string | null {
+  if (!status) return null;
   switch (status) {
     case 'modified':
-      return ANSI_YELLOW;
+      return 'yellow';
     case 'added':
-      return ANSI_GREEN;
+      return 'green';
     case 'deleted':
-      return ANSI_RED;
+      return 'red';
     case 'untracked':
-      return ANSI_GRAY;
+      return 'gray';
     case 'renamed':
-      return ANSI_BLUE;
+      return 'blue';
     case 'copied':
-      return ANSI_MAGENTA;
+      return 'magenta';
     default:
-      return ANSI_RESET;
+      return null;
   }
 }
 
+/** Wrap text in a blessed foreground colour tag. */
+function fg(color: string, text: string): string {
+  return `{${color}-fg}${text}{/${color}-fg}`;
+}
+
 /**
- * Format a single explorer row as a raw ANSI string.
+ * Format a single explorer row as a blessed-tagged string. Tree glyphs are
+ * safe literals; file/dir names are escaped so a `{` or `}` in a filename
+ * cannot be parsed as a tag.
  */
 function formatExplorerRow(
   row: ExplorerDisplayRow,
@@ -106,11 +106,12 @@ function formatExplorerRow(
   }
 
   const statusMarker = getStatusMarker(node.gitStatus);
-  const statusColor = getStatusColor(node.gitStatus);
-  const statusDisplay = statusMarker ? `${statusColor}${statusMarker}${ANSI_RESET} ` : '';
+  const statusColorName = getStatusColorName(node.gitStatus);
+  const statusDisplay =
+    statusMarker && statusColorName ? `${fg(statusColorName, statusMarker)} ` : '';
 
   const dirStatusDisplay =
-    node.isDirectory && node.hasChangedChildren ? `${ANSI_YELLOW}●${ANSI_RESET} ` : '';
+    node.isDirectory && node.hasChangedChildren ? `${fg('yellow', '●')} ` : '';
 
   const prefixLen =
     prefix.length +
@@ -123,27 +124,24 @@ function formatExplorerRow(
   if (displayName.length > maxNameLen) {
     displayName = displayName.slice(0, maxNameLen - 1) + '…';
   }
+  const safeName = escapeContent(displayName);
 
-  let line = `${ANSI_GRAY}${prefix}${ANSI_RESET}`;
+  const highlightedName = `{cyan-fg}{bold}{inverse}${safeName}{/inverse}{/bold}{/cyan-fg}`;
+
+  let line = fg('gray', prefix);
 
   if (node.isDirectory) {
-    line += `${ANSI_BLUE}${icon}${ANSI_RESET}`;
+    line += fg('blue', icon);
     line += dirStatusDisplay;
-
-    if (isHighlighted) {
-      line += `${ANSI_CYAN}${ANSI_BOLD}${ANSI_INVERSE}${displayName}${ANSI_RESET}`;
-    } else {
-      line += `${ANSI_BLUE}${displayName}${ANSI_RESET}`;
-    }
+    line += isHighlighted ? highlightedName : fg('blue', safeName);
   } else {
     line += statusDisplay;
-
     if (isHighlighted) {
-      line += `${ANSI_CYAN}${ANSI_BOLD}${ANSI_INVERSE}${displayName}${ANSI_RESET}`;
-    } else if (node.gitStatus) {
-      line += `${statusColor}${displayName}${ANSI_RESET}`;
+      line += highlightedName;
+    } else if (statusColorName) {
+      line += fg(statusColorName, safeName);
     } else {
-      line += displayName;
+      line += safeName;
     }
   }
 
@@ -184,7 +182,7 @@ export function formatExplorerView(
   for (let i = 0; i < visibleRows.length; i++) {
     const actualIndex = scrollOffset + i;
     const line = formatExplorerRow(visibleRows[i], actualIndex === selectedIndex, isFocused, width);
-    lines.push(`{escape}${line}{/escape}`);
+    lines.push(line);
   }
 
   return lines.join('\n');
