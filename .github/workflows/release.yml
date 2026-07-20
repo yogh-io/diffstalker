@@ -91,6 +91,11 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
+      # Token-less OIDC trusted publishing needs npm >= 11.5.1. Node 24 ships a
+      # new-enough npm today, but pin explicitly so a future runner image with an
+      # older bundled npm can't fail auth on the actual publish.
+      - run: npm install -g npm@latest
+
       - run: bun install --frozen-lockfile
 
       - name: Download tarballs
@@ -111,7 +116,10 @@ jobs:
           set -euo pipefail
           for entry in $PUBLISHABLE; do
             name="${entry##*:}"
-            tgz=$(ls dist-tarballs/${name}-*.tgz)
+            # Match "${name}-<version>.tgz" only. The version starts with a digit,
+            # so this never matches a longer sibling name (e.g. a future
+            # "diffstalker-web-*.tgz" won't be caught by the "diffstalker" glob).
+            tgz=$(ls dist-tarballs/${name}-[0-9]*.tgz)
             version=$(tar -xzOf "$tgz" package/package.json \
               | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
             existing=$(npm view "${name}@${version}" version 2>/dev/null || true)
@@ -123,20 +131,28 @@ jobs:
             fi
           done
 
-      # Post-publish bookkeeping (never in the act dry-run). A metrics failure
-      # must not un-publish the release, hence `|| true` on the commit.
+      # The user-facing release lands RIGHT AFTER publish, before any
+      # bookkeeping — so a successful npm publish always produces a GitHub
+      # Release, and nothing after `npm publish` can prevent it.
+      - name: Create GitHub Release
+        if: ${{ !env.ACT }}
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+
+      # Post-publish bookkeeping. Non-fatal by construction: the packages are
+      # already on npm and the release already exists, so a metrics hiccup
+      # (snapshot error, main moved, protected branch) must not red the job.
+      # `continue-on-error` isolates the whole step; the resilient push swallows
+      # a non-fast-forward rather than aborting.
       - name: Commit metrics snapshot
         if: ${{ !env.ACT }}
+        continue-on-error: true
         run: |
           bun run metrics:snapshot
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add metrics/
           git commit -m "Add metrics snapshot for ${{ github.ref_name }}" || true
-          git push origin HEAD:main
-
-      - name: Create GitHub Release
-        if: ${{ !env.ACT }}
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
+          git fetch origin main && git rebase origin/main || true
+          git push origin HEAD:main || echo "metrics push skipped (non-fatal)"

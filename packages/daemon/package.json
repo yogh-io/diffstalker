@@ -19,7 +19,8 @@
   "files": [
     "dist/index.js",
     "bin",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
@@ -36,7 +37,9 @@
     "deps": "depcruise src/ --config .dependency-cruiser.cjs",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
-    "prepublishOnly": "bun run build:prod"
+    "prepublishOnly": "bun run build:prod",
+    "prepack": "cp ../../LICENSE .",
+    "postpack": "rm -f LICENSE"
   },
   "keywords": [
     "git",

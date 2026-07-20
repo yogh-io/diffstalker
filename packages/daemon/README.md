@@ -1,12 +1,13 @@
-# @diffstalker/daemon
+# diffstalkerd
 
 `diffstalkerd` is the diffstalker daemon: a Node http server that exposes
 `@diffstalker/core` (git status, diffs, staging, live change events) behind a
 REST API + Server-Sent Events. It lets non-terminal clients (editors, web UIs,
 scripts) talk to the same git state engine the TUI uses.
 
-The package is private and bin-only: it is not published and not importable.
-The only entry point is the `diffstalkerd` executable.
+Published to npm as `diffstalkerd`, bin-only: it exposes the `diffstalkerd`
+executable, not an importable API. The `diffstalker` CLI depends on it and
+pulls it in automatically, so most users never install it directly.
 
 Its primary client is the `diffstalker` CLI (`packages/cli`), which spawns or
 attaches to this daemon over a unix socket and consumes it through the typed

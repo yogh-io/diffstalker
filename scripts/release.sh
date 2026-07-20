@@ -23,6 +23,15 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
+# Release from main only. The CI release workflow pushes the metrics snapshot to
+# main (`git push origin HEAD:main`); cutting a release from any other branch
+# would put the tagged commit off main's history and wedge that push.
+branch=$(git rev-parse --abbrev-ref HEAD)
+if [ "$branch" != "main" ]; then
+  echo "Error: release from main only (currently on '$branch')" >&2
+  exit 1
+fi
+
 # Read current version (published package lives in packages/cli)
 current=$(node -p "require('./packages/cli/package.json').version")
 
@@ -57,9 +66,10 @@ for manifest in $MANIFESTS; do
   "
 done
 
-# Commit, tag, push
+# Commit, tag, push. Push main explicitly (not via the branch's upstream) so it
+# matches the CI tail's `HEAD:main` and never fails on a missing upstream.
 git add $MANIFESTS
 git commit -m "Bump version to $next"
 git tag "v$next"
-git push
+git push origin main
 git push origin "v$next"

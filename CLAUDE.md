@@ -70,7 +70,7 @@ Never bump `package.json` or create version tags manually — always use the scr
 The repo is a bun workspace with four packages:
 
 - **`@diffstalker/core`** — headless git state (plain git fns + a small set of managers), no UI deps. Consumed only by the daemon; the CLI imports pure helpers/types from it (`git/diff`, `git/explorerData`, `git/status`/`worktree` types, `services/commitService`, `utils`, `types`) but **not** its managers.
-- **`@diffstalker/daemon`** — diffstalkerd, private and bin-only (not published, not importable): Node http REST + SSE over core. Owns git state and follow mode.
+- **`@diffstalker/daemon`** — diffstalkerd, published to npm as a bin-only package (an executable, not an importable API): Node http REST + SSE over core. Owns git state and follow mode.
 - **`@diffstalker/client`** — a typed REST + SSE client for the daemon. Private; consumed by the CLI (and, later, a web client).
 - **`diffstalker`** (`packages/cli`) — the terminal UI, published to npm. A pure daemon client: `RepoSession` fed by REST + SSE, `DaemonLifecycle` to attach/spawn.
 

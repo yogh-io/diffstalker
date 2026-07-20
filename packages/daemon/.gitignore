@@ -1,0 +1,6 @@
+# LICENSE is copied in from the repo root during `bun pm pack` / `npm publish`
+# (prepack) and removed by postpack. It is not tracked, so a hard-killed pack
+# never leaves a dirty tracked file — the leftover is an inert, git-ignored copy.
+# The daemon's own README.md is committed in-package (unlike the cli, which
+# copies the root marketing README in at pack time).
+/LICENSE

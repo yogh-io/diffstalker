@@ -40,7 +40,7 @@ terminal UI is a lean client: it installs `diffstalkerd` as a dependency and
 auto-spawns it on a unix socket, opening repos over REST and following live
 state over SSE. It holds no in-process git of its own. The UX is unchanged —
 the split just means the same daemon can back other clients (a web client is
-web-ready) with the identical feature set.
+planned) with the identical feature set.
 
 ## Installation
 

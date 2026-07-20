@@ -1,7 +1,7 @@
 {
   "name": "diffstalker",
   "version": "0.4.0",
-  "description": "Terminal application that displays git diff/status for directories",
+  "description": "Interactive terminal UI for git staging, committing, and live diff review",
   "author": "yogh-io",
   "license": "MIT",
   "repository": {
