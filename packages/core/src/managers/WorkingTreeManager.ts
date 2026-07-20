@@ -27,8 +27,6 @@ import {
 } from '../git/status.js';
 import {
   getDiff,
-  getDiffForUntracked,
-  getStagedDiff,
   countHunksPerFile,
   DiffResult,
   FileHunkCounts,
@@ -38,16 +36,8 @@ import { HunkTimeTracker } from '../git/hunkTimes.js';
 export type { FileHunkCounts } from '../git/diff.js';
 export type { StashEntry, InProgressOperation } from '../git/status.js';
 
-export interface CombinedFileDiffs {
-  unstaged: DiffResult;
-  staged: DiffResult;
-}
-
 export interface GitState {
   status: GitStatus | null;
-  diff: DiffResult | null;
-  combinedFileDiffs: CombinedFileDiffs | null;
-  selectedFile: FileEntry | null;
   isLoading: boolean;
   error: string | null;
   hunkCounts: FileHunkCounts | null;
@@ -62,24 +52,19 @@ type WorkingTreeEventMap = {
 };
 
 /**
- * Manages the working tree: file watching, status, diffs, staging, and commits.
- * Accepts an onRefresh callback for cascading refreshes to history/compare managers.
+ * Manages the working tree: file watching, status, whole-tree diffs (for hunk
+ * counts and edit-time stamps), staging, and commits.
  */
 export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   private repoPath: string;
   private queue: GitOperationQueue;
   private hunkTimes: HunkTimeTracker;
-  private onRefresh: (() => Promise<void>) | null;
   private gitWatcher: FSWatcher | null = null;
   private workingDirWatcher: FSWatcher | null = null;
   private ignorers: Map<string, Ignore> = new Map();
-  private diffDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   private _state: GitState = {
     status: null,
-    diff: null,
-    combinedFileDiffs: null,
-    selectedFile: null,
     isLoading: false,
     error: null,
     hunkCounts: null,
@@ -87,11 +72,10 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     operationInProgress: null,
   };
 
-  constructor(repoPath: string, queue: GitOperationQueue, onRefresh?: () => Promise<void>) {
+  constructor(repoPath: string, queue: GitOperationQueue) {
     super();
     this.repoPath = repoPath;
     this.queue = queue;
-    this.onRefresh = onRefresh ?? null;
     this.hunkTimes = new HunkTimeTracker(repoPath);
   }
 
@@ -100,12 +84,6 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   }
 
   private updateState(partial: Partial<GitState>): void {
-    // Any diff entering state gets hunk edit-time annotations
-    if (partial.diff) this.hunkTimes.stamp(partial.diff);
-    if (partial.combinedFileDiffs) {
-      this.hunkTimes.stamp(partial.combinedFileDiffs.unstaged);
-      this.hunkTimes.stamp(partial.combinedFileDiffs.staged);
-    }
     this._state = { ...this._state, ...partial };
     this.emit('state-change', this._state);
   }
@@ -257,7 +235,6 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   }
 
   dispose(): void {
-    if (this.diffDebounceTimer) clearTimeout(this.diffDebounceTimer);
     this.gitWatcher?.close();
     this.workingDirWatcher?.close();
   }
@@ -267,11 +244,6 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   scheduleRefresh(): void {
     this.queue.scheduleRefresh(async () => {
       await this.doRefresh();
-
-      // Cascade refresh to history and compare if loaded
-      if (this.onRefresh) {
-        await this.onRefresh();
-      }
     });
   }
 
@@ -282,7 +254,6 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         if (!newStatus.isRepo) {
           this.updateState({
             status: newStatus,
-            diff: null,
             isLoading: false,
             error: 'Not a git repository',
           });
@@ -313,7 +284,6 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       if (!newStatus.isRepo) {
         this.updateState({
           status: newStatus,
-          diff: null,
           isLoading: false,
           error: 'Not a git repository',
         });
@@ -336,22 +306,14 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         staged: countHunksPerFile(allStagedDiff.raw),
       };
 
-      // Observe every hunk (not just the selected file's) so first-seen
-      // stamps are locked in as soon as a change appears, then drop stamps
-      // for files that no longer have changes
+      // Observe every hunk so first-seen stamps are locked in as soon as a
+      // change appears, then drop stamps for files that no longer have changes
       this.hunkTimes.stamp(allUnstagedDiff);
       this.hunkTimes.stamp(allStagedDiff);
       this.hunkTimes.prune(new Set(newStatus.files.map((f) => f.path)));
 
-      const { displayDiff, combinedFileDiffs } = await this.resolveFileDiffs(
-        newStatus,
-        allUnstagedDiff
-      );
-
       this.updateState({
         status: newStatus,
-        diff: displayDiff,
-        combinedFileDiffs,
         hunkCounts,
         stashList,
         operationInProgress,
@@ -361,112 +323,6 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       this.updateState({
         isLoading: false,
         error: err instanceof Error ? err.message : 'Unknown error',
-      });
-    }
-  }
-
-  private async resolveFileDiffs(
-    newStatus: GitStatus,
-    fallbackDiff: DiffResult
-  ): Promise<{ displayDiff: DiffResult; combinedFileDiffs: CombinedFileDiffs | null }> {
-    const currentSelectedFile = this._state.selectedFile;
-    if (!currentSelectedFile) {
-      return { displayDiff: fallbackDiff, combinedFileDiffs: null };
-    }
-
-    const currentFile =
-      newStatus.files.find(
-        (f) => f.path === currentSelectedFile.path && f.staged === currentSelectedFile.staged
-      ) ?? newStatus.files.find((f) => f.path === currentSelectedFile.path);
-    if (!currentFile) {
-      this.updateState({ selectedFile: null });
-      return { displayDiff: fallbackDiff, combinedFileDiffs: null };
-    }
-
-    if (currentFile.status === 'untracked') {
-      const displayDiff = await getDiffForUntracked(this.repoPath, currentFile.path);
-      return {
-        displayDiff,
-        combinedFileDiffs: { unstaged: displayDiff, staged: { raw: '', lines: [] } },
-      };
-    }
-
-    const [unstagedFileDiff, stagedFileDiff] = await Promise.all([
-      getDiff(this.repoPath, currentFile.path, false),
-      getDiff(this.repoPath, currentFile.path, true),
-    ]);
-    const displayDiff = currentFile.staged ? stagedFileDiff : unstagedFileDiff;
-    return {
-      displayDiff,
-      combinedFileDiffs: { unstaged: unstagedFileDiff, staged: stagedFileDiff },
-    };
-  }
-
-  // --- File selection ---
-
-  selectFile(file: FileEntry | null): void {
-    this.updateState({ selectedFile: file });
-
-    if (!this._state.status?.isRepo) return;
-
-    if (this.diffDebounceTimer) {
-      clearTimeout(this.diffDebounceTimer);
-      this.diffDebounceTimer = setTimeout(() => {
-        this.diffDebounceTimer = null;
-        this.fetchDiffForSelection();
-      }, 20);
-    } else {
-      this.fetchDiffForSelection();
-      this.diffDebounceTimer = setTimeout(() => {
-        this.diffDebounceTimer = null;
-      }, 20);
-    }
-  }
-
-  private fetchDiffForSelection(): void {
-    const file = this._state.selectedFile;
-
-    this.queue
-      .enqueue(async () => {
-        if (file !== this._state.selectedFile) return;
-        await this.doFetchDiffForFile(file);
-      })
-      .catch((err) => {
-        this.updateState({
-          error: `Failed to load diff: ${err instanceof Error ? err.message : String(err)}`,
-        });
-      });
-  }
-
-  private async doFetchDiffForFile(file: FileEntry | null): Promise<void> {
-    if (!file) {
-      const allDiff = await getStagedDiff(this.repoPath);
-      if (this._state.selectedFile === null) {
-        this.updateState({ diff: allDiff, combinedFileDiffs: null });
-      }
-      return;
-    }
-
-    if (file.status === 'untracked') {
-      const fileDiff = await getDiffForUntracked(this.repoPath, file.path);
-      if (file === this._state.selectedFile) {
-        this.updateState({
-          diff: fileDiff,
-          combinedFileDiffs: { unstaged: fileDiff, staged: { raw: '', lines: [] } },
-        });
-      }
-      return;
-    }
-
-    const [unstagedDiff, stagedDiff] = await Promise.all([
-      getDiff(this.repoPath, file.path, false),
-      getDiff(this.repoPath, file.path, true),
-    ]);
-    if (file === this._state.selectedFile) {
-      const displayDiff = file.staged ? stagedDiff : unstagedDiff;
-      this.updateState({
-        diff: displayDiff,
-        combinedFileDiffs: { unstaged: unstagedDiff, staged: stagedDiff },
       });
     }
   }

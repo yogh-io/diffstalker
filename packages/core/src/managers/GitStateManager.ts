@@ -5,19 +5,16 @@
 
 import { getQueueForRepo, removeQueueForRepo } from './GitOperationQueue.js';
 import { WorkingTreeManager } from './WorkingTreeManager.js';
-import { HistoryManager } from './HistoryManager.js';
-import { CompareManager } from './CompareManager.js';
 import { RemoteOperationManager } from './RemoteOperationManager.js';
 
 /**
- * Coordinates WorkingTreeManager, HistoryManager,
- * CompareManager, and RemoteOperationManager.
+ * Coordinates WorkingTreeManager and RemoteOperationManager.
  * Sub-managers are public readonly — callers use them directly.
+ * History and compare are served statelessly by the daemon from plain
+ * git functions, so there are no in-process managers for them.
  */
 export class GitStateManager {
   readonly workingTree: WorkingTreeManager;
-  readonly history: HistoryManager;
-  readonly compare: CompareManager;
   readonly remote: RemoteOperationManager;
 
   private repoPath: string;
@@ -26,19 +23,11 @@ export class GitStateManager {
     this.repoPath = repoPath;
     const queue = getQueueForRepo(repoPath);
 
-    // Create sub-managers with cross-cutting callbacks
-    this.history = new HistoryManager(repoPath, queue);
-    this.compare = new CompareManager(repoPath, queue);
-
-    this.workingTree = new WorkingTreeManager(repoPath, queue, async () => {
-      await this.history.refreshIfLoaded();
-      await this.compare.refreshIfLoaded();
-    });
+    this.workingTree = new WorkingTreeManager(repoPath, queue);
 
     this.remote = new RemoteOperationManager(repoPath, queue, {
       scheduleRefresh: () => this.workingTree.scheduleRefresh(),
       loadStashList: () => this.workingTree.loadStashList(),
-      resetCompareBaseBranch: () => this.compare.resetBaseBranch(),
     });
   }
 

@@ -111,7 +111,6 @@ describe('WorkingTreeManager', () => {
         expect(state.status).not.toBeNull();
         expect(state.status!.isRepo).toBe(false);
         expect(state.error).toBe('Not a git repository');
-        expect(state.diff).toBeNull();
         expect(state.isLoading).toBe(false);
       } finally {
         fs.rmSync(nonRepoDir, { recursive: true, force: true });

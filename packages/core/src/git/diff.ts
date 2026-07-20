@@ -392,7 +392,7 @@ export async function getDefaultBaseBranch(repoPath: string): Promise<string | n
 /**
  * The effective compare base for a repo: the persisted per-repo choice,
  * or the discovered default when nothing is persisted. Single source of
- * this rule — used by CompareManager and the daemon alike.
+ * this rule — used by the daemon's compare endpoints.
  */
 export async function resolveEffectiveBaseBranch(repoPath: string): Promise<string | null> {
   return getCachedBaseBranch(repoPath) ?? (await getDefaultBaseBranch(repoPath));

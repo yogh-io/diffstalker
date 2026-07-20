@@ -25,7 +25,6 @@ export type { RemoteOperationState, RemoteOperation } from '../types/remote.js';
 export interface RemoteCallbacks {
   scheduleRefresh: () => void;
   loadStashList: () => Promise<void>;
-  resetCompareBaseBranch: () => void;
 }
 
 type RemoteEventMap = {
@@ -34,7 +33,7 @@ type RemoteEventMap = {
 
 /**
  * Manages remote operations (push/pull/fetch), stash, branch switching, and undo operations.
- * Uses callbacks for cross-manager coordination (refresh, stash list, compare reset).
+ * Uses callbacks for cross-manager coordination (refresh, stash list).
  */
 export class RemoteOperationManager extends EventEmitter<RemoteEventMap> {
   private repoPath: string;
@@ -145,7 +144,6 @@ export class RemoteOperationManager extends EventEmitter<RemoteEventMap> {
     const outcome = await this.runRemoteOperation('branchSwitch', () =>
       gitSwitchBranch(this.repoPath, name)
     );
-    this.callbacks.resetCompareBaseBranch();
     return outcome;
   }
 
@@ -154,7 +152,6 @@ export class RemoteOperationManager extends EventEmitter<RemoteEventMap> {
     const outcome = await this.runRemoteOperation('branchCreate', () =>
       gitCreateBranch(this.repoPath, name)
     );
-    this.callbacks.resetCompareBaseBranch();
     return outcome;
   }
 

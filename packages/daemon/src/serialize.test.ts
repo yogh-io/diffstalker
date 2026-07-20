@@ -38,9 +38,6 @@ describe('serializeSharedState', () => {
         branch: { current: 'main', ahead: 0, behind: 0 },
         isRepo: true,
       },
-      diff: { raw: 'SECRET-PER-CLIENT', lines: [] },
-      combinedFileDiffs: null,
-      selectedFile: { path: 'a.ts', status: 'modified', staged: false },
       isLoading: false,
       error: null,
       hunkCounts: { staged: new Map(), unstaged: new Map([['a.ts', 1]]) },
@@ -64,9 +61,6 @@ describe('serializeSharedState', () => {
   test('carries the manager error and in-progress operation onto the wire', () => {
     const state: GitState = {
       status: null,
-      diff: null,
-      combinedFileDiffs: null,
-      selectedFile: null,
       isLoading: false,
       error: 'Git watcher error: boom',
       hunkCounts: null,

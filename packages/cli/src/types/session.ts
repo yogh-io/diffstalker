@@ -2,11 +2,11 @@
  * Client-side session state shapes.
  *
  * These are the shapes the TUI renders from. They used to live on the
- * in-process core managers (WorkingTreeManager / HistoryManager /
- * CompareManager); now the daemon owns the git state and RepoSession
- * (src/daemon/RepoSession.ts) maintains these locally from the daemon's
- * REST + SSE API. Only core DTO types (status entries, diffs, commits)
- * are imported — type-only, erased at build.
+ * in-process core managers (working-tree / history / compare); now the
+ * daemon owns the git state and RepoSession (src/daemon/RepoSession.ts)
+ * maintains these locally from the daemon's REST + SSE API. Only core DTO
+ * types (status entries, diffs, commits) are imported — type-only, erased
+ * at build.
  */
 
 import type {

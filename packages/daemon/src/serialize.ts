@@ -1,10 +1,10 @@
 /**
  * Pure encoders for the daemon wire format.
  *
- * Only SHARED repo state crosses the wire: status and hunk counts.
- * Per-client fields on GitState (diff, combinedFileDiffs, selectedFile)
- * are never serialized — clients fetch diffs via the parameterized
- * /repos/:id/diff endpoint instead.
+ * Only SHARED repo state crosses the wire: status, hunk counts, stash
+ * list, error, and any in-progress operation. Per-client concerns (file
+ * selection and its diffs) never live on the manager's GitState — clients
+ * fetch diffs via the parameterized /repos/:id/diff endpoint instead.
  */
 
 import type { GitStatus, StashEntry, InProgressOperation } from '@diffstalker/core/git/status';
