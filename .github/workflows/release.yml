@@ -86,15 +86,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
 
       # npmjs registry for OIDC trusted publishing (no NODE_AUTH_TOKEN needed).
+      # node 24's bundled npm (>= 11.9) already satisfies token-less OIDC
+      # trusted publishing (needs >= 11.5.1), so we do NOT upgrade npm here:
+      # `npm install -g npm@latest` pulls npm 12, whose engine requires a newer
+      # node than setup-node provides, and fails. Use the bundled npm as-is.
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
-
-      # Token-less OIDC trusted publishing needs npm >= 11.5.1. Node 24 ships a
-      # new-enough npm today, but pin explicitly so a future runner image with an
-      # older bundled npm can't fail auth on the actual publish.
-      - run: npm install -g npm@latest
 
       - run: bun install --frozen-lockfile
 
