@@ -25,6 +25,18 @@ export class DaemonError extends Error {
   }
 }
 
+/**
+ * True for a transport/connection loss — ENOENT, ECONNREFUSED, ECONNRESET,
+ * EPIPE, socket close, SSE drop, or any raw node error — as opposed to a
+ * DaemonError, which means the daemon was reached and answered with an HTTP
+ * status. Consumers driving a TUI use this to route connection loss into a
+ * reconnect flow (never a throw or a console write, which garble a blessed
+ * screen) while letting genuine HTTP failures keep their own handling.
+ */
+export function isConnectionError(err: unknown): boolean {
+  return !(err instanceof DaemonError);
+}
+
 function connectionOptions(target: TransportTarget): http.RequestOptions {
   return 'socketPath' in target
     ? { socketPath: target.socketPath }

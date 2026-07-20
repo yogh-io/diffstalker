@@ -10,6 +10,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+import { DaemonError } from '@diffstalker/client';
 import type { DiffstalkerClient } from '@diffstalker/client';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
 import { buildGitStatusMap } from '@diffstalker/core/git/explorerData';
@@ -201,13 +202,26 @@ describe('ExplorerViewModel loadFile flag->prose', () => {
     const fake = fakeClient({
       tree: { '': [{ name: 'f.txt', path: 'f.txt', type: 'file' }] },
     });
-    // Override file() to reject.
+    // A genuine daemon-side failure is an HTTP DaemonError (a plain Error
+    // would read as a transport loss and show the reconnect line instead).
     (fake.client as unknown as { file: () => Promise<never> }).file = () =>
-      Promise.reject(new Error('boom'));
+      Promise.reject(new DaemonError(500, 'boom'));
     const vm = makeVM(fake);
     await vm.loadTree();
     await vm.selectIndex(0);
     expect(vm.state.selectedFile?.content).toBe('Error: boom');
+  });
+
+  test('a connection loss shows the reconnect line in the preview, not raw ENOENT', async () => {
+    const fake = fakeClient({
+      tree: { '': [{ name: 'f.txt', path: 'f.txt', type: 'file' }] },
+    });
+    (fake.client as unknown as { file: () => Promise<never> }).file = () =>
+      Promise.reject(Object.assign(new Error('connect ENOENT'), { code: 'ENOENT' }));
+    const vm = makeVM(fake);
+    await vm.loadTree();
+    await vm.selectIndex(0);
+    expect(vm.state.selectedFile?.content).toBe('daemon connection lost — reconnecting…');
   });
 });
 

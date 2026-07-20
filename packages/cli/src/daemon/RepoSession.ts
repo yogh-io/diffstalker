@@ -26,6 +26,7 @@
  */
 
 import { EventEmitter } from 'node:events';
+import { isConnectionError } from '@diffstalker/client';
 import type {
   DiffstalkerClient,
   MutationEnvelope,
@@ -33,7 +34,7 @@ import type {
   WireSharedState,
 } from '@diffstalker/client';
 import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
-import type { FileHunkCounts } from '@diffstalker/core/git/diff';
+import type { FileHunkCounts, DiffResult } from '@diffstalker/core/git/diff';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import type { RemoteOperationState, RemoteOperation } from '@diffstalker/core/types/remote';
 import type {
@@ -51,6 +52,13 @@ const RECONNECT_DELAY_MS = 1000;
 
 const NOT_A_REPO_ERROR = 'Not a git repository';
 
+/**
+ * The single state a lost daemon connection collapses into. Set once (never
+ * spammed) so the header shows one calm line while recovery runs in the
+ * background; cleared when a fresh snapshot arrives.
+ */
+const CONNECTION_LOST_MESSAGE = 'daemon connection lost — reconnecting…';
+
 type SessionEventMap = {
   'state-change': [];
   'history-change': [];
@@ -66,6 +74,14 @@ export interface RepoSessionOptions {
    * refused to open the path). Defaults to "Not a git repository".
    */
   initialError?: string;
+  /**
+   * Re-establish the daemon during recovery: ensures diffstalkerd is alive
+   * (spawns a fresh one when the socket is gone, attaches when it came back)
+   * and returns the client to use afterwards. App wires this to
+   * ensureDaemon(); when omitted, recovery just re-opens the repo on the
+   * existing client (a live daemon that only dropped the SSE stream).
+   */
+  ensureDaemon?: () => Promise<DiffstalkerClient>;
 }
 
 /** Revive wire hunk counts (plain objects) into core's Map-based shape. */
@@ -91,6 +107,8 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
   private disposed = false;
   private reconnectDelayMs: number;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private recovering = false;
+  private ensureDaemonFn: (() => Promise<DiffstalkerClient>) | null;
 
   private diffDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private historyPullInFlight = false;
@@ -140,6 +158,7 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     this.id = ref.id;
     this.repoPath = ref.path;
     this.reconnectDelayMs = options.reconnectDelayMs ?? RECONNECT_DELAY_MS;
+    this.ensureDaemonFn = options.ensureDaemon ?? null;
 
     if (this.id === null) {
       // Not-a-repo mode: nothing to subscribe to; the header renders the
@@ -192,8 +211,10 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     this.subscription = subscription;
     subscription.on('snapshot', (state) => this.applyWireState(state));
     subscription.on('state-change', (state) => this.applyWireState(state));
-    subscription.on('close', () => this.onConnectionLost('daemon connection closed'));
-    subscription.on('error', (err) => this.onConnectionLost(errorMessage(err)));
+    // The stream ending server-side or erroring IS the connection-down
+    // signal; both route into the single-flight recovery below.
+    subscription.on('close', () => this.handleConnectionLoss('stream closed'));
+    subscription.on('error', (err) => this.handleConnectionLoss(errorMessage(err)));
   }
 
   /**
@@ -213,41 +234,63 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     }
   }
 
-  private onConnectionLost(reason: string): void {
+  /**
+   * A transport/connection loss happened (SSE drop or a read/write hitting a
+   * dead socket). Collapse it into ONE calm state — set once, never spammed —
+   * and drive the single-flight recovery. Never throws, never logs: doing
+   * either from the render loop garbles the blessed alt-screen.
+   */
+  private handleConnectionLoss(_reason: string): void {
     if (this.disposed) return;
     this.subscription?.close();
     this.subscription = null;
-    this.setError(`Daemon connection lost (${reason}); reconnecting...`);
-    this.scheduleReconnect();
+    // Set the message exactly once so the header doesn't flicker on every
+    // failed keypress; recovery clears it when a fresh snapshot lands.
+    if (this._shared.error !== CONNECTION_LOST_MESSAGE) {
+      this._shared = { ...this._shared, error: CONNECTION_LOST_MESSAGE };
+      this.emit('state-change');
+    }
+    this.scheduleRecovery();
   }
 
-  private scheduleReconnect(): void {
-    if (this.disposed || this.reconnectTimer) return;
+  private scheduleRecovery(): void {
+    if (this.disposed || this.recovering || this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.attemptReconnect(); // catches internally; never rejects
+      this.recover(); // single-flight; catches internally, never rejects
     }, this.reconnectDelayMs);
   }
 
-  private async attemptReconnect(): Promise<void> {
-    if (this.disposed) return;
+  /**
+   * Single-flight recovery: make sure diffstalkerd is alive (ensureDaemon
+   * spawns/attaches), re-POST /repos (a restarted daemon has an empty
+   * registry; the path-hashed id is stable), resubscribe the SSE stream, and
+   * apply a fresh /status snapshot — which clears the connection error. On
+   * any failure, keep the error and retry with backoff. Never throws/prints.
+   */
+  private async recover(): Promise<void> {
+    if (this.disposed || this.recovering) return;
+    this.recovering = true;
     try {
-      // A restarted daemon has an empty registry: re-POST /repos so the
-      // repo is open again (the path-hashed id is stable across restarts).
+      if (this.ensureDaemonFn) {
+        this.client = await this.ensureDaemonFn();
+      }
+      if (this.disposed) return;
       const ref = await this.client.openRepo(this.repoPath);
+      if (this.disposed) return;
       this.id = ref.id;
       this.connect();
-      // The new subscription's snapshot refreshes shared state; re-pull
-      // the on-demand surfaces that were loaded before the drop.
-      if (this._history.commits.length > 0) {
-        this.reloadHistory();
-      }
-      if (this._compare.compareDiff !== null || this._compare.baseBranch !== null) {
-        this.refreshCompare(this.lastIncludeUncommitted);
-      }
+      // Fresh snapshot: applyWireState overwrites shared.error with the
+      // daemon's (null on success), clearing the reconnect line, and cascades
+      // the on-demand re-pulls (selection diff, history, compare) itself.
+      this.applyWireState(await this.client.status(this.id));
     } catch {
-      this.scheduleReconnect();
+      // Still down (or down again mid-recovery): keep the error, retry.
+      this.recovering = false;
+      this.scheduleRecovery();
+      return;
     }
+    this.recovering = false;
   }
 
   // --- Shared state ---
@@ -283,6 +326,24 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     this.emit('state-change');
   }
 
+  /**
+   * Run a daemon read. On connection loss: enter the reconnect state, kick
+   * off recovery, and resolve to `fallback` — never throw, never log, so a
+   * keypress-triggered fetch can't crash or garble the UI. An HTTP
+   * DaemonError propagates to the caller's own error handling.
+   */
+  private async read<T>(op: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      if (isConnectionError(err)) {
+        this.handleConnectionLoss(errorMessage(err));
+        return fallback;
+      }
+      throw err;
+    }
+  }
+
   /** Pull fresh shared state from the daemon. */
   async refresh(): Promise<void> {
     if (this.id === null) return;
@@ -292,6 +353,10 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
       this.applyWireState(await this.client.status(this.id));
     } catch (err) {
       this._shared = { ...this._shared, isLoading: false };
+      if (isConnectionError(err)) {
+        this.handleConnectionLoss(errorMessage(err));
+        return;
+      }
       this.setError(`Failed to refresh: ${errorMessage(err)}`);
     }
   }
@@ -331,6 +396,10 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     try {
       await this.doFetchDiffForFile(file);
     } catch (err) {
+      if (isConnectionError(err)) {
+        this.handleConnectionLoss(errorMessage(err));
+        return;
+      }
       this.setError(`Failed to load diff: ${errorMessage(err)}`);
     }
   }
@@ -414,6 +483,10 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
       // pending selection anchor is consumed against post-mutation status.
       this.applyWireState(envelope.state);
     } catch (err) {
+      if (isConnectionError(err)) {
+        this.handleConnectionLoss(errorMessage(err));
+        return;
+      }
       this.setError(`${describe}: ${errorMessage(err)}`);
     }
   }
@@ -472,6 +545,10 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     } catch (err) {
       this._history = { ...this._history, isLoading: false };
       this.emit('history-change');
+      if (isConnectionError(err)) {
+        this.handleConnectionLoss(errorMessage(err));
+        return;
+      }
       throw err;
     }
   }
@@ -494,7 +571,12 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     this.emit('history-change');
     if (!commit || this.id === null) return;
 
-    const diff = await this.client.commitDiff(this.id, commit.hash);
+    const id = this.id;
+    const diff = await this.read<DiffResult | null>(
+      () => this.client.commitDiff(id, commit.hash),
+      null
+    );
+    if (diff === null) return;
     if (this._history.selectedCommit === commit) {
       this._history = { ...this._history, commitDiff: diff };
       this.emit('history-change');
@@ -504,7 +586,8 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
   /** HEAD commit message for the amend prefill ("" without commits). */
   async getHeadCommitMessage(): Promise<string> {
     if (this.id === null) return '';
-    return this.client.headMessage(this.id);
+    const id = this.id;
+    return this.read(() => this.client.headMessage(id), '');
   }
 
   // --- Compare ---
@@ -524,6 +607,12 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
       };
       this.emit('compare-change');
     } catch (err) {
+      if (isConnectionError(err)) {
+        this._compare = { ...this._compare, loading: false };
+        this.emit('compare-change');
+        this.handleConnectionLoss(errorMessage(err));
+        return;
+      }
       this._compare = {
         ...this._compare,
         loading: false,
@@ -535,7 +624,8 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
 
   async getCandidateBaseBranches(): Promise<string[]> {
     if (this.id === null) return [];
-    return this.client.baseBranches(this.id);
+    const id = this.id;
+    return this.read<string[]>(() => this.client.baseBranches(id), []);
   }
 
   async setCompareBaseBranch(branch: string, includeUncommitted: boolean = false): Promise<void> {
@@ -543,6 +633,10 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     try {
       await this.client.setCompareBase(this.id, branch);
     } catch (err) {
+      if (isConnectionError(err)) {
+        this.handleConnectionLoss(errorMessage(err));
+        return;
+      }
       this._compare = {
         ...this._compare,
         error: `Failed to set base branch: ${errorMessage(err)}`,
@@ -566,7 +660,12 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     this._compare = { ...this._compare, selection: { type: 'commit', index, diff: null } };
     this.emit('compare-change');
 
-    const diff = await this.client.commitDiff(this.id, commit.hash);
+    const id = this.id;
+    const diff = await this.read<DiffResult | null>(
+      () => this.client.commitDiff(id, commit.hash),
+      null
+    );
+    if (diff === null) return;
     const selection = this._compare.selection;
     if (selection.type === 'commit' && selection.index === index) {
       this._compare = { ...this._compare, selection: { ...selection, diff } };
@@ -612,6 +711,12 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
       this._remote = { ...this._remote, inProgress: false, lastResult: envelope.result ?? null };
       this.emit('remote-change');
     } catch (err) {
+      if (isConnectionError(err)) {
+        this._remote = { ...this._remote, inProgress: false };
+        this.emit('remote-change');
+        this.handleConnectionLoss(errorMessage(err));
+        return;
+      }
       this._remote = { ...this._remote, inProgress: false, error: errorMessage(err) };
       this.emit('remote-change');
     }
@@ -626,7 +731,8 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
 
   async listWorktrees(): Promise<WorktreeInfo[]> {
     if (this.id === null) return [];
-    return this.client.worktrees(this.id);
+    const id = this.id;
+    return this.read<WorktreeInfo[]>(() => this.client.worktrees(id), []);
   }
 }
 

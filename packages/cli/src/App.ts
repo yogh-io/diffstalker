@@ -43,6 +43,13 @@ export interface AppOptions {
   /** Client bound to a live diffstalkerd (index.ts runs ensureDaemon). */
   client: DiffstalkerClient;
   initialPath?: string;
+  /**
+   * Re-establish diffstalkerd during a session's recovery: re-runs
+   * ensureDaemon (spawn if the socket is gone, attach if it came back) and
+   * resolves to the client to use afterwards. Threaded into every
+   * RepoSession so a daemon restart reconnects instead of garbling the UI.
+   */
+  reconnect?: () => Promise<DiffstalkerClient>;
 }
 
 /**
@@ -56,6 +63,7 @@ export class App {
   private layout: LayoutManager;
   private uiState: UIState;
   private client: DiffstalkerClient;
+  private reconnect?: () => Promise<DiffstalkerClient>;
   private session: RepoSession | null = null;
   private followMode: FollowMode;
   /**
@@ -118,6 +126,7 @@ export class App {
   constructor(options: AppOptions) {
     this.config = options.config;
     this.client = options.client;
+    this.reconnect = options.reconnect;
     this.repoPath = options.initialPath ?? process.cwd();
     this.currentTheme = options.config.theme;
     this.recentRepos = options.config.recentRepos ?? [];
@@ -487,7 +496,7 @@ export class App {
    */
   private async applyRepoSwitch(rawPath: string, opts: { stopFollow: boolean }): Promise<void> {
     const seq = ++this.switchSeq;
-    const next = await openRepoSession(this.client, rawPath);
+    const next = await openRepoSession(this.client, rawPath, { ensureDaemon: this.reconnect });
 
     const stale = seq !== this.switchSeq;
     const samePath = this.session !== null && next.repoPath === this.session.repoPath;

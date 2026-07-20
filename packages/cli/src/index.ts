@@ -157,11 +157,16 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Create and start the app
+  // Create and start the app. `reconnect` re-runs ensureDaemon when a
+  // session loses its connection: it spawns a fresh daemon if the socket is
+  // gone, or re-attaches if one came back, so a mid-session daemon restart
+  // reconnects silently instead of throwing/printing ENOENT into the screen.
   const app = new App({
     config,
     client,
     initialPath: args.initialPath,
+    reconnect: () =>
+      ensureDaemon({ socketPath: args.socket, followFile: args.followFile }).then((r) => r.client),
   });
 
   // Wait for app to exit

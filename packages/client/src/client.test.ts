@@ -5,13 +5,13 @@
  * and typed DaemonError failures.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, spyOn } from 'bun:test';
 import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createDaemon, type Daemon } from '@diffstalker/daemon/src/server.ts';
-import { DiffstalkerClient, DaemonError } from './index.js';
+import { DiffstalkerClient, DaemonError, isConnectionError } from './index.js';
 import type { RepoRef, WireSharedState } from './index.js';
 
 const SOCKET = path.join(os.tmpdir(), `diffstalker-client-test-${process.pid}.sock`);
@@ -305,5 +305,31 @@ describe('typed errors', () => {
     // Restore: unstage so the fixture ends where the test found it.
     const unstaged = await client.unstage(repoId, 'fresh.txt');
     expect(unstaged.state.status!.files.find((f) => f.path === 'fresh.txt')?.staged).toBe(false);
+  });
+});
+
+describe('connection loss (transport)', () => {
+  test('isConnectionError: a DaemonError is HTTP, everything else is transport loss', () => {
+    expect(isConnectionError(new DaemonError(500, 'boom'))).toBe(false);
+    const enoent = Object.assign(new Error('connect ENOENT'), { code: 'ENOENT' });
+    expect(isConnectionError(enoent)).toBe(true);
+  });
+
+  test('an SSE connect to a dead socket emits error (connection down), never throws or prints', async () => {
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const dead = new DiffstalkerClient({ socketPath: `${SOCKET}.gone` });
+      const subscription = dead.subscribeRepo('nope');
+      // The failed connect surfaces as a guarded 'error' event, not a throw.
+      const err = await new Promise<Error>((resolve) => subscription.on('error', resolve));
+      expect(isConnectionError(err)).toBe(true);
+      subscription.close();
+      expect(errSpy).not.toHaveBeenCalled();
+      expect(logSpy).not.toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+      logSpy.mockRestore();
+    }
   });
 });

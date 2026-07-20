@@ -11,6 +11,6 @@ export type {
   RepoSubscriptionEvents,
   DaemonSubscriptionEvents,
 } from './client.js';
-export { DaemonError } from './transport.js';
+export { DaemonError, isConnectionError } from './transport.js';
 export type { TransportTarget, HttpMethod } from './transport.js';
 export type * from './wire.js';

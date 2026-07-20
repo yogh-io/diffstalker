@@ -8,8 +8,9 @@
  * not-a-repo mode).
  */
 
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, spyOn } from 'bun:test';
 import { EventEmitter } from 'node:events';
+import { DaemonError } from '@diffstalker/client';
 import type { DiffstalkerClient, WireSharedState, MutationEnvelope } from '@diffstalker/client';
 import type { FileEntry } from '@diffstalker/core/git/status';
 import { RepoSession, openRepoSession } from './RepoSession.js';
@@ -98,6 +99,10 @@ function fakeClient(overrides: FakeClientOptions = {}) {
     {},
     {
       get(_target, prop: string) {
+        // Never look thenable: recovery does `await ensureDaemon()` and the
+        // fake is returned as that value, so a trapped `then` would make
+        // await resolve it to undefined. A real client is not a thenable.
+        if (prop === 'then') return undefined;
         return (...args: unknown[]) => {
           calls.push({ method: prop, args });
           const impl = (overrides[prop] as typeof defaults[string]) ?? defaults[prop];
@@ -273,8 +278,11 @@ describe('RepoSession mutations', () => {
   });
 
   test('failure lands in shared.error and never throws to the caller', async () => {
+    // A genuine operation failure comes back as an HTTP DaemonError (not a
+    // transport loss), so it lands in shared.error rather than the reconnect
+    // state.
     const fake = fakeClient({
-      stageHunk: () => Promise.reject(new Error('patch does not apply')),
+      stageHunk: () => Promise.reject(new DaemonError(500, 'patch does not apply')),
     });
     const session = makeSession(fake);
 
@@ -329,7 +337,7 @@ describe('RepoSession history and compare', () => {
       true
     );
 
-    const failing = fakeClient({ compare: () => Promise.reject(new Error('no base')) });
+    const failing = fakeClient({ compare: () => Promise.reject(new DaemonError(400, 'no base')) });
     const failingSession = makeSession(failing);
     await failingSession.refreshCompare();
     expect(failingSession.compare.error).toContain('no base');
@@ -361,7 +369,7 @@ describe('RepoSession remote operations', () => {
   });
 
   test('revert failure sets remote.error; clearRemoteState resets', async () => {
-    const fake = fakeClient({ revert: () => Promise.reject(new Error('conflict')) });
+    const fake = fakeClient({ revert: () => Promise.reject(new DaemonError(500, 'conflict')) });
     const session = makeSession(fake);
 
     await session.revertCommit('abcd1234'); // must not reject
@@ -395,6 +403,93 @@ describe('RepoSession reconnect', () => {
     expect(fake.subscriptions.length).toBe(2); // resubscribed
     expect(fake.callsTo('history').length).toBeGreaterThan(historyCalls);
     await session.dispose();
+  });
+});
+
+const RECONNECT_MESSAGE = 'daemon connection lost — reconnecting…';
+
+/** A session wired with a mock ensureDaemon, like App provides in prod. */
+function makeRecoverableSession(
+  fake: ReturnType<typeof fakeClient>,
+  ensureDaemon: () => Promise<DiffstalkerClient>
+): RepoSession {
+  const session = new RepoSession(
+    fake.client,
+    { id: REPO_ID, path: REPO_PATH },
+    { reconnectDelayMs: 1, ensureDaemon }
+  );
+  session.connect();
+  return session;
+}
+
+describe('RepoSession connection loss and recovery', () => {
+  test('(a) a read hitting a dead socket sets the reconnect state, returns a safe default, never throws', async () => {
+    const connErr = Object.assign(new Error('connect ENOENT'), { code: 'ENOENT' });
+    const fake = fakeClient({ baseBranches: () => Promise.reject(connErr) });
+    const session = makeSession(fake);
+
+    const result = await session.getCandidateBaseBranches(); // must not reject
+    expect(result).toEqual([]); // safe default, not a throw
+    expect(session.shared.error).toBe(RECONNECT_MESSAGE);
+    await session.dispose();
+  });
+
+  test('(b) a connection-down event surfaces the reconnect state and triggers recovery via ensureDaemon', async () => {
+    let ensureCalled = 0;
+    const fake = fakeClient();
+    const session = makeRecoverableSession(fake, () => {
+      ensureCalled++;
+      return Promise.resolve(fake.client);
+    });
+
+    fake.subscriptions[0].emit('close'); // SSE dropped
+    expect(session.shared.error).toContain('reconnecting');
+
+    await sleep(20); // reconnectDelayMs is 1 in tests
+    expect(ensureCalled).toBeGreaterThanOrEqual(1); // recovery re-established the daemon
+    expect(fake.callsTo('openRepo').length).toBe(1); // re-POST /repos (stable id)
+    expect(fake.subscriptions.length).toBe(2); // resubscribed
+    await session.dispose();
+  });
+
+  test('(c) successful recovery re-applies a fresh snapshot and clears the error', async () => {
+    const fake = fakeClient({ status: () => Promise.resolve(wireState({ error: null })) });
+    const session = makeRecoverableSession(fake, () => Promise.resolve(fake.client));
+
+    fake.subscriptions[0].emit('error', new Error('socket hang up'));
+    expect(session.shared.error).toContain('reconnecting');
+
+    await sleep(20);
+    expect(session.shared.error).toBeNull(); // cleared by the fresh /status snapshot
+    expect(session.shared.status?.branch.current).toBe('main');
+    await session.dispose();
+  });
+
+  test('(d) no console output on any connection-loss path (read, keypress fetch, SSE drop, failed recovery)', async () => {
+    const errSpy = spyOn(console, 'error').mockImplementation(() => {});
+    const logSpy = spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const connErr = new Error('connect ECONNREFUSED');
+      const fake = fakeClient({
+        status: () => Promise.reject(connErr),
+        diff: () => Promise.reject(connErr),
+      });
+      // ensureDaemon keeps failing: recovery retries with backoff, silently.
+      const session = makeRecoverableSession(fake, () => Promise.reject(new Error('still down')));
+
+      await session.refresh(); // read failure
+      session.selectFile(fileA); // keypress-driven read failure
+      fake.subscriptions[0].emit('close'); // SSE drop
+      await sleep(20); // recovery attempts run and fail
+
+      expect(session.shared.error).toContain('reconnecting');
+      expect(errSpy).not.toHaveBeenCalled();
+      expect(logSpy).not.toHaveBeenCalled();
+      await session.dispose();
+    } finally {
+      errSpy.mockRestore();
+      logSpy.mockRestore();
+    }
   });
 });
 

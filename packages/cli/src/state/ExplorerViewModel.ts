@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { isConnectionError } from '@diffstalker/client';
 import type { DiffstalkerClient } from '@diffstalker/client';
 import type { FileStatus } from '@diffstalker/core/git/status';
 import type { GitStatusMap } from '@diffstalker/core/git/explorerData';
@@ -256,9 +257,15 @@ export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
 
       node.childrenLoaded = true;
     } catch (err) {
-      logger.warn(
-        `Failed to read directory ${node.name}: ${err instanceof Error ? err.message : err}`
-      );
+      // Connection loss (daemon died/restarting): stay silent — logger.warn
+      // writes to stderr, which garbles the blessed alt-screen on every
+      // keypress-driven expand. The session's SSE drop drives the reconnect
+      // and shows the outage in the header; here we just render empty.
+      if (!isConnectionError(err)) {
+        logger.warn(
+          `Failed to read directory ${node.name}: ${err instanceof Error ? err.message : err}`
+        );
+      }
       node.childrenLoaded = true;
       node.children = [];
     }
@@ -446,12 +453,14 @@ export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
         },
       });
     } catch (err) {
-      this.updateState({
-        selectedFile: {
-          path: itemPath,
-          content: err instanceof Error ? `Error: ${err.message}` : 'Failed to read file',
-        },
-      });
+      // Rendered into the preview pane (not stderr), so no garble either way;
+      // on connection loss show the calm reconnect line instead of raw ENOENT.
+      const content = isConnectionError(err)
+        ? 'daemon connection lost — reconnecting…'
+        : err instanceof Error
+          ? `Error: ${err.message}`
+          : 'Failed to read file';
+      this.updateState({ selectedFile: { path: itemPath, content } });
     }
   }
 
@@ -630,7 +639,11 @@ export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
     try {
       this._cachedFilePaths = await this.client.files(this.repoId);
     } catch (err) {
-      logger.warn(`Failed to load file paths: ${err instanceof Error ? err.message : err}`);
+      // Silent on connection loss — logger.warn hits stderr and garbles the
+      // alt-screen; the session's reconnect flow surfaces the outage.
+      if (!isConnectionError(err)) {
+        logger.warn(`Failed to load file paths: ${err instanceof Error ? err.message : err}`);
+      }
       this._cachedFilePaths = [];
     }
   }
