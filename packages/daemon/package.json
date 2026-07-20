@@ -18,6 +18,7 @@
   },
   "files": [
     "dist/index.js",
+    "dist/web",
     "bin",
     "README.md",
     "LICENSE"
@@ -28,7 +29,8 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "rm -rf dist && tsc -b",
-    "build:prod": "bun run build && bun build dist/index.js --outfile dist/index.js --minify --target node --external chokidar --external simple-git --external ignore",
+    "build:web": "cd ../web && bun run build && cd ../daemon && bun scripts/copyWebDist.ts",
+    "build:prod": "bun run build && bun run build:web && bun build dist/index.js --outfile dist/index.js --minify --target node --external chokidar --external simple-git --external ignore",
     "start": "bun dist/index.js",
     "test": "bun test src/*.test.ts src/**/*.test.ts",
     "test:watch": "bun test --watch src/*.test.ts src/**/*.test.ts",

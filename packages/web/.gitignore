@@ -1,0 +1,6 @@
+# Build artifact: shipped inside the daemon (copied to packages/daemon/dist/web),
+# never committed here.
+dist/
+# Vite caches
+.vite/
+node_modules/.vite/

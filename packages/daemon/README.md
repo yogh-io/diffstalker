@@ -34,11 +34,20 @@ Options:
 --follow-file PATH   Hook file to follow (created when missing)
                      (default: ~/.cache/diffstalker/target)
 --no-follow          Disable follow mode (no hook-file watcher)
+--web-root PATH      Directory of built web-UI assets to serve at GET /
+                     (default: ./web next to the daemon bundle; the published
+                     package ships it there. Missing dir → API-only, non-fatal)
 --help, -h           Show this help
 ```
 
 `--socket` and `--port` are mutually exclusive; so are `--follow-file` and
 `--no-follow`.
+
+A browser can only reach the daemon over TCP (`--port`), not a unix socket, and
+the daemon sends no CORS headers — so the web UI is served same-origin from the
+daemon itself. `GET /` and any unmatched non-API GET path return the SPA's
+`index.html` (client-side routing); hashed `/assets/*` are served with a long
+immutable cache. The REST/SSE API always takes precedence over static files.
 
 Without `--socket`/`--port`, the daemon binds a unix socket at
 `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock`. The directory is created

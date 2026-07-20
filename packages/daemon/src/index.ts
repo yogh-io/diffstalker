@@ -10,6 +10,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { runtimeDir, cacheDir } from '@diffstalker/core/utils/xdg';
 import { createDaemon, ListenOptions } from './server.js';
 
@@ -30,6 +31,9 @@ Options:
   --follow-file PATH   Hook file to follow (created when missing)
                        (default: ~/.cache/diffstalker/target)
   --no-follow          Disable follow mode (no hook-file watcher)
+  --web-root PATH      Directory with the built web UI to serve at GET /
+                       (default: web/ next to the daemon's compiled module;
+                       when missing, the daemon serves the API only)
   --help, -h           Show this help
 `;
 
@@ -46,6 +50,8 @@ export interface CliOptions extends ListenOptions {
   followFile?: string;
   /** --no-follow: no hook-file watcher at all. */
   noFollow?: boolean;
+  /** Explicit web UI assets dir from --web-root. */
+  webRoot?: string;
 }
 
 export function parseArgs(argv: string[]): CliOptions | 'help' {
@@ -75,6 +81,9 @@ export function parseArgs(argv: string[]): CliOptions | 'help' {
       case '--no-follow':
         options.noFollow = true;
         break;
+      case '--web-root':
+        options.webRoot = expectValue(argv, ++i, '--web-root');
+        break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -91,9 +100,7 @@ export function parseArgs(argv: string[]): CliOptions | 'help' {
 
 /** True when systemd handed us pre-bound listening fds. */
 function hasActivationFds(): boolean {
-  return (
-    process.env.LISTEN_PID === String(process.pid) && Number(process.env.LISTEN_FDS) >= 1
-  );
+  return process.env.LISTEN_PID === String(process.pid) && Number(process.env.LISTEN_FDS) >= 1;
 }
 
 /**
@@ -118,6 +125,19 @@ function applyListenDefaults(options: ListenOptions): void {
   }
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   options.socketPath = path.join(dir, SOCKET_NAME);
+}
+
+/**
+ * Where the built web UI lives: --web-root when given, otherwise web/ next
+ * to the daemon's own module (dist/web/ in the built package). When the
+ * directory is missing the daemon runs API-only — one stderr line, never
+ * fatal (a source checkout without a web build is the normal dev case).
+ */
+function resolveWebRoot(explicit?: string): string | undefined {
+  const dir = explicit ?? fileURLToPath(new URL('web/', import.meta.url));
+  if (fs.existsSync(dir)) return dir;
+  console.error(`diffstalkerd: web UI assets not found at ${dir}; serving API only`);
+  return undefined;
 }
 
 async function main(): Promise<void> {
@@ -145,7 +165,9 @@ async function main(): Promise<void> {
     ? undefined
     : (options.followFile ?? path.join(cacheDir(), 'target'));
 
-  const daemon = createDaemon({ followFile });
+  const webRoot = resolveWebRoot(options.webRoot);
+
+  const daemon = createDaemon({ followFile, webRoot });
   await daemon.listen(options);
   // Status lines go to stderr: stdout stays clean for piping, and journald
   // captures stderr just the same.
@@ -158,6 +180,9 @@ async function main(): Promise<void> {
   }
   if (followFile) {
     console.error(`diffstalkerd following ${followFile}`);
+  }
+  if (webRoot) {
+    console.error(`diffstalkerd serving web UI from ${webRoot}`);
   }
 
   let shuttingDown = false;

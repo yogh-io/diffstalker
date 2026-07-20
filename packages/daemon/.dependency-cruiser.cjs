@@ -31,11 +31,18 @@ module.exports = {
       to: { path: "^src/(index|server|router|serialize)\\.ts$|^src/routes/" },
     },
     {
+      name: "staticfiles-no-upper-layers",
+      comment: "staticFiles.ts sits at the router layer: only router/core imports",
+      severity: "error",
+      from: { path: "^src/staticFiles\\.ts$" },
+      to: { path: "^src/(index|server|repoRegistry|sse|follow)\\.ts$|^src/routes/" },
+    },
+    {
       name: "router-no-upper-layers",
       comment: "router.ts is generic; no server/routes/index/registry/sse/follow imports",
       severity: "error",
       from: { path: "^src/router\\.ts$" },
-      to: { path: "^src/(index|server|repoRegistry|sse|follow)\\.ts$|^src/routes/" },
+      to: { path: "^src/(index|server|repoRegistry|sse|follow|staticFiles)\\.ts$|^src/routes/" },
     },
     {
       name: "routes-no-upper-layers",

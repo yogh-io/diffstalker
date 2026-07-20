@@ -89,6 +89,12 @@ describe('parseArgs error branches (exit 2 + message + usage)', () => {
     expect(result.stderr).toContain('--follow-file and --no-follow are mutually exclusive');
   });
 
+  test('--web-root missing its value', () => {
+    const result = runDaemon(['--web-root']);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--web-root requires a value');
+  });
+
   test('--help prints usage on stdout and exits 0', () => {
     const result = runDaemon(['--help']);
     expect(result.status).toBe(0);
@@ -96,7 +102,58 @@ describe('parseArgs error branches (exit 2 + message + usage)', () => {
     expect(result.stdout).toContain('--socket PATH');
     expect(result.stdout).toContain('--follow-file PATH');
     expect(result.stdout).toContain('--no-follow');
+    expect(result.stdout).toContain('--web-root PATH');
   });
+});
+
+describe('web root wiring', () => {
+  test('missing web root is non-fatal: one API-only line, daemon still serves', async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-web-'));
+    const socket = path.join(base, 'd.sock');
+    const missingRoot = path.join(base, 'no-such-web');
+
+    try {
+      await withRunningDaemon(
+        ['--socket', socket, '--no-follow', '--web-root', missingRoot],
+        {},
+        async (getStderr) => {
+          expect(getStderr()).toContain(
+            `web UI assets not found at ${missingRoot}; serving API only`
+          );
+
+          const res = await fetch('http://localhost/health', { unix: socket } as RequestInit);
+          expect(res.status).toBe(200);
+        }
+      );
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  test('an existing --web-root is announced and served', async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-web-'));
+    const socket = path.join(base, 'd.sock');
+    const webRoot = path.join(base, 'web');
+    fs.mkdirSync(webRoot, { recursive: true });
+    fs.writeFileSync(path.join(webRoot, 'index.html'), '<!doctype html>fixture');
+
+    try {
+      await withRunningDaemon(
+        ['--socket', socket, '--no-follow', '--web-root', webRoot],
+        {},
+        async (getStderr) => {
+          expect(getStderr()).toContain(`serving web UI from ${webRoot}`);
+
+          const res = await fetch('http://localhost/', { unix: socket } as RequestInit);
+          expect(res.status).toBe(200);
+          expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
+          expect(await res.text()).toContain('fixture');
+        }
+      );
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 15000);
 });
 
 /** Spawn the daemon, wait for the listening line, hand control to `run`. */
@@ -129,64 +186,56 @@ async function withRunningDaemon(
 }
 
 describe('follow flags wiring', () => {
-  test(
-    'follow defaults to the cache-dir hook file (via XDG_CACHE_HOME)',
-    async () => {
-      const cacheBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-cache-'));
-      const socket = path.join(cacheBase, 'd.sock');
-      const expectedTarget = path.join(cacheBase, 'diffstalker', 'target');
+  test('follow defaults to the cache-dir hook file (via XDG_CACHE_HOME)', async () => {
+    const cacheBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-cache-'));
+    const socket = path.join(cacheBase, 'd.sock');
+    const expectedTarget = path.join(cacheBase, 'diffstalker', 'target');
 
-      try {
-        await withRunningDaemon(
-          ['--socket', socket],
-          { XDG_CACHE_HOME: cacheBase },
-          async (getStderr) => {
-            expect(getStderr()).toContain(`following ${expectedTarget}`);
-            // The watcher created the hook file.
-            expect(fs.existsSync(expectedTarget)).toBe(true);
+    try {
+      await withRunningDaemon(
+        ['--socket', socket],
+        { XDG_CACHE_HOME: cacheBase },
+        async (getStderr) => {
+          expect(getStderr()).toContain(`following ${expectedTarget}`);
+          // The watcher created the hook file.
+          expect(fs.existsSync(expectedTarget)).toBe(true);
 
-            const res = await fetch('http://localhost/follow', { unix: socket } as RequestInit);
-            expect(res.status).toBe(200);
-            const follow = (await res.json()) as { enabled: boolean; targetFile: string };
-            expect(follow.enabled).toBe(true);
-            expect(follow.targetFile).toBe(expectedTarget);
-          }
-        );
-      } finally {
-        fs.rmSync(cacheBase, { recursive: true, force: true });
-      }
-    },
-    15000
-  );
+          const res = await fetch('http://localhost/follow', { unix: socket } as RequestInit);
+          expect(res.status).toBe(200);
+          const follow = (await res.json()) as { enabled: boolean; targetFile: string };
+          expect(follow.enabled).toBe(true);
+          expect(follow.targetFile).toBe(expectedTarget);
+        }
+      );
+    } finally {
+      fs.rmSync(cacheBase, { recursive: true, force: true });
+    }
+  }, 15000);
 
-  test(
-    '--no-follow: GET /follow reports enabled:false and no hook file appears',
-    async () => {
-      const cacheBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-cache-'));
-      const socket = path.join(cacheBase, 'd.sock');
+  test('--no-follow: GET /follow reports enabled:false and no hook file appears', async () => {
+    const cacheBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-cache-'));
+    const socket = path.join(cacheBase, 'd.sock');
 
-      try {
-        await withRunningDaemon(
-          ['--socket', socket, '--no-follow'],
-          { XDG_CACHE_HOME: cacheBase },
-          async (getStderr) => {
-            expect(getStderr()).not.toContain('following');
+    try {
+      await withRunningDaemon(
+        ['--socket', socket, '--no-follow'],
+        { XDG_CACHE_HOME: cacheBase },
+        async (getStderr) => {
+          expect(getStderr()).not.toContain('following');
 
-            const res = await fetch('http://localhost/follow', { unix: socket } as RequestInit);
-            expect(res.status).toBe(200);
-            const follow = (await res.json()) as { enabled: boolean; targetFile: string | null };
-            expect(follow.enabled).toBe(false);
-            expect(follow.targetFile).toBeNull();
-            // No watcher was created: the default hook file does not exist.
-            expect(fs.existsSync(path.join(cacheBase, 'diffstalker', 'target'))).toBe(false);
-          }
-        );
-      } finally {
-        fs.rmSync(cacheBase, { recursive: true, force: true });
-      }
-    },
-    15000
-  );
+          const res = await fetch('http://localhost/follow', { unix: socket } as RequestInit);
+          expect(res.status).toBe(200);
+          const follow = (await res.json()) as { enabled: boolean; targetFile: string | null };
+          expect(follow.enabled).toBe(false);
+          expect(follow.targetFile).toBeNull();
+          // No watcher was created: the default hook file does not exist.
+          expect(fs.existsSync(path.join(cacheBase, 'diffstalker', 'target'))).toBe(false);
+        }
+      );
+    } finally {
+      fs.rmSync(cacheBase, { recursive: true, force: true });
+    }
+  }, 15000);
 });
 
 describe('default socket resolution', () => {
@@ -196,38 +245,34 @@ describe('default socket resolution', () => {
     expect(result.stderr).toContain('XDG_RUNTIME_DIR is not set');
   });
 
-  test(
-    'derives $XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock, dir 0700, socket 0600',
-    async () => {
-      const runtimeBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-xdg-'));
-      const expectedDir = path.join(runtimeBase, 'diffstalker');
-      const expectedSocket = path.join(expectedDir, 'diffstalkerd.sock');
+  test('derives $XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock, dir 0700, socket 0600', async () => {
+    const runtimeBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-xdg-'));
+    const expectedDir = path.join(runtimeBase, 'diffstalker');
+    const expectedSocket = path.join(expectedDir, 'diffstalkerd.sock');
 
-      const child = spawn(process.execPath, [ENTRY], {
-        env: cleanEnv({ XDG_RUNTIME_DIR: runtimeBase }),
-        stdio: ['ignore', 'ignore', 'pipe'],
-      });
-      let stderr = '';
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString('utf-8');
-      });
+    const child = spawn(process.execPath, [ENTRY], {
+      env: cleanEnv({ XDG_RUNTIME_DIR: runtimeBase }),
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf-8');
+    });
 
-      try {
-        const deadline = Date.now() + 10000;
-        while (!stderr.includes('listening') && Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-        expect(stderr).toContain(`listening on unix socket ${expectedSocket}`);
-        expect(fs.existsSync(expectedSocket)).toBe(true);
-        expect(fs.statSync(expectedDir).mode & 0o777).toBe(0o700);
-        expect(fs.statSync(expectedSocket).mode & 0o777).toBe(0o600);
-      } finally {
-        const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
-        child.kill('SIGTERM');
-        await exited;
-        fs.rmSync(runtimeBase, { recursive: true, force: true });
+    try {
+      const deadline = Date.now() + 10000;
+      while (!stderr.includes('listening') && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
       }
-    },
-    15000
-  );
+      expect(stderr).toContain(`listening on unix socket ${expectedSocket}`);
+      expect(fs.existsSync(expectedSocket)).toBe(true);
+      expect(fs.statSync(expectedDir).mode & 0o777).toBe(0o700);
+      expect(fs.statSync(expectedSocket).mode & 0o777).toBe(0o600);
+    } finally {
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+      child.kill('SIGTERM');
+      await exited;
+      fs.rmSync(runtimeBase, { recursive: true, force: true });
+    }
+  }, 15000);
 });

@@ -14,8 +14,9 @@
 import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
-import type { Socket } from 'node:net';
+import type { AddressInfo, Socket } from 'node:net';
 import { Router } from './router.js';
+import { createStaticHandler } from './staticFiles.js';
 import { RepoRegistry } from './repoRegistry.js';
 import { SseHub, DaemonEventHub } from './sse.js';
 import { FollowController } from './follow.js';
@@ -40,6 +41,8 @@ export interface ListenOptions {
 export interface Daemon {
   listen(options: ListenOptions): Promise<void>;
   close(): Promise<void>;
+  /** Bound address after listen(): AddressInfo for TCP, the path for a unix socket. */
+  address(): AddressInfo | string | null;
 }
 
 export interface DaemonOptions {
@@ -51,6 +54,14 @@ export interface DaemonOptions {
    * the default path unless --no-follow is given.
    */
   followFile?: string;
+  /**
+   * Directory with the built web UI (index.html + hashed assets). When set,
+   * unmatched GET requests are served from it (SPA fallback); API routes
+   * always win. Omit to serve the API only (unmatched GETs stay JSON 404s)
+   * — the CLI entry point resolves the default location and logs when the
+   * assets are missing.
+   */
+  webRoot?: string;
 }
 
 /** True when something accepts connections on the unix socket path. */
@@ -80,7 +91,8 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
   const sse = new SseHub();
   const daemonEvents = new DaemonEventHub();
   const registry = new RepoRegistry({
-    onOpened: (handle) => daemonEvents.broadcast('repo-opened', { id: handle.id, path: handle.path }),
+    onOpened: (handle) =>
+      daemonEvents.broadcast('repo-opened', { id: handle.id, path: handle.path }),
     onClosed: (id) => {
       // Real dispose (refcount hit zero): drop the repo's own SSE channel
       // and tell daemon-channel subscribers the repo list changed.
@@ -104,10 +116,12 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
 
   follow?.start();
 
+  const staticHandler = options.webRoot ? createStaticHandler(options.webRoot) : undefined;
+
   const server = http.createServer((req, res) => {
     // handle() never rejects (it converts errors to JSON responses), but
     // a floating rejection here would crash the daemon — belt and braces.
-    router.handle(req, res).catch(() => res.end());
+    router.handle(req, res, staticHandler).catch(() => res.end());
   });
 
   // Track open connections so close() can cut long-lived SSE streams.
@@ -120,6 +134,10 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
   let boundSocketPath: string | null = null;
 
   return {
+    address(): AddressInfo | string | null {
+      return server.address();
+    },
+
     async listen(options: ListenOptions): Promise<void> {
       if (options.socketPath) {
         // Refuse to clobber a live daemon: only unlink the socket file

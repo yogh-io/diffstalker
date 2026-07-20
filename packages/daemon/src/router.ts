@@ -33,6 +33,17 @@ export interface RouteContext {
 
 export type RouteHandler = (ctx: RouteContext) => Promise<void> | void;
 
+/**
+ * Handles a GET request no route matched (static files / SPA fallback).
+ * Runs inside the router's error handling: thrown HttpErrors become
+ * `{error}` JSON responses like any route's.
+ */
+export type FallbackHandler = (
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string
+) => Promise<void> | void;
+
 interface Route {
   method: string;
   segments: string[];
@@ -114,22 +125,36 @@ export class Router {
     this.routes.push({ method, segments: path.split('/').filter(Boolean), handler });
   }
 
-  async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private match(
+    method: string,
+    segments: string[]
+  ): { handler: RouteHandler; params: Record<string, string> } | null {
+    for (const route of this.routes) {
+      if (route.method !== method) continue;
+      const params = matchRoute(route, segments);
+      if (params) return { handler: route.handler, params };
+    }
+    return null;
+  }
+
+  async handle(
+    req: IncomingMessage,
+    res: ServerResponse,
+    fallback?: FallbackHandler
+  ): Promise<void> {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
       const segments = url.pathname.split('/').filter(Boolean);
       const method = req.method ?? 'GET';
 
-      let matched: { handler: RouteHandler; params: Record<string, string> } | null = null;
-      for (const route of this.routes) {
-        if (route.method !== method) continue;
-        const params = matchRoute(route, segments);
-        if (params) {
-          matched = { handler: route.handler, params };
-          break;
-        }
-      }
+      const matched = this.match(method, segments);
       if (!matched) {
+        // API routes always win: the fallback only ever sees requests no
+        // route claimed, and only GETs (static files have no mutations).
+        if (fallback && method === 'GET') {
+          await fallback(req, res, url.pathname);
+          return;
+        }
         throw new HttpError(404, `Unknown route: ${method} ${url.pathname}`);
       }
 
