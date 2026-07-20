@@ -100,10 +100,12 @@
       "name": "@diffstalker/web",
       "version": "0.0.0",
       "dependencies": {
+        "@diffstalker/core": "workspace:*",
         "pinia": "^4.0.2",
         "vue": "^3.5.40",
       },
       "devDependencies": {
+        "@diffstalker/client": "workspace:*",
         "@eslint/js": "^9.39.2",
         "@types/node": "^22.10.7",
         "@vitejs/plugin-vue": "^6.0.8",
