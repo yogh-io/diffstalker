@@ -19,7 +19,7 @@ The git state engine now lives in a **daemon** (`diffstalkerd`): a Node http ser
 - **simple-git** for git operations — **core/daemon only** (the CLI never runs git in-process)
 - **chokidar** for file watching (follow hook file, git dir, working tree) — **core/daemon only**
 - **neo-blessed** for terminal rendering (CLI; patched at runtime for 24-bit RGB, see `packages/cli/src/utils/blessedRgbPatch.ts`)
-- **fast-diff** for word-level diff highlighting (CLI)
+- **fast-diff** for word-level diff highlighting (in `@diffstalker/core/view/wordDiff`, bundled into CLI + web)
 - **emphasize** for syntax highlighting in the explorer (CLI)
 - **fzf** for file finder matching (CLI)
 - Event-driven state: Node `EventEmitter` inside the daemon (managers) and inside the CLI's `RepoSession` (no React)
@@ -69,7 +69,7 @@ Never bump `package.json` or create version tags manually — always use the scr
 
 The repo is a bun workspace with four packages:
 
-- **`@diffstalker/core`** — headless git state (plain git fns + a small set of managers), no UI deps. Consumed only by the daemon; the CLI imports pure helpers/types from it (`git/diff`, `git/explorerData`, `git/status`/`worktree` types, `services/commitService`, `utils`, `types`) but **not** its managers.
+- **`@diffstalker/core`** — headless git state (plain git fns + a small set of managers), no UI deps. The daemon consumes its managers; the CLI (and the coming web client) import pure helpers/types from it (`view/*` presentation logic, `git/diff`, `git/explorerData`, `git/status`/`worktree` types, `services/commitService`, `utils`, `types`) but **not** its managers.
 - **`@diffstalker/daemon`** — diffstalkerd, published to npm as a bin-only package (an executable, not an importable API): Node http REST + SSE over core. Owns git state and follow mode.
 - **`@diffstalker/client`** — a typed REST + SSE client for the daemon. Private; consumed by the CLI (and, later, a web client).
 - **`diffstalker`** (`packages/cli`) — the terminal UI, published to npm. A pure daemon client: `RepoSession` fed by REST + SSE, `DaemonLifecycle` to attach/spawn.
@@ -94,9 +94,21 @@ packages/core/src/
 │   └── FilePathWatcher.ts  # Watches the follow hook file
 ├── services/
 │   └── commitService.ts    # Git commit execution
+├── view/                   # Pure presentation logic, shared by CLI + web (no UI/node/ANSI deps)
+│   ├── displayRows.ts?     # (row builders like wordDiff, fileTree, flatFileList,
+│   │                       #  fileCategories, diffFilters, lineBreaking, diffRowCalculations)
+│   ├── formatPath.ts       # shortenPath, formatDate, commitFormat — pure formatters
+│   └── languageDetection.ts # getLanguageFromPath (pure map; NO emphasize/ANSI — that stays in cli)
 ├── utils/                  # logger, path utils, base-branch cache, xdg dirs
 └── types/                  # Shared type declarations (remote)
 ```
+
+`view/` holds framework-agnostic presentation logic (diff/explorer row models, word diff, file-tree
+building, formatters, language detection) extracted from the CLI so the CLI and the coming web client
+share one copy. It imports git/ and utils/ **types only** (a runtime import would drag node-only code
+into a browser bundle — a dependency-cruiser rule enforces this). Its ANSI counterpart (emphasize
+highlighting) stays in `packages/cli/src/utils/syntaxHighlight.ts`; the row builders that bake ANSI in
+(`displayRows`, `explorerDisplayRows`) also stay in the CLI until highlighting is made injectable.
 
 The History, Compare, and Explorer **managers were deleted** in the daemon split. History/compare/explorer data are stateless now: the daemon serves them on demand with plain git fns (`git/status`, `git/diff`, `git/explorerData`) and holds no per-client selection or tree expansion.
 
@@ -149,7 +161,7 @@ packages/cli/src/
 │   ├── CommitFlowState.ts  # Commit panel state machine
 │   ├── ExplorerViewModel.ts # Explorer tree state, fed by daemon tree/file endpoints
 │   └── FocusRing.ts        # Tab/Shift-Tab focus zone cycling
-├── utils/                  # Pure helpers (displayRows, layout math, ansi, paths...)
+├── utils/                  # CLI-only helpers (displayRows, ansi, syntaxHighlight, layout math...)
 └── types/                  # Shared type declarations (tabs, session, neo-blessed shim)
 ```
 
@@ -233,7 +245,7 @@ When building UI structures with rows (diff views, file lists), always use a sin
 
 ### Pre-commit Hook
 
-A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 19 pre-existing sonarjs cognitive-complexity warnings are expected (6 in packages/core + 13 in packages/cli; daemon and client 0), 0 errors.
+A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 19 pre-existing sonarjs cognitive-complexity warnings are expected (8 in packages/core + 11 in packages/cli; daemon and client 0), 0 errors.
 
 ### Architecture Layering (dependency-cruiser)
 
@@ -254,7 +266,7 @@ state/
 utils/  types/  themes.ts  config.ts
 ```
 
-The CLI is locked as a pure daemon client (severity `error`): `src/` may **not** import `@diffstalker/core/managers/*` (no in-process managers), nor `simple-git` / `chokidar` (daemon/core-only). It may still import the pure core helpers it uses (`git/diff`, `git/explorerData`, `git/status`/`worktree` types, `services/commitService`, `utils`, `types`).
+The CLI is locked as a pure daemon client (severity `error`): `src/` may **not** import `@diffstalker/core/managers/*` (no in-process managers), nor `simple-git` / `chokidar` (daemon/core-only). It may still import the pure core helpers it uses (`view/*`, `git/diff`, `git/explorerData`, `git/status`/`worktree` types, `services/commitService`, `utils`, `types`).
 
 packages/core:
 

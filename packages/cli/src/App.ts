@@ -22,13 +22,13 @@ import { CommitFlowState } from './state/CommitFlowState.js';
 import { UIState } from './state/UIState.js';
 import { RepoSession, openRepoSession } from './daemon/RepoSession.js';
 import { Config, saveConfig, addRecentRepo } from './config.js';
-import { getIndexForCategoryPosition } from './utils/fileCategories.js';
+import { getIndexForCategoryPosition } from '@diffstalker/core/view/fileCategories';
 import {
   buildFlatFileList,
   getFlatFileAtIndex,
   getFlatFileIndexByPath,
   type FlatFileEntry,
-} from './utils/flatFileList.js';
+} from '@diffstalker/core/view/flatFileList';
 import { getFileAtIndex } from './ui/widgets/FileList.js';
 import { applyBlessedRgbPatch } from './utils/blessedRgbPatch.js';
 import {

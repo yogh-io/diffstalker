@@ -6,7 +6,7 @@ import {
   getDiffLineRowCount,
   getDiffTotalRows,
 } from './diffRowCalculations.js';
-import { DiffLine, DiffResult } from '@diffstalker/core/git/diff';
+import type { DiffLine, DiffResult } from '../git/diff.js';
 
 describe('getLineContent', () => {
   it('removes leading + from additions', () => {

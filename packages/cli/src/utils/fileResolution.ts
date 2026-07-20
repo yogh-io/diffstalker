@@ -1,7 +1,7 @@
 import type { FileEntry } from '@diffstalker/core/git/status';
-import type { FlatFileEntry } from './flatFileList.js';
-import { getFileAtIndex } from './fileCategories.js';
-import { getFlatFileAtIndex } from './flatFileList.js';
+import type { FlatFileEntry } from '@diffstalker/core/view/flatFileList';
+import { getFileAtIndex } from '@diffstalker/core/view/fileCategories';
+import { getFlatFileAtIndex } from '@diffstalker/core/view/flatFileList';
 
 /**
  * Resolve a FileEntry from an index, abstracting over flat vs categorized mode.

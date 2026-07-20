@@ -1,4 +1,4 @@
-import type { FileEntry } from '@diffstalker/core/git/status';
+import type { FileEntry } from '../git/status.js';
 
 /**
  * Categorize files into Modified, Untracked, and Staged sections.

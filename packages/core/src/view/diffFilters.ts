@@ -1,4 +1,4 @@
-import { DiffLine } from '@diffstalker/core/git/diff';
+import type { DiffLine } from '../git/diff.js';
 
 /**
  * Check if a diff header line should be displayed.

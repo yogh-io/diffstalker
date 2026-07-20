@@ -13,7 +13,7 @@ import {
   type CombinedHunkInfo,
 } from '../../utils/displayRows.js';
 import { truncateAnsi } from '../../utils/ansiTruncate.js';
-import { formatRelativeTime } from '../../utils/formatDate.js';
+import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import {
   ANSI_RESET,
   ANSI_BOLD,

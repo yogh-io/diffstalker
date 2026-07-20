@@ -20,7 +20,7 @@ import { formatExplorerView } from './widgets/ExplorerView.js';
 import { formatDiff, formatCombinedDiff, formatHistoryDiff } from './widgets/DiffView.js';
 import { formatCommitPanel, getCommitPanelTotalRows } from './widgets/CommitPanel.js';
 import { formatExplorerContent } from './widgets/ExplorerContent.js';
-import type { FlatFileEntry } from '../utils/flatFileList.js';
+import type { FlatFileEntry } from '@diffstalker/core/view/flatFileList';
 
 /**
  * Render the top pane content for the current tab.

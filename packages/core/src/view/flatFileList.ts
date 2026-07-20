@@ -1,5 +1,5 @@
-import type { FileEntry, FileStatus } from '@diffstalker/core/git/status';
-import type { FileHunkCounts } from '@diffstalker/core/git/diff';
+import type { FileEntry, FileStatus } from '../git/status.js';
+import type { FileHunkCounts } from '../git/diff.js';
 
 export type StagingState = 'unstaged' | 'staged' | 'partial';
 

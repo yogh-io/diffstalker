@@ -3,14 +3,14 @@
 
 import { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
 import { CommitInfo } from '@diffstalker/core/git/status';
-import { formatDateAbsolute } from './formatDate.js';
-import { isDisplayableDiffLine } from './diffFilters.js';
-import { breakLine, getLineRowCount } from './lineBreaking.js';
-import { computeWordDiff, areSimilarEnough, WordDiffSegment } from './wordDiff.js';
-import { getLanguageFromPath, highlightBlockPreserveBg } from './languageDetection.js';
-import { getLineContent as extractLineContent } from './diffRowCalculations.js';
+import { formatDateAbsolute } from '@diffstalker/core/view/formatDate';
+import { isDisplayableDiffLine } from '@diffstalker/core/view/diffFilters';
+import { breakLine, getLineRowCount } from '@diffstalker/core/view/lineBreaking';
+import { computeWordDiff, areSimilarEnough, WordDiffSegment } from '@diffstalker/core/view/wordDiff';
+import { getSupportedLanguage, highlightBlockPreserveBg } from './syntaxHighlight.js';
+import { getLineContent as extractLineContent } from '@diffstalker/core/view/diffRowCalculations';
 
-export type { WordDiffSegment } from './wordDiff.js';
+export type { WordDiffSegment } from '@diffstalker/core/view/wordDiff';
 
 // Unified display row types - every type renders as exactly 1 terminal row
 export type DisplayRow =
@@ -161,7 +161,7 @@ function buildRawDiffRows(filteredLines: DiffLine[]): RawDiffResult {
           rows.push({ type: 'spacer' });
         }
         currentSection = {
-          language: getLanguageFromPath(filePath),
+          language: getSupportedLanguage(filePath),
           startRowIndex: rows.length,
           oldContent: [],
           oldRowIndices: [],

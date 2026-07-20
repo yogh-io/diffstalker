@@ -1,5 +1,5 @@
 import type { FileStatus } from '@diffstalker/core/git/status';
-import { shortenPath } from '../../utils/formatPath.js';
+import { shortenPath } from '@diffstalker/core/view/formatPath';
 
 export function getStatusChar(status: FileStatus): string {
   switch (status) {

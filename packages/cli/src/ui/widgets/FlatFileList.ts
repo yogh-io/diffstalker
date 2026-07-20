@@ -1,4 +1,4 @@
-import type { FlatFileEntry, StagingState } from '../../utils/flatFileList.js';
+import type { FlatFileEntry, StagingState } from '@diffstalker/core/view/flatFileList';
 import {
   getStatusChar,
   getStatusColor,

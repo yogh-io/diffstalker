@@ -1,6 +1,6 @@
 import type { CommitInfo } from '@diffstalker/core/git/status';
-import { formatDate } from '../../utils/formatDate.js';
-import { formatCommitDisplay } from '../../utils/commitFormat.js';
+import { formatDate } from '@diffstalker/core/view/formatDate';
+import { formatCommitDisplay } from '@diffstalker/core/view/commitFormat';
 
 /**
  * Format the history view as blessed-compatible tagged string.

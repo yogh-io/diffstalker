@@ -1,6 +1,6 @@
 import type { FileEntry } from '@diffstalker/core/git/status';
 import type { FileHunkCounts } from '@diffstalker/core/git/diff';
-import { categorizeFiles, getFileAtIndex } from '../../utils/fileCategories.js';
+import { categorizeFiles, getFileAtIndex } from '@diffstalker/core/view/fileCategories';
 import {
   getStatusChar,
   getStatusColor,

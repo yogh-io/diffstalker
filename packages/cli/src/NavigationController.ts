@@ -2,7 +2,7 @@ import type { UIState } from './state/UIState.js';
 import type { RepoSession } from './daemon/RepoSession.js';
 import type { ExplorerViewModel } from './state/ExplorerViewModel.js';
 import type { FileEntry } from '@diffstalker/core/git/status';
-import type { FlatFileEntry } from './utils/flatFileList.js';
+import type { FlatFileEntry } from '@diffstalker/core/view/flatFileList';
 import type { HunkBoundary } from './utils/displayRows.js';
 import {
   getNextCompareSelection,

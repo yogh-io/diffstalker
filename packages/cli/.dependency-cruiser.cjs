@@ -49,7 +49,7 @@ module.exports = {
     {
       name: "cli-no-core-managers",
       comment:
-        "The CLI is a daemon client — it must not import @diffstalker/core managers (in-process git state). Talk to diffstalkerd over REST/SSE instead. Pure core helpers (git/diff, git/explorerData, git/status + worktree types, services/commitService, utils, types) are fine.",
+        "The CLI is a daemon client — it must not import @diffstalker/core managers (in-process git state). Talk to diffstalkerd over REST/SSE instead. Pure core helpers (view/* presentation logic, git/diff, git/explorerData, git/status + worktree types, services/commitService, utils, types) are fine.",
       severity: "error",
       from: { path: "^src/" },
       to: { path: "^@diffstalker/core/managers/" },

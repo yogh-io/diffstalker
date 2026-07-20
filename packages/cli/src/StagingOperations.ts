@@ -1,10 +1,10 @@
 import type { UIState } from './state/UIState.js';
 import type { RepoSession } from './daemon/RepoSession.js';
 import type { FileEntry } from '@diffstalker/core/git/status';
-import type { FlatFileEntry } from './utils/flatFileList.js';
+import type { FlatFileEntry } from '@diffstalker/core/view/flatFileList';
 import type { CombinedHunkInfo } from './utils/displayRows.js';
-import { getFlatFileAtIndex } from './utils/flatFileList.js';
-import { getCategoryForIndex, type CategoryName } from './utils/fileCategories.js';
+import { getFlatFileAtIndex } from '@diffstalker/core/view/flatFileList';
+import { getCategoryForIndex, type CategoryName } from '@diffstalker/core/view/fileCategories';
 import { extractHunkPatch } from '@diffstalker/core/git/diffParse';
 
 /**

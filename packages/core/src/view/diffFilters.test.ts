@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isDisplayableDiffHeader, isDisplayableDiffLine } from './diffFilters.js';
-import type { DiffLine } from '@diffstalker/core/git/diff';
+import type { DiffLine } from '../git/diff.js';
 
 describe('isDisplayableDiffHeader', () => {
   it('filters index headers', () => {

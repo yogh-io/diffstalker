@@ -124,21 +124,29 @@ types) without pulling `simple-git`, enforced by dependency-cruiser and subpath 
 package's config for no new isolation the subpath rule doesn't already give. Either way the code is
 **bundled** into both the CLI and the web build (like `core`/`client` today), not published.
 
-**Modules to extract** (all pure, no blessed, no Node-only APIs):
+**Extracted in Slice 1** — the ANSI-free closure moved to `@diffstalker/core/view/*`:
 
-| From | Module | What it gives the web client |
-|---|---|---|
-| `cli/utils` | `displayRows.ts` | `buildDiffDisplayRows`, `buildCombinedDiffDisplayRows`, `buildHistoryDisplayRows`, `getHunkBoundaries`, `wrapDisplayRows` — the single source of truth for diff row layout (feeds render **and** virtual-scroll math). |
-| `cli/utils` | `wordDiff.ts` | `computeWordDiff`, `areSimilarEnough` — word-level highlight segments. |
-| `cli/utils` | `explorerDisplayRows.ts` | `buildExplorerContentRows`, `wrapExplorerContentRows`. |
-| `cli/utils` | `fileTree.ts` | `buildFileTree`, `flattenTree` — compare/explorer tree building. |
-| `cli/utils` | `flatFileList.ts` | flat/dedup partially-staged file rows. |
-| `cli/utils` | `fileCategories.ts` | Modified/Untracked/Staged grouping. |
-| `cli/utils` | `formatPath.ts` | `shortenPath` (middle-ellipsis). |
-| `cli/utils` | `formatDate.ts` | `formatRelativeTime`, `formatDate`. |
-| `cli/utils` | `commitFormat.ts` | commit metadata formatting. |
-| `cli/utils` | `languageDetection.ts` | `getLanguageFromPath` (drop the emphasize/ANSI part; keep detection). |
-| `core/git` | `hunkTimes.ts` | already in core — `HunkTimeTracker`, `hashHunkBody` (per-hunk edit times). |
+| Module | What it gives the web client |
+|---|---|
+| `wordDiff.ts` | `computeWordDiff`, `areSimilarEnough` — word-level highlight segments. |
+| `fileTree.ts` | `buildFileTree`, `flattenTree` — compare/explorer tree building. |
+| `flatFileList.ts` | flat/dedup partially-staged file rows. |
+| `fileCategories.ts` | Modified/Untracked/Staged grouping. |
+| `diffFilters.ts` | displayable-diff-line filtering. |
+| `lineBreaking.ts` | `breakLine`, `getLineRowCount` — wrap math. |
+| `diffRowCalculations.ts` | diff row/line helpers. |
+| `formatPath.ts` | `shortenPath` (middle-ellipsis). |
+| `formatDate.ts` | `formatRelativeTime`, `formatDate`. |
+| `commitFormat.ts` | commit metadata formatting. |
+| `languageDetection.ts` | `getLanguageFromPath` — pure map only. The emphasize/ANSI highlighters split out to `cli/utils/syntaxHighlight.ts`; the CLI's availability filter (`getSupportedLanguage`) also lives there, so core stays browser-pure while CLI output is unchanged. |
+| `hunkTimes.ts` | already in `core/git` — `HunkTimeTracker`, `hashHunkBody` (per-hunk edit times). |
+
+**Deferred to a later "de-ANSI" slice** (before the web diff/explorer views need them): `displayRows.ts`
+and `explorerDisplayRows.ts` stayed in the CLI because they currently *bake ANSI syntax highlighting
+into their row content* (they call the emphasize highlighters). To share them, highlighting must first
+become injectable — the row builders should carry `{ content, language, wordDiffSegments }` and let each
+frontend (blessed for CLI, DOM for web) apply highlighting. Until then the web builds diff rows on the
+extracted primitives above, or waits for that refactor.
 
 **Not extracted** (CLI-specific): `state/UIState.ts`, `state/FocusRing.ts`, `state/ExplorerViewModel.ts`
 — these encode terminal focus-zone/pane navigation. The web builds its own equivalents (Pinia stores +

@@ -1,8 +1,8 @@
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareFileDiff } from '@diffstalker/core/git/diff';
-import { formatDate } from '../../utils/formatDate.js';
-import { formatCommitDisplay } from '../../utils/commitFormat.js';
-import { buildFileTree, flattenTree, buildTreePrefix, TreeRowItem } from '../../utils/fileTree.js';
+import { formatDate } from '@diffstalker/core/view/formatDate';
+import { formatCommitDisplay } from '@diffstalker/core/view/commitFormat';
+import { buildFileTree, flattenTree, buildTreePrefix, TreeRowItem } from '@diffstalker/core/view/fileTree';
 
 /** Escape blessed tag braces in user-supplied text (names, messages, refs). */
 function escapeContent(content: string): string {

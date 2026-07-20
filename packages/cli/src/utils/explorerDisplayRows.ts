@@ -4,8 +4,8 @@
  * for both rendering and scroll calculations.
  */
 
-import { breakLine, getLineRowCount } from './lineBreaking.js';
-import { getLanguageFromPath, highlightLine } from './languageDetection.js';
+import { breakLine, getLineRowCount } from '@diffstalker/core/view/lineBreaking';
+import { getSupportedLanguage, highlightLine } from './syntaxHighlight.js';
 
 // Base row type for explorer content
 export type ExplorerContentRow =
@@ -37,7 +37,7 @@ export function buildExplorerContentRows(
   const rows: ExplorerContentRow[] = [];
 
   // Detect language for highlighting
-  const language = filePath ? getLanguageFromPath(filePath) : null;
+  const language = filePath ? getSupportedLanguage(filePath) : null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
