@@ -298,7 +298,9 @@ describe('view routing', () => {
     expect(wrapper.text()).toContain('No changes compared to origin/main.');
 
     await (await railButton(wrapper, 'Explorer')).trigger('click');
-    expect(wrapper.text()).toContain('The file tree and viewer land in a later slice.');
+    await flushPromises(); // the tree root loads on activation
+    expect(wrapper.text()).toContain('Select a file');
+    expect(wrapper.find('[data-testid="toggle-changed"]').exists()).toBe(true);
     wrapper.unmount();
   });
 

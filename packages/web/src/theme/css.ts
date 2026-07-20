@@ -7,7 +7,7 @@
 
 import { resolveColor } from './palette';
 import { themeOrder, themes } from './themes';
-import type { ChromeColors, DiffColors, Theme } from './themes';
+import type { ChromeColors, DiffColors, SyntaxColors, Theme } from './themes';
 
 function diffVars(colors: DiffColors): string[] {
   return [
@@ -48,8 +48,26 @@ function chromeVars(chrome: ChromeColors): string[] {
   ];
 }
 
+function syntaxVars(syntax: SyntaxColors): string[] {
+  return [
+    `--syn-keyword: ${syntax.keyword};`,
+    `--syn-string: ${syntax.string};`,
+    `--syn-comment: ${syntax.comment};`,
+    `--syn-number: ${syntax.number};`,
+    `--syn-literal: ${syntax.literal};`,
+    `--syn-title: ${syntax.title};`,
+    `--syn-attr: ${syntax.attr};`,
+    `--syn-meta: ${syntax.meta};`,
+  ];
+}
+
 function themeBlock(theme: Theme): string {
-  const lines = [`color-scheme: ${theme.scheme};`, ...chromeVars(theme.chrome), ...diffVars(theme.colors)];
+  const lines = [
+    `color-scheme: ${theme.scheme};`,
+    ...chromeVars(theme.chrome),
+    ...diffVars(theme.colors),
+    ...syntaxVars(theme.syntax),
+  ];
   return `:root[data-theme='${theme.name}'] {\n  ${lines.join('\n  ')}\n}`;
 }
 

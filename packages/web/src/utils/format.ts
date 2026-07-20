@@ -8,6 +8,13 @@ export function basename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** Human-readable byte size ('482 B', '1.2 KB', '3.4 MB'). */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** One-letter status glyph, same letters the CLI uses. */
 export function statusLetter(status: FileStatus): string {
   switch (status) {

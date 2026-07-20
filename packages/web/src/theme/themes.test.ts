@@ -73,6 +73,13 @@ describe('buildThemeCss', () => {
     }
   });
 
+  test('every block carries the syntax token set', () => {
+    for (const token of ['--syn-keyword:', '--syn-string:', '--syn-comment:', '--syn-meta:']) {
+      const count = css.split(token).length - 1;
+      expect(count).toBe(themeOrder.length);
+    }
+  });
+
   test('color-scheme follows the theme', () => {
     expect(css.split('color-scheme: dark;').length - 1).toBe(3);
     expect(css.split('color-scheme: light;').length - 1).toBe(3);

@@ -1,0 +1,394 @@
+/**
+ * ExplorerView tests: the tree renders entries with git-status
+ * decoration, dirs expand/collapse on click (lazy fetch), files select
+ * and load into the content pane (highlighted lines, line numbers), the
+ * pane's flag-driven states (binary / too-large / truncated / empty /
+ * no selection), keyboard tree navigation with roving tabindex, and the
+ * toolbar toggles (inverted wire params, changed-only client filter).
+ *
+ * The explorer + repo stores run for real against the fake fetch —
+ * no real daemon.
+ */
+
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mount, flushPromises } from '@vue/test-utils';
+import type { VueWrapper } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
+import ExplorerView from './ExplorerView.vue';
+import { useRepoStore } from '../stores/repo';
+import { useExplorerStore } from '../stores/explorer';
+import { makeFakeFetch } from '../testing/fakes';
+import type { FakeFetch, FetchCall, FakeResponse } from '../testing/fakes';
+import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
+
+const ROOT_ENTRIES: DirEntry[] = [
+  { name: 'src', path: 'src', type: 'dir', hasChanges: true },
+  { name: 'logo.png', path: 'logo.png', type: 'file' },
+  { name: 'main.ts', path: 'main.ts', type: 'file', gitStatus: 'modified', staged: true },
+];
+
+const SRC_ENTRIES: DirEntry[] = [
+  { name: 'util.ts', path: 'src/util.ts', type: 'file', gitStatus: 'added' },
+];
+
+const TS_FILE: FileForDisplay = {
+  content: 'const x = 1;\nlet y = 2;\n',
+  binary: false,
+  truncated: false,
+  tooLarge: false,
+  size: 25,
+  totalLines: 3,
+};
+
+function params(call: FetchCall): URLSearchParams {
+  return new URLSearchParams(call.url.split('?')[1] ?? '');
+}
+
+let pinia: Pinia;
+let fake: FakeFetch;
+let onRequest: ((call: FetchCall) => FakeResponse | undefined) | null;
+
+function defaultRoutes(call: FetchCall): FakeResponse {
+  if (call.url.startsWith('/repos/r1/tree?')) {
+    const dir = params(call).get('dir');
+    if (dir === '') return { body: ROOT_ENTRIES };
+    if (dir === 'src') return { body: SRC_ENTRIES };
+    return { status: 404, body: { error: `no such dir: ${dir}` } };
+  }
+  if (call.url.startsWith('/repos/r1/file?')) {
+    return { body: TS_FILE };
+  }
+  return { status: 404, body: { error: `no fake route: ${call.method} ${call.url}` } };
+}
+
+async function mountView(): Promise<{
+  wrapper: VueWrapper;
+  explorer: ReturnType<typeof useExplorerStore>;
+}> {
+  const repo = useRepoStore();
+  repo.repoId = 'r1';
+  const explorer = useExplorerStore();
+  const wrapper = mount(ExplorerView, {
+    global: { plugins: [pinia] },
+    attachTo: document.body,
+  });
+  await flushPromises();
+  return { wrapper, explorer };
+}
+
+function rowNames(wrapper: VueWrapper): string[] {
+  return wrapper.findAll('.tree-row .name').map((el) => el.text());
+}
+
+beforeEach(() => {
+  pinia = createPinia();
+  setActivePinia(pinia);
+  onRequest = null;
+  fake = makeFakeFetch((call) => onRequest?.(call) ?? defaultRoutes(call));
+  vi.stubGlobal('fetch', fake.fn);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  document.body.innerHTML = '';
+});
+
+describe('tree rendering', () => {
+  test('the root listing renders as a tree with git-status decoration', async () => {
+    const { wrapper } = await mountView();
+
+    expect(wrapper.find('[role="tree"]').exists()).toBe(true);
+    expect(rowNames(wrapper)).toEqual(['src', 'logo.png', 'main.ts']);
+
+    const rows = wrapper.findAll('.tree-row');
+    // Dir: collapsed chevron, changes dot, aria-expanded=false, level 1.
+    expect(rows[0].find('.chevron').text()).toBe('▸');
+    expect(rows[0].find('.changes-dot').exists()).toBe(true);
+    expect(rows[0].attributes('aria-expanded')).toBe('false');
+    expect(rows[0].attributes('aria-level')).toBe('1');
+    // Plain file: no letter, no dots.
+    expect(rows[1].find('.status-letter').exists()).toBe(false);
+    // Modified + staged file: the M letter, the staged dot, status class.
+    expect(rows[2].find('[data-testid="status-letter"]').text()).toBe('M');
+    expect(rows[2].find('.staged-dot').exists()).toBe(true);
+    expect(rows[2].classes()).toContain('st-modified');
+  });
+
+  test('an empty repo shows the quiet empty state', async () => {
+    onRequest = (call) => (call.url.includes('/tree') ? { body: [] } : undefined);
+    const { wrapper } = await mountView();
+    expect(wrapper.find('[data-testid="tree-empty"]').text()).toBe('Empty repository.');
+  });
+
+  test('a failed root load surfaces the error in the tree column', async () => {
+    onRequest = (call) =>
+      call.url.includes('/tree') ? { status: 500, body: { error: 'boom' } } : undefined;
+    const { wrapper } = await mountView();
+    expect(wrapper.find('[data-testid="tree-error"]').text()).toBe('boom');
+  });
+});
+
+describe('expansion by mouse', () => {
+  test('clicking a dir fetches its children and renders them one level deeper', async () => {
+    const { wrapper } = await mountView();
+
+    await wrapper.findAll('.tree-row')[0].trigger('click');
+    await flushPromises();
+
+    const dirCalls = fake.callsTo('/tree');
+    expect(params(dirCalls.at(-1)!).get('dir')).toBe('src');
+    expect(rowNames(wrapper)).toEqual(['src', 'util.ts', 'logo.png', 'main.ts']);
+
+    const child = wrapper.findAll('.tree-row')[1];
+    expect(child.attributes('aria-level')).toBe('2');
+    expect(child.findAll('.guide')).toHaveLength(1);
+    expect(wrapper.findAll('.tree-row')[0].attributes('aria-expanded')).toBe('true');
+  });
+
+  test('clicking an expanded dir collapses it', async () => {
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[0].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.tree-row')[0].trigger('click');
+    expect(rowNames(wrapper)).toEqual(['src', 'logo.png', 'main.ts']);
+  });
+});
+
+describe('file selection and the content pane', () => {
+  test('nothing selected shows the prompt', async () => {
+    const { wrapper } = await mountView();
+    expect(wrapper.find('[data-testid="file-prompt"]').text()).toBe('Select a file');
+  });
+
+  test('clicking a file loads it and renders highlighted, numbered lines', async () => {
+    const { wrapper } = await mountView();
+
+    await wrapper.findAll('.tree-row')[2].trigger('click'); // main.ts
+    await flushPromises();
+
+    expect(params(fake.callsTo('/file')[0]).get('path')).toBe('main.ts');
+    expect(wrapper.find('[data-testid="file-header"]').text()).toContain('main.ts');
+    expect(wrapper.findAll('.tree-row')[2].attributes('aria-selected')).toBe('true');
+
+    const content = wrapper.find('[data-testid="file-content"]');
+    const rows = content.findAll('.code-row');
+    expect(rows).toHaveLength(2); // trailing newline adds no phantom line
+    expect(rows.map((r) => r.find('.ln').text())).toEqual(['1', '2']);
+    // Syntax highlighting produced hljs token spans in the DOM.
+    expect(content.find('.hljs-keyword').exists()).toBe(true);
+    expect(content.text()).toContain('const x = 1;');
+  });
+
+  test('a binary file shows the flag-driven note', async () => {
+    onRequest = (call) =>
+      call.url.includes('/file')
+        ? { body: { ...TS_FILE, content: '', binary: true, size: 2048, totalLines: 0 } }
+        : undefined;
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[1].trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="file-binary"]').text()).toBe('Binary file — 2.0 KB');
+  });
+
+  test('a too-large file shows the flag-driven note', async () => {
+    onRequest = (call) =>
+      call.url.includes('/file')
+        ? { body: { ...TS_FILE, content: '', tooLarge: true, size: 5 * 1024 * 1024, totalLines: 0 } }
+        : undefined;
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[2].trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="file-too-large"]').text()).toBe(
+      'File too large to display (5.0 MB)'
+    );
+  });
+
+  test('a truncated file shows content plus the truncation note', async () => {
+    onRequest = (call) =>
+      call.url.includes('/file')
+        ? { body: { ...TS_FILE, truncated: true, totalLines: 9000 } }
+        : undefined;
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[2].trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="file-content"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="file-truncated"]').text()).toContain('of 9,000 lines');
+  });
+
+  test('an empty file shows the quiet note', async () => {
+    onRequest = (call) =>
+      call.url.includes('/file')
+        ? { body: { ...TS_FILE, content: '', size: 0, totalLines: 1 } }
+        : undefined;
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[2].trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="file-empty"]').text()).toBe('Empty file');
+  });
+
+  test('a failed file load shows the error in the pane', async () => {
+    onRequest = (call) =>
+      call.url.includes('/file') ? { status: 404, body: { error: 'ENOENT' } } : undefined;
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[2].trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="file-error"]').text()).toBe('ENOENT');
+  });
+});
+
+describe('keyboard navigation', () => {
+  test('ArrowDown moves the tab stop down; ArrowUp back; ends clamp', async () => {
+    const { wrapper } = await mountView();
+    const tabStops = () => wrapper.findAll('.tree-row').map((r) => r.attributes('tabindex'));
+    expect(tabStops()).toEqual(['0', '-1', '-1']);
+
+    await wrapper.findAll('.tree-row')[0].trigger('keydown', { key: 'ArrowDown' });
+    expect(tabStops()).toEqual(['-1', '0', '-1']);
+
+    await wrapper.findAll('.tree-row')[1].trigger('keydown', { key: 'ArrowUp' });
+    expect(tabStops()).toEqual(['0', '-1', '-1']);
+
+    // Clamped at the top.
+    await wrapper.findAll('.tree-row')[0].trigger('keydown', { key: 'ArrowUp' });
+    expect(tabStops()).toEqual(['0', '-1', '-1']);
+  });
+
+  test('ArrowRight expands a collapsed dir; ArrowLeft collapses it', async () => {
+    const { wrapper } = await mountView();
+
+    await wrapper.findAll('.tree-row')[0].trigger('keydown', { key: 'ArrowRight' });
+    await flushPromises();
+    expect(rowNames(wrapper)).toContain('util.ts');
+
+    await wrapper.findAll('.tree-row')[0].trigger('keydown', { key: 'ArrowLeft' });
+    expect(rowNames(wrapper)).not.toContain('util.ts');
+  });
+
+  test('ArrowLeft on a nested file moves the tab stop to its parent dir', async () => {
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[0].trigger('click'); // expand src
+    await flushPromises();
+
+    await wrapper.findAll('.tree-row')[1].trigger('keydown', { key: 'ArrowLeft' }); // util.ts
+    const stops = wrapper.findAll('.tree-row').map((r) => r.attributes('tabindex'));
+    expect(stops[0]).toBe('0'); // src owns the tab stop now
+  });
+
+  test('Enter on a file row loads it', async () => {
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[2].trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    expect(fake.callsTo('/file')).toHaveLength(1);
+    expect(wrapper.find('[data-testid="file-content"]').exists()).toBe(true);
+  });
+
+  test('Home and End jump the tab stop to the first and last row', async () => {
+    const { wrapper } = await mountView();
+    const tabStops = () => wrapper.findAll('.tree-row').map((r) => r.attributes('tabindex'));
+
+    await wrapper.findAll('.tree-row')[0].trigger('keydown', { key: 'End' });
+    expect(tabStops()).toEqual(['-1', '-1', '0']);
+
+    await wrapper.findAll('.tree-row')[2].trigger('keydown', { key: 'Home' });
+    expect(tabStops()).toEqual(['0', '-1', '-1']);
+  });
+
+  test('ArrowRight on an expanded dir with no children does NOT jump to a sibling', async () => {
+    onRequest = (call) => {
+      if (!call.url.includes('/tree')) return undefined;
+      const dir = params(call).get('dir');
+      if (dir === '') {
+        return {
+          body: [
+            { name: 'empty', path: 'empty', type: 'dir' },
+            { name: 'main.ts', path: 'main.ts', type: 'file' },
+          ] satisfies DirEntry[],
+        };
+      }
+      if (dir === 'empty') return { body: [] };
+      return undefined;
+    };
+    const { wrapper } = await mountView();
+    const tabStops = () => wrapper.findAll('.tree-row').map((r) => r.attributes('tabindex'));
+
+    // First Right expands (fetches the empty listing).
+    await wrapper.findAll('.tree-row')[0].trigger('keydown', { key: 'ArrowRight' });
+    await flushPromises();
+    expect(wrapper.findAll('.tree-row')[0].attributes('aria-expanded')).toBe('true');
+    expect(wrapper.findAll('.tree-row')).toHaveLength(2); // no children appeared
+
+    // Second Right: per the ARIA tree pattern, stay put — no sibling jump.
+    await wrapper.findAll('.tree-row')[0].trigger('keydown', { key: 'ArrowRight' });
+    expect(tabStops()).toEqual(['0', '-1']);
+  });
+
+  test('ArrowRight on an expanded dir WITH children steps into the first child', async () => {
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[0].trigger('keydown', { key: 'ArrowRight' }); // expand src
+    await flushPromises();
+
+    await wrapper.findAll('.tree-row')[0].trigger('keydown', { key: 'ArrowRight' });
+    const stops = wrapper.findAll('.tree-row').map((r) => r.attributes('tabindex'));
+    expect(stops).toEqual(['-1', '0', '-1', '-1']); // src/util.ts owns the tab stop
+  });
+
+  test('focus recovers to the selected row when the focused row vanishes', async () => {
+    const { wrapper } = await mountView();
+
+    await wrapper.findAll('.tree-row')[2].trigger('click'); // select main.ts
+    await flushPromises();
+    // Move focus up to logo.png (a row with no changes).
+    await wrapper.findAll('.tree-row')[2].trigger('keydown', { key: 'ArrowUp' });
+    await wrapper.vm.$nextTick();
+    expect(document.activeElement).toBe(wrapper.findAll('.tree-row')[1].element);
+
+    // Changed-only filter drops logo.png — the focused row vanishes.
+    await wrapper.find('[data-testid="toggle-changed"]').trigger('click');
+    await wrapper.vm.$nextTick();
+    await wrapper.vm.$nextTick();
+
+    expect(rowNames(wrapper)).toEqual(['src', 'main.ts']);
+    // Focus moved to the selected row instead of falling to <body>.
+    const selected = wrapper.findAll('.tree-row')[1];
+    expect(selected.text()).toContain('main.ts');
+    expect(document.activeElement).toBe(selected.element);
+  });
+});
+
+describe('toolbar toggles', () => {
+  test('the dotfiles toggle refetches with hidden=true and reads pressed', async () => {
+    const { wrapper } = await mountView();
+    const toggle = wrapper.find('[data-testid="toggle-hidden"]');
+    expect(toggle.attributes('aria-pressed')).toBe('false');
+
+    await toggle.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="toggle-hidden"]').attributes('aria-pressed')).toBe('true');
+    const last = fake.callsTo('/tree').at(-1)!;
+    expect(params(last).get('hidden')).toBe('true');
+    expect(params(last).get('ignored')).toBe('false');
+  });
+
+  test('the ignored toggle refetches with ignored=true', async () => {
+    const { wrapper } = await mountView();
+    await wrapper.find('[data-testid="toggle-ignored"]').trigger('click');
+    await flushPromises();
+    expect(params(fake.callsTo('/tree').at(-1)!).get('ignored')).toBe('true');
+  });
+
+  test('the changed toggle filters rows client-side without a fetch', async () => {
+    const { wrapper } = await mountView();
+    const calls = fake.callsTo('/tree').length;
+
+    await wrapper.find('[data-testid="toggle-changed"]').trigger('click');
+
+    expect(rowNames(wrapper)).toEqual(['src', 'main.ts']); // hasChanges + modified
+    expect(fake.callsTo('/tree')).toHaveLength(calls);
+    // And a truthful empty-state message when nothing has changes:
+    // (covered by the store test; here just flip back)
+    await wrapper.find('[data-testid="toggle-changed"]').trigger('click');
+    expect(rowNames(wrapper)).toHaveLength(3);
+  });
+});

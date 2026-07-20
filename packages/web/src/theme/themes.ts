@@ -70,6 +70,31 @@ export interface ChromeColors {
   flash: string;
 }
 
+/**
+ * Syntax-highlighting tokens (web-only, for the Explorer's code viewer).
+ * A small set: highlight.js's many token classes collapse onto these
+ * eight vars (see FileContentPane.vue for the class → var mapping), so
+ * every theme states its whole code palette in eight values.
+ */
+export interface SyntaxColors {
+  /** Keywords, storage words (`const`, `fn`, `class`). */
+  keyword: string;
+  /** String and regexp literals. */
+  string: string;
+  /** Comments and quotes. */
+  comment: string;
+  /** Numeric literals and symbols. */
+  number: string;
+  /** Built-ins, types, language literals (`true`, `null`). */
+  literal: string;
+  /** Function/class/section names. */
+  title: string;
+  /** Attributes, properties, variables, CSS selectors. */
+  attr: string;
+  /** Meta/preprocessor, punctuation-ish chrome (tags, bullets, links). */
+  meta: string;
+}
+
 export interface Theme {
   name: ThemeName;
   displayName: string;
@@ -77,6 +102,7 @@ export interface Theme {
   scheme: 'dark' | 'light';
   colors: DiffColors;
   chrome: ChromeColors;
+  syntax: SyntaxColors;
 }
 
 // Dark theme - sampled from Claude Code's dark mode
@@ -116,6 +142,16 @@ const darkTheme: Theme = {
     statusCopied: '#43b3bc',
     uncommitted: '#c678dd',
     flash: '#e5c94b',
+  },
+  syntax: {
+    keyword: '#c678dd',
+    string: '#98c379',
+    comment: '#6e7a72',
+    number: '#d19a66',
+    literal: '#56b6c2',
+    title: '#61afef',
+    attr: '#e5c07b',
+    meta: '#859089',
   },
 };
 
@@ -159,6 +195,16 @@ const lightTheme: Theme = {
     uncommitted: '#9c36b5',
     flash: '#eac54f',
   },
+  syntax: {
+    keyword: '#a626a4',
+    string: '#2f7d3b',
+    comment: '#6a737d',
+    number: '#b25e09',
+    literal: '#0184bc',
+    title: '#4078f2',
+    attr: '#986801',
+    meta: '#5d675f',
+  },
 };
 
 // Dark colorblind theme - matches Claude Code's dark-daltonized colors
@@ -198,6 +244,17 @@ const darkColorblindTheme: Theme = {
     statusCopied: '#45b8c9',
     uncommitted: '#c678dd',
     flash: '#e5c94b',
+  },
+  // No red/green pairs: strings are cyan, not green.
+  syntax: {
+    keyword: '#c678dd',
+    string: '#56b6c2',
+    comment: '#7d8894',
+    number: '#d19a66',
+    literal: '#2596d1',
+    title: '#6f9fdd',
+    attr: '#e5c07b',
+    meta: '#848f9a',
   },
 };
 
@@ -240,6 +297,17 @@ const lightColorblindTheme: Theme = {
     uncommitted: '#9c36b5',
     flash: '#eac54f',
   },
+  // No red/green pairs: strings are teal, not green.
+  syntax: {
+    keyword: '#9c36b5',
+    string: '#0c7f8c',
+    comment: '#6a737d',
+    number: '#b25e09',
+    literal: '#0184bc',
+    title: '#3b6fd4',
+    attr: '#986801',
+    meta: '#5c6670',
+  },
 };
 
 // Dark ANSI theme - the terminal's native 16 ANSI colors (xterm values)
@@ -279,6 +347,17 @@ const darkAnsiTheme: Theme = {
     statusCopied: '#00cdcd',
     uncommitted: '#cd00cd',
     flash: '#ffff00',
+  },
+  // Terminal identity: xterm's 16-color values only.
+  syntax: {
+    keyword: '#cd00cd',
+    string: '#00cd00',
+    comment: '#7f7f7f',
+    number: '#cdcd00',
+    literal: '#00cdcd',
+    title: '#5c5cff',
+    attr: '#cdcd00',
+    meta: '#7f7f7f',
   },
 };
 
@@ -320,6 +399,17 @@ const lightAnsiTheme: Theme = {
     statusCopied: '#00a3a3',
     uncommitted: '#cd00cd',
     flash: '#ffff00',
+  },
+  // Terminal identity, darkened where xterm's values are unreadable on white.
+  syntax: {
+    keyword: '#cd00cd',
+    string: '#00a000',
+    comment: '#7f7f7f',
+    number: '#a0a000',
+    literal: '#00a3a3',
+    title: '#0000ee',
+    attr: '#a0a000',
+    meta: '#7f7f7f',
   },
 };
 
