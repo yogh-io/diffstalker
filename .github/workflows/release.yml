@@ -118,7 +118,10 @@ jobs:
             # Match "${name}-<version>.tgz" only. The version starts with a digit,
             # so this never matches a longer sibling name (e.g. a future
             # "diffstalker-web-*.tgz" won't be caught by the "diffstalker" glob).
-            tgz=$(ls dist-tarballs/${name}-[0-9]*.tgz)
+            # Absolute path: `npm publish <tarball>` treats a bare "a/b" string
+            # as a github owner/repo shorthand, so a relative "dist-tarballs/x.tgz"
+            # gets cloned instead of published. An absolute path is unambiguous.
+            tgz=$(ls "$GITHUB_WORKSPACE"/dist-tarballs/${name}-[0-9]*.tgz)
             version=$(tar -xzOf "$tgz" package/package.json \
               | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
             existing=$(npm view "${name}@${version}" version 2>/dev/null || true)
