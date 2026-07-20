@@ -267,7 +267,8 @@ describe('view routing', () => {
 
   test('the rail switches the view, renders the placeholder, and persists', async () => {
     const wrapper = await mountWithRepos([REPO_ONE]);
-    expect(wrapper.text()).toContain('Working tree');
+    // Changes view: no repo snapshot yet, so the files column is loading.
+    expect(wrapper.text()).toContain('Loading status');
 
     await (await railButton(wrapper, 'History')).trigger('click');
     expect(wrapper.text()).toContain('Load history');
@@ -324,11 +325,11 @@ describe('live readouts', () => {
     repoSource('r1')!.emit('snapshot', SHARED_STATE);
     await flushPromises();
 
-    // Changes view: plain rows path+status.
+    // Changes view: grouped rows (Modified / Staged) with paths.
     const fileList = wrapper.find('[data-testid="file-list"]');
     expect(fileList.text()).toContain('src/a.ts');
     expect(fileList.text()).toContain('src/b.ts');
-    expect(fileList.text()).toContain('staged');
+    expect(fileList.text()).toContain('Staged');
 
     // Header: branch → tracking, ahead/behind in diff colors.
     const branch = wrapper.find('[data-testid="branch-info"]');

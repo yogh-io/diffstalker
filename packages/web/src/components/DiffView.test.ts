@@ -1,0 +1,307 @@
+/**
+ * DiffView tests: line-type rendering (markers, dual line-number
+ * gutters, diff bg classes), hunk headers with relative edit times and
+ * the fresh-hunk flash, word-level highlighting for similar del/add
+ * pairs (positional pairing within a run, none for dissimilar lines),
+ * empty/binary states, and a large diff rendering without error.
+ */
+
+import { describe, test, expect, vi, afterEach } from 'vitest';
+import { mount } from '@vue/test-utils';
+import DiffView from './DiffView.vue';
+import type { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
+
+function header(path: string): DiffLine {
+  return { type: 'header', content: `diff --git a/${path} b/${path}` };
+}
+
+function hunk(content: string, editedAt?: number): DiffLine {
+  return { type: 'hunk', content, ...(editedAt !== undefined && { editedAt }) };
+}
+
+function ctx(text: string, oldNum: number, newNum: number): DiffLine {
+  return { type: 'context', content: ` ${text}`, oldLineNum: oldNum, newLineNum: newNum };
+}
+
+function add(text: string, newNum: number): DiffLine {
+  return { type: 'addition', content: `+${text}`, newLineNum: newNum };
+}
+
+function del(text: string, oldNum: number): DiffLine {
+  return { type: 'deletion', content: `-${text}`, oldLineNum: oldNum };
+}
+
+function makeDiff(lines: DiffLine[]): DiffResult {
+  return { raw: lines.map((l) => l.content).join('\n') + '\n', lines };
+}
+
+function mountDiff(diff: DiffResult | null) {
+  return mount(DiffView, { props: { diff } });
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('line rendering', () => {
+  const diff = makeDiff([
+    header('src/foo.ts'),
+    hunk('@@ -10,3 +10,3 @@ function foo()'),
+    ctx('unchanged', 10, 10),
+    del('old line', 11),
+    add('new line', 11),
+  ]);
+
+  test('each line type renders with the right marker and line numbers', () => {
+    const wrapper = mountDiff(diff);
+
+    const context = wrapper.find('.row.context');
+    expect(context.find('.ln.old').text()).toBe('10');
+    expect(context.find('.ln.new').text()).toBe('10');
+    expect(context.find('.marker').text()).toBe('');
+    expect(context.find('.content').text()).toBe('unchanged');
+
+    const deletion = wrapper.find('.row.del');
+    expect(deletion.find('.ln.old').text()).toBe('11');
+    expect(deletion.find('.ln.new').text()).toBe('');
+    expect(deletion.find('.marker').text()).toBe('-');
+    expect(deletion.find('.content').text()).toBe('old line');
+
+    const addition = wrapper.find('.row.add');
+    expect(addition.find('.ln.old').text()).toBe('');
+    expect(addition.find('.ln.new').text()).toBe('11');
+    expect(addition.find('.marker').text()).toBe('+');
+    expect(addition.find('.content').text()).toBe('new line');
+  });
+
+  test('addition and deletion rows carry the diff bg classes', () => {
+    const wrapper = mountDiff(diff);
+    expect(wrapper.find('.row.add').exists()).toBe(true);
+    expect(wrapper.find('.row.del').exists()).toBe(true);
+    // Context rows carry neither.
+    expect(wrapper.find('.row.context').classes()).not.toContain('add');
+    expect(wrapper.find('.row.context').classes()).not.toContain('del');
+  });
+
+  test('the file header shows the path from the diff --git line', () => {
+    const wrapper = mountDiff(diff);
+    expect(wrapper.find('.file-header').text()).toBe('src/foo.ts');
+  });
+
+  test('the line-number gutter width follows the largest line number', () => {
+    const wide = makeDiff([
+      header('a.ts'),
+      hunk('@@ -99998,2 +99998,2 @@'),
+      ctx('x', 99998, 99998),
+      ctx('y', 99999, 99999),
+    ]);
+    const wrapper = mountDiff(wide);
+    expect(wrapper.find('[data-testid="diff-view"]').attributes('style')).toContain(
+      '--ln-w: 5ch'
+    );
+  });
+});
+
+describe('hunk headers', () => {
+  test('shows readable ranges and the relative edit time from editedAt', () => {
+    const editedAt = Date.now() - 5 * 60_000;
+    const wrapper = mountDiff(
+      makeDiff([
+        header('src/foo.ts'),
+        hunk('@@ -10,3 +12,4 @@ function foo()', editedAt),
+        ctx('x', 10, 12),
+      ])
+    );
+    const headerEl = wrapper.find('[data-testid="hunk-header"]');
+    expect(headerEl.text()).toContain('Lines 10-12 → 12-15');
+    expect(headerEl.text()).toContain('function foo()');
+    expect(wrapper.find('[data-testid="hunk-time"]').text()).toBe('5 minutes ago');
+  });
+
+  test('a hunk without editedAt shows no time', () => {
+    const wrapper = mountDiff(makeDiff([header('a.ts'), hunk('@@ -1 +1 @@'), ctx('x', 1, 1)]));
+    expect(wrapper.find('[data-testid="hunk-time"]').exists()).toBe(false);
+  });
+
+  test('a freshly-edited hunk gets the flash class; an old one does not', () => {
+    const wrapper = mountDiff(
+      makeDiff([
+        header('a.ts'),
+        hunk('@@ -1 +1 @@', Date.now() - 100),
+        ctx('x', 1, 1),
+        hunk('@@ -5 +5 @@', Date.now() - 60_000),
+        ctx('y', 5, 5),
+      ])
+    );
+    const headers = wrapper.findAll('[data-testid="hunk-header"]');
+    expect(headers[0].classes()).toContain('flash');
+    expect(headers[1].classes()).not.toContain('flash');
+  });
+
+  test('sub-minute times tick: the 1s interval re-renders the relative time', async () => {
+    vi.useFakeTimers();
+    const wrapper = mountDiff(
+      makeDiff([header('a.ts'), hunk('@@ -1 +1 @@', Date.now() - 55_000), ctx('x', 1, 1)])
+    );
+    expect(wrapper.find('[data-testid="hunk-time"]').text()).toBe('55 seconds ago');
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(wrapper.find('[data-testid="hunk-time"]').text()).toBe('1 minute ago');
+    // The stamp aged past the sub-minute window — the ticker stopped itself.
+    expect(vi.getTimerCount()).toBe(0);
+    wrapper.unmount(); // advancing further must not throw
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
+
+  test('unmount clears the ticker: zero pending timers remain', () => {
+    vi.useFakeTimers();
+    const wrapper = mountDiff(
+      makeDiff([header('a.ts'), hunk('@@ -1 +1 @@', Date.now() - 5_000), ctx('x', 1, 1)])
+    );
+    expect(vi.getTimerCount()).toBe(1); // fresh stamp → ticker running
+    wrapper.unmount();
+    expect(vi.getTimerCount()).toBe(0); // the real leak proof
+  });
+
+  test('no ticker runs when the newest editedAt is older than a minute', () => {
+    vi.useFakeTimers();
+    const wrapper = mountDiff(
+      makeDiff([header('a.ts'), hunk('@@ -1 +1 @@', Date.now() - 5 * 60_000), ctx('x', 1, 1)])
+    );
+    expect(wrapper.find('[data-testid="hunk-time"]').text()).toBe('5 minutes ago');
+    expect(vi.getTimerCount()).toBe(0);
+    wrapper.unmount();
+  });
+});
+
+describe('word-level highlighting', () => {
+  test('a similar del/add pair gets changed segments wrapped in .word-hl', () => {
+    const wrapper = mountDiff(
+      makeDiff([
+        header('a.ts'),
+        hunk('@@ -1 +1 @@'),
+        del('const value = 1;', 1),
+        add('const value = 2;', 1),
+      ])
+    );
+    const delHl = wrapper.find('.row.del').findAll('.word-hl');
+    const addHl = wrapper.find('.row.add').findAll('.word-hl');
+    expect(delHl.map((s) => s.text()).join('')).toBe('1');
+    expect(addHl.map((s) => s.text()).join('')).toBe('2');
+    // Unchanged segments are NOT highlighted.
+    expect(wrapper.find('.row.del .content').text()).toBe('const value = 1;');
+  });
+
+  test('a dissimilar del/add pair gets NO word highlighting', () => {
+    const wrapper = mountDiff(
+      makeDiff([
+        header('a.ts'),
+        hunk('@@ -1 +1 @@'),
+        del('aaaa', 1),
+        add('a completely different line entirely', 1),
+      ])
+    );
+    expect(wrapper.findAll('.word-hl')).toHaveLength(0);
+  });
+
+  test('pairs by position within a consecutive del/add run (CLI semantics)', () => {
+    const wrapper = mountDiff(
+      makeDiff([
+        header('a.ts'),
+        hunk('@@ -1,2 +1,2 @@'),
+        del('alpha = 111;', 1),
+        del('beta = 333;', 2),
+        add('alpha = 222;', 1),
+        add('beta = 444;', 2),
+      ])
+    );
+    const delRows = wrapper.findAll('.row.del');
+    const addRows = wrapper.findAll('.row.add');
+    // del[0] pairs with add[0], del[1] with add[1] — every row highlights
+    // exactly its own changed token.
+    expect(delRows[0].findAll('.word-hl').map((s) => s.text()).join('')).toBe('111');
+    expect(delRows[1].findAll('.word-hl').map((s) => s.text()).join('')).toBe('333');
+    expect(addRows[0].findAll('.word-hl').map((s) => s.text()).join('')).toBe('222');
+    expect(addRows[1].findAll('.word-hl').map((s) => s.text()).join('')).toBe('444');
+  });
+
+  test('an unequal run pairs by position; the surplus addition gets NO highlight', () => {
+    const wrapper = mountDiff(
+      makeDiff([
+        header('a.ts'),
+        hunk('@@ -1,2 +1,3 @@'),
+        del('const alpha = 1;', 1),
+        del('const beta = 2;', 2),
+        add('const alpha = 9;', 1),
+        add('const beta = 8;', 2),
+        add('const gamma = 7;', 3),
+      ])
+    );
+    const delRows = wrapper.findAll('.row.del');
+    const addRows = wrapper.findAll('.row.add');
+    // The first two del/add pairs highlight their changed token…
+    expect(delRows[0].findAll('.word-hl').map((s) => s.text()).join('')).toBe('1');
+    expect(delRows[1].findAll('.word-hl').map((s) => s.text()).join('')).toBe('2');
+    expect(addRows[0].findAll('.word-hl').map((s) => s.text()).join('')).toBe('9');
+    expect(addRows[1].findAll('.word-hl').map((s) => s.text()).join('')).toBe('8');
+    // …the unpaired third addition carries no word highlighting at all.
+    expect(addRows[2].findAll('.word-hl')).toHaveLength(0);
+    expect(addRows[2].find('.content').text()).toBe('const gamma = 7;');
+  });
+
+  test('does NOT pair across context lines (separate runs)', () => {
+    const wrapper = mountDiff(
+      makeDiff([
+        header('a.ts'),
+        hunk('@@ -1,3 +1,3 @@'),
+        del('const value = 1;', 1),
+        ctx('between', 2, 2),
+        add('const value = 2;', 2),
+      ])
+    );
+    expect(wrapper.findAll('.word-hl')).toHaveLength(0);
+  });
+});
+
+describe('empty and edge states', () => {
+  test('a null diff shows the quiet empty state', () => {
+    const wrapper = mountDiff(null);
+    expect(wrapper.find('[data-testid="diff-empty"]').text()).toContain('No changes to show');
+  });
+
+  test('an empty diff shows the quiet empty state', () => {
+    const wrapper = mountDiff({ raw: '', lines: [] });
+    expect(wrapper.find('[data-testid="diff-empty"]').text()).toContain('No changes to show');
+  });
+
+  test('a binary diff shows a clear note', () => {
+    const wrapper = mountDiff(
+      makeDiff([
+        header('img.png'),
+        { type: 'header', content: 'Binary files a/img.png and b/img.png differ' },
+      ])
+    );
+    expect(wrapper.find('[data-testid="diff-empty"]').text()).toContain('Binary file');
+  });
+
+  test('a header-only diff (new file mode, no content) renders the notes branch', () => {
+    const wrapper = mountDiff(
+      makeDiff([header('new.ts'), { type: 'header', content: 'new file mode 100644' }])
+    );
+    const empty = wrapper.find('[data-testid="diff-empty"]');
+    expect(empty.exists()).toBe(true);
+    expect(empty.find('.empty-note').text()).toBe('new file mode 100644');
+    expect(empty.text()).toContain('No text changes to show');
+    // No diff rows and no crash on a body-less diff.
+    expect(wrapper.findAll('.row')).toHaveLength(0);
+  });
+
+  test('a large diff renders every row without error', () => {
+    const lines: DiffLine[] = [header('big.ts'), hunk('@@ -1,3000 +1,3000 @@')];
+    for (let i = 1; i <= 3000; i++) {
+      lines.push(ctx(`line ${i}`, i, i));
+    }
+    const wrapper = mountDiff(makeDiff(lines));
+    expect(wrapper.findAll('.row')).toHaveLength(3000);
+  });
+});

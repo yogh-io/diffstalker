@@ -22,12 +22,21 @@ export interface Prefs {
   theme: ThemeName | null;
   activeView: ViewName;
   recentRepos: string[];
+  /**
+   * Changes view files/diff split as a fraction of the container width;
+   * null = the view's default. Clamped to a sane band on read.
+   */
+  changesSplit: number | null;
 }
 
 export const MAX_RECENT_REPOS = 8;
 
+/** The band a stored changesSplit must fall in to be believed. */
+export const CHANGES_SPLIT_MIN = 0.15;
+export const CHANGES_SPLIT_MAX = 0.65;
+
 function defaults(): Prefs {
-  return { theme: null, activeView: 'changes', recentRepos: [] };
+  return { theme: null, activeView: 'changes', recentRepos: [], changesSplit: null };
 }
 
 function sanitize(raw: unknown): Prefs {
@@ -40,6 +49,14 @@ function sanitize(raw: unknown): Prefs {
     prefs.recentRepos = record.recentRepos
       .filter((entry): entry is string => typeof entry === 'string')
       .slice(0, MAX_RECENT_REPOS);
+  }
+  if (
+    typeof record.changesSplit === 'number' &&
+    Number.isFinite(record.changesSplit) &&
+    record.changesSplit >= CHANGES_SPLIT_MIN &&
+    record.changesSplit <= CHANGES_SPLIT_MAX
+  ) {
+    prefs.changesSplit = record.changesSplit;
   }
   return prefs;
 }

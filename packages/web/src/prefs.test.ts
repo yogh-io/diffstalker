@@ -13,17 +13,32 @@ afterEach(() => {
 
 describe('loadPrefs', () => {
   test('defaults with empty storage', () => {
-    expect(loadPrefs()).toEqual({ theme: null, activeView: 'changes', recentRepos: [] });
+    expect(loadPrefs()).toEqual({
+      theme: null,
+      activeView: 'changes',
+      recentRepos: [],
+      changesSplit: null,
+    });
   });
 
   test('defaults on corrupt JSON', () => {
     localStorage.setItem(PREFS_KEY, '{not json');
-    expect(loadPrefs()).toEqual({ theme: null, activeView: 'changes', recentRepos: [] });
+    expect(loadPrefs()).toEqual({
+      theme: null,
+      activeView: 'changes',
+      recentRepos: [],
+      changesSplit: null,
+    });
   });
 
   test('defaults on a non-object payload', () => {
     localStorage.setItem(PREFS_KEY, '"dark"');
-    expect(loadPrefs()).toEqual({ theme: null, activeView: 'changes', recentRepos: [] });
+    expect(loadPrefs()).toEqual({
+      theme: null,
+      activeView: 'changes',
+      recentRepos: [],
+      changesSplit: null,
+    });
   });
 
   test('drops invalid field values, keeps valid ones', () => {
@@ -39,6 +54,7 @@ describe('loadPrefs', () => {
       theme: null,
       activeView: 'history',
       recentRepos: ['/a', '/b'],
+      changesSplit: null,
     });
   });
 
@@ -46,6 +62,17 @@ describe('loadPrefs', () => {
     const paths = Array.from({ length: 20 }, (_, i) => `/repo-${i}`);
     localStorage.setItem(PREFS_KEY, JSON.stringify({ recentRepos: paths }));
     expect(loadPrefs().recentRepos).toHaveLength(MAX_RECENT_REPOS);
+  });
+
+  test('changesSplit: keeps a sane fraction, drops out-of-band or non-numeric values', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ changesSplit: 0.4 }));
+    expect(loadPrefs().changesSplit).toBe(0.4);
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ changesSplit: 0.95 }));
+    expect(loadPrefs().changesSplit).toBeNull();
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ changesSplit: 'wide' }));
+    expect(loadPrefs().changesSplit).toBeNull();
   });
 
   test('degrades to defaults when localStorage throws (private mode / quota)', () => {
@@ -58,7 +85,12 @@ describe('loadPrefs', () => {
       },
     });
 
-    expect(loadPrefs()).toEqual({ theme: null, activeView: 'changes', recentRepos: [] });
+    expect(loadPrefs()).toEqual({
+      theme: null,
+      activeView: 'changes',
+      recentRepos: [],
+      changesSplit: null,
+    });
     // Writes are swallowed too — prefs just don't persist.
     expect(() => savePrefs({ activeView: 'history' })).not.toThrow();
   });
@@ -72,6 +104,7 @@ describe('savePrefs', () => {
       theme: 'light-ansi',
       activeView: 'explorer',
       recentRepos: [],
+      changesSplit: null,
     });
   });
 
