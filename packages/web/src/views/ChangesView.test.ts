@@ -5,8 +5,14 @@
  * navigation, the clean-tree and no-selection states, the diff column
  * reflecting the store selection, and the persisted resizer.
  *
+ * Slice 9 adds: per-row stage/unstage/discard actions (discard behind
+ * a confirm with tracked-vs-untracked copy), stage all / unstage all,
+ * per-op in-flight disabling, the hunk-staging direction handed to
+ * DiffView, and the commit column.
+ *
  * The repo store runs for real; state is set directly on it (selectFile
- * with repoId === null never fetches), so no fakes are needed.
+ * with repoId === null never fetches) and mutations are spied, so no
+ * fakes are needed.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -330,5 +336,199 @@ describe('resizable split', () => {
     expect(wrapper.find('.changes').attributes('style')).toContain('--files-col: 15.00%');
     expect(resizer.attributes('aria-valuenow')).toBe('15');
     expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).changesSplit).toBeCloseTo(0.15);
+  });
+});
+
+describe('file staging actions', () => {
+  test('an unstaged row offers stage + discard; a staged row offers unstage only', () => {
+    const { wrapper } = mountView();
+
+    const unstagedRow = wrapper.find('[data-testid="section-modified"] .file-row');
+    expect(unstagedRow.find('[data-testid="stage-file"]').exists()).toBe(true);
+    expect(unstagedRow.find('[data-testid="discard-file"]').exists()).toBe(true);
+    expect(unstagedRow.find('[data-testid="unstage-file"]').exists()).toBe(false);
+
+    const stagedRow = wrapper.find('[data-testid="section-staged"] .file-row');
+    expect(stagedRow.find('[data-testid="unstage-file"]').exists()).toBe(true);
+    expect(stagedRow.find('[data-testid="stage-file"]').exists()).toBe(false);
+    expect(stagedRow.find('[data-testid="discard-file"]').exists()).toBe(false);
+  });
+
+  test('stage calls repo.stage with the EXACT FileEntry and does not select the row', async () => {
+    const { wrapper, repo } = mountView();
+    const stageSpy = vi.spyOn(repo, 'stage').mockResolvedValue();
+    const selectSpy = vi.spyOn(repo, 'selectFile');
+
+    await wrapper
+      .find('[data-testid="section-modified"] [data-testid="stage-file"]')
+      .trigger('click');
+
+    expect(stageSpy).toHaveBeenCalledTimes(1);
+    expect(stageSpy.mock.calls[0][0]).toBe(repo.shared.status!.files[0]);
+    // @click.stop: the action never doubles as a row select.
+    expect(selectSpy).not.toHaveBeenCalled();
+  });
+
+  test('unstage on a staged row calls repo.unstage with the staged entry', async () => {
+    const { wrapper, repo } = mountView();
+    const unstageSpy = vi.spyOn(repo, 'unstage').mockResolvedValue();
+
+    await wrapper
+      .find('[data-testid="section-staged"] [data-testid="unstage-file"]')
+      .trigger('click');
+
+    expect(unstageSpy).toHaveBeenCalledTimes(1);
+    expect(unstageSpy.mock.calls[0][0]).toBe(repo.shared.status!.files[3]);
+  });
+
+  test('stage all on Modified/Untracked headers, unstage all on Staged', async () => {
+    const { wrapper, repo } = mountView();
+    const stageAllSpy = vi.spyOn(repo, 'stageAll').mockResolvedValue();
+    const unstageAllSpy = vi.spyOn(repo, 'unstageAll').mockResolvedValue();
+
+    const stageAllButtons = wrapper.findAll('[data-testid="stage-all"]');
+    expect(stageAllButtons).toHaveLength(2); // Modified + Untracked
+    await stageAllButtons[0].trigger('click');
+    expect(stageAllSpy).toHaveBeenCalledTimes(1);
+
+    await wrapper.find('[data-testid="unstage-all"]').trigger('click');
+    expect(unstageAllSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test('a button disables while ITS mutation is in flight, re-enables after', async () => {
+    const { wrapper, repo } = mountView();
+    let resolveOp!: () => void;
+    vi.spyOn(repo, 'stage').mockImplementation(
+      () => new Promise<void>((resolve) => (resolveOp = resolve))
+    );
+
+    const rows = wrapper.find('[data-testid="section-modified"]').findAll('.file-row');
+    await rows[0].find('[data-testid="stage-file"]').trigger('click');
+
+    expect(rows[0].find('[data-testid="stage-file"]').attributes('disabled')).toBeDefined();
+    // Sibling rows and other ops stay enabled — per-op flags, not a global lock.
+    expect(rows[1].find('[data-testid="stage-file"]').attributes('disabled')).toBeUndefined();
+    expect(rows[0].find('[data-testid="discard-file"]').attributes('disabled')).toBeUndefined();
+
+    resolveOp();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await wrapper.vm.$nextTick();
+    expect(rows[0].find('[data-testid="stage-file"]').attributes('disabled')).toBeUndefined();
+  });
+});
+
+describe('discard confirm', () => {
+  test('discard opens the confirm with tracked copy; confirm calls repo.discard', async () => {
+    const { wrapper, repo } = mountView();
+    const discardSpy = vi.spyOn(repo, 'discard').mockResolvedValue();
+
+    await wrapper
+      .find('[data-testid="section-modified"] [data-testid="discard-file"]')
+      .trigger('click');
+
+    const dialog = wrapper.find('[data-testid="discard-confirm"]');
+    expect(dialog.exists()).toBe(true);
+    expect(discardSpy).not.toHaveBeenCalled(); // nothing happens before confirm
+    expect(dialog.find('[data-testid="discard-question"]').text()).toBe(
+      'Discard changes to src/app/main.ts?'
+    );
+    expect(dialog.find('[data-testid="discard-go"]').text()).toBe('discard');
+
+    await dialog.find('[data-testid="discard-go"]').trigger('click');
+    expect(discardSpy).toHaveBeenCalledTimes(1);
+    expect(discardSpy.mock.calls[0][0]).toBe(repo.shared.status!.files[0]);
+    expect(wrapper.find('[data-testid="discard-confirm"]').exists()).toBe(false);
+  });
+
+  test('an untracked file gets delete copy', async () => {
+    const { wrapper } = mountView();
+
+    await wrapper
+      .find('[data-testid="section-untracked"] [data-testid="discard-file"]')
+      .trigger('click');
+
+    const dialog = wrapper.find('[data-testid="discard-confirm"]');
+    expect(dialog.find('[data-testid="discard-question"]').text()).toBe('Delete notes.txt?');
+    expect(dialog.find('[data-testid="discard-go"]').text()).toBe('delete');
+    // The row button says delete too, not discard.
+    expect(
+      wrapper.find('[data-testid="section-untracked"] [data-testid="discard-file"]').text()
+    ).toBe('delete');
+  });
+
+  test('cancel closes the dialog without discarding', async () => {
+    const { wrapper, repo } = mountView();
+    const discardSpy = vi.spyOn(repo, 'discard').mockResolvedValue();
+
+    await wrapper
+      .find('[data-testid="section-modified"] [data-testid="discard-file"]')
+      .trigger('click');
+    await wrapper.find('[data-testid="discard-cancel"]').trigger('click');
+
+    expect(wrapper.find('[data-testid="discard-confirm"]').exists()).toBe(false);
+    expect(discardSpy).not.toHaveBeenCalled();
+  });
+
+  test('y confirms, Escape cancels (CLI parity)', async () => {
+    const { wrapper, repo } = mountView();
+    const discardSpy = vi.spyOn(repo, 'discard').mockResolvedValue();
+
+    await wrapper
+      .find('[data-testid="section-modified"] [data-testid="discard-file"]')
+      .trigger('click');
+    await wrapper.find('[data-testid="discard-confirm"]').trigger('keydown', { key: 'Escape' });
+    expect(wrapper.find('[data-testid="discard-confirm"]').exists()).toBe(false);
+    expect(discardSpy).not.toHaveBeenCalled();
+
+    await wrapper
+      .find('[data-testid="section-modified"] [data-testid="discard-file"]')
+      .trigger('click');
+    await wrapper.find('[data-testid="discard-confirm"]').trigger('keydown', { key: 'y' });
+    expect(discardSpy).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('[data-testid="discard-confirm"]').exists()).toBe(false);
+  });
+});
+
+describe('hunk staging direction', () => {
+  test('an unstaged-side selection renders stage-hunk buttons', async () => {
+    const { wrapper, repo } = mountView();
+    repo.selection = { file: repo.shared.status!.files[0], diff: SAMPLE_DIFF, combined: null };
+    await wrapper.vm.$nextTick();
+
+    const button = wrapper.find('[data-testid="hunk-action"]');
+    expect(button.exists()).toBe(true);
+    expect(button.text()).toBe('stage hunk');
+  });
+
+  test('a staged-side selection renders unstage-hunk buttons', async () => {
+    const { wrapper, repo } = mountView();
+    repo.selection = { file: repo.shared.status!.files[3], diff: SAMPLE_DIFF, combined: null };
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="hunk-action"]').text()).toBe('unstage hunk');
+  });
+
+  test('an untracked selection gets NO hunk buttons (whole-file staging only)', async () => {
+    const { wrapper, repo } = mountView();
+    repo.selection = { file: repo.shared.status!.files[2], diff: SAMPLE_DIFF, combined: null };
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="hunk-action"]').exists()).toBe(false);
+  });
+});
+
+describe('commit column', () => {
+  test('the commit panel renders as the third column', () => {
+    const { wrapper } = mountView();
+    const col = wrapper.find('[data-testid="commit-col"]');
+    expect(col.exists()).toBe(true);
+    expect(col.find('[data-testid="commit-message"]').exists()).toBe(true);
+    expect(col.find('[data-testid="commit-button"]').exists()).toBe(true);
+  });
+
+  test('the staged summary reflects the store status', () => {
+    const { wrapper } = mountView();
+    // FILES has exactly one staged entry.
+    expect(wrapper.find('[data-testid="staged-summary"]').text()).toBe('1 file staged');
   });
 });

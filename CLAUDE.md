@@ -248,7 +248,7 @@ When building UI structures with rows (diff views, file lists), always use a sin
 
 ### Pre-commit Hook
 
-A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 19 pre-existing sonarjs cognitive-complexity warnings are expected (8 in packages/core + 11 in packages/cli; daemon and client 0), 0 errors.
+A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 18 pre-existing sonarjs cognitive-complexity warnings are expected (7 in packages/core + 11 in packages/cli; daemon and client 0), 0 errors.
 
 ### Architecture Layering (dependency-cruiser)
 

@@ -384,4 +384,106 @@ index 1111111..2222222 100644
     expect(lines[4]).toBe('@@ -1,3 +1,3 @@');
     expect(lines.slice(5, 9)).toEqual([' a', '-b', '+B', ' c']);
   });
+
+  describe('multi-file diffs', () => {
+    // File A (src/alpha.ts) has 2 hunks, file B (src/beta.ts) has 1.
+    const TWO_FILE_DIFF = `diff --git a/src/alpha.ts b/src/alpha.ts
+index 1111111..2222222 100644
+--- a/src/alpha.ts
++++ b/src/alpha.ts
+@@ -1,3 +1,3 @@
+ a1
+-a2
++A2
+ a3
+@@ -10,3 +10,3 @@
+ a10
+-a11
++A11
+ a12
+diff --git a/src/beta.ts b/src/beta.ts
+index 3333333..4444444 100644
+--- a/src/beta.ts
++++ b/src/beta.ts
+@@ -5,3 +5,3 @@
+ b5
+-b6
++B6
+ b7
+`;
+
+    it("hunk 0 returns file A's header plus A's first hunk", () => {
+      const patch = extractHunkPatch(TWO_FILE_DIFF, 0);
+      expect(patch).toBe(`diff --git a/src/alpha.ts b/src/alpha.ts
+index 1111111..2222222 100644
+--- a/src/alpha.ts
++++ b/src/alpha.ts
+@@ -1,3 +1,3 @@
+ a1
+-a2
++A2
+ a3
+`);
+    });
+
+    it("hunk 1 returns file A's header plus A's second hunk", () => {
+      const patch = extractHunkPatch(TWO_FILE_DIFF, 1);
+      expect(patch).not.toBeNull();
+      expect(patch).toContain('diff --git a/src/alpha.ts b/src/alpha.ts');
+      expect(patch).toContain('--- a/src/alpha.ts');
+      expect(patch).toContain('+++ b/src/alpha.ts');
+      expect(patch).toContain('@@ -10,3 +10,3 @@');
+      expect(patch).toContain('+A11');
+      expect(patch).not.toContain('beta.ts');
+      expect(patch).not.toContain('+A2');
+    });
+
+    it("hunk 2 (file B's only hunk) returns file B's header — NOT file A's", () => {
+      const patch = extractHunkPatch(TWO_FILE_DIFF, 2);
+      expect(patch).toBe(`diff --git a/src/beta.ts b/src/beta.ts
+index 3333333..4444444 100644
+--- a/src/beta.ts
++++ b/src/beta.ts
+@@ -5,3 +5,3 @@
+ b5
+-b6
++B6
+ b7
+`);
+      // The header names beta.ts and alpha.ts appears nowhere.
+      expect(patch).toContain('diff --git a/src/beta.ts b/src/beta.ts');
+      expect(patch).not.toContain('alpha.ts');
+    });
+
+    it('an out-of-range index across all files returns null', () => {
+      expect(extractHunkPatch(TWO_FILE_DIFF, 3)).toBeNull();
+    });
+
+    it("a new-file second section keeps its mode lines in the extracted patch", () => {
+      const withNewFile = `diff --git a/old.txt b/old.txt
+index 1111111..2222222 100644
+--- a/old.txt
++++ b/old.txt
+@@ -1,1 +1,1 @@
+-x
++y
+diff --git a/fresh.txt b/fresh.txt
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/fresh.txt
+@@ -0,0 +1,1 @@
++hello
+`;
+      const patch = extractHunkPatch(withNewFile, 1);
+      expect(patch).toBe(`diff --git a/fresh.txt b/fresh.txt
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/fresh.txt
+@@ -0,0 +1,1 @@
++hello
+`);
+    });
+  });
 });

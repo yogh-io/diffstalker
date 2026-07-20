@@ -140,9 +140,12 @@ export function countHunks(rawDiff: string): number {
 
 /**
  * Extract a valid single-hunk patch from a raw diff.
- * Includes all file headers (diff --git, index, new file mode,
- * rename from/to, ---, +++) plus the Nth @@ hunk and its lines
- * (including '\ No newline at end of file' markers).
+ * Includes the file headers of the FILE SECTION that contains the
+ * Nth hunk (diff --git, index, new file mode, rename from/to, ---,
+ * +++) plus that @@ hunk and its lines (including '\ No newline at
+ * end of file' markers). The hunk index is 0-based across the WHOLE
+ * diff (all file sections, raw order), so a multi-file diff returns
+ * each hunk wrapped in its own file's header — never another file's.
  * Returns null if hunkIndex is out of range.
  */
 export function extractHunkPatch(rawDiff: string, hunkIndex: number): string | null {
@@ -150,33 +153,32 @@ export function extractHunkPatch(rawDiff: string, hunkIndex: number): string | n
 
   const lines = rawDiff.split('\n');
 
-  // Collect file headers (everything before the first @@)
-  const headers: string[] = [];
-  let firstHunkLine = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith('@@')) {
-      firstHunkLine = i;
-      break;
-    }
-    headers.push(lines[i]);
-  }
-
-  if (firstHunkLine === -1) return null;
-
-  // Find the Nth @@ line
+  // Walk the diff tracking the header block of the CURRENT file
+  // section; when the Nth @@ is found, that section's header is the
+  // one the patch needs.
+  let sectionHeader: string[] = [];
+  let inHunkBody = false;
   let hunkCount = -1;
   let hunkStart = -1;
-  for (let i = firstHunkLine; i < lines.length; i++) {
-    if (lines[i].startsWith('@@')) {
+  let hunkHeader: string[] | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('diff --git')) {
+      sectionHeader = [lines[i]];
+      inHunkBody = false;
+    } else if (lines[i].startsWith('@@')) {
+      inHunkBody = true;
       hunkCount++;
       if (hunkCount === hunkIndex) {
         hunkStart = i;
+        hunkHeader = sectionHeader;
         break;
       }
+    } else if (!inHunkBody) {
+      sectionHeader.push(lines[i]);
     }
   }
 
-  if (hunkStart === -1) return null;
+  if (hunkStart === -1 || hunkHeader === null) return null;
 
   // Collect from that @@ until the next @@ or end-of-content
   const hunkLines: string[] = [lines[hunkStart]];
@@ -190,7 +192,7 @@ export function extractHunkPatch(rawDiff: string, hunkIndex: number): string | n
     hunkLines.pop();
   }
 
-  const patch = [...headers, ...hunkLines].join('\n') + '\n';
+  const patch = [...hunkHeader, ...hunkLines].join('\n') + '\n';
   return patch;
 }
 

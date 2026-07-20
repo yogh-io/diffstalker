@@ -35,6 +35,13 @@ export interface DiffContentRow {
 
 export interface DiffHunkGroup {
   key: number;
+  /**
+   * 0-based ordinal of this hunk across the WHOLE diff (all file
+   * sections, raw order) — exactly the index extractHunkPatch(raw, i)
+   * expects. Valid because grouping never drops @@ lines: the
+   * isDisplayableDiffLine filter only removes header lines.
+   */
+  index: number;
   /** Pretty old-side range ("10-20") parsed from the @@ header. */
   oldRange: string;
   /** Pretty new-side range ("15-25"). */
@@ -246,7 +253,7 @@ function maxLineNumber(sections: DiffFileSection[]): number {
   return max;
 }
 
-function buildSection(raw: RawSection, nextKey: NextKey): DiffFileSection {
+function buildSection(raw: RawSection, nextKey: NextKey, nextHunkIndex: NextKey): DiffFileSection {
   const section: DiffFileSection = {
     key: nextKey(),
     filePath: raw.filePath,
@@ -256,6 +263,7 @@ function buildSection(raw: RawSection, nextKey: NextKey): DiffFileSection {
   for (const rawHunk of raw.hunks) {
     section.hunks.push({
       key: nextKey(),
+      index: nextHunkIndex(),
       ...parseHunkRanges(rawHunk.header.content),
       raw: rawHunk.header.content,
       editedAt: resolveEditedAt(rawHunk.header, rawHunk.lines),
@@ -271,10 +279,12 @@ export function buildDiffModel(diff: DiffResult | null): DiffModel {
 
   let key = 0;
   const nextKey: NextKey = () => key++;
+  let hunkIndex = 0;
+  const nextHunkIndex: NextKey = () => hunkIndex++;
 
   const grouped = groupSections(diff.lines.filter(isDisplayableDiffLine));
   model.isBinary = grouped.isBinary;
-  model.sections = grouped.sections.map((raw) => buildSection(raw, nextKey));
+  model.sections = grouped.sections.map((raw) => buildSection(raw, nextKey, nextHunkIndex));
 
   for (const section of model.sections) {
     for (const hunk of section.hunks) {
