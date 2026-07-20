@@ -1,5 +1,5 @@
 import type { UIState } from './state/UIState.js';
-import type { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
+import type { RepoSession } from './daemon/RepoSession.js';
 import type { FileEntry } from '@diffstalker/core/git/status';
 import type { FlatFileEntry } from './utils/flatFileList.js';
 import type { CombinedHunkInfo } from './utils/displayRows.js';
@@ -12,7 +12,7 @@ import { extractHunkPatch } from '@diffstalker/core/git/diff';
  */
 export interface StagingContext {
   uiState: UIState;
-  getGitManager(): GitStateManager | null;
+  getSession(): RepoSession | null;
   getCachedFlatFiles(): FlatFileEntry[];
   getCombinedHunkMapping(): CombinedHunkInfo[];
   resolveFileAtIndex(index: number): FileEntry | null;
@@ -48,9 +48,8 @@ export class StagingOperations {
   }
 
   async stageSelected(): Promise<void> {
-    const gm = this.ctx.getGitManager();
-    const wt = gm?.workingTree;
-    const files = wt?.state.status?.files ?? [];
+    const session = this.ctx.getSession();
+    const files = session?.shared.status?.files ?? [];
     const index = this.ctx.uiState.state.selectedIndex;
 
     if (this.ctx.uiState.state.flatViewMode) {
@@ -59,21 +58,20 @@ export class StagingOperations {
       const file = flatEntry.unstagedEntry;
       if (file) {
         this.pendingFlatSelectionPath = flatEntry.path;
-        await wt?.stage(file);
+        await session?.stage(file);
       }
     } else {
       const selectedFile = this.ctx.resolveFileAtIndex(index);
       if (selectedFile && !selectedFile.staged) {
         this.pendingSelectionAnchor = getCategoryForIndex(files, index);
-        await wt?.stage(selectedFile);
+        await session?.stage(selectedFile);
       }
     }
   }
 
   async unstageSelected(): Promise<void> {
-    const gm = this.ctx.getGitManager();
-    const wt = gm?.workingTree;
-    const files = wt?.state.status?.files ?? [];
+    const session = this.ctx.getSession();
+    const files = session?.shared.status?.files ?? [];
     const index = this.ctx.uiState.state.selectedIndex;
 
     if (this.ctx.uiState.state.flatViewMode) {
@@ -82,13 +80,13 @@ export class StagingOperations {
       const file = flatEntry.stagedEntry;
       if (file) {
         this.pendingFlatSelectionPath = flatEntry.path;
-        await wt?.unstage(file);
+        await session?.unstage(file);
       }
     } else {
       const selectedFile = this.ctx.resolveFileAtIndex(index);
       if (selectedFile?.staged) {
         this.pendingSelectionAnchor = getCategoryForIndex(files, index);
-        await wt?.unstage(selectedFile);
+        await session?.unstage(selectedFile);
       }
     }
   }
@@ -100,36 +98,35 @@ export class StagingOperations {
       const flatEntry = getFlatFileAtIndex(this.ctx.getCachedFlatFiles(), index);
       if (flatEntry) await this.toggleFlatEntry(flatEntry);
     } else {
-      const gm = this.ctx.getGitManager();
-      const wt = gm?.workingTree;
-      const files = wt?.state.status?.files ?? [];
+      const session = this.ctx.getSession();
+      const files = session?.shared.status?.files ?? [];
       const selectedFile = this.ctx.resolveFileAtIndex(index);
       if (selectedFile) {
         this.pendingSelectionAnchor = getCategoryForIndex(files, index);
         if (selectedFile.staged) {
-          await wt?.unstage(selectedFile);
+          await session?.unstage(selectedFile);
         } else {
-          await wt?.stage(selectedFile);
+          await session?.stage(selectedFile);
         }
       }
     }
   }
 
   async stageAll(): Promise<void> {
-    await this.ctx.getGitManager()?.workingTree.stageAll();
+    await this.ctx.getSession()?.stageAll();
   }
 
   async unstageAll(): Promise<void> {
-    await this.ctx.getGitManager()?.workingTree.unstageAll();
+    await this.ctx.getSession()?.unstageAll();
   }
 
   async toggleFlatEntry(entry: FlatFileEntry): Promise<void> {
-    const wt = this.ctx.getGitManager()?.workingTree;
+    const session = this.ctx.getSession();
     this.pendingFlatSelectionPath = entry.path;
     if (entry.stagingState === 'staged') {
-      if (entry.stagedEntry) await wt?.unstage(entry.stagedEntry);
+      if (entry.stagedEntry) await session?.unstage(entry.stagedEntry);
     } else {
-      if (entry.unstagedEntry) await wt?.stage(entry.unstagedEntry);
+      if (entry.unstagedEntry) await session?.stage(entry.unstagedEntry);
     }
   }
 
@@ -138,9 +135,8 @@ export class StagingOperations {
       const flatEntry = getFlatFileAtIndex(this.ctx.getCachedFlatFiles(), index);
       if (flatEntry) await this.toggleFlatEntry(flatEntry);
     } else {
-      const gm = this.ctx.getGitManager();
-      const wt = gm?.workingTree;
-      const files = wt?.state.status?.files ?? [];
+      const session = this.ctx.getSession();
+      const files = session?.shared.status?.files ?? [];
       const file = this.ctx.resolveFileAtIndex(index);
       if (file) {
         this.pendingSelectionAnchor = getCategoryForIndex(
@@ -148,9 +144,9 @@ export class StagingOperations {
           this.ctx.uiState.state.selectedIndex
         );
         if (file.staged) {
-          await wt?.unstage(file);
+          await session?.unstage(file);
         } else {
-          await wt?.stage(file);
+          await session?.stage(file);
         }
       }
     }
@@ -159,19 +155,19 @@ export class StagingOperations {
   // Hunk staging
 
   async toggleCurrentHunk(): Promise<void> {
-    const selectedFile = this.ctx.getGitManager()?.workingTree.state.selectedFile;
+    const session = this.ctx.getSession();
+    const selectedFile = session?.selection.file;
     if (!selectedFile) return;
     if (selectedFile.status === 'untracked') {
       // Hunk staging not available for untracked files; stage the whole file
       // but preserve selection state like a normal hunk toggle would
-      const wt = this.ctx.getGitManager()?.workingTree;
-      const files = wt?.state.status?.files ?? [];
+      const files = session?.shared.status?.files ?? [];
       this.pendingSelectionAnchor = getCategoryForIndex(
         files,
         this.ctx.uiState.state.selectedIndex
       );
       this.pendingHunkIndex = this.ctx.uiState.state.selectedHunkIndex;
-      await wt?.stage(selectedFile);
+      await session?.stage(selectedFile);
       return;
     }
 
@@ -186,8 +182,8 @@ export class StagingOperations {
     const mapping = this.ctx.getCombinedHunkMapping()[this.ctx.uiState.state.selectedHunkIndex];
     if (!mapping) return;
 
-    const wt = this.ctx.getGitManager()?.workingTree;
-    const combined = wt?.state.combinedFileDiffs;
+    const session = this.ctx.getSession();
+    const combined = session?.selection.combined;
     if (!combined) return;
 
     const rawDiff = mapping.source === 'unstaged' ? combined.unstaged.raw : combined.staged.raw;
@@ -197,27 +193,27 @@ export class StagingOperations {
     this.pendingHunkIndex = this.ctx.uiState.state.selectedHunkIndex;
 
     if (mapping.source === 'staged') {
-      await wt?.unstageHunk(patch);
+      await session?.unstageHunk(patch);
     } else {
-      await wt?.stageHunk(patch);
+      await session?.stageHunk(patch);
     }
   }
 
   private async toggleCurrentHunkCategorized(selectedFile: FileEntry): Promise<void> {
-    const wt = this.ctx.getGitManager()?.workingTree;
-    const rawDiff = wt?.state.diff?.raw;
+    const session = this.ctx.getSession();
+    const rawDiff = session?.selection.diff?.raw;
     if (!rawDiff) return;
 
     const patch = extractHunkPatch(rawDiff, this.ctx.uiState.state.selectedHunkIndex);
     if (!patch) return;
 
-    const files = wt?.state.status?.files ?? [];
+    const files = session?.shared.status?.files ?? [];
     this.pendingSelectionAnchor = getCategoryForIndex(files, this.ctx.uiState.state.selectedIndex);
 
     if (selectedFile.staged) {
-      await wt?.unstageHunk(patch);
+      await session?.unstageHunk(patch);
     } else {
-      await wt?.stageHunk(patch);
+      await session?.stageHunk(patch);
     }
   }
 }

@@ -1,5 +1,5 @@
 import type { UIState } from './state/UIState.js';
-import type { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
+import type { RepoSession } from './daemon/RepoSession.js';
 import type { ExplorerStateManager } from '@diffstalker/core/managers/ExplorerStateManager';
 import type { FileEntry } from '@diffstalker/core/git/status';
 import type { FlatFileEntry } from './utils/flatFileList.js';
@@ -17,7 +17,7 @@ import { getCommitAtIndex } from './ui/widgets/HistoryView.js';
  */
 export interface NavigationContext {
   uiState: UIState;
-  getGitManager(): GitStateManager | null;
+  getSession(): RepoSession | null;
   getExplorerManager(): ExplorerStateManager | null;
   getTopPaneHeight(): number;
   getBottomPaneHeight(): number;
@@ -79,10 +79,10 @@ export class NavigationController {
   private activeListLength(): number {
     const tab = this.ctx.uiState.state.bottomTab;
     if (tab === 'history') {
-      return this.ctx.getGitManager()?.history.historyState.commits.length ?? 0;
+      return this.ctx.getSession()?.history.commits.length ?? 0;
     }
     if (tab === 'compare') {
-      const compareDiff = this.ctx.getGitManager()?.compare.compareState?.compareDiff;
+      const compareDiff = this.ctx.getSession()?.compare.compareDiff;
       return (compareDiff?.commits.length ?? 0) + (compareDiff?.files.length ?? 0);
     }
     if (tab === 'explorer') {
@@ -112,7 +112,7 @@ export class NavigationController {
 
   private navigateFileListBy(steps: number): void {
     const state = this.ctx.uiState.state;
-    const files = this.ctx.getGitManager()?.workingTree.state.status?.files ?? [];
+    const files = this.ctx.getSession()?.shared.status?.files ?? [];
     const maxIndex = this.ctx.getFileListMaxIndex();
     if (maxIndex < 0) return;
 
@@ -130,7 +130,7 @@ export class NavigationController {
 
   private navigateHistoryBy(steps: number): void {
     const state = this.ctx.uiState.state;
-    const commits = this.ctx.getGitManager()?.history.historyState.commits ?? [];
+    const commits = this.ctx.getSession()?.history.commits ?? [];
     if (commits.length === 0) return;
 
     const newIndex = Math.min(commits.length - 1, Math.max(0, state.historySelectedIndex + steps));
@@ -144,9 +144,9 @@ export class NavigationController {
   }
 
   private navigateCompareBy(steps: number): void {
-    const compareState = this.ctx.getGitManager()?.compare.compareState;
-    const commits = compareState?.compareDiff?.commits ?? [];
-    const files = compareState?.compareDiff?.files ?? [];
+    const compareDiff = this.ctx.getSession()?.compare.compareDiff;
+    const commits = compareDiff?.commits ?? [];
+    const files = compareDiff?.files ?? [];
     if (commits.length === 0 && files.length === 0) return;
 
     if (!this.compareSelection) {
@@ -188,7 +188,7 @@ export class NavigationController {
 
   navigateFileList(direction: -1 | 1): void {
     const state = this.ctx.uiState.state;
-    const files = this.ctx.getGitManager()?.workingTree.state.status?.files ?? [];
+    const files = this.ctx.getSession()?.shared.status?.files ?? [];
 
     const maxIndex = this.ctx.getFileListMaxIndex();
     if (maxIndex < 0) return;
@@ -269,7 +269,7 @@ export class NavigationController {
 
   private navigateHistoryDown(): void {
     const state = this.ctx.uiState.state;
-    const commits = this.ctx.getGitManager()?.history.historyState.commits ?? [];
+    const commits = this.ctx.getSession()?.history.commits ?? [];
     const newIndex = Math.min(commits.length - 1, state.historySelectedIndex + 1);
 
     if (newIndex !== state.historySelectedIndex) {
@@ -283,12 +283,12 @@ export class NavigationController {
   }
 
   selectHistoryCommitByIndex(index: number): void {
-    const gm = this.ctx.getGitManager();
-    const commits = gm?.history.historyState.commits ?? [];
+    const session = this.ctx.getSession();
+    const commits = session?.history.commits ?? [];
     const commit = getCommitAtIndex(commits, index);
     if (commit) {
       this.ctx.uiState.setDiffScrollOffset(0);
-      gm?.history.selectHistoryCommit(commit).catch((err) => {
+      session?.selectHistoryCommit(commit).catch((err) => {
         this.ctx.onError(
           `Failed to load commit diff: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -297,9 +297,9 @@ export class NavigationController {
   }
 
   private navigateCompareUp(): void {
-    const compareState = this.ctx.getGitManager()?.compare.compareState;
-    const commits = compareState?.compareDiff?.commits ?? [];
-    const files = compareState?.compareDiff?.files ?? [];
+    const compareDiff = this.ctx.getSession()?.compare.compareDiff;
+    const commits = compareDiff?.commits ?? [];
+    const files = compareDiff?.files ?? [];
 
     if (commits.length === 0 && files.length === 0) return;
 
@@ -319,9 +319,9 @@ export class NavigationController {
   }
 
   private navigateCompareDown(): void {
-    const compareState = this.ctx.getGitManager()?.compare.compareState;
-    const commits = compareState?.compareDiff?.commits ?? [];
-    const files = compareState?.compareDiff?.files ?? [];
+    const compareDiff = this.ctx.getSession()?.compare.compareDiff;
+    const commits = compareDiff?.commits ?? [];
+    const files = compareDiff?.files ?? [];
 
     if (commits.length === 0 && files.length === 0) return;
 
@@ -354,15 +354,15 @@ export class NavigationController {
     this.compareSelection = selection;
     this.ctx.uiState.setDiffScrollOffset(0);
 
-    const gm = this.ctx.getGitManager();
+    const session = this.ctx.getSession();
     if (selection.type === 'commit') {
-      gm?.compare.selectCompareCommit(selection.index).catch((err) => {
+      session?.selectCompareCommit(selection.index).catch((err) => {
         this.ctx.onError(
           `Failed to load commit diff: ${err instanceof Error ? err.message : String(err)}`
         );
       });
     } else {
-      gm?.compare.selectCompareFile(selection.index);
+      session?.selectCompareFile(selection.index);
     }
   }
 
@@ -414,7 +414,7 @@ export class NavigationController {
     if (file) {
       this.ctx.uiState.setDiffScrollOffset(0);
       this.ctx.uiState.setSelectedHunkIndex(0);
-      this.ctx.getGitManager()?.workingTree.selectFile(file);
+      this.ctx.getSession()?.selectFile(file);
     }
   }
 
@@ -428,7 +428,7 @@ export class NavigationController {
     const relativePath = absolutePath.slice(repoPrefix.length);
     if (!relativePath) return;
 
-    const files = this.ctx.getGitManager()?.workingTree.state.status?.files ?? [];
+    const files = this.ctx.getSession()?.shared.status?.files ?? [];
     const fileIndex = files.findIndex((f) => f.path === relativePath);
 
     if (fileIndex >= 0) {

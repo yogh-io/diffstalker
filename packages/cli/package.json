@@ -67,6 +67,7 @@
     "string-width": "^8.1.0"
   },
   "devDependencies": {
+    "@diffstalker/client": "workspace:*",
     "@diffstalker/core": "workspace:*",
     "@eslint/js": "^9.39.2",
     "@types/blessed": "^0.1.27",

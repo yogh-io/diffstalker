@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { App } from './App.js';
 import { loadConfig } from './config.js';
-import { CommandServer } from './ipc/CommandServer.js';
+import { ensureDaemon } from './daemon/DaemonLifecycle.js';
 import { setDebug } from '@diffstalker/core/utils/logger';
 
 // Cleanup function to reset terminal state on exit
@@ -51,7 +51,6 @@ interface ParsedArgs {
   follow?: boolean;
   followFile?: string;
   initialPath?: string;
-  once?: boolean;
   debug?: boolean;
   socket?: string;
 }
@@ -67,8 +66,6 @@ function parseArgs(args: string[]): ParsedArgs {
       if (args[i + 1] && !args[i + 1].startsWith('-')) {
         result.followFile = args[++i];
       }
-    } else if (arg === '--once') {
-      result.once = true;
     } else if (arg === '--debug' || arg === '-d') {
       result.debug = true;
     } else if (arg === '--socket' || arg === '-s') {
@@ -87,8 +84,9 @@ Usage: diffstalker [options] [path]
 Options:
   -f, --follow [FILE]  Follow hook file for dynamic repo switching
                        (default: ~/.cache/diffstalker/target)
-  -s, --socket PATH    Enable IPC server on Unix socket for testing
-  --once               Show status once and exit
+  -s, --socket PATH    diffstalkerd socket to attach to or spawn on
+                       (default: $DIFFSTALKER_SOCKET, then
+                       $XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock)
   -d, --debug          Log path changes to stderr for debugging
   -h, --help           Show this help message
 
@@ -100,6 +98,10 @@ Modes:
   diffstalker /path/to/repo       Fixed on specified repo
   diffstalker --follow            Follow default hook file
   diffstalker --follow /tmp/hook  Follow custom hook file
+
+The TUI talks to diffstalkerd (spawned automatically when not already
+running; found via DIFFSTALKERD_BIN, PATH, or the workspace checkout).
+The daemon outlives the TUI and is never stopped by it.
 
 Keyboard:
   j/k, Up/Down  Navigate files / scroll diff
@@ -143,32 +145,27 @@ async function main(): Promise<void> {
     setDebug(true);
   }
 
-  // Start IPC server if --socket specified
-  let commandServer: CommandServer | null = null;
-  if (args.socket) {
-    commandServer = new CommandServer(args.socket);
-    try {
-      await commandServer.start();
-    } catch (err) {
-      console.error('Failed to start command server:', err);
-      process.exit(1);
-    }
+  // Attach to (or spawn) diffstalkerd before the screen exists, so any
+  // failure prints on the normal buffer.
+  let client;
+  try {
+    ({ client } = await ensureDaemon({ socketPath: args.socket }));
+  } catch (err) {
+    console.error(
+      `Failed to reach diffstalkerd: ${err instanceof Error ? err.message : String(err)}`
+    );
+    process.exit(1);
   }
 
   // Create and start the app
   const app = new App({
     config,
+    client,
     initialPath: args.initialPath,
-    commandServer,
   });
 
   // Wait for app to exit
   await app.start();
-
-  // Clean up command server
-  if (commandServer) {
-    commandServer.stop();
-  }
 
   process.exit(0);
 }

@@ -2,10 +2,12 @@ import type { UIStateData, FocusZone } from '../state/UIState.js';
 import type { CommitFlowStateData } from '../state/CommitFlowState.js';
 import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
 import type { DiffResult, CompareDiff } from '@diffstalker/core/git/diff';
-import type { CombinedFileDiffs } from '@diffstalker/core/managers/WorkingTreeManager';
+import type {
+  CombinedFileDiffs,
+  HistoryState,
+  CompareSelectionState,
+} from '../types/session.js';
 import type { ExplorerState } from '@diffstalker/core/managers/ExplorerStateManager';
-import type { HistoryState } from '@diffstalker/core/managers/HistoryManager';
-import type { CompareSelectionState } from '@diffstalker/core/managers/CompareManager';
 import type { FileHunkCounts } from '@diffstalker/core/git/diff';
 import type { CompareListSelection } from './widgets/CompareListView.js';
 import type { ThemeName } from '../themes.js';

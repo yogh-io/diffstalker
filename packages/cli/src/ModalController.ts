@@ -1,6 +1,6 @@
 import type { Widgets } from 'blessed';
 import type { UIState } from './state/UIState.js';
-import type { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
+import type { RepoSession } from './daemon/RepoSession.js';
 import type { ExplorerStateManager } from '@diffstalker/core/managers/ExplorerStateManager';
 import type { FileEntry } from '@diffstalker/core/git/status';
 import type { ThemeName } from './themes.js';
@@ -33,7 +33,7 @@ export type ModalType =
 export interface ModalContext {
   screen: Widgets.Screen;
   uiState: UIState;
-  getGitManager(): GitStateManager | null;
+  getSession(): RepoSession | null;
   getExplorerManager(): ExplorerStateManager | null;
   getTopPaneHeight(): number;
   getCurrentTheme(): ThemeName;
@@ -103,14 +103,14 @@ export class ModalController {
   }
 
   openBaseBranchPicker(): void {
-    const gm = this.ctx.getGitManager();
-    if (!gm) return;
+    const session = this.ctx.getSession();
+    if (!session) return;
 
     this.activeModalType = 'baseBranch';
-    gm.compare
+    session
       .getCandidateBaseBranches()
       .then((branches) => {
-        const currentBranch = gm.compare.compareState.compareBaseBranch ?? null;
+        const currentBranch = session.compare.baseBranch ?? null;
         const modal = new BaseBranchPicker(
           this.ctx.screen,
           branches,
@@ -118,7 +118,7 @@ export class ModalController {
           (branch) => {
             this.clearModal();
             const includeUncommitted = this.ctx.uiState.state.includeUncommitted;
-            gm.compare.setCompareBaseBranch(branch, includeUncommitted);
+            session.setCompareBaseBranch(branch, includeUncommitted);
           },
           () => {
             this.clearModal();
@@ -141,7 +141,7 @@ export class ModalController {
       file.status === 'untracked',
       async () => {
         this.clearModal();
-        await this.ctx.getGitManager()?.workingTree.discard(file);
+        await this.ctx.getSession()?.discard(file);
       },
       () => {
         this.clearModal();
@@ -191,7 +191,7 @@ export class ModalController {
   }
 
   openCherryPickConfirm(): void {
-    const commit = this.ctx.getGitManager()?.history.historyState.selectedCommit;
+    const commit = this.ctx.getSession()?.history.selectedCommit;
     if (!commit) return;
 
     this.activeModalType = 'commitAction';
@@ -201,7 +201,7 @@ export class ModalController {
       commit,
       () => {
         this.clearModal();
-        this.ctx.getGitManager()?.remote.cherryPick(commit.hash);
+        this.ctx.getSession()?.cherryPick(commit.hash);
       },
       () => {
         this.clearModal();
@@ -211,7 +211,7 @@ export class ModalController {
   }
 
   openRevertConfirm(): void {
-    const commit = this.ctx.getGitManager()?.history.historyState.selectedCommit;
+    const commit = this.ctx.getSession()?.history.selectedCommit;
     if (!commit) return;
 
     this.activeModalType = 'commitAction';
@@ -221,7 +221,7 @@ export class ModalController {
       commit,
       () => {
         this.clearModal();
-        this.ctx.getGitManager()?.remote.revertCommit(commit.hash);
+        this.ctx.getSession()?.revertCommit(commit.hash);
       },
       () => {
         this.clearModal();

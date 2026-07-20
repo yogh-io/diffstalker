@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
+import type { DiffstalkerClient } from '@diffstalker/client';
 import { LayoutManager } from './ui/Layout.js';
 import { setupKeyBindings } from './KeyBindings.js';
 import { renderTopPane, renderBottomPane } from './ui/PaneRenderers.js';
@@ -22,17 +23,8 @@ import {
 import { buildGitStatusMap } from '@diffstalker/core/git/explorerData';
 import { CommitFlowState } from './state/CommitFlowState.js';
 import { UIState } from './state/UIState.js';
-import {
-  GitStateManager,
-  getManagerForRepo,
-  removeManagerForRepo,
-} from '@diffstalker/core/managers/GitStateManager';
+import { RepoSession, openRepoSession } from './daemon/RepoSession.js';
 import { Config, saveConfig, addRecentRepo } from './config.js';
-import {
-  resolveWorktreeRoot,
-  listWorktrees,
-  pickDefaultWorktree,
-} from '@diffstalker/core/git/worktree';
 import { getIndexForCategoryPosition } from './utils/fileCategories.js';
 import {
   buildFlatFileList,
@@ -46,30 +38,31 @@ import {
   resolveFileAtIndex as resolveFile,
   getFileListMaxIndex as getMaxIndex,
 } from './utils/fileResolution.js';
-import type { CommandServer, CommandHandler, AppState } from './ipc/CommandServer.js';
-import type { BottomTab } from './types/tabs.js';
 import type { ThemeName } from './themes.js';
 import type { HunkBoundary, CombinedHunkInfo } from './utils/displayRows.js';
 
 export interface AppOptions {
   config: Config;
+  /** Client bound to a live diffstalkerd (index.ts runs ensureDaemon). */
+  client: DiffstalkerClient;
   initialPath?: string;
-  commandServer?: CommandServer | null;
 }
 
 /**
  * Main application controller.
- * Coordinates between GitStateManager, UIState, and blessed widgets.
+ * Coordinates between the daemon-backed RepoSession, UIState, and blessed
+ * widgets. All git state lives on diffstalkerd; the session mirrors it
+ * client-side (SSE + on-demand pulls) so rendering stays synchronous.
  */
 export class App {
   private screen: Widgets.Screen;
   private layout: LayoutManager;
   private uiState: UIState;
-  private gitManager: GitStateManager | null = null;
+  private client: DiffstalkerClient;
+  private session: RepoSession | null = null;
   private followMode: FollowMode | null = null;
   private explorerManager: ExplorerStateManager | null = null;
   private config: Config;
-  private commandServer: CommandServer | null;
   private navigation: NavigationController;
   private staging: StagingOperations;
   private modals: ModalController;
@@ -78,6 +71,13 @@ export class App {
   private repoPath: string;
   private currentTheme: ThemeName;
   private recentRepos: string[];
+
+  // Monotonic guard for concurrent repo switches: only the latest open wins
+  private switchSeq: number = 0;
+
+  // Session dispose kicked off by exit(); awaited before the process ends
+  // so the daemon-side repo refcount is actually released.
+  private exitDispose: Promise<void> | null = null;
 
   // Commit flow state
   private commitFlowState: CommitFlowState;
@@ -114,7 +114,7 @@ export class App {
 
   constructor(options: AppOptions) {
     this.config = options.config;
-    this.commandServer = options.commandServer ?? null;
+    this.client = options.client;
     this.repoPath = options.initialPath ?? process.cwd();
     this.currentTheme = options.config.theme;
     this.recentRepos = options.config.recentRepos ?? [];
@@ -160,9 +160,9 @@ export class App {
 
     // Initialize commit flow state
     this.commitFlowState = new CommitFlowState({
-      getHeadMessage: () => this.gitManager?.history.getHeadCommitMessage() ?? Promise.resolve(''),
+      getHeadMessage: () => this.session?.getHeadCommitMessage() ?? Promise.resolve(''),
       onCommit: async (message, amend) => {
-        await this.gitManager?.workingTree.commit(message, amend);
+        await this.session?.commit(message, amend);
       },
       onSuccess: () => {
         this.uiState.setTab('diff');
@@ -205,7 +205,7 @@ export class App {
     // Setup navigation controller
     this.navigation = new NavigationController({
       uiState: this.uiState,
-      getGitManager: () => this.gitManager,
+      getSession: () => this.session,
       getExplorerManager: () => this.explorerManager,
       getTopPaneHeight: () => this.layout.dimensions.topPaneHeight,
       getBottomPaneHeight: () => this.layout.dimensions.bottomPaneHeight,
@@ -220,13 +220,13 @@ export class App {
           index,
           this.uiState.state.flatViewMode,
           this.cachedFlatFiles,
-          this.gitManager?.workingTree.state.status?.files ?? []
+          this.session?.shared.status?.files ?? []
         ),
       getFileListMaxIndex: () =>
         getMaxIndex(
           this.uiState.state.flatViewMode,
           this.cachedFlatFiles,
-          this.gitManager?.workingTree.state.status?.files ?? []
+          this.session?.shared.status?.files ?? []
         ),
     });
 
@@ -234,7 +234,7 @@ export class App {
     this.modals = new ModalController({
       screen: this.screen,
       uiState: this.uiState,
-      getGitManager: () => this.gitManager,
+      getSession: () => this.session,
       getExplorerManager: () => this.explorerManager,
       getTopPaneHeight: () => this.layout.dimensions.topPaneHeight,
       getCurrentTheme: () => this.currentTheme,
@@ -250,7 +250,7 @@ export class App {
     // Setup staging operations
     this.staging = new StagingOperations({
       uiState: this.uiState,
-      getGitManager: () => this.gitManager,
+      getSession: () => this.session,
       getCachedFlatFiles: () => this.cachedFlatFiles,
       getCombinedHunkMapping: () => this.combinedHunkMapping,
       resolveFileAtIndex: (index) =>
@@ -258,7 +258,7 @@ export class App {
           index,
           this.uiState.state.flatViewMode,
           this.cachedFlatFiles,
-          this.gitManager?.workingTree.state.status?.files ?? []
+          this.session?.shared.status?.files ?? []
         ),
     });
 
@@ -286,28 +286,21 @@ export class App {
       this.followMode.start();
     }
 
-    // Setup IPC command handler if command server provided
-    if (this.commandServer) {
-      this.setupCommandHandler();
-    }
-
-    // The git manager is created in start(), once the initial path has been
-    // normalized to a worktree root. A bare-repo container is never opened
-    // directly (it resolves to its most recently active worktree), which
-    // avoids running git commands against a directory that has no working
-    // tree. Follow mode may create the manager earlier if the watched file
-    // already names a repo.
+    // The repo session is opened in start(): POST /repos normalizes the
+    // initial path to a worktree root (a bare-repo container resolves to
+    // its most recently active worktree). Follow mode may open a session
+    // earlier when the watched file already names a repo.
 
     // Initial render
     this.render();
   }
 
   /**
-   * Display an error in the UI via the working tree state (rendered in the
-   * header, cleared on the next refresh).
+   * Display an error in the UI via the session's shared state (rendered in
+   * the header, cleared on the next refresh).
    */
   private showError(message: string): void {
-    this.gitManager?.workingTree.setError(message);
+    this.session?.setError(message);
   }
 
   private setupKeyboardHandlers(): void {
@@ -354,19 +347,21 @@ export class App {
         getCurrentPane: () => this.uiState.state.currentPane,
         getFocusedZone: () => this.uiState.state.focusedZone,
         isCommitInputFocused: () => this.commitFlowState.state.inputFocused,
-        getStatusFiles: () => this.gitManager?.workingTree.state.status?.files ?? [],
+        getStatusFiles: () => this.session?.shared.status?.files ?? [],
         getSelectedIndex: () => this.uiState.state.selectedIndex,
         uiState: this.uiState,
         getExplorerManager: () => this.explorerManager,
         commitFlowState: this.commitFlowState,
-        getGitManager: () => this.gitManager,
+        refreshCompare: (includeUncommitted) => {
+          this.session?.refreshCompare(includeUncommitted);
+        },
         layout: this.layout,
         resolveFileAtIndex: (index) =>
           resolveFile(
             index,
             this.uiState.state.flatViewMode,
             this.cachedFlatFiles,
-            this.gitManager?.workingTree.state.status?.files ?? []
+            this.session?.shared.status?.files ?? []
           ),
       }
     );
@@ -391,10 +386,10 @@ export class App {
       {
         uiState: this.uiState,
         getExplorerManager: () => this.explorerManager,
-        getStatusFiles: () => this.gitManager?.workingTree.state.status?.files ?? [],
-        getHistoryCommitCount: () => this.gitManager?.history.historyState.commits.length ?? 0,
-        getCompareCommits: () => this.gitManager?.compare.compareState?.compareDiff?.commits ?? [],
-        getCompareFiles: () => this.gitManager?.compare.compareState?.compareDiff?.files ?? [],
+        getStatusFiles: () => this.session?.shared.status?.files ?? [],
+        getHistoryCommitCount: () => this.session?.history.commits.length ?? 0,
+        getCompareCommits: () => this.session?.compare.compareDiff?.commits ?? [],
+        getCompareFiles: () => this.session?.compare.compareDiff?.files ?? [],
         getBottomPaneTotalRows: () => this.bottomPaneTotalRows,
         getScreenWidth: () => (this.screen.width as number) || 80,
         getCachedFlatFiles: () => this.cachedFlatFiles,
@@ -426,7 +421,7 @@ export class App {
       if (tab === 'history') {
         this.loadHistory();
       } else if (tab === 'compare') {
-        this.gitManager?.compare.refreshCompareDiff(this.uiState.state.includeUncommitted);
+        this.session?.refreshCompare(this.uiState.state.includeUncommitted);
       } else if (tab === 'explorer') {
         // Explorer is already loaded on init, but refresh if needed
         if (!this.explorerManager?.state.displayRows.length) {
@@ -452,16 +447,12 @@ export class App {
     });
   }
 
-  private async handleFollowRepoChange(
-    newPath: string,
-    _state: FollowModeWatcherState
-  ): Promise<void> {
-    // Resolve the followed path to its worktree root; applyRepoSwitch is a
-    // no-op when that root already matches the current repo, so following a
-    // file within the active worktree stays put while a path in a different
-    // worktree switches — even when the current repo is a parent directory.
-    const target = await this.resolveRepoTarget(newPath);
-    this.applyRepoSwitch(target.path, { stopFollow: false });
+  private handleFollowRepoChange(newPath: string, _state: FollowModeWatcherState): void {
+    // POST /repos resolves the followed path to its worktree root;
+    // applyRepoSwitch is a no-op when that root already matches the
+    // current repo, so following a file within the active worktree stays
+    // put while a path in a different worktree switches.
+    this.applyRepoSwitch(newPath, { stopFollow: false });
   }
 
   private handleFollowFileNavigate(rawContent: string): void {
@@ -479,85 +470,62 @@ export class App {
     addRecentRepo(this.repoPath, max);
   }
 
-  private async switchToRepo(newPath: string): Promise<void> {
-    const target = await this.resolveRepoTarget(newPath);
-    this.applyRepoSwitch(target.path, { stopFollow: true });
+  private switchToRepo(newPath: string): void {
+    this.applyRepoSwitch(newPath, { stopFollow: true });
   }
 
   /**
-   * Classify an arbitrary path into what diffstalker should open:
-   * - `worktree`: a normal working tree (its resolved root). A bare-repo
-   *   container resolves to its most recently active worktree instead of
-   *   forcing a choice (Shift+W switches afterwards).
-   * - `none`: not a git repository (open as-is; the UI shows "not a repo")
+   * Open `rawPath` on the daemon and make it the current repo. The daemon
+   * normalizes the path (worktree root, bare-container resolution); when
+   * the resolved root already matches the current session this releases
+   * the duplicate open and stays put. Concurrent switches are guarded by
+   * a sequence number: only the latest requested switch wins.
    */
-  private async resolveRepoTarget(
-    rawPath: string
-  ): Promise<{ kind: 'worktree'; path: string } | { kind: 'none'; path: string }> {
-    const root = await resolveWorktreeRoot(rawPath);
-    if (root) return { kind: 'worktree', path: root };
+  private async applyRepoSwitch(rawPath: string, opts: { stopFollow: boolean }): Promise<void> {
+    const seq = ++this.switchSeq;
+    const next = await openRepoSession(this.client, rawPath);
 
-    const picked = pickDefaultWorktree(await listWorktrees(rawPath));
-    if (picked) return { kind: 'worktree', path: picked.path };
+    const stale = seq !== this.switchSeq;
+    const samePath = this.session !== null && next.repoPath === this.session.repoPath;
+    if (stale || samePath) {
+      next.dispose(); // release the daemon-side refcount (never rejects)
+      return;
+    }
 
-    return { kind: 'none', path: rawPath };
-  }
-
-  private applyRepoSwitch(newPath: string, opts: { stopFollow: boolean }): void {
-    if (newPath === this.repoPath) return;
     if (opts.stopFollow && this.followMode?.isEnabled) this.followMode.stop();
-    const oldRepoPath = this.repoPath;
-    this.repoPath = newPath;
-    this.initGitManager(oldRepoPath);
-    this.resetRepoSpecificState();
+
+    const old = this.session;
+    this.session = next;
+    this.repoPath = next.repoPath;
+    old?.dispose(); // detaches listeners and DELETEs the ref (never rejects)
+    this.attachSessionListeners(next);
+
+    // Initialize explorer manager for the new repo
+    this.initExplorerManager();
+
+    // Record this repo in recent repos list
+    this.recordCurrentRepo();
+
+    if (old) {
+      this.resetRepoSpecificState();
+    }
     this.loadCurrentTabData();
     this.render();
   }
 
   /** Open the worktree switcher for the current repository (Shift+W). */
   private async openWorktreeSwitcher(): Promise<void> {
-    const worktrees = (await listWorktrees(this.repoPath)).filter((w) => !w.isBare);
+    const worktrees = ((await this.session?.listWorktrees()) ?? []).filter((w) => !w.isBare);
     if (worktrees.length === 0) return;
     this.modals.openWorktreePicker(worktrees, this.repoPath);
   }
 
-  /**
-   * Normalize the startup repo path to its worktree root. A bare-repo
-   * container resolves to its most recently active worktree, so a git manager
-   * is never pointed at a directory without a working tree.
-   */
-  private async normalizeInitialRepo(): Promise<void> {
-    // Follow mode may have already established the repo from the watched file.
-    if (this.gitManager) return;
-
-    const target = await this.resolveRepoTarget(this.repoPath);
-    if (target.kind === 'worktree') {
-      this.repoPath = target.path;
-    }
-    this.initGitManager();
-    this.loadCurrentTabData();
-    this.render();
-  }
-
-  private initGitManager(oldRepoPath?: string): void {
-    // Clean up existing manager's event listeners
-    if (this.gitManager) {
-      this.gitManager.workingTree.removeAllListeners();
-      this.gitManager.history.removeAllListeners();
-      this.gitManager.compare.removeAllListeners();
-      this.gitManager.remote.removeAllListeners();
-      // Use oldRepoPath if provided (when switching repos), otherwise use current path
-      removeManagerForRepo(oldRepoPath ?? this.repoPath);
-    }
-
-    // Get or create manager for this repo
-    this.gitManager = getManagerForRepo(this.repoPath);
-
-    // Listen to working tree state changes
-    this.gitManager.workingTree.on('state-change', () => {
+  private attachSessionListeners(session: RepoSession): void {
+    // Shared state (status/hunk counts/diffs/selection) changes
+    session.on('state-change', () => {
       // Skip reconciliation while loading — the pending anchor must wait
       // for the new status to arrive before being consumed
-      if (!this.gitManager?.workingTree.state.isLoading) {
+      if (!session.shared.isLoading) {
         this.reconcileSelectionAfterStateChange();
         this.applyAutoTab();
         this.applyAutoScrollToLatestChange();
@@ -566,10 +534,11 @@ export class App {
       this.render();
     });
 
-    // Listen to history state changes
-    this.gitManager.history.on('history-state-change', (historyState) => {
+    // History changes
+    session.on('history-change', () => {
+      const history = session.history;
       // Auto-select first commit when history loads
-      if (historyState.commits.length > 0 && !historyState.selectedCommit) {
+      if (history.commits.length > 0 && !history.selectedCommit) {
         const state = this.uiState.state;
         if (state.bottomTab === 'history') {
           this.navigation.selectHistoryCommitByIndex(state.historySelectedIndex);
@@ -578,47 +547,34 @@ export class App {
       this.render();
     });
 
-    // Listen to compare state changes
-    this.gitManager.compare.on('compare-state-change', () => {
+    // Compare changes (diff + selection share one event on the session)
+    session.on('compare-change', () => {
       this.render();
     });
 
-    this.gitManager.compare.on('compare-selection-change', () => {
-      this.render();
-    });
-
-    // Listen to remote operation state changes
-    this.gitManager.remote.on('remote-state-change', (remoteState) => {
+    // Remote operation state changes
+    session.on('remote-change', () => {
+      const remoteState = session.remote;
       // Auto-clear success after 3s, error after 5s
       if (this.remoteClearTimer) clearTimeout(this.remoteClearTimer);
       if (remoteState.lastResult && !remoteState.inProgress) {
         this.remoteClearTimer = setTimeout(() => {
-          this.gitManager?.remote.clearRemoteState();
+          this.session?.clearRemoteState();
         }, 3000);
       } else if (remoteState.error) {
         this.remoteClearTimer = setTimeout(() => {
-          this.gitManager?.remote.clearRemoteState();
+          this.session?.clearRemoteState();
         }, 5000);
       }
       this.render();
     });
-
-    // Start watching and do initial refresh
-    this.gitManager.workingTree.startWatching();
-    this.gitManager.workingTree.refresh();
-
-    // Initialize explorer manager
-    this.initExplorerManager();
-
-    // Record this repo in recent repos list
-    this.recordCurrentRepo();
   }
 
   /**
-   * Load history with error handling (moved from facade).
+   * Load history with error handling.
    */
   private loadHistory(count: number = 100): void {
-    this.gitManager?.history.loadHistory(count).catch((err) => {
+    this.session?.loadHistory(count).catch((err) => {
       this.showError(`Failed to load history: ${err instanceof Error ? err.message : String(err)}`);
     });
   }
@@ -628,14 +584,11 @@ export class App {
    * Handles both flat mode (path-based anchoring) and categorized mode (category-based anchoring).
    */
   private reconcileSelectionAfterStateChange(): void {
-    const files = this.gitManager?.workingTree.state.status?.files ?? [];
+    const files = this.session?.shared.status?.files ?? [];
 
     const pendingFlatPath = this.staging.consumePendingFlatSelectionPath();
     if (this.uiState.state.flatViewMode && pendingFlatPath) {
-      const flatFiles = buildFlatFileList(
-        files,
-        this.gitManager?.workingTree.state.hunkCounts ?? null
-      );
+      const flatFiles = buildFlatFileList(files, this.session?.shared.hunkCounts ?? null);
       const newIndex = getFlatFileIndexByPath(flatFiles, pendingFlatPath);
       if (newIndex >= 0) {
         this.uiState.setSelectedIndex(newIndex);
@@ -657,12 +610,9 @@ export class App {
     }
 
     // No pending anchor — clamp to valid range and sync diff if file changed
-    const currentSelected = this.gitManager?.workingTree.state.selectedFile ?? null;
+    const currentSelected = this.session?.selection.file ?? null;
     if (this.uiState.state.flatViewMode) {
-      const flatFiles = buildFlatFileList(
-        files,
-        this.gitManager?.workingTree.state.hunkCounts ?? null
-      );
+      const flatFiles = buildFlatFileList(files, this.session?.shared.hunkCounts ?? null);
       const maxIndex = flatFiles.length - 1;
       let idx = this.uiState.state.selectedIndex;
       if (maxIndex >= 0 && idx > maxIndex) {
@@ -727,9 +677,9 @@ export class App {
    * Build git status map and update explorer.
    */
   private updateExplorerGitStatus(): void {
-    if (!this.explorerManager || !this.gitManager) return;
+    if (!this.explorerManager || !this.session) return;
 
-    const files = this.gitManager.workingTree.state.status?.files ?? [];
+    const files = this.session.shared.status?.files ?? [];
     this.explorerManager.setGitStatus(buildGitStatusMap(files));
   }
 
@@ -754,72 +704,10 @@ export class App {
     if (tab === 'history') {
       this.loadHistory();
     } else if (tab === 'compare') {
-      this.gitManager?.compare.refreshCompareDiff(this.uiState.state.includeUncommitted);
+      this.session?.refreshCompare(this.uiState.state.includeUncommitted);
     }
-    // Diff tab data is loaded by gitManager.workingTree.refresh() in initGitManager
+    // Diff tab data arrives with the session's SSE snapshot
     // Explorer data is loaded by initExplorerManager()
-  }
-
-  private setupCommandHandler(): void {
-    if (!this.commandServer) return;
-
-    const handler: CommandHandler = {
-      navigateUp: () => this.navigation.navigateUp(),
-      navigateDown: () => this.navigation.navigateDown(),
-      switchTab: (tab: BottomTab) => this.uiState.setTab(tab),
-      togglePane: () => this.uiState.togglePane(),
-      stage: async () => this.staging.stageSelected(),
-      unstage: async () => this.staging.unstageSelected(),
-      stageAll: async () => this.staging.stageAll(),
-      unstageAll: async () => this.staging.unstageAll(),
-      commit: async (message: string) => this.commit(message),
-      refresh: async () => this.refresh(),
-      getState: (): AppState => this.getAppState(),
-      quit: () => this.exit(),
-    };
-
-    this.commandServer.setHandler(handler);
-    this.commandServer.notifyReady();
-  }
-
-  private getAppState(): AppState {
-    const state = this.uiState.state;
-    const gitState = this.gitManager?.workingTree.state;
-    const historyState = this.gitManager?.history.historyState;
-    const files = gitState?.status?.files ?? [];
-    const commits = historyState?.commits ?? [];
-
-    return {
-      currentTab: state.bottomTab,
-      currentPane: state.currentPane,
-      selectedIndex: state.selectedIndex,
-      totalFiles: files.length,
-      stagedCount: files.filter((f) => f.staged).length,
-      files: files.map((f) => ({
-        path: f.path,
-        status: f.status,
-        staged: f.staged,
-      })),
-      historySelectedIndex: state.historySelectedIndex,
-      historyCommitCount: commits.length,
-      compareSelectedIndex: state.compareSelectedIndex,
-      compareTotalItems: 0,
-      includeUncommitted: state.includeUncommitted,
-      explorerPath: this.repoPath,
-      explorerSelectedIndex: state.explorerSelectedIndex,
-      explorerItemCount: 0,
-      wrapMode: state.wrapMode,
-      mouseEnabled: state.mouseEnabled,
-      autoTabEnabled: state.autoTabEnabled,
-    };
-  }
-
-  private async commit(message: string): Promise<void> {
-    await this.gitManager?.workingTree.commit(message);
-  }
-
-  private async refresh(): Promise<void> {
-    await this.gitManager?.workingTree.refresh();
   }
 
   private toggleMouseMode(): void {
@@ -843,7 +731,7 @@ export class App {
    * Always updates prevFileCount so enabling doesn't trigger on stale state.
    */
   private applyAutoTab(): void {
-    const files = this.gitManager?.workingTree.state.status?.files ?? [];
+    const files = this.session?.shared.status?.files ?? [];
     const currentCount = files.length;
     const prev = this.prevFileCount;
     this.prevFileCount = currentCount;
@@ -871,7 +759,7 @@ export class App {
    * doesn't jump to a stale "newest" change.
    */
   private applyAutoScrollToLatestChange(): void {
-    const files = this.gitManager?.workingTree.state.status?.files ?? [];
+    const files = this.session?.shared.status?.files ?? [];
 
     const current = new Map<string, number>();
     let newest: { path: string; mtime: number } | null = null;
@@ -1015,8 +903,8 @@ export class App {
 
     const tab = this.uiState.state.bottomTab;
     if (tab !== 'diff' && tab !== 'commit') return;
-    const state = this.gitManager?.workingTree.state;
-    if (!state) return;
+    const selection = this.session?.selection;
+    if (!selection) return;
 
     let newest = 0;
     const scan = (lines?: { type: string; editedAt?: number }[]): void => {
@@ -1026,9 +914,9 @@ export class App {
         }
       }
     };
-    scan(state.diff?.lines);
-    scan(state.combinedFileDiffs?.unstaged.lines);
-    scan(state.combinedFileDiffs?.staged.lines);
+    scan(selection.diff?.lines);
+    scan(selection.combined?.unstaged.lines);
+    scan(selection.combined?.staged.lines);
     if (newest === 0) return;
 
     const age = Date.now() - newest;
@@ -1051,16 +939,16 @@ export class App {
   }
 
   private updateHeader(): void {
-    const gitState = this.gitManager?.workingTree.state;
+    const shared = this.session?.shared;
     const width = (this.screen.width as number) || 80;
 
     const content = formatHeader(
       this.repoPath,
-      gitState?.status?.branch ?? null,
-      gitState?.isLoading ?? false,
-      gitState?.error ?? null,
+      shared?.status?.branch ?? null,
+      shared?.isLoading ?? true,
+      shared?.error ?? null,
       width,
-      this.gitManager?.remote.remoteState ?? null
+      this.session?.remote ?? null
     );
 
     this.layout.headerBox.setContent(content);
@@ -1069,26 +957,23 @@ export class App {
   private updateTopPane(): void {
     const state = this.uiState.state;
     const width = (this.screen.width as number) || 80;
-    const files = this.gitManager?.workingTree.state.status?.files ?? [];
+    const files = this.session?.shared.status?.files ?? [];
 
     // Build and cache flat file list when in flat mode
     if (state.flatViewMode) {
-      this.cachedFlatFiles = buildFlatFileList(
-        files,
-        this.gitManager?.workingTree.state.hunkCounts ?? null
-      );
+      this.cachedFlatFiles = buildFlatFileList(files, this.session?.shared.hunkCounts ?? null);
     }
 
     const content = renderTopPane(
       state,
       files,
-      this.gitManager?.history.historyState?.commits ?? [],
-      this.gitManager?.compare.compareState?.compareDiff ?? null,
+      this.session?.history.commits ?? [],
+      this.session?.compare.compareDiff ?? null,
       this.navigation.compareSelection,
       this.explorerManager?.state,
       width,
       this.layout.dimensions.topPaneHeight,
-      this.gitManager?.workingTree.state.hunkCounts,
+      this.session?.shared.hunkCounts,
       state.flatViewMode ? this.cachedFlatFiles : undefined,
       this.flashFilePath
     );
@@ -1099,7 +984,7 @@ export class App {
   private updateBottomPane(): void {
     const state = this.uiState.state;
     const width = (this.screen.width as number) || 80;
-    const files = this.gitManager?.workingTree.state.status?.files ?? [];
+    const files = this.session?.shared.status?.files ?? [];
     const stagedCount = files.filter((f) => f.staged).length;
 
     // Update staged count for commit validation
@@ -1108,15 +993,13 @@ export class App {
     // Pass selectedHunkIndex and staged status only when diff pane is focused on diff tab
     const diffPaneFocused = state.bottomTab === 'diff' && state.currentPane === 'diff';
     const hunkIndex = diffPaneFocused ? state.selectedHunkIndex : undefined;
-    const isFileStaged = diffPaneFocused
-      ? this.gitManager?.workingTree.state.selectedFile?.staged
-      : undefined;
+    const isFileStaged = diffPaneFocused ? this.session?.selection.file?.staged : undefined;
 
     const { content, totalRows, hunkCount, hunkBoundaries, hunkMapping } = renderBottomPane(
       state,
-      this.gitManager?.workingTree.state.diff ?? null,
-      this.gitManager?.history.historyState,
-      this.gitManager?.compare.compareSelectionState,
+      this.session?.selection.diff ?? null,
+      this.session?.history,
+      this.session?.compare.selection,
       this.explorerManager?.state?.selectedFile ?? null,
       this.commitFlowState.state,
       stagedCount,
@@ -1125,7 +1008,7 @@ export class App {
       this.layout.dimensions.bottomPaneHeight,
       hunkIndex,
       isFileStaged,
-      state.flatViewMode ? this.gitManager?.workingTree.state.combinedFileDiffs : undefined,
+      state.flatViewMode ? this.session?.selection.combined : undefined,
       state.focusedZone
     );
 
@@ -1168,21 +1051,19 @@ export class App {
   }
 
   /**
-   * Exit the application cleanly.
+   * Exit the application cleanly. The session's dispose (DELETE /repos —
+   * the daemon-side refcount release) is started here and awaited in
+   * start() before the process ends. The daemon itself is never stopped.
    */
   exit(): void {
     // Clean up
-    if (this.gitManager) {
-      removeManagerForRepo(this.repoPath);
-    }
+    this.exitDispose = this.session?.dispose() ?? Promise.resolve();
+    this.session = null;
     if (this.explorerManager) {
       this.explorerManager.dispose();
     }
     if (this.followMode) {
       this.followMode.stop();
-    }
-    if (this.commandServer) {
-      this.commandServer.stop();
     }
     if (this.remoteClearTimer) {
       clearTimeout(this.remoteClearTimer);
@@ -1202,11 +1083,17 @@ export class App {
    * Start the application (returns when app exits).
    */
   async start(): Promise<void> {
-    await this.normalizeInitialRepo();
-    return new Promise((resolve) => {
+    // Follow mode may have already opened (or be opening) a session from
+    // the watched file; only open the initial path when nothing else has.
+    if (this.session === null && this.switchSeq === 0) {
+      await this.applyRepoSwitch(this.repoPath, { stopFollow: false });
+    }
+    await new Promise<void>((resolve) => {
       this.screen.on('destroy', () => {
         resolve();
       });
     });
+    // Release the daemon-side repo ref before the process exits.
+    await (this.exitDispose ?? Promise.resolve());
   }
 }

@@ -4,32 +4,32 @@ module.exports = {
     // --- Bottom layer: utils/ and types/ must not reach up ---
     {
       name: "utils-no-upper-layers",
-      comment: "utils/ must not import state/, ipc/, or ui/",
+      comment: "utils/ must not import state/, daemon/, or ui/",
       severity: "error",
       from: { path: "^src/utils/" },
-      to: { path: "^src/(state|ipc|ui)/" },
+      to: { path: "^src/(state|daemon|ui)/" },
     },
     {
       name: "types-no-upper-layers",
-      comment: "types/ must not import state/, ipc/, ui/, or utils/",
+      comment: "types/ must not import state/, daemon/, ui/, or utils/",
       severity: "error",
       from: { path: "^src/types/" },
-      to: { path: "^src/(state|ipc|ui|utils)/" },
+      to: { path: "^src/(state|daemon|ui|utils)/" },
     },
 
-    // --- Middle layer: state/ and ipc/ must not import ui/ or each other ---
+    // --- Middle layer: state/ and daemon/ must not import ui/ or each other ---
     {
-      name: "state-no-ui-or-ipc",
-      comment: "state/ must not import ui/ or ipc/",
+      name: "state-no-ui-or-daemon",
+      comment: "state/ must not import ui/ or daemon/",
       severity: "error",
       from: { path: "^src/state/" },
-      to: { path: "^src/(ui|ipc)/" },
+      to: { path: "^src/(ui|daemon)/" },
     },
     {
-      name: "ipc-no-ui-or-state",
-      comment: "ipc/ must not import ui/ or state/",
+      name: "daemon-no-ui-or-state",
+      comment: "daemon/ must not import ui/ or state/",
       severity: "error",
-      from: { path: "^src/ipc/" },
+      from: { path: "^src/daemon/" },
       to: { path: "^src/(ui|state)/" },
     },
 
@@ -37,9 +37,9 @@ module.exports = {
     {
       name: "lower-layers-no-top-level",
       comment:
-        "ui/, state/, ipc/, utils/, and types/ must not import App, index, KeyBindings, MouseHandlers, NavigationController, StagingOperations, ModalController, or FollowMode",
+        "ui/, state/, daemon/, utils/, and types/ must not import App, index, KeyBindings, MouseHandlers, NavigationController, StagingOperations, ModalController, or FollowMode",
       severity: "error",
-      from: { path: "^src/(ui|state|ipc|utils|types)/" },
+      from: { path: "^src/(ui|state|daemon|utils|types)/" },
       to: {
         path: "^src/(App|index|KeyBindings|MouseHandlers|NavigationController|StagingOperations|ModalController|FollowMode)\\.ts$",
       },
