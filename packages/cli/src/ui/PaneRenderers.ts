@@ -7,11 +7,10 @@ import type {
   HistoryState,
   CompareSelectionState,
 } from '../types/session.js';
-import type { ExplorerState } from '@diffstalker/core/managers/ExplorerStateManager';
+import type { ExplorerState, SelectedFile } from '../state/ExplorerViewModel.js';
 import type { FileHunkCounts } from '@diffstalker/core/git/diff';
 import type { CompareListSelection } from './widgets/CompareListView.js';
 import type { ThemeName } from '../themes.js';
-import type { SelectedFile } from '@diffstalker/core/managers/ExplorerStateManager';
 
 import { formatFileList } from './widgets/FileList.js';
 import { formatFlatFileList } from './widgets/FlatFileList.js';

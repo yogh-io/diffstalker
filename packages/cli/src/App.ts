@@ -16,10 +16,7 @@ import { formatHeader } from './ui/widgets/Header.js';
 import { formatFooter } from './ui/widgets/Footer.js';
 import { COMMIT_INPUT_HEIGHT } from './ui/widgets/CommitPanel.js';
 import { HUNK_FLASH_MS } from './ui/widgets/DiffView.js';
-import {
-  ExplorerStateManager,
-  ExplorerOptions,
-} from '@diffstalker/core/managers/ExplorerStateManager';
+import { ExplorerViewModel, ExplorerOptions } from './state/ExplorerViewModel.js';
 import { buildGitStatusMap } from '@diffstalker/core/git/explorerData';
 import { CommitFlowState } from './state/CommitFlowState.js';
 import { UIState } from './state/UIState.js';
@@ -61,7 +58,7 @@ export class App {
   private client: DiffstalkerClient;
   private session: RepoSession | null = null;
   private followMode: FollowMode | null = null;
-  private explorerManager: ExplorerStateManager | null = null;
+  private explorerManager: ExplorerViewModel | null = null;
   private config: Config;
   private navigation: NavigationController;
   private staging: StagingOperations;
@@ -650,13 +647,20 @@ export class App {
       this.explorerManager.dispose();
     }
 
-    // Create new manager with options
+    // Create new manager with options. Explorer I/O now goes to the daemon
+    // via the client, keyed by the current session's repo id (null in
+    // not-a-repo mode, where tree/file calls no-op into an empty view).
     const options: Partial<ExplorerOptions> = {
       hideHidden: true,
       hideGitignored: true,
       showOnlyChanges: false,
     };
-    this.explorerManager = new ExplorerStateManager(this.repoPath, options);
+    this.explorerManager = new ExplorerViewModel(
+      this.client,
+      this.session?.repoId ?? null,
+      this.repoPath,
+      options
+    );
 
     // Listen to state changes
     this.explorerManager.on('state-change', () => {

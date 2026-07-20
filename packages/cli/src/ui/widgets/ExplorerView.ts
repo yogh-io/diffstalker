@@ -1,4 +1,4 @@
-import type { ExplorerDisplayRow } from '@diffstalker/core/managers/ExplorerStateManager';
+import type { ExplorerDisplayRow } from '../../state/ExplorerViewModel.js';
 import type { FileStatus } from '@diffstalker/core/git/status';
 import {
   ANSI_RESET,

@@ -5,7 +5,7 @@ import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareFileDiff } from '@diffstalker/core/git/diff';
 import type { CompareListSelection } from './ui/widgets/CompareListView.js';
 import { COMMIT_INPUT_HEIGHT } from './ui/widgets/CommitPanel.js';
-import type { ExplorerStateManager } from '@diffstalker/core/managers/ExplorerStateManager';
+import type { ExplorerViewModel } from './state/ExplorerViewModel.js';
 import type { FlatFileEntry } from './utils/flatFileList.js';
 import { getFileListTotalRows, getFileIndexFromRow } from './ui/widgets/FileList.js';
 import { getFlatFileListTotalRows } from './ui/widgets/FlatFileList.js';
@@ -40,7 +40,7 @@ export interface MouseActions {
  */
 export interface MouseContext {
   uiState: UIState;
-  getExplorerManager(): ExplorerStateManager | null;
+  getExplorerManager(): ExplorerViewModel | null;
   getStatusFiles(): FileEntry[];
   getHistoryCommitCount(): number;
   getCompareCommits(): CommitInfo[];

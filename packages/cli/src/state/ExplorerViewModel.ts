@@ -1,16 +1,17 @@
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
-import {
-  listDirectory,
-  readFileForDisplay,
-  MAX_DISPLAY_LINES,
-  MAX_FILE_SIZE,
-} from '../git/explorerData.js';
-import { listAllFiles } from '../git/status.js';
-import * as logger from '../utils/logger.js';
-import type { FileStatus } from '../git/status.js';
-import type { GitStatusMap } from '../git/explorerData.js';
+import type { DiffstalkerClient } from '@diffstalker/client';
+import type { FileStatus } from '@diffstalker/core/git/status';
+import type { GitStatusMap } from '@diffstalker/core/git/explorerData';
+import * as logger from '@diffstalker/core/utils/logger';
+
+/** Maximum file size served for display (mirrors the daemon's limit). */
+const MAX_FILE_SIZE = 1024 * 1024; // 1MB
+
+/** Maximum lines kept in content before truncation kicks in. */
+const MAX_DISPLAY_LINES = 5000;
+
+const WARN_FILE_SIZE = 100 * 1024; // 100KB
 
 export interface SelectedFile {
   path: string;
@@ -62,19 +63,25 @@ type ExplorerStateEventMap = {
   'state-change': [ExplorerState];
 };
 
-const WARN_FILE_SIZE = 100 * 1024; // 100KB
-
 /**
- * ExplorerStateManager manages file explorer state independent of React.
- * It handles directory loading, file selection, and navigation with tree view support.
+ * ExplorerViewModel is the TUI's file-explorer state, independent of React.
+ * It owns tree expansion, display rows, selection, navigation, and the
+ * flag->prose conversion for file previews — the pure view-model half of
+ * the old in-process explorer manager (its fs/git I/O now lives on the
+ * daemon).
+ *
+ * All filesystem/git I/O now goes through the daemon: directory listings
+ * (client.tree), file reads (client.file), and the file-finder source
+ * (client.files). Nothing here touches disk; the daemon owns that.
  */
-export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
+export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
+  private client: DiffstalkerClient;
+  private repoId: string | null;
   private repoPath: string;
   private options: ExplorerOptions;
   private expandedPaths: Set<string> = new Set();
   private gitStatusMap: GitStatusMap = { files: new Map(), directories: new Set() };
   private _cachedFilePaths: string[] | null = null;
-  private _isGitRepo: boolean;
 
   private _state: ExplorerState = {
     currentPath: '',
@@ -86,10 +93,16 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
     error: null,
   };
 
-  constructor(repoPath: string, options: Partial<ExplorerOptions>) {
+  constructor(
+    client: DiffstalkerClient,
+    repoId: string | null,
+    repoPath: string,
+    options: Partial<ExplorerOptions>
+  ) {
     super();
+    this.client = client;
+    this.repoId = repoId;
     this.repoPath = repoPath;
-    this._isGitRepo = fs.existsSync(path.join(repoPath, '.git'));
     this.options = {
       hideHidden: options.hideHidden ?? true,
       hideGitignored: options.hideGitignored ?? true,
@@ -153,27 +166,18 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
     this.updateState({ isLoading: true, error: null });
 
     try {
-      const tree = await this.buildTreeNode('', 0);
-      if (tree) {
-        tree.expanded = true; // Root is always expanded
-        this.applyGitStatusToTree(tree);
-        const displayRows = this.flattenTree(tree);
+      const tree = await this.buildRootNode();
+      tree.expanded = true; // Root is always expanded
+      this.applyGitStatusToTree(tree);
+      const displayRows = this.flattenTree(tree);
 
-        this.updateState({
-          tree,
-          displayRows,
-          selectedIndex: 0,
-          selectedFile: null,
-          isLoading: false,
-        });
-      } else {
-        this.updateState({
-          tree: null,
-          displayRows: [],
-          isLoading: false,
-          error: 'Failed to load directory',
-        });
-      }
+      this.updateState({
+        tree,
+        displayRows,
+        selectedIndex: 0,
+        selectedFile: null,
+        isLoading: false,
+      });
     } catch (err) {
       this.updateState({
         error: err instanceof Error ? err.message : 'Failed to read directory',
@@ -185,65 +189,43 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
   }
 
   /**
-   * Build a tree node for a directory path.
+   * Build the root node (always the repo root, always a directory) and load
+   * its children. The daemon 400/404s a bad path — the error surfaces via
+   * loadTree's catch into state.error.
    */
-  private async buildTreeNode(
-    relativePath: string,
-    _depth: number
-  ): Promise<ExplorerTreeNode | null> {
-    try {
-      const fullPath = path.join(this.repoPath, relativePath);
-      const stats = await fs.promises.stat(fullPath);
-
-      if (!stats.isDirectory()) {
-        // It's a file
-        return {
-          name: path.basename(relativePath) || this.getRepoName(),
-          path: relativePath,
-          isDirectory: false,
-          expanded: false,
-          children: [],
-          childrenLoaded: true,
-        };
-      }
-
-      const isExpanded = this.expandedPaths.has(relativePath);
-
-      const node: ExplorerTreeNode = {
-        name: path.basename(relativePath) || this.getRepoName(),
-        path: relativePath,
-        isDirectory: true,
-        expanded: isExpanded,
-        children: [],
-        childrenLoaded: false,
-      };
-
-      // Always load children for root, or if expanded
-      if (relativePath === '' || isExpanded) {
-        await this.loadChildrenForNode(node);
-      }
-
-      return node;
-    } catch (err) {
-      logger.warn(
-        `Failed to build tree node for ${relativePath}: ${err instanceof Error ? err.message : err}`
-      );
-      return null;
-    }
+  private async buildRootNode(): Promise<ExplorerTreeNode> {
+    const node: ExplorerTreeNode = {
+      name: this.getRepoName(),
+      path: '',
+      isDirectory: true,
+      expanded: true,
+      children: [],
+      childrenLoaded: false,
+    };
+    await this.loadChildrenForNode(node);
+    return node;
   }
 
   /**
-   * Load children for a directory node.
+   * Load children for a directory node from the daemon's /tree endpoint.
    */
   private async loadChildrenForNode(node: ExplorerTreeNode): Promise<void> {
     if (node.childrenLoaded) return;
 
+    if (this.repoId === null) {
+      node.childrenLoaded = true;
+      node.children = [];
+      return;
+    }
+
     try {
-      // Shared data logic: one level, hidden/gitignored filtered, dirs
-      // first then alphabetical (skip the git-ignore call off-repo).
-      const entries = await listDirectory(this.repoPath, node.path, {
-        hideHidden: this.options.hideHidden,
-        hideGitignored: this.options.hideGitignored && this._isGitRepo,
+      // Daemon-served single-level listing: hidden/gitignored filtered,
+      // dirs first then alphabetical. hidden/ignored are "show" flags on
+      // the wire, so they invert the view-model's "hide" options.
+      const entries = await this.client.tree(this.repoId, {
+        dir: node.path,
+        hidden: !this.options.hideHidden,
+        ignored: !this.options.hideGitignored,
       });
 
       const children: ExplorerTreeNode[] = [];
@@ -412,13 +394,15 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
   }
 
   /**
-   * Load a file's contents.
+   * Load a file's contents. The daemon returns display FLAGS
+   * (binary/tooLarge/truncated); this view-model layer turns them into the
+   * prose the TUI renders.
    */
   async loadFile(itemPath: string): Promise<void> {
+    if (this.repoId === null) return;
+
     try {
-      // Shared data logic returns flags; this view-model layer turns them
-      // into the prose the TUI renders.
-      const file = await readFileForDisplay(this.repoPath, itemPath);
+      const file = await this.client.file(this.repoId, itemPath);
 
       if (file.tooLarge) {
         this.updateState({
@@ -447,10 +431,9 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
         content += `\n\n... (truncated, ${file.totalLines - MAX_DISPLAY_LINES} more lines)`;
       }
 
-      // Warn about large files. This only prepends prose: since the
-      // extraction into readFileForDisplay, `truncated` strictly means
-      // "cut at MAX_DISPLAY_LINES" — a >100KB file within the line limit
-      // is no longer flagged truncated (more correct than the old code).
+      // Warn about large files. This only prepends prose: `truncated`
+      // strictly means "cut at MAX_DISPLAY_LINES" — a >100KB file within
+      // the line limit is not flagged truncated.
       if (file.size > WARN_FILE_SIZE) {
         content = `Warning: Large file (${(file.size / 1024).toFixed(1)} KB)\n\n` + content;
       }
@@ -636,16 +619,16 @@ export class ExplorerStateManager extends EventEmitter<ExplorerStateEventMap> {
   }
 
   /**
-   * Load all file paths using git ls-files (fast, single git command).
+   * Load all file paths from the daemon's /files endpoint (git ls-files).
    * Stores result in cache for instant access by FileFinder.
    */
   async loadFilePaths(): Promise<void> {
-    if (!this._isGitRepo) {
+    if (this.repoId === null) {
       this._cachedFilePaths = [];
       return;
     }
     try {
-      this._cachedFilePaths = await listAllFiles(this.repoPath);
+      this._cachedFilePaths = await this.client.files(this.repoId);
     } catch (err) {
       logger.warn(`Failed to load file paths: ${err instanceof Error ? err.message : err}`);
       this._cachedFilePaths = [];

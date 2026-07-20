@@ -3,8 +3,8 @@
  * annotation, and file reads for display with binary/size/truncation FLAGS
  * (no presentation prose baked into content).
  *
- * Shared by ExplorerStateManager (the TUI view-model applies its own prose
- * on top) and the daemon's stateless /tree, /file endpoints — one
+ * Shared by the daemon's stateless /tree and /file endpoints (the CLI's
+ * ExplorerViewModel applies its own prose on top of the flags) — one
  * implementation, no duplication.
  */
 

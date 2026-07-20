@@ -1,7 +1,7 @@
 import type { Widgets } from 'blessed';
 import type { UIState } from './state/UIState.js';
 import type { RepoSession } from './daemon/RepoSession.js';
-import type { ExplorerStateManager } from '@diffstalker/core/managers/ExplorerStateManager';
+import type { ExplorerViewModel } from './state/ExplorerViewModel.js';
 import type { FileEntry } from '@diffstalker/core/git/status';
 import type { ThemeName } from './themes.js';
 import type { Modal } from './ui/modals/Modal.js';
@@ -34,7 +34,7 @@ export interface ModalContext {
   screen: Widgets.Screen;
   uiState: UIState;
   getSession(): RepoSession | null;
-  getExplorerManager(): ExplorerStateManager | null;
+  getExplorerManager(): ExplorerViewModel | null;
   getTopPaneHeight(): number;
   getCurrentTheme(): ThemeName;
   setCurrentTheme(theme: ThemeName): void;
