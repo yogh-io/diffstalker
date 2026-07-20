@@ -420,11 +420,13 @@ a mid-rebase/mid-cherry-pick state exposes **abort** / **continue**.
 
 The web UI does **not** become a third published npm package. It's a private package **bundled into
 `diffstalkerd`**: the daemon serves the built SPA, so the assets ship inside the daemon's tarball.
-The release stays **two lockstep published packages** (`diffstalker` + `diffstalkerd`), so
-`scripts/release.sh` `MANIFESTS` and the workflow's `PUBLISHABLE` are unchanged. The one release
-concern: the `diffstalkerd` build must run the web build first so `dist/` is present when
-`bun pm pack` runs, and the daemon's `files` allowlist must include the web assets. The CI pin-guard
-and lockfile-refresh (from the 0.5.1 fixes) are unaffected. Update `CHANGELOG.md`/`FEATURES.md` and
+The release stays **two lockstep published packages** (`diffstalker` + `diffstalkerd`). Versioning is
+single-sourced (Slice 2.5): the root `package.json` is the version source, `release.sh` `MANIFESTS`
+now carries root + cli + daemon, and the workflow's `PUBLISHABLE` is unchanged (still the two
+published packages). `@diffstalker/web` is private and pinned at a static `0.0.0` like `core`/`client`.
+The one release concern: `diffstalkerd`'s `build:prod` runs the web build first and copies it into
+`dist/web` so `bun pm pack` includes it, and the daemon's `files` allowlist lists `dist/web`. The CI
+pin-guard and lockfile patch (from the 0.5.1 fixes) are unaffected. Update `CHANGELOG.md`/`FEATURES.md` and
 this doc as the web UI lands. (This revises the earlier "web = 3rd published package" assumption in
 `release-model` — serving it from the daemon is simpler and keeps same-origin.)
 

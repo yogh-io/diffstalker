@@ -11,11 +11,15 @@ case "$bump" in
   *) echo "Usage: $0 [patch|minor|major]" >&2; exit 1 ;;
 esac
 
-# The publishable manifests, bumped in lockstep to the SAME version. They release
-# together because the cli depends on diffstalkerd via workspace:* (published as
-# the exact version), so any version skew would ship an uninstallable cli. Add the
-# coming web http package here (one line) when it becomes publishable.
-MANIFESTS="packages/cli/package.json packages/daemon/package.json"
+# Single source of version truth: the ROOT package.json. Everything derives from
+# it. The two PUBLISHED manifests (cli, daemon) are bumped in lockstep to the same
+# version — npm needs a literal version in each, and the cli depends on diffstalkerd
+# via workspace:* (published as the exact version), so any skew would ship an
+# uninstallable cli. The private, bundled packages (core/client/web) are NOT here:
+# they carry a static 0.0.0 and are never versioned (they ship inside the published
+# bundles, never on their own). If the web ever becomes independently publishable,
+# add its manifest here.
+MANIFESTS="package.json packages/cli/package.json packages/daemon/package.json"
 
 # Ensure clean working tree
 if [ -n "$(git status --porcelain)" ]; then
@@ -37,8 +41,8 @@ fi
 # without this, the `git push origin main` below would be rejected (non-fast-forward).
 git pull --rebase origin main
 
-# Read current version (published package lives in packages/cli)
-current=$(node -p "require('./packages/cli/package.json').version")
+# Read current version from the single source of truth (root package.json).
+current=$(node -p "require('./package.json').version")
 
 # Compute next version
 IFS='.' read -r ma mi pa <<EOF
@@ -74,18 +78,41 @@ done
 # Keep bun.lock's workspace versions in lockstep with the bumped manifests.
 # CRITICAL: `bun pm pack` derives the published cli's `diffstalkerd` pin from the
 # LOCKFILE, not the manifest — a stale lockfile ships a wrong-version pin (0.5.0
-# shipped pinning diffstalkerd@0.4.0 this way). `bun install` won't re-record the
-# versions and a full regen drifts transitive deps, so patch only the standalone
-# "version" fields in the workspaces block (the packages block has none, so
-# nothing else is touched). CI's pin-guard fails the release if this ever slips.
-next="$next" node -e '
+# shipped pinning diffstalkerd@0.4.0 this way). Patch only the workspace "version"
+# fields that currently hold the OUTGOING version ($current) — that's cli + daemon
+# (bun.lock has no version field for the root workspace entry). The private,
+# bundled packages (core/client/web) sit at a static 0.0.0 and are deliberately
+# left untouched, so no lock/manifest drift is created. Because this patch is
+# equality-scoped it would SILENTLY SKIP a stale cli/daemon entry, so it then
+# asserts both landed at $next and refuses otherwise — catching the bad pin here,
+# before the tag is pushed, not just at CI's post-push pin-guard.
+next="$next" current="$current" node -e '
   const fs = require("fs");
-  const next = process.env.next;
+  const { next, current } = process.env;
   const p = "bun.lock";
   const s = fs.readFileSync(p, "utf8");
   const i = s.indexOf("\n  \"packages\": {");
   if (i < 0) { console.error("bun.lock: workspaces/packages boundary not found"); process.exit(1); }
-  const head = s.slice(0, i).replace(/("version": ")[^"]*(")/g, (m, a, b) => a + next + b);
+  const head = s.slice(0, i).replace(
+    /("version": ")([^"]*)(")/g,
+    (m, a, ver, b) => (ver === current ? a + next + b : m)
+  );
+  const lockVersion = (key) => {
+    const k = head.indexOf(`"${key}": {`);
+    if (k < 0) return null;
+    const marker = `"version": "`;
+    const v = head.indexOf(marker, k);
+    if (v < 0) return null;
+    const start = v + marker.length;
+    return head.slice(start, head.indexOf(`"`, start));
+  };
+  for (const key of ["packages/cli", "packages/daemon"]) {
+    const got = lockVersion(key);
+    if (got !== next) {
+      console.error(`bun.lock: ${key} is ${got}, expected ${next} (stale lock entry?) — refusing`);
+      process.exit(1);
+    }
+  }
   fs.writeFileSync(p, head + s.slice(i));
 '
 

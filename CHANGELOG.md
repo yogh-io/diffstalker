@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Internal
+
+- **Single-source versioning.** The root `package.json` is now the one source of
+  version truth. `scripts/release.sh` reads and bumps it, and derives the two
+  published manifests (`diffstalker`, `diffstalkerd`) from it in lockstep. The
+  private, bundled packages (`@diffstalker/core`, `@diffstalker/client`,
+  `@diffstalker/web`) are pinned to a static `0.0.0` and never versioned — they
+  ship inside the published bundles, never on their own. The release's bun.lock
+  patch is now equality-scoped to the outgoing version and asserts the published
+  entries landed on the new one, so it can't silently ship a stale pin.
+- Groundwork for the web frontend (Phase 5): a shared `@diffstalker/core/view/*`
+  presentation-logic layer and the `@diffstalker/web` Vue scaffold served by the
+  daemon. Not user-facing yet.
+
 ## [0.5.1] - 2026-07-20
 
 ### Fixed

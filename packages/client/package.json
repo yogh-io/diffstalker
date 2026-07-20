@@ -1,6 +1,6 @@
 {
   "name": "@diffstalker/client",
-  "version": "0.4.0",
+  "version": "0.0.0",
   "description": "Typed REST + SSE client for diffstalkerd",
   "private": true,
   "type": "module",

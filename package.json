@@ -1,6 +1,7 @@
 {
   "name": "diffstalker-monorepo",
   "private": true,
+  "version": "0.5.1",
   "type": "module",
   "workspaces": [
     "packages/*"

@@ -1,13 +1,13 @@
 {
   "name": "@diffstalker/web",
-  "version": "0.5.1",
+  "version": "0.0.0",
   "description": "diffstalker web UI: a browser client for diffstalkerd, served by the daemon",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
-  "type-check": "vue-tsc --noEmit",
+    "type-check": "vue-tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/ vite.config.ts && depcruise src/ --config .dependency-cruiser.cjs",
