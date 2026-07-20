@@ -32,6 +32,11 @@ if [ "$branch" != "main" ]; then
   exit 1
 fi
 
+# Sync with origin/main before releasing. CI pushes a metrics-snapshot commit to
+# main after every publish, so local main is one commit behind after each release;
+# without this, the `git push origin main` below would be rejected (non-fast-forward).
+git pull --rebase origin main
+
 # Read current version (published package lives in packages/cli)
 current=$(node -p "require('./packages/cli/package.json').version")
 
