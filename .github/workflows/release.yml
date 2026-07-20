@@ -54,6 +54,35 @@ jobs:
           done
           ls -l "$GITHUB_WORKSPACE/dist-tarballs"
 
+      # Pin-guard: every published package that depends on another published
+      # package must pin it at the EXACT release version (lockstep). This is the
+      # backstop for the bun-pm-pack-reads-a-stale-lockfile bug that shipped
+      # diffstalker@0.5.0 pinning diffstalkerd@0.4.0. If any sibling pin is not
+      # the tarball's own version, fail the gate — nothing publishes.
+      - name: Verify workspace-sibling pins are exact
+        run: |
+          set -euo pipefail
+          names=""
+          for entry in $PUBLISHABLE; do names="$names ${entry##*:}"; done
+          for entry in $PUBLISHABLE; do
+            name="${entry##*:}"
+            tgz=$(ls "$GITHUB_WORKSPACE"/dist-tarballs/${name}-[0-9]*.tgz)
+            tar -xzOf "$tgz" package/package.json | node -e '
+              const pkg = JSON.parse(require("fs").readFileSync(0, "utf8"));
+              const siblings = process.argv[1].trim().split(/\s+/);
+              const deps = pkg.dependencies || {};
+              let bad = false;
+              for (const [d, spec] of Object.entries(deps)) {
+                if (siblings.includes(d) && spec !== pkg.version) {
+                  console.error(`PIN MISMATCH: ${pkg.name}@${pkg.version} pins ${d}@${spec} (expected ${pkg.version})`);
+                  bad = true;
+                }
+              }
+              if (bad) process.exit(1);
+              console.log(`${pkg.name}@${pkg.version}: workspace-sibling pins OK`);
+            ' "$names"
+          done
+
       # Full suite (core + cli + daemon + client).
       - run: bun run test
 

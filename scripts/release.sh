@@ -66,9 +66,27 @@ for manifest in $MANIFESTS; do
   "
 done
 
+# Keep bun.lock's workspace versions in lockstep with the bumped manifests.
+# CRITICAL: `bun pm pack` derives the published cli's `diffstalkerd` pin from the
+# LOCKFILE, not the manifest — a stale lockfile ships a wrong-version pin (0.5.0
+# shipped pinning diffstalkerd@0.4.0 this way). `bun install` won't re-record the
+# versions and a full regen drifts transitive deps, so patch only the standalone
+# "version" fields in the workspaces block (the packages block has none, so
+# nothing else is touched). CI's pin-guard fails the release if this ever slips.
+next="$next" node -e '
+  const fs = require("fs");
+  const next = process.env.next;
+  const p = "bun.lock";
+  const s = fs.readFileSync(p, "utf8");
+  const i = s.indexOf("\n  \"packages\": {");
+  if (i < 0) { console.error("bun.lock: workspaces/packages boundary not found"); process.exit(1); }
+  const head = s.slice(0, i).replace(/("version": ")[^"]*(")/g, (m, a, b) => a + next + b);
+  fs.writeFileSync(p, head + s.slice(i));
+'
+
 # Commit, tag, push. Push main explicitly (not via the branch's upstream) so it
 # matches the CI tail's `HEAD:main` and never fails on a missing upstream.
-git add $MANIFESTS
+git add $MANIFESTS bun.lock
 git commit -m "Bump version to $next"
 git tag "v$next"
 git push origin main

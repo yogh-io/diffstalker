@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-20
+
+### Fixed
+
+- The published `diffstalker` now pins the exact matching `diffstalkerd`
+  version. `release.sh` refreshes `bun.lock`'s workspace versions on bump
+  (`bun pm pack` derives the cli's `diffstalkerd` pin from the lockfile, not
+  the manifest), and CI now fails the release if any published package's
+  workspace-sibling pin is not the exact release version. 0.5.0 shipped
+  pinning `diffstalkerd@0.4.0` — functional (same daemon build) but wrong.
+
 ## [0.5.0] - 2026-07-20
 
 ### Changed
