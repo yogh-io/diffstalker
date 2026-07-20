@@ -117,24 +117,57 @@ export function resolveDaemonBin(): string {
 }
 
 /**
+ * Refuse an explicit --follow FILE that disagrees with the hook file the
+ * already-running daemon watches: a silently-ignored explicit flag is a
+ * hidden divergence, so surface it. A daemon running --no-follow reports a
+ * null targetFile — that conflicts with any explicit FILE too.
+ */
+export async function assertFollowFileMatches(
+  client: DiffstalkerClient,
+  followFile: string
+): Promise<void> {
+  const follow = await client.getFollow();
+  if (follow.targetFile === followFile) return;
+  const running =
+    follow.targetFile === null ? 'has follow mode disabled' : `follows ${follow.targetFile}`;
+  throw new Error(
+    `--follow ${followFile} conflicts with the already-running diffstalkerd, which ${running}.\n` +
+      `Omit the path to use the daemon's target, or restart the daemon with --follow-file ${followFile}.`
+  );
+}
+
+/**
  * Attach to a running daemon on the resolved socket, or spawn one
  * (detached, unref'd — it survives this process) and wait for /health.
+ *
+ * `followFile` (from an explicit --follow FILE) is passed through as
+ * --follow-file when we spawn, and validated against the daemon's target
+ * when we attach.
  */
 export async function ensureDaemon(options: {
   socketPath?: string;
+  followFile?: string;
 }): Promise<EnsureDaemonResult> {
   const socketPath = resolveSocketPath(options.socketPath);
   const client = new DiffstalkerClient({ socketPath });
 
   if (await isHealthy(client, HEALTH_TIMEOUT_MS)) {
+    if (options.followFile !== undefined) {
+      await assertFollowFileMatches(client, options.followFile);
+    }
     return { client, socketPath, spawned: false };
   }
 
   const bin = resolveDaemonBin();
   fs.mkdirSync(path.dirname(socketPath), { recursive: true, mode: 0o700 });
 
+  const spawnArgs = ['--socket', socketPath];
+  if (options.followFile !== undefined) {
+    spawnArgs.push('--follow-file', options.followFile);
+  }
+
   let spawnError: Error | null = null;
-  const child = spawn(bin, ['--socket', socketPath], {
+  const child = spawn(bin, spawnArgs, {
     detached: true,
     stdio: 'ignore',
   });

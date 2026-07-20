@@ -133,12 +133,12 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const config = loadConfig();
 
-  // Configure watcher based on --follow flag
+  // --follow is client policy now: the daemon owns the hook-file watcher, so
+  // this only enables the TUI's reaction to its follow-change events. An
+  // explicit FILE is passed through to a daemon we spawn, and validated
+  // against a daemon we attach to (ensureDaemon), never a local watcher.
   if (args.follow) {
     config.watcherEnabled = true;
-    if (args.followFile) {
-      config.targetFile = args.followFile;
-    }
   }
   if (args.debug) {
     config.debug = true;
@@ -149,7 +149,7 @@ async function main(): Promise<void> {
   // failure prints on the normal buffer.
   let client;
   try {
-    ({ client } = await ensureDaemon({ socketPath: args.socket }));
+    ({ client } = await ensureDaemon({ socketPath: args.socket, followFile: args.followFile }));
   } catch (err) {
     console.error(
       `Failed to reach diffstalkerd: ${err instanceof Error ? err.message : String(err)}`

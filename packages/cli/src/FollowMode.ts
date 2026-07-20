@@ -1,117 +1,98 @@
-import {
-  FilePathWatcher,
-  WatcherState as FileWatcherState,
-} from '@diffstalker/core/managers/FilePathWatcher';
+/**
+ * Follow mode, client-side policy.
+ *
+ * The daemon owns the truth: it runs the one hook-file watcher and
+ * broadcasts its changes as `follow-change` on the daemon-scope /events
+ * stream (see packages/daemon/src/follow.ts). The CLI no longer watches
+ * any file itself — it subscribes to that stream and reacts, gated by a
+ * client-side `enabled` toggle.
+ *
+ * The subscription is opened ONCE (App calls start() regardless of the
+ * toggle); the toggle only gates whether follow-change events act, so
+ * flipping follow on/off never churns the connection.
+ */
 
-export interface FollowModeWatcherState {
-  enabled: boolean;
-  sourceFile?: string;
-  rawContent?: string;
-  lastUpdate?: Date;
-}
+import type { DiffstalkerClient, DaemonSubscription, FollowChangeEvent } from '@diffstalker/client';
 
 /**
- * Callbacks invoked by FollowMode when repository or file changes occur.
+ * Callbacks invoked by FollowMode when the daemon reports a follow change.
  */
 export interface FollowModeCallbacks {
   /**
-   * Called when the watcher detects a new repository path.
-   * The callback should switch to the new repo.
+   * Called when the followed path names a repo different from the current
+   * session. The callback should switch to it (the daemon already opened
+   * and normalized it; POST /repos just refcounts in).
    */
-  onRepoChange(newPath: string, state: FollowModeWatcherState): void;
+  onRepoChange(newPath: string): void;
 
   /**
-   * Called when the watcher detects a file to navigate to.
+   * Called with the literal hook-file content, so the callback can select
+   * that file within the (now current) repo.
    */
   onFileNavigate(rawContent: string): void;
 }
 
 /**
- * Manages the file-watching follow mode.
- * Watches a target file for repository path changes and file navigation.
+ * Reacts to the daemon's `follow-change` events, gated by a client-side
+ * toggle. Holds no watcher — all file watching lives on the daemon.
  */
 export class FollowMode {
-  private watcher: FilePathWatcher | null = null;
-  private _watcherState: FollowModeWatcherState = { enabled: false };
+  private subscription: DaemonSubscription | null = null;
+  private _enabled: boolean;
 
   constructor(
-    private targetFile: string,
+    private client: DiffstalkerClient,
     private getCurrentRepoPath: () => string,
-    private callbacks: FollowModeCallbacks
-  ) {}
-
-  get watcherState(): FollowModeWatcherState {
-    return this._watcherState;
+    private callbacks: FollowModeCallbacks,
+    enabled: boolean
+  ) {
+    this._enabled = enabled;
   }
 
   get isEnabled(): boolean {
-    return this.watcher !== null;
+    return this._enabled;
   }
 
   /**
-   * Start watching the target file.
+   * Open the daemon-scope subscription. Idempotent; the toggle — not this —
+   * decides whether follow-change events are acted on, so the connection
+   * stays up across toggles.
    */
   start(): void {
-    this.watcher = new FilePathWatcher(this.targetFile);
+    if (this.subscription) return;
+    const subscription = this.client.subscribeDaemon();
+    this.subscription = subscription;
+    subscription.on('follow-change', (event) => this.onFollowChange(event));
+  }
 
-    this.watcher.on('path-change', (state: FileWatcherState) => {
-      if (state.path && state.path !== this.getCurrentRepoPath()) {
-        this._watcherState = {
-          enabled: true,
-          sourceFile: state.sourceFile ?? this.targetFile,
-          rawContent: state.rawContent ?? undefined,
-          lastUpdate: state.lastUpdate ?? undefined,
-        };
-        this.callbacks.onRepoChange(state.path, this._watcherState);
-      }
-      // Navigate to the followed file if it's within the repo
-      if (state.rawContent) {
-        this.callbacks.onFileNavigate(state.rawContent);
-      }
-    });
-
-    this._watcherState = {
-      enabled: true,
-      sourceFile: this.targetFile,
-    };
-
-    this.watcher.start();
-
-    // Switch to the repo described in the target file
-    const initialState = this.watcher.state;
-    if (initialState.path && initialState.path !== this.getCurrentRepoPath()) {
-      this._watcherState = {
-        enabled: true,
-        sourceFile: initialState.sourceFile ?? this.targetFile,
-        rawContent: initialState.rawContent ?? undefined,
-        lastUpdate: initialState.lastUpdate ?? undefined,
-      };
-      this.callbacks.onRepoChange(initialState.path, this._watcherState);
-    } else if (initialState.rawContent) {
-      this._watcherState.rawContent = initialState.rawContent;
-      this.callbacks.onFileNavigate(initialState.rawContent);
+  private onFollowChange(event: FollowChangeEvent): void {
+    if (!this._enabled) return;
+    // `path` is the resolved hook-file content (worktree root or a file
+    // inside it). A repo different from the current session's switches;
+    // applyRepoSwitch de-dupes when the daemon normalizes it back to the
+    // current repo, so following a file within the active repo stays put.
+    if (event.path && event.path !== this.getCurrentRepoPath()) {
+      this.callbacks.onRepoChange(event.path);
+    }
+    if (event.rawContent) {
+      this.callbacks.onFileNavigate(event.rawContent);
     }
   }
 
-  /**
-   * Toggle follow mode on/off.
-   */
-  toggle(): void {
-    if (this.watcher) {
-      this.stop();
-    } else {
-      this.start();
-    }
+  /** Flip the follow toggle; returns the new state. */
+  toggle(): boolean {
+    this._enabled = !this._enabled;
+    return this._enabled;
   }
 
-  /**
-   * Stop watching.
-   */
-  stop(): void {
-    if (this.watcher) {
-      this.watcher.stop();
-      this.watcher = null;
-      this._watcherState = { enabled: false };
-    }
+  /** Turn follow off (e.g. after a manual repo switch); keeps the stream. */
+  disable(): void {
+    this._enabled = false;
+  }
+
+  /** Close the daemon-scope subscription (app exit). */
+  dispose(): void {
+    this.subscription?.close();
+    this.subscription = null;
   }
 }

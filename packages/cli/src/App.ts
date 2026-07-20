@@ -10,7 +10,7 @@ import { setupMouseHandlers } from './MouseHandlers.js';
 import { NavigationController } from './NavigationController.js';
 import { StagingOperations } from './StagingOperations.js';
 import { ModalController } from './ModalController.js';
-import { FollowMode, FollowModeWatcherState } from './FollowMode.js';
+import { FollowMode } from './FollowMode.js';
 import { formatHeader } from './ui/widgets/Header.js';
 
 import { formatFooter } from './ui/widgets/Footer.js';
@@ -57,7 +57,13 @@ export class App {
   private uiState: UIState;
   private client: DiffstalkerClient;
   private session: RepoSession | null = null;
-  private followMode: FollowMode | null = null;
+  private followMode: FollowMode;
+  /**
+   * Whether the daemon itself runs follow mode (false under --no-follow).
+   * Fetched once at startup; gates the client-side follow toggle so a
+   * silently-ignored keypress becomes a visible error instead.
+   */
+  private daemonFollowEnabled = false;
   private explorerManager: ExplorerViewModel | null = null;
   private config: Config;
   private navigation: NavigationController;
@@ -274,14 +280,15 @@ export class App {
     // Setup state change listeners
     this.setupStateListeners();
 
-    // Setup follow mode if enabled
-    if (this.config.watcherEnabled) {
-      this.followMode = new FollowMode(this.config.targetFile, () => this.repoPath, {
-        onRepoChange: (newPath, state) => this.handleFollowRepoChange(newPath, state),
-        onFileNavigate: (rawContent) => this.handleFollowFileNavigate(rawContent),
-      });
-      this.followMode.start();
-    }
+    // Follow mode reacts to the daemon's follow-change SSE (the daemon owns
+    // the hook-file watcher). Subscribe once, up front; the toggle — seeded
+    // from --follow — only gates whether events act. GET /follow in start()
+    // then decides the daemon's follow capability and the initial repo.
+    this.followMode = new FollowMode(this.client, () => this.repoPath, {
+      onRepoChange: (newPath) => this.handleFollowRepoChange(newPath),
+      onFileNavigate: (rawContent) => this.handleFollowFileNavigate(rawContent),
+    }, this.config.watcherEnabled);
+    this.followMode.start();
 
     // The repo session is opened in start(): POST /repos normalizes the
     // initial path to a worktree root (a bare-repo container resolves to
@@ -444,7 +451,7 @@ export class App {
     });
   }
 
-  private handleFollowRepoChange(newPath: string, _state: FollowModeWatcherState): void {
+  private handleFollowRepoChange(newPath: string): void {
     // POST /repos resolves the followed path to its worktree root;
     // applyRepoSwitch is a no-op when that root already matches the
     // current repo, so following a file within the active worktree stays
@@ -489,7 +496,7 @@ export class App {
       return;
     }
 
-    if (opts.stopFollow && this.followMode?.isEnabled) this.followMode.stop();
+    if (opts.stopFollow) this.followMode.disable();
 
     const old = this.session;
     this.session = next;
@@ -808,11 +815,13 @@ export class App {
   }
 
   private toggleFollow(): void {
-    if (!this.followMode) {
-      this.followMode = new FollowMode(this.config.targetFile, () => this.repoPath, {
-        onRepoChange: (newPath, state) => this.handleFollowRepoChange(newPath, state),
-        onFileNavigate: (rawContent) => this.handleFollowFileNavigate(rawContent),
-      });
+    // The daemon owns the hook-file watcher; a client toggle is meaningless
+    // when the daemon runs --no-follow. Surface that instead of flipping a
+    // switch that would silently do nothing.
+    if (!this.daemonFollowEnabled) {
+      this.showError('daemon follow is disabled');
+      this.render();
+      return;
     }
     this.followMode.toggle();
     this.render();
@@ -1045,7 +1054,7 @@ export class App {
       state.mouseEnabled,
       state.autoTabEnabled,
       state.wrapMode,
-      this.followMode?.isEnabled ?? false,
+      this.followMode.isEnabled,
       this.explorerManager?.showOnlyChanges ?? false,
       width,
       state.currentPane
@@ -1066,9 +1075,7 @@ export class App {
     if (this.explorerManager) {
       this.explorerManager.dispose();
     }
-    if (this.followMode) {
-      this.followMode.stop();
-    }
+    this.followMode.dispose();
     if (this.remoteClearTimer) {
       clearTimeout(this.remoteClearTimer);
     }
@@ -1087,8 +1094,21 @@ export class App {
    * Start the application (returns when app exits).
    */
   async start(): Promise<void> {
-    // Follow mode may have already opened (or be opening) a session from
-    // the watched file; only open the initial path when nothing else has.
+    // The daemon owns follow mode; ask it whether follow is enabled (false
+    // under --no-follow) so the toggle can refuse cleanly, and where it is
+    // currently pointed so we open that repo instead of cwd at startup.
+    try {
+      const follow = await this.client.getFollow();
+      this.daemonFollowEnabled = follow.enabled;
+      if (this.followMode.isEnabled && follow.enabled && follow.followedPath) {
+        await this.applyRepoSwitch(follow.followedPath, { stopFollow: false });
+      }
+    } catch {
+      // Follow is best-effort; a failed probe leaves it disabled and falls
+      // through to opening the initial path below.
+    }
+
+    // Open the initial path when the follow probe didn't already open one.
     if (this.session === null && this.switchSeq === 0) {
       await this.applyRepoSwitch(this.repoPath, { stopFollow: false });
     }
