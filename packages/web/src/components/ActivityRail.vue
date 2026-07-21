@@ -7,15 +7,15 @@
  *
  * Portrait: the rail rotates into a full-width horizontal tab band
  * under the header (grid-area railband). The band is ONE flex row: the
- * tabs, then the #view-toolbar-slot Teleport target as a right-aligned
- * flex sibling (margin-left auto) — never absolutely positioned, so
- * lifted controls (Explorer's filters, Compare's base picker) share
- * the row with the tabs instead of overlapping them; on narrow widths
- * the row wraps and the controls drop to their own line. With nothing
- * teleported the slot is empty and removed from flow, so the tabs stay
- * centered. The slot is display:none in landscape — views keep their
- * toolbars inline (Teleport disabled), so the landscape layout is
- * untouched.
+ * four tabs LEFT-aligned (justify-content: flex-start), then the
+ * #view-toolbar-slot Teleport target as a right-aligned flex sibling
+ * (margin-left auto) — never absolutely positioned, so lifted controls
+ * (Explorer's filters, Compare's base picker) share the row with the
+ * tabs instead of overlapping them; on narrow widths the row wraps and
+ * the controls drop to their own line. The tabs stay left-aligned on
+ * every view, toolbar or not. The slot is display:none in landscape —
+ * views keep their toolbars inline (Teleport disabled), so the landscape
+ * layout is untouched.
  */
 
 import { useUiStore, VIEWS } from '../stores/ui';
@@ -138,7 +138,7 @@ const ICON_PATHS: Record<ViewName, string> = {
     grid-area: railband;
     flex-direction: row;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     flex-wrap: wrap;
     gap: 0.25rem;
     width: auto;
@@ -178,8 +178,9 @@ const ICON_PATHS: Record<ViewName, string> = {
     margin-left: auto;
   }
 
-  /* Nothing teleported (Changes/History): drop the slot from flow so
-     justify-content keeps the tabs centered. */
+  /* Nothing teleported (Changes/History): drop the empty slot from flow.
+     The tabs are left-aligned (justify-content: flex-start) on every view,
+     so all four tabs line up on the left whether or not a toolbar lifts in. */
   .toolbar-slot:empty {
     display: none;
   }
