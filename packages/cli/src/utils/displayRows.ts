@@ -5,8 +5,13 @@ import { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
 import { CommitInfo } from '@diffstalker/core/git/status';
 import { formatDateAbsolute } from '@diffstalker/core/view/formatDate';
 import { isDisplayableDiffLine } from '@diffstalker/core/view/diffFilters';
-import { breakLine, getLineRowCount } from '@diffstalker/core/view/lineBreaking';
-import { computeWordDiff, areSimilarEnough, WordDiffSegment } from '@diffstalker/core/view/wordDiff';
+import { breakLine } from '@diffstalker/core/view/lineBreaking';
+import { WordDiffSegment } from '@diffstalker/core/view/wordDiff';
+import {
+  extractDiffFilePath,
+  getLineNumColumnWidth,
+  pairChangeRuns,
+} from '@diffstalker/core/view/diffPrimitives';
 import { getSupportedLanguage, highlightBlockPreserveBg } from './syntaxHighlight.js';
 import { getLineContent as extractLineContent } from '@diffstalker/core/view/diffRowCalculations';
 
@@ -75,14 +80,6 @@ function convertDiffLineToDisplayRow(line: DiffLine): DisplayRow {
   }
 }
 
-/**
- * Extract file path from a diff --git header line.
- */
-function extractFilePathFromHeader(content: string): string | null {
-  const match = content.match(/^diff --git a\/.+ b\/(.+)$/);
-  return match ? match[1] : null;
-}
-
 // Track file sections for block highlighting
 // Each file section has: language, startRowIndex, and content streams
 interface FileSection {
@@ -96,12 +93,6 @@ interface FileSection {
   newRowIndices: number[]; // Maps newContent index -> row index
 }
 
-/** Result of pairing consecutive deletions with additions for word-diff. */
-interface WordDiffPairing {
-  delSegmentsMap: Map<number, WordDiffSegment[]>;
-  addSegmentsMap: Map<number, WordDiffSegment[]>;
-}
-
 /** Result of building raw display rows before syntax highlighting. */
 interface RawDiffResult {
   rows: DisplayRow[];
@@ -113,29 +104,6 @@ function isHighlightable(
   row: DisplayRow
 ): row is DisplayRow & { type: 'diff-add' | 'diff-del' | 'diff-context' } {
   return row.type === 'diff-add' || row.type === 'diff-del' || row.type === 'diff-context';
-}
-
-/**
- * Pair consecutive deletions with additions and compute word-level diffs.
- * Returns maps from pair index to word diff segments for each side.
- */
-function pairDeletionsAndAdditions(deletions: DiffLine[], additions: DiffLine[]): WordDiffPairing {
-  const delSegmentsMap: Map<number, WordDiffSegment[]> = new Map();
-  const addSegmentsMap: Map<number, WordDiffSegment[]> = new Map();
-  const pairCount = Math.min(deletions.length, additions.length);
-
-  for (let j = 0; j < pairCount; j++) {
-    const delContent = getLineContent(deletions[j]);
-    const addContent = getLineContent(additions[j]);
-
-    if (areSimilarEnough(delContent, addContent)) {
-      const { oldSegments, newSegments } = computeWordDiff(delContent, addContent);
-      delSegmentsMap.set(j, oldSegments);
-      addSegmentsMap.set(j, newSegments);
-    }
-  }
-
-  return { delSegmentsMap, addSegmentsMap };
 }
 
 /**
@@ -154,7 +122,7 @@ function buildRawDiffRows(filteredLines: DiffLine[]): RawDiffResult {
 
     // Headers - start new file section
     if (line.type === 'header') {
-      const filePath = extractFilePathFromHeader(line.content);
+      const filePath = extractDiffFilePath(line.content);
       if (filePath) {
         if (currentSection) {
           fileSections.push(currentSection);
@@ -217,12 +185,12 @@ function buildRawDiffRows(filteredLines: DiffLine[]): RawDiffResult {
     }
 
     // Pair deletions with additions for word-level diff
-    const { delSegmentsMap, addSegmentsMap } = pairDeletionsAndAdditions(deletions, additions);
+    const { delSegments, addSegments } = pairChangeRuns(deletions, additions, getLineContent);
 
     for (let j = 0; j < deletions.length; j++) {
       const delLine = deletions[j];
       const delContent = getLineContent(delLine);
-      const segments = delSegmentsMap.get(j);
+      const segments = delSegments.get(j);
       const rowIndex = rows.length;
 
       rows.push({
@@ -241,7 +209,7 @@ function buildRawDiffRows(filteredLines: DiffLine[]): RawDiffResult {
     for (let j = 0; j < additions.length; j++) {
       const addLine = additions[j];
       const addContent = getLineContent(addLine);
-      const segments = addSegmentsMap.get(j);
+      const segments = addSegments.get(j);
       const rowIndex = rows.length;
 
       rows.push({
@@ -369,7 +337,7 @@ export function getDisplayRowsLineNumWidth(rows: DisplayRow[]): number {
       max = Math.max(max, row.lineNum);
     }
   }
-  return Math.max(3, String(max).length);
+  return getLineNumColumnWidth(max);
 }
 
 // Extended row type with wrap metadata
@@ -468,37 +436,6 @@ export function getHunkBoundaries(rows: (DisplayRow | WrappedDisplayRow)[]): Hun
   }
 
   return boundaries;
-}
-
-/**
- * Calculate the total row count after wrapping.
- * More efficient than wrapDisplayRows().length when you only need the count.
- */
-export function getWrappedRowCount(
-  rows: DisplayRow[],
-  contentWidth: number,
-  wrapEnabled: boolean
-): number {
-  if (!wrapEnabled) return rows.length;
-
-  const minWidth = 10;
-  const effectiveWidth = Math.max(minWidth, contentWidth);
-
-  let count = 0;
-  for (const row of rows) {
-    if (row.type === 'diff-add' || row.type === 'diff-del' || row.type === 'diff-context') {
-      const content = row.content;
-      if (!content || content.length <= effectiveWidth) {
-        count += 1;
-      } else {
-        count += getLineRowCount(content, effectiveWidth);
-      }
-    } else {
-      count += 1;
-    }
-  }
-
-  return count;
 }
 
 /**

@@ -1,31 +1,30 @@
 /**
- * Theme system tests. The parity guard imports the REAL CLI theme table
- * (packages/cli/src/themes.ts) test-side — a relative, test-only import
- * that vitest resolves and that never enters the browser bundle — and
- * asserts every web theme's DiffColors deep-equal the CLI's. CLI-side
- * drift now fails this suite automatically instead of relying on a
- * hand-copied fixture.
+ * Theme system tests. The diff palette, theme names, and display names now
+ * live once in @diffstalker/core/view/themes (the CLI reads the same table).
+ * The parity guard here asserts the web theme objects surface that shared
+ * table unchanged — they compose it (spread + web-only chrome/syntax) and
+ * must not fork the diff colors — so a web-side override of a shared value
+ * fails this suite. Core's own themes.test.ts covers the shared table itself.
  */
 
 import { describe, test, expect, beforeEach } from 'vitest';
 import { themes, themeOrder, isThemeName } from './themes';
 import { ANSI_COLORS, resolveColor } from './palette';
 import { buildThemeCss, installThemeStyles } from './css';
-import { themes as cliThemes, themeOrder as cliThemeOrder } from '../../../cli/src/themes';
+import { themes as coreThemes } from '@diffstalker/core/view/themes';
 
 describe('themes', () => {
-  test('all six CLI themes exist, in the CLI order', () => {
-    expect(themeOrder).toEqual(cliThemeOrder);
+  test('the web theme record holds exactly the shared themes', () => {
     expect(Object.keys(themes).sort()).toEqual([...themeOrder].sort());
   });
 
-  test.each(themeOrder)('%s DiffColors match the CLI source exactly', (name) => {
-    expect(themes[name].colors).toEqual(cliThemes[name].colors);
+  test.each(themeOrder)('%s surfaces the shared DiffColors unchanged', (name) => {
+    expect(themes[name].colors).toEqual(coreThemes[name].colors);
   });
 
-  test('display names match the CLI', () => {
+  test('display names come from the shared table', () => {
     expect(themeOrder.map((name) => themes[name].displayName)).toEqual(
-      cliThemeOrder.map((name) => cliThemes[name].displayName)
+      themeOrder.map((name) => coreThemes[name].displayName)
     );
   });
 

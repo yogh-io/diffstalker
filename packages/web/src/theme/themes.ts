@@ -1,10 +1,10 @@
 /**
  * Theme definitions for the diffstalker web UI.
  *
- * DiffColors are ported verbatim from the CLI (packages/cli/src/themes.ts)
- * — same 6 themes, same 10 fields, byte-identical values (hex stays hex,
- * named ANSI colors resolve through theme/palette.ts at CSS build time).
- * Keep the two files in sync when a theme changes.
+ * The theme names, display names, and DiffColors come from the shared
+ * table in @diffstalker/core/view/themes — the same module the CLI uses,
+ * so the two can no longer drift (hex stays hex, named ANSI colors
+ * resolve through theme/palette.ts at CSS build time).
  *
  * ChromeColors are web-only: the CLI scatters chrome literals across its
  * widgets (file-status colors, selection cyan, magenta-uncommitted, flash
@@ -14,27 +14,11 @@
  * values themselves stay exact.
  */
 
-export type ThemeName =
-  | 'dark'
-  | 'light'
-  | 'dark-colorblind'
-  | 'light-colorblind'
-  | 'dark-ansi'
-  | 'light-ansi';
+import { themes as sharedThemes } from '@diffstalker/core/view/themes';
+import type { Theme as SharedTheme, ThemeName } from '@diffstalker/core/view/themes';
 
-/** The 10 diff colors, exactly as the CLI defines them. */
-export interface DiffColors {
-  addBg: string;
-  delBg: string;
-  addHighlight: string;
-  delHighlight: string;
-  text: string;
-  addLineNum: string;
-  delLineNum: string;
-  contextLineNum: string;
-  addSymbol: string;
-  delSymbol: string;
-}
+export type { ThemeName, DiffColors } from '@diffstalker/core/view/themes';
+export { themeOrder, isThemeName } from '@diffstalker/core/view/themes';
 
 /** Web-only chrome tokens (all resolved hex or ANSI names). */
 export interface ChromeColors {
@@ -95,33 +79,17 @@ export interface SyntaxColors {
   meta: string;
 }
 
-export interface Theme {
-  name: ThemeName;
-  displayName: string;
+export interface Theme extends SharedTheme {
   /** Whether the browser should treat form controls etc. as dark. */
   scheme: 'dark' | 'light';
-  colors: DiffColors;
   chrome: ChromeColors;
   syntax: SyntaxColors;
 }
 
 // Dark theme - sampled from Claude Code's dark mode
 const darkTheme: Theme = {
-  name: 'dark',
-  displayName: 'Dark',
+  ...sharedThemes.dark,
   scheme: 'dark',
-  colors: {
-    addBg: '#022800',
-    delBg: '#3D0100',
-    addHighlight: '#044700',
-    delHighlight: '#5C0200',
-    text: 'white',
-    addLineNum: '#368F35',
-    delLineNum: '#A14040',
-    contextLineNum: 'gray',
-    addSymbol: 'greenBright',
-    delSymbol: 'redBright',
-  },
   chrome: {
     bg: '#0d100f',
     surface: '#131716',
@@ -157,21 +125,8 @@ const darkTheme: Theme = {
 
 // Light theme - matches Claude Code's light mode colors
 const lightTheme: Theme = {
-  name: 'light',
-  displayName: 'Light',
+  ...sharedThemes.light,
   scheme: 'light',
-  colors: {
-    addBg: '#69db7c',
-    delBg: '#ffa8b4',
-    addHighlight: '#2f9d44',
-    delHighlight: '#d1454b',
-    text: 'black',
-    addLineNum: '#2f9d44',
-    delLineNum: '#d1454b',
-    contextLineNum: '#6c757d',
-    addSymbol: 'green',
-    delSymbol: 'red',
-  },
   chrome: {
     bg: '#f5f6f5',
     surface: '#fcfdfc',
@@ -209,21 +164,8 @@ const lightTheme: Theme = {
 
 // Dark colorblind theme - matches Claude Code's dark-daltonized colors
 const darkColorblindTheme: Theme = {
-  name: 'dark-colorblind',
-  displayName: 'Dark (colorblind)',
+  ...sharedThemes['dark-colorblind'],
   scheme: 'dark',
-  colors: {
-    addBg: '#004466',
-    delBg: '#660000',
-    addHighlight: '#0077b3',
-    delHighlight: '#b30000',
-    text: 'white',
-    addLineNum: '#0077b3',
-    delLineNum: '#b30000',
-    contextLineNum: 'gray',
-    addSymbol: 'cyanBright',
-    delSymbol: 'redBright',
-  },
   chrome: {
     bg: '#0d0f11',
     surface: '#131619',
@@ -260,21 +202,8 @@ const darkColorblindTheme: Theme = {
 
 // Light colorblind theme - matches Claude Code's light-daltonized colors
 const lightColorblindTheme: Theme = {
-  name: 'light-colorblind',
-  displayName: 'Light (colorblind)',
+  ...sharedThemes['light-colorblind'],
   scheme: 'light',
-  colors: {
-    addBg: '#99ccff',
-    delBg: '#ffcccc',
-    addHighlight: '#3366cc',
-    delHighlight: '#993333',
-    text: 'black',
-    addLineNum: '#3366cc',
-    delLineNum: '#993333',
-    contextLineNum: '#6c757d',
-    addSymbol: 'blue',
-    delSymbol: 'red',
-  },
   chrome: {
     bg: '#f4f6f8',
     surface: '#fcfdfe',
@@ -312,21 +241,8 @@ const lightColorblindTheme: Theme = {
 
 // Dark ANSI theme - the terminal's native 16 ANSI colors (xterm values)
 const darkAnsiTheme: Theme = {
-  name: 'dark-ansi',
-  displayName: 'Dark (ANSI)',
+  ...sharedThemes['dark-ansi'],
   scheme: 'dark',
-  colors: {
-    addBg: 'green',
-    delBg: 'red',
-    addHighlight: 'greenBright',
-    delHighlight: 'redBright',
-    text: 'white',
-    addLineNum: 'greenBright',
-    delLineNum: 'redBright',
-    contextLineNum: 'gray',
-    addSymbol: 'greenBright',
-    delSymbol: 'redBright',
-  },
   chrome: {
     bg: '#000000',
     surface: '#121212',
@@ -363,21 +279,8 @@ const darkAnsiTheme: Theme = {
 
 // Light ANSI theme - the terminal's native 16 ANSI colors (xterm values)
 const lightAnsiTheme: Theme = {
-  name: 'light-ansi',
-  displayName: 'Light (ANSI)',
+  ...sharedThemes['light-ansi'],
   scheme: 'light',
-  colors: {
-    addBg: 'green',
-    delBg: 'red',
-    addHighlight: 'greenBright',
-    delHighlight: 'redBright',
-    text: 'black',
-    addLineNum: 'green',
-    delLineNum: 'red',
-    contextLineNum: 'gray',
-    addSymbol: 'green',
-    delSymbol: 'red',
-  },
   chrome: {
     bg: '#ffffff',
     surface: '#f5f5f5',
@@ -421,16 +324,3 @@ export const themes: Record<ThemeName, Theme> = {
   'dark-ansi': darkAnsiTheme,
   'light-ansi': lightAnsiTheme,
 };
-
-export const themeOrder: ThemeName[] = [
-  'dark',
-  'light',
-  'dark-colorblind',
-  'light-colorblind',
-  'dark-ansi',
-  'light-ansi',
-];
-
-export function isThemeName(value: unknown): value is ThemeName {
-  return typeof value === 'string' && (themeOrder as string[]).includes(value);
-}

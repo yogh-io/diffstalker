@@ -3,7 +3,6 @@ import {
   buildDiffDisplayRows,
   getDisplayRowsLineNumWidth,
   wrapDisplayRows,
-  getWrappedRowCount,
 } from './displayRows.js';
 import type { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
 
@@ -171,31 +170,5 @@ describe('wrapDisplayRows', () => {
     expect(addRows.length).toBeGreaterThan(1);
     expect(addRows[0].isContinuation).toBeFalsy();
     expect(addRows[1].isContinuation).toBe(true);
-  });
-});
-
-describe('getWrappedRowCount', () => {
-  it('returns row count without wrapping', () => {
-    const diff = makeDiff([
-      { type: 'header', content: 'diff --git a/f.txt b/f.txt' },
-      { type: 'hunk', content: '@@ -1,2 +1,2 @@' },
-      { type: 'context', content: ' a', oldLineNum: 1, newLineNum: 1 },
-      { type: 'context', content: ' b', oldLineNum: 2, newLineNum: 2 },
-    ]);
-    const rows = buildDiffDisplayRows(diff);
-    expect(getWrappedRowCount(rows, 20, false)).toBe(rows.length);
-  });
-
-  it('matches wrapDisplayRows length', () => {
-    const diff = makeDiff([
-      { type: 'header', content: 'diff --git a/f.txt b/f.txt' },
-      { type: 'hunk', content: '@@ -1,2 +1,2 @@' },
-      { type: 'context', content: ' short', oldLineNum: 1, newLineNum: 1 },
-      { type: 'addition', content: '+' + 'x'.repeat(50), newLineNum: 2 },
-    ]);
-    const rows = buildDiffDisplayRows(diff);
-    const wrapped = wrapDisplayRows(rows, 20, true);
-    const count = getWrappedRowCount(rows, 20, true);
-    expect(count).toBe(wrapped.length);
   });
 });

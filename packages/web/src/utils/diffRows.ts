@@ -3,12 +3,12 @@
  * file sections and hunks, pairs adjacent deletion/addition runs for
  * word-level diffs, and parses @@ headers into readable ranges.
  *
- * The pairing semantics mirror the CLI's displayRows builder
+ * The pairing semantics match the CLI's displayRows builder
  * (packages/cli/src/utils/displayRows.ts): within a hunk, a run of
  * consecutive deletions followed by a run of consecutive additions is
- * paired by position; each pair that passes areSimilarEnough gets
- * word-level segments from computeWordDiff. Both come from
- * core/view/wordDiff — shared with the CLI, not reimplemented.
+ * paired by position; similar pairs get word-level segments. The
+ * pairing is shared code — pairChangeRuns from
+ * core/view/diffPrimitives — not reimplemented.
  *
  * Grouping into per-hunk sections (instead of a flat row list) is what
  * lets the view give each hunk a sticky header that the next hunk's
@@ -18,7 +18,12 @@
 import type { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
 import { isDisplayableDiffLine } from '@diffstalker/core/view/diffFilters';
 import { getLineContent } from '@diffstalker/core/view/diffRowCalculations';
-import { computeWordDiff, areSimilarEnough } from '@diffstalker/core/view/wordDiff';
+import {
+  extractDiffFilePath,
+  getLineNumColumnWidth,
+  pairChangeRuns,
+  parseHunkHeader,
+} from '@diffstalker/core/view/diffPrimitives';
 import type { WordDiffSegment } from '@diffstalker/core/view/wordDiff';
 
 export type { WordDiffSegment } from '@diffstalker/core/view/wordDiff';
@@ -76,9 +81,6 @@ export interface DiffModel {
   latestEditedAt?: number;
 }
 
-const HUNK_HEADER_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
-const GIT_HEADER_RE = /^diff --git a\/.+ b\/(.+)$/;
-
 /** Strip C0 control chars except tab (CSS tab-size renders tabs). */
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS_RE = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
@@ -88,18 +90,14 @@ function cleanContent(line: DiffLine): string {
 }
 
 function parseHunkRanges(content: string): { oldRange: string; newRange: string; context: string } {
-  const match = HUNK_HEADER_RE.exec(content);
-  if (!match) return { oldRange: '', newRange: '', context: '' };
-  const oldStart = parseInt(match[1], 10);
-  const oldCount = match[2] !== undefined ? parseInt(match[2], 10) : 1;
-  const newStart = parseInt(match[3], 10);
-  const newCount = match[4] !== undefined ? parseInt(match[4], 10) : 1;
+  const header = parseHunkHeader(content);
+  if (!header) return { oldRange: '', newRange: '', context: '' };
   const range = (start: number, count: number): string =>
     count === 1 ? `${start}` : `${start}-${start + count - 1}`;
   return {
-    oldRange: range(oldStart, oldCount),
-    newRange: range(newStart, newCount),
-    context: match[5].trim(),
+    oldRange: range(header.oldStart, header.oldCount),
+    newRange: range(header.newStart, header.newCount),
+    context: header.context,
   };
 }
 
@@ -133,7 +131,7 @@ function groupSections(lines: DiffLine[]): { sections: RawSection[]; isBinary: b
   for (const line of lines) {
     if (line.type === 'header') {
       hunk = null;
-      const filePath = GIT_HEADER_RE.exec(line.content)?.[1] ?? null;
+      const filePath = extractDiffFilePath(line.content);
       if (filePath !== null) {
         section = { filePath, notes: [], hunks: [] };
         sections.push(section);
@@ -154,30 +152,6 @@ function groupSections(lines: DiffLine[]): { sections: RawSection[]; isBinary: b
 }
 
 // --- Pass 2: content rows with word-diff pairing ---
-
-interface RunSegments {
-  del: Map<number, WordDiffSegment[]>;
-  add: Map<number, WordDiffSegment[]>;
-}
-
-/**
- * Pair a run of consecutive deletions with the additions that follow it,
- * by position; similar pairs get word-diff segments (CLI semantics).
- */
-function pairRuns(deletions: DiffLine[], additions: DiffLine[]): RunSegments {
-  const segments: RunSegments = { del: new Map(), add: new Map() };
-  const pairCount = Math.min(deletions.length, additions.length);
-  for (let j = 0; j < pairCount; j++) {
-    const delContent = cleanContent(deletions[j]);
-    const addContent = cleanContent(additions[j]);
-    if (areSimilarEnough(delContent, addContent)) {
-      const { oldSegments, newSegments } = computeWordDiff(delContent, addContent);
-      segments.del.set(j, oldSegments);
-      segments.add.set(j, newSegments);
-    }
-  }
-  return segments;
-}
 
 type NextKey = () => number;
 
@@ -219,12 +193,12 @@ function buildHunkRows(lines: DiffLine[], nextKey: NextKey): DiffContentRow[] {
       continue;
     }
 
-    const segments = pairRuns(deletions, additions);
+    const segments = pairChangeRuns(deletions, additions, cleanContent);
     deletions.forEach((line, j) => {
-      rows.push(toContentRow(line, 'del', nextKey(), segments.del.get(j)));
+      rows.push(toContentRow(line, 'del', nextKey(), segments.delSegments.get(j)));
     });
     additions.forEach((line, j) => {
-      rows.push(toContentRow(line, 'add', nextKey(), segments.add.get(j)));
+      rows.push(toContentRow(line, 'add', nextKey(), segments.addSegments.get(j)));
     });
   }
   return rows;
@@ -298,6 +272,6 @@ export function buildDiffModel(diff: DiffResult | null): DiffModel {
     }
   }
 
-  model.lineNumWidth = Math.max(3, String(maxLineNumber(model.sections)).length);
+  model.lineNumWidth = getLineNumColumnWidth(maxLineNumber(model.sections));
   return model;
 }
