@@ -11,7 +11,9 @@ pulls it in automatically, so most users never install it directly.
 
 Its primary client is the `diffstalker` CLI (`packages/cli`), which spawns or
 attaches to this daemon over a unix socket and consumes it through the typed
-`@diffstalker/client`. A web client is planned against the same API.
+`@diffstalker/client`. A read-only web UI (Vue) ships inside this package and is
+served at `GET /` when the daemon binds a TCP port (`--port N`) — same-origin,
+since a browser can't reach the unix socket and the daemon sends no CORS headers.
 
 ## Running
 
