@@ -29,22 +29,6 @@ export function categorizeFiles(files: FileEntry[]): CategorizedFiles {
   };
 }
 
-/**
- * Get file counts for the 3 FileList sections.
- */
-export function getFileListSectionCounts(files: FileEntry[]): {
-  modifiedCount: number;
-  untrackedCount: number;
-  stagedCount: number;
-} {
-  const { modified, untracked, staged } = categorizeFiles(files);
-  return {
-    modifiedCount: modified.length,
-    untrackedCount: untracked.length,
-    stagedCount: staged.length,
-  };
-}
-
 export type CategoryName = 'modified' | 'untracked' | 'staged';
 
 /**

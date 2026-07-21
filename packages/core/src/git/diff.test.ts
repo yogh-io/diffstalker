@@ -7,7 +7,6 @@ import {
   extractHunkPatch,
   getDiff,
   getDiffForUntracked,
-  getStagedDiff,
   getCommitDiff,
   getCandidateBaseBranches,
   getDefaultBaseBranch,
@@ -27,7 +26,7 @@ import {
   removeRepoWithRemote,
 } from './test-helpers.js';
 
-describe('getDiff / getDiffForUntracked / getStagedDiff (fixture)', () => {
+describe('getDiff / getDiffForUntracked (fixture)', () => {
   const REPO_NAME = 'diff-ops-test';
   let repoPath: string;
 
@@ -60,15 +59,6 @@ describe('getDiff / getDiffForUntracked / getStagedDiff (fixture)', () => {
   it('getDiff returns empty raw for clean file', async () => {
     const diff = await getDiff(repoPath, 'file.txt');
     expect(diff.raw).toBe('');
-  });
-
-  it('getStagedDiff returns diff for staged changes', async () => {
-    writeFixtureFile(repoPath, 'file.txt', 'staged change\n');
-    gitExec(repoPath, 'add file.txt');
-    const diff = await getStagedDiff(repoPath);
-    expect(diff.lines.length).toBeGreaterThan(0);
-    expect(diff.lines.some((l) => l.type === 'addition')).toBe(true);
-    resetRepo();
   });
 
   it('getDiffForUntracked shows entire file as additions', async () => {

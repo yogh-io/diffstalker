@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { visualLength, truncateAnsi, needsTruncation } from './ansiTruncate.js';
+import { visualLength, truncateAnsi } from './ansiTruncate.js';
 
 describe('visualLength', () => {
   it('returns length for plain strings', () => {
@@ -55,23 +55,5 @@ describe('truncateAnsi', () => {
   it('returns ANSI string unchanged if within limit', () => {
     const input = '\x1b[32mhi\x1b[0m';
     expect(truncateAnsi(input, 10)).toBe(input);
-  });
-});
-
-describe('needsTruncation', () => {
-  it('returns false for short strings', () => {
-    expect(needsTruncation('hello', 10)).toBe(false);
-  });
-
-  it('returns false for exact length', () => {
-    expect(needsTruncation('hello', 5)).toBe(false);
-  });
-
-  it('returns true for long strings', () => {
-    expect(needsTruncation('hello world', 5)).toBe(true);
-  });
-
-  it('ignores ANSI codes when checking', () => {
-    expect(needsTruncation('\x1b[32mhi\x1b[0m', 5)).toBe(false);
   });
 });

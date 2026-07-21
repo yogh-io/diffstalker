@@ -48,24 +48,7 @@ export function highlightLine(content: string, language: string): string {
 
 /**
  * Highlight multiple lines as a block, preserving multi-line context
- * (e.g., block comments, multi-line strings).
- * Returns an array of highlighted lines.
- */
-export function highlightBlock(lines: string[], language: string): string[] {
-  if (!language || lines.length === 0) return lines;
-
-  try {
-    // Join lines and highlight as one block to preserve state
-    const block = lines.join('\n');
-    const result = emphasize.highlight(language, block);
-    return result.value.split('\n');
-  } catch {
-    return lines;
-  }
-}
-
-/**
- * Highlight multiple lines as a block, preserving background color.
+ * (e.g., block comments, multi-line strings) and background color.
  * Returns an array of highlighted lines with foreground-only resets.
  */
 export function highlightBlockPreserveBg(lines: string[], language: string): string[] {

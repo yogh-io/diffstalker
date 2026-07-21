@@ -116,10 +116,6 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
   }
 }
 
-export async function getStagedDiff(repoPath: string): Promise<DiffResult> {
-  return getDiff(repoPath, undefined, true);
-}
-
 /**
  * Get candidate base branches for PR comparison.
  * Uses git log to find branches that appear in recent history (likely PR targets).

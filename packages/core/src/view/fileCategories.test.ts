@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { categorizeFiles, getFileListSectionCounts } from './fileCategories.js';
+import { categorizeFiles } from './fileCategories.js';
 import type { FileEntry, FileStatus } from '../git/status.js';
 
 // Helper to create test FileEntry objects
@@ -125,32 +125,5 @@ describe('categorizeFiles', () => {
       'staged1.txt',
       'staged2.txt',
     ]);
-  });
-});
-
-describe('getFileListSectionCounts', () => {
-  test('returns zero counts for empty input', () => {
-    const result = getFileListSectionCounts([]);
-
-    expect(result.modifiedCount).toBe(0);
-    expect(result.untrackedCount).toBe(0);
-    expect(result.stagedCount).toBe(0);
-  });
-
-  test('counts files correctly', () => {
-    const files = [
-      makeFile('mod1.txt', 'modified', false),
-      makeFile('mod2.txt', 'deleted', false),
-      makeFile('new1.txt', 'untracked', false),
-      makeFile('staged1.txt', 'added', true),
-      makeFile('staged2.txt', 'modified', true),
-      makeFile('staged3.txt', 'renamed', true),
-    ];
-
-    const result = getFileListSectionCounts(files);
-
-    expect(result.modifiedCount).toBe(2);
-    expect(result.untrackedCount).toBe(1);
-    expect(result.stagedCount).toBe(3);
   });
 });

@@ -108,10 +108,3 @@ export function truncateAnsi(str: string, maxVisualLength: number, suffix: strin
 
   return result;
 }
-
-/**
- * Check if a string needs truncation at the given visual length.
- */
-export function needsTruncation(str: string, maxVisualLength: number): boolean {
-  return visualLength(str) > maxVisualLength;
-}
