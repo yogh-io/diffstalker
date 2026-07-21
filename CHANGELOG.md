@@ -5,20 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-07-21
 
 ### Added
 
-- **Web UI.** `diffstalkerd` now serves a Vue 3 browser client at `GET /` (run it
-  with `--port N`, open `http://localhost:N`) at feature parity with the terminal
-  UI: a Changes source-control panel (file + per-hunk staging, discard, commit /
-  amend), History (commit diff, cherry-pick / revert), a GitHub-PR-style Compare
-  view, an Explorer with syntax highlighting, remote/branch operations (fetch /
-  pull / push, branch switch/create, stash, soft reset, abort/continue), a fuzzy
-  file finder, follow mode, the six themes, and live updates over SSE. The web
-  build ships inside the `diffstalkerd` tarball — it is not a separately published
-  package. No authentication yet; the daemon binds `127.0.0.1` — keep it on
-  localhost.
+- **Web UI (read-only viewer).** `diffstalkerd` now serves a Vue 3 browser client
+  at `GET /` (run it with `--port N`, open `http://localhost:N`). It is a viewer,
+  not a manager — it reads git state and never mutates it. Four views mirroring the
+  terminal UI: Changes (file list + working-tree diffs, per-hunk view), History
+  (commit list + diff), a GitHub-PR-style Compare view against a base branch, and
+  an Explorer with syntax highlighting. Plus a fuzzy file finder, the six themes,
+  and live updates over SSE. The web build ships inside the `diffstalkerd` tarball
+  — it is not a separately published package. No authentication; the daemon binds
+  `127.0.0.1` — keep it on localhost.
+- **Follow + auto mode in the web UI.** A follow toggle switches the viewed repo
+  when an external tool appends to the follow hook file. Auto mode additionally
+  selects the freshest-changed file (and flashes it) and switches views as the
+  changed-file set grows or empties — driven by a new per-file mtime signal the
+  daemon now includes in shared state (browsers can't `fs.stat`, and it also
+  defeats SSE payload dedup so in-place edits still fire an update).
+- **Portrait / vertical-monitor layout.** On portrait or square viewports the
+  view rail rotates into a full-width top tab band and each view stacks its list
+  above a full-width diff, with drag-resizable rows. Landscape is byte-for-byte
+  unchanged.
+- **Collapsible folders** in the web Compare and Explorer file trees, with
+  single-child directory chains folded onto one row for compactness.
+- A favicon (the diff-gutter add/remove mark) for the web UI.
 
 ### Internal
 
