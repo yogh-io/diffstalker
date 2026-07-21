@@ -84,6 +84,16 @@ describe('follow toggle', () => {
   });
 });
 
+describe('remote action cluster', () => {
+  test('the real fetch/pull/push buttons and the actions menu render (no stubs)', () => {
+    const wrapper = mountHeader();
+    for (const id of ['remote-fetch', 'remote-pull', 'remote-push', 'actions-trigger']) {
+      expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(true);
+    }
+    expect(wrapper.text()).not.toContain('later slice');
+  });
+});
+
 describe('finder trigger', () => {
   test('disabled without an active repo', () => {
     const wrapper = mountHeader();

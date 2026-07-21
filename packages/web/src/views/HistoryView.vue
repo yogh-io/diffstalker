@@ -12,16 +12,23 @@
  * "Load more" raises the requested count by a page and re-pulls; it
  * hides once the log comes back short (nothing more to load).
  *
- * Phase 5b seam: cherry-pick / revert are git mutations and land later
- * — the .detail-actions span in the detail header is their spot.
+ * Cherry-pick / revert live on the detail header, each behind a
+ * CommitActionConfirm dialog naming the verb + commit (CLI parity).
+ * The mutation runs through the store's remote-op machine: the header
+ * shows global progress, and this view mirrors the label/error inline
+ * next to the buttons while the acted-on op is cherry-pick/revert. A
+ * conflict (409) wedges the repo — the shell's OperationBanner then
+ * offers abort (and continue for a rebase).
  */
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRepoStore } from '../stores/repo';
 import { formatRelativeTime, formatDateAbsolute } from '@diffstalker/core/view/formatDate';
+import { condenseGitError, REMOTE_OP_LABELS } from '../utils/remoteOps';
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import DiffView from '../components/DiffView.vue';
+import CommitActionConfirm from '../components/CommitActionConfirm.vue';
 
 const PAGE_SIZE = 100;
 
@@ -35,9 +42,59 @@ const detailError = ref<string | null>(null);
 // "Load more" keeps paging forward instead of re-requesting page one.
 const requestedCount = ref(Math.max(PAGE_SIZE, repo.history.commits.length));
 const listEl = ref<HTMLElement | null>(null);
+/** Focus fallback for the confirm dialog: a confirm disables the
+ * trigger button before the dialog unmounts, so focus restore needs
+ * somewhere sensible to land instead of <body>. */
+const viewEl = ref<HTMLElement | null>(null);
 
 const commits = computed(() => history.value.commits);
 const selected = computed(() => history.value.selectedCommit);
+
+// --- Cherry-pick / revert (confirm first; runs the remote-op machine) ---
+
+const { remote } = storeToRefs(repo);
+
+/** The pending confirm: which verb over which commit, null when closed. */
+const pendingAction = ref<{ verb: 'cherry-pick' | 'revert'; commit: CommitInfo } | null>(null);
+
+const actionsBusy = computed(() => remote.value.inProgress);
+
+/** True while/after THIS view's ops run — gates the inline status mirror. */
+const remoteIsCommitAction = computed(
+  () => remote.value.operation === 'cherryPick' || remote.value.operation === 'revert'
+);
+
+const actionProgress = computed(() => {
+  const state = remote.value;
+  if (!remoteIsCommitAction.value || !state.inProgress || state.operation === null) return null;
+  return REMOTE_OP_LABELS[state.operation];
+});
+
+const actionError = computed(() => {
+  if (!remoteIsCommitAction.value || remote.value.inProgress || remote.value.error === null) {
+    return null;
+  }
+  // A conflict arrives as git's full multi-line stderr — condense it;
+  // the banner below the header owns the recovery affordances anyway.
+  return condenseGitError(remote.value.error);
+});
+
+function requestAction(verb: 'cherry-pick' | 'revert', commit: CommitInfo): void {
+  if (actionsBusy.value) return;
+  pendingAction.value = { verb, commit };
+}
+
+/** Remote ops never reject — a failure lands in remote.error. */
+async function confirmAction(): Promise<void> {
+  const pending = pendingAction.value;
+  pendingAction.value = null;
+  if (!pending) return;
+  if (pending.verb === 'cherry-pick') {
+    await repo.cherryPick(pending.commit.hash);
+  } else {
+    await repo.revertCommit(pending.commit.hash);
+  }
+}
 
 /** The log filled the requested page — more commits may exist. */
 const mayHaveMore = computed(() => commits.value.length >= requestedCount.value);
@@ -146,7 +203,7 @@ function moveSelection(delta: number): void {
 </script>
 
 <template>
-  <div class="history">
+  <div ref="viewEl" class="history" tabindex="-1">
     <aside class="commits-col" aria-label="Commit history">
       <p v-if="history.isLoading && commits.length === 0" class="col-empty">Loading history…</p>
       <!-- Full-pane error only when there is nothing to show; with commits
@@ -215,13 +272,42 @@ function moveSelection(delta: number): void {
         <header class="detail-header">
           <div class="detail-top">
             <span class="full-hash mono">{{ selected.hash }}</span>
-            <!-- Phase 5b seam: cherry-pick / revert buttons land here. -->
-            <span class="detail-actions"></span>
+            <span class="detail-actions">
+              <span v-if="actionProgress" class="action-status mono" data-testid="action-progress">
+                {{ actionProgress }}
+              </span>
+              <button
+                class="action-btn mono"
+                data-testid="cherry-pick"
+                :disabled="actionsBusy"
+                title="Apply this commit onto the current branch"
+                @click="requestAction('cherry-pick', selected)"
+              >
+                cherry-pick
+              </button>
+              <button
+                class="action-btn mono"
+                data-testid="revert"
+                :disabled="actionsBusy"
+                title="Create a commit undoing this commit"
+                @click="requestAction('revert', selected)"
+              >
+                revert
+              </button>
+            </span>
           </div>
           <p class="detail-message">{{ selected.message }}</p>
           <p class="detail-meta mono">
             <span class="author">{{ selected.author }}</span>
             <span class="abs-date">{{ formatDateAbsolute(selected.date) }}</span>
+          </p>
+          <p
+            v-if="actionError"
+            class="action-error mono"
+            data-testid="action-error"
+            :title="remote.error ?? undefined"
+          >
+            {{ actionError }}
           </p>
         </header>
         <div class="detail-diff">
@@ -236,6 +322,15 @@ function moveSelection(delta: number): void {
         Select a commit to view its changes
       </p>
     </section>
+
+    <CommitActionConfirm
+      v-if="pendingAction"
+      :verb="pendingAction.verb"
+      :commit="pendingAction.commit"
+      :fallback-focus="viewEl"
+      @confirm="confirmAction"
+      @cancel="pendingAction = null"
+    />
   </div>
 </template>
 
@@ -245,6 +340,11 @@ function moveSelection(delta: number): void {
   display: grid;
   grid-template-columns: clamp(16rem, 34%, 30rem) minmax(0, 1fr);
   background: var(--bg);
+}
+
+/* Programmatic focus target only (dialog fallback) — no visible ring. */
+.history:focus {
+  outline: none;
 }
 
 /* --- Commit list --- */
@@ -401,6 +501,43 @@ function moveSelection(delta: number): void {
   display: flex;
   align-items: baseline;
   gap: 0.75rem;
+}
+
+.detail-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  margin-left: auto;
+}
+
+.action-status {
+  font-size: var(--fs-small);
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+.action-btn {
+  flex: none;
+  padding: 0.1875rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  font-size: var(--fs-small);
+}
+
+.action-btn:hover:not(:disabled) {
+  border-color: var(--text-dim);
+}
+
+.action-btn:disabled {
+  color: var(--text-dim);
+}
+
+.action-error {
+  margin: 0.375rem 0 0;
+  font-size: var(--fs-small);
+  color: var(--del);
+  overflow-wrap: anywhere;
 }
 
 .full-hash {

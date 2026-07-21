@@ -42,7 +42,7 @@ import { DiffstalkerClient } from '../api/client';
 import { DaemonError, isConnectionError } from '../api/errors';
 import type { SseHandle } from '../api/transport';
 import type { MutationEnvelope, RepoRef, WireSharedState } from '@diffstalker/client';
-import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
+import type { FileEntry, CommitInfo, LocalBranch } from '@diffstalker/core/git/status';
 import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import type { RemoteOperation, RemoteOperationState } from '@diffstalker/core/types/remote';
@@ -831,6 +831,13 @@ export const useRepoStore = defineStore('repo', () => {
     remote.value = initialRemote();
   }
 
+  /** Local branches for the switcher (read-only; empty when unavailable). */
+  async function listBranches(): Promise<LocalBranch[]> {
+    const id = repoId.value;
+    if (id === null) return [];
+    return read<LocalBranch[]>(() => client.branches(id), []);
+  }
+
   // --- Worktrees / explorer sources ---
 
   async function listWorktrees(): Promise<WorktreeInfo[]> {
@@ -890,6 +897,7 @@ export const useRepoStore = defineStore('repo', () => {
     abort,
     rebaseContinue,
     clearRemoteState,
+    listBranches,
     // worktrees
     listWorktrees,
   };

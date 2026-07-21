@@ -974,3 +974,30 @@ describe('reconnect', () => {
     expect(store.repoId).toBe('r2');
   });
 });
+
+// --- Branch listing (read-only, for the actions menu) ---
+
+describe('listBranches', () => {
+  test('returns the daemon branch list', async () => {
+    const { store } = await openStore();
+    onRequest = (call) =>
+      call.url === '/repos/r1/branches'
+        ? {
+            body: [
+              { name: 'main', current: true, tracking: 'origin/main' },
+              { name: 'feat-x', current: false },
+            ],
+          }
+        : undefined;
+
+    const branches = await store.listBranches();
+    expect(branches.map((b) => b.name)).toEqual(['main', 'feat-x']);
+    expect(branches[0].current).toBe(true);
+  });
+
+  test('resolves empty without a repo', async () => {
+    const store = useRepoStore();
+    expect(await store.listBranches()).toEqual([]);
+    expect(fake.callsTo('/branches')).toHaveLength(0);
+  });
+});

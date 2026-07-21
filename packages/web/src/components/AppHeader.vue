@@ -2,8 +2,9 @@
 /**
  * Global header: wordmark, repo switcher, branch + tracking + ahead/behind
  * (mono, diff-colored counts), one calm error line, the follow toggle,
- * stubbed remote-op controls (wired in the mutation phase), the fuzzy
- * finder trigger, theme switcher.
+ * the remote-op controls (fetch/pull/push + the branch/stash/reset menu,
+ * over the store's remote-operation machine), the fuzzy finder trigger,
+ * theme switcher.
  *
  * Follow: the daemon owns the watcher; the button flips the CLIENT-side
  * followEnabled policy toggle (useFollowMode acts on follow-change only
@@ -19,6 +20,8 @@ import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import RepoSwitcher from './RepoSwitcher.vue';
+import RemoteActions from './RemoteActions.vue';
+import RepoActionsMenu from './RepoActionsMenu.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
 
 const daemon = useDaemonStore();
@@ -101,10 +104,9 @@ const followTitle = computed(() => {
       <span class="dot" aria-hidden="true"></span>{{ followLabel }}
     </button>
 
-    <div class="stub-actions" aria-label="Remote operations (land in a later slice)">
-      <button disabled title="Lands in a later slice">fetch</button>
-      <button disabled title="Lands in a later slice">pull</button>
-      <button disabled title="Lands in a later slice">push</button>
+    <div class="remote-cluster">
+      <RemoteActions />
+      <RepoActionsMenu />
     </div>
 
     <button
@@ -239,12 +241,13 @@ const followTitle = computed(() => {
   background: var(--add);
 }
 
-.stub-actions {
+.remote-cluster {
   display: flex;
-  gap: 0.25rem;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
 }
 
-.stub-actions button,
 .finder-btn {
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--border);
@@ -267,7 +270,7 @@ const followTitle = computed(() => {
 }
 
 @media (max-width: 56rem) {
-  .stub-actions,
+  .remote-cluster,
   .finder-btn,
   .follow {
     display: none;

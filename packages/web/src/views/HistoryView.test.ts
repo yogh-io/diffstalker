@@ -336,3 +336,137 @@ describe('re-anchoring across a state-change re-pull', () => {
     expect(wrapper.find('[data-testid="history-prompt"]').exists()).toBe(true);
   });
 });
+
+describe('cherry-pick / revert', () => {
+  /** Mount with the commit already selected (detail header showing). */
+  function mountSelected() {
+    const repo = useRepoStore();
+    const selected = commit({ message: 'Fix the thing' });
+    repo.history = {
+      commits: [selected],
+      selectedCommit: selected,
+      commitDiff: TWO_FILE_DIFF,
+      isLoading: false,
+    };
+    const wrapper = mount(HistoryView, {
+      global: { plugins: [pinia] },
+      attachTo: document.body,
+    });
+    return { wrapper, repo, selected };
+  }
+
+  test('cherry-pick opens the confirm naming verb + shortHash + message; store untouched', async () => {
+    const { wrapper, repo, selected } = mountSelected();
+    const spy = vi.spyOn(repo, 'cherryPick').mockResolvedValue();
+
+    await wrapper.find('[data-testid="cherry-pick"]').trigger('click');
+    expect(spy).not.toHaveBeenCalled();
+
+    const dialog = wrapper.find('[data-testid="commit-action-confirm"]');
+    expect(dialog.exists()).toBe(true);
+    expect(dialog.find('[data-testid="commit-action-question"]').text()).toContain('Cherry-pick');
+    expect(dialog.find('[data-testid="commit-action-commit"]').text()).toContain(
+      selected.shortHash
+    );
+    expect(dialog.find('[data-testid="commit-action-commit"]').text()).toContain('Fix the thing');
+  });
+
+  test('confirm calls cherryPick with the hash and closes the dialog', async () => {
+    const { wrapper, repo, selected } = mountSelected();
+    const spy = vi.spyOn(repo, 'cherryPick').mockResolvedValue();
+
+    await wrapper.find('[data-testid="cherry-pick"]').trigger('click');
+    await wrapper.find('[data-testid="commit-action-go"]').trigger('click');
+
+    expect(spy).toHaveBeenCalledWith(selected.hash);
+    expect(wrapper.find('[data-testid="commit-action-confirm"]').exists()).toBe(false);
+  });
+
+  test('cancel closes without a call', async () => {
+    const { wrapper, repo } = mountSelected();
+    const cherrySpy = vi.spyOn(repo, 'cherryPick').mockResolvedValue();
+    const revertSpy = vi.spyOn(repo, 'revertCommit').mockResolvedValue();
+
+    await wrapper.find('[data-testid="revert"]').trigger('click');
+    await wrapper.find('[data-testid="commit-action-cancel"]').trigger('click');
+
+    expect(cherrySpy).not.toHaveBeenCalled();
+    expect(revertSpy).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-testid="commit-action-confirm"]').exists()).toBe(false);
+  });
+
+  test('confirm on revert calls revertCommit with the hash', async () => {
+    const { wrapper, repo, selected } = mountSelected();
+    const spy = vi.spyOn(repo, 'revertCommit').mockResolvedValue();
+
+    await wrapper.find('[data-testid="revert"]').trigger('click');
+    await wrapper.find('[data-testid="commit-action-go"]').trigger('click');
+
+    expect(spy).toHaveBeenCalledWith(selected.hash);
+  });
+
+  test('buttons disable and the label shows while the op runs', async () => {
+    const { wrapper, repo } = mountSelected();
+    repo.remote = { operation: 'cherryPick', inProgress: true, error: null, lastResult: null };
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="cherry-pick"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.find('[data-testid="revert"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.find('[data-testid="action-progress"]').text()).toBe('cherry-picking…');
+  });
+
+  test('a conflict (409) surfaces as the inline action error', async () => {
+    const { wrapper, repo } = mountSelected();
+    repo.remote = {
+      operation: 'cherryPick',
+      inProgress: false,
+      error: 'Cherry-pick failed: conflicts in src/foo.ts',
+      lastResult: null,
+    };
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="action-error"]').text()).toBe(
+      'Cherry-pick failed: conflicts in src/foo.ts'
+    );
+  });
+
+  test('an unrelated remote error (e.g. a push) stays out of the detail header', async () => {
+    const { wrapper, repo } = mountSelected();
+    repo.remote = { operation: 'push', inProgress: false, error: 'push rejected', lastResult: null };
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="action-error"]').exists()).toBe(false);
+  });
+
+  test('confirming (which disables the trigger) drops focus into the view, not <body>', async () => {
+    const { wrapper, repo } = mountSelected();
+    // The real op flips remote.inProgress synchronously — that disables
+    // the cherry-pick trigger BEFORE the dialog unmounts, so the trap's
+    // normal restore is a no-op on a disabled element.
+    vi.spyOn(repo, 'cherryPick').mockImplementation(async () => {
+      repo.remote = { operation: 'cherryPick', inProgress: true, error: null, lastResult: null };
+    });
+
+    const trigger = wrapper.find('[data-testid="cherry-pick"]');
+    (trigger.element as HTMLElement).focus();
+    await trigger.trigger('click');
+    await wrapper.find('[data-testid="commit-action-go"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="commit-action-confirm"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(wrapper.find('.history').element);
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  test('cancel restores focus to the (still-enabled) trigger button', async () => {
+    const { wrapper } = mountSelected();
+
+    const trigger = wrapper.find('[data-testid="cherry-pick"]');
+    (trigger.element as HTMLElement).focus();
+    await trigger.trigger('click');
+    await wrapper.find('[data-testid="commit-action-cancel"]').trigger('click');
+    await flushPromises();
+
+    expect(document.activeElement).toBe(trigger.element);
+  });
+});

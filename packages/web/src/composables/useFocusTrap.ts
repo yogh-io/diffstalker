@@ -5,7 +5,11 @@
  * into the container ([data-autofocus] target if present, else the
  * container itself — give it tabindex="-1"). While mounted: Tab and
  * Shift+Tab cycle within the container's focusable elements instead of
- * escaping to the page. On unmount: focus returns to where it was.
+ * escaping to the page. On unmount: focus returns to where it was —
+ * unless that element can no longer take it (gone from the DOM, or
+ * disabled by the very action that closed the dialog, e.g. a confirm
+ * that flips an in-progress flag); then the caller's `fallback` target
+ * gets focus instead of letting it drop to <body>.
  *
  * A container keydown handler that already claimed Tab (the finder's
  * result cycling) wins — the trap skips defaultPrevented events.
@@ -18,7 +22,24 @@ const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), ' +
   'textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function useFocusTrap(container: Ref<HTMLElement | null>): void {
+export interface FocusTrapOptions {
+  /** Focus target when the remembered element cannot be restored to. */
+  fallback?: () => HTMLElement | null;
+}
+
+/** Can focus return here? Not when it left the DOM or got disabled. */
+function canRestore(el: HTMLElement | null): el is HTMLElement {
+  if (el === null || !el.isConnected) return false;
+  if ('disabled' in el && (el as HTMLElement & { disabled?: boolean }).disabled === true) {
+    return false;
+  }
+  return true;
+}
+
+export function useFocusTrap(
+  container: Ref<HTMLElement | null>,
+  options: FocusTrapOptions = {}
+): void {
   let previous: HTMLElement | null = null;
 
   function onKeydown(event: KeyboardEvent): void {
@@ -59,6 +80,10 @@ export function useFocusTrap(container: Ref<HTMLElement | null>): void {
 
   onBeforeUnmount(() => {
     container.value?.removeEventListener('keydown', onKeydown);
-    if (previous?.isConnected) previous.focus();
+    if (canRestore(previous)) {
+      previous.focus();
+    } else {
+      options.fallback?.()?.focus();
+    }
   });
 }

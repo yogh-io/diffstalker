@@ -14,9 +14,11 @@ import { createPinia, setActivePinia } from 'pinia';
 import App from './App.vue';
 import { useDaemonStore } from './stores/daemon';
 import { useRepoStore } from './stores/repo';
+import { useUiStore } from './stores/ui';
 import { PREFS_KEY } from './prefs';
 import { makeFakeFetch, FakeEventSource } from './testing/fakes';
 import type { FakeFetch, FetchCall, FakeResponse } from './testing/fakes';
+import type { CommitInfo } from '@diffstalker/core/git/status';
 
 const REPO_ONE = { id: 'r1', path: '/repo', branch: 'main' };
 const REPO_TWO = { id: 'r2', path: '/other', branch: 'dev' };
@@ -280,6 +282,62 @@ describe('repo selection', () => {
     // One POST for B, and A's ref released (DELETE), never re-POSTed.
     expect(repoPosts()).toEqual(['/repo', '/other']);
     expect(repoDeletes()).toEqual(['/repos/r1']);
+    wrapper.unmount();
+  });
+});
+
+describe('repo switch discards stale view state', () => {
+  const COMMIT: CommitInfo = {
+    hash: 'a'.repeat(40),
+    shortHash: 'aaaaaaa',
+    message: 'Fix the thing',
+    author: 'Jorn',
+    date: new Date(),
+    refs: '',
+  };
+
+  /** Switch to the second repo through the header switcher. */
+  async function switchToSecond(wrapper: VueWrapper): Promise<void> {
+    await wrapper.find('.switch-btn').trigger('click');
+    const rows = wrapper.find('[data-testid="open-repos"]').findAll('.repo-row');
+    await rows[1].trigger('click');
+    await flushPromises();
+  }
+
+  test('an open cherry-pick confirm does NOT survive a repo switch — no wrong-repo pick', async () => {
+    const wrapper = await mountWithRepos([REPO_ONE, REPO_TWO]);
+    const repo = useRepoStore();
+    const cherrySpy = vi.spyOn(repo, 'cherryPick');
+
+    useUiStore().setActiveView('history');
+    await flushPromises(); // History mounts on repo A, pulls its (empty) log
+    repo.history = { commits: [COMMIT], selectedCommit: COMMIT, commitDiff: null, isLoading: false };
+    await flushPromises();
+
+    await wrapper.find('[data-testid="cherry-pick"]').trigger('click');
+    expect(wrapper.find('[data-testid="commit-action-confirm"]').exists()).toBe(true);
+
+    // Follow mode (or the user) activates repo B with the confirm open.
+    await switchToSecond(wrapper);
+
+    // The keyed view remounted: the stale dialog is gone, and repo A's
+    // hash can never be cherry-picked onto repo B.
+    expect(wrapper.find('[data-testid="commit-action-confirm"]').exists()).toBe(false);
+    expect(cherrySpy).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  test('switching repos on History remounts it and pulls the NEW repo log', async () => {
+    const wrapper = await mountWithRepos([REPO_ONE, REPO_TWO]);
+    useUiStore().setActiveView('history');
+    await flushPromises();
+    expect(fake.calls.some((c) => c.url.startsWith('/repos/r1/history'))).toBe(true);
+
+    await switchToSecond(wrapper);
+
+    // Without the remount, onMounted never refires and History sticks
+    // on the old repo's (empty) state.
+    expect(fake.calls.some((c) => c.url.startsWith('/repos/r2/history'))).toBe(true);
     wrapper.unmount();
   });
 });

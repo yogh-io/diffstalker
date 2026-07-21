@@ -5,9 +5,10 @@
  * when the active element is NOT one of the trap's focusable items
  * (the dialog root itself, tabindex="-1"), BOTH directions are
  * prevented and redirected into the dialog instead of walking out to
- * the page behind the scrim. Focus returns to the opener on unmount.
- * Includes HotkeysOverlay, whose only autofocus target is the close
- * button.
+ * the page behind the scrim. Focus returns to the opener on unmount —
+ * unless the opener can no longer take it (disabled or gone), in which
+ * case the caller's fallback gets it instead of <body>. Includes
+ * HotkeysOverlay, whose only autofocus target is the close button.
  */
 
 import { describe, test, expect, afterEach, beforeEach } from 'vitest';
@@ -19,11 +20,11 @@ import { useFocusTrap } from './useFocusTrap';
 import HotkeysOverlay from '../components/HotkeysOverlay.vue';
 
 /** A dialog root (tabindex=-1) with two buttons; autofocus optional. */
-function makeHarness(withAutofocus: boolean) {
+function makeHarness(withAutofocus: boolean, fallback?: () => HTMLElement | null) {
   return defineComponent({
     setup() {
       const container = ref<HTMLElement | null>(null);
-      useFocusTrap(container);
+      useFocusTrap(container, fallback ? { fallback } : {});
       return () =>
         h('div', { ref: container, tabindex: '-1', 'data-testid': 'dialog' }, [
           h('button', { 'data-testid': 'first', ...(withAutofocus ? { 'data-autofocus': '' } : {}) }, 'first'),
@@ -111,6 +112,59 @@ describe('trapping', () => {
 
     wrapper.unmount();
     expect(document.activeElement).toBe(opener);
+  });
+});
+
+describe('restore fallback', () => {
+  /** An opener button + a fallback target (tabindex=-1), both in body. */
+  function setupTargets(): { opener: HTMLButtonElement; fallback: HTMLElement } {
+    const opener = document.createElement('button');
+    const fallback = document.createElement('div');
+    fallback.tabIndex = -1;
+    document.body.append(opener, fallback);
+    opener.focus();
+    return { opener, fallback };
+  }
+
+  test('an opener DISABLED while the dialog was open: focus lands on the fallback, not body', () => {
+    const { opener, fallback } = setupTargets();
+    wrapper = mount(makeHarness(true, () => fallback), { attachTo: document.body });
+
+    // The confirmed action disables its own trigger before the dialog
+    // unmounts (e.g. remote.inProgress flips) — restoring there is a no-op.
+    opener.disabled = true;
+    wrapper.unmount();
+
+    expect(document.activeElement).toBe(fallback);
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  test('an opener REMOVED from the DOM: focus lands on the fallback', () => {
+    const { opener, fallback } = setupTargets();
+    wrapper = mount(makeHarness(true, () => fallback), { attachTo: document.body });
+
+    opener.remove();
+    wrapper.unmount();
+
+    expect(document.activeElement).toBe(fallback);
+  });
+
+  test('a healthy opener still wins over the fallback (cancel path)', () => {
+    const { opener, fallback } = setupTargets();
+    wrapper = mount(makeHarness(true, () => fallback), { attachTo: document.body });
+
+    wrapper.unmount();
+
+    expect(document.activeElement).toBe(opener);
+  });
+
+  test('no fallback and a disabled opener: focus is simply not restored', () => {
+    const { opener } = setupTargets();
+    wrapper = mount(makeHarness(true), { attachTo: document.body });
+
+    opener.disabled = true;
+    expect(() => wrapper.unmount()).not.toThrow();
+    expect(document.activeElement).not.toBe(opener);
   });
 });
 
