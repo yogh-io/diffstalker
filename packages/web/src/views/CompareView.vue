@@ -21,7 +21,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRepoStore } from '../stores/repo';
-import { buildFileTree, flattenTree } from '@diffstalker/core/view/fileTree';
+import { buildFileTree, flattenTree, type TreeRowItem } from '@diffstalker/core/view/fileTree';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareFileDiff } from '@diffstalker/core/git/diff';
@@ -103,9 +103,50 @@ function relTime(commit: CommitInfo): string {
 /** Directory + file rows from core's collapsing tree builder. */
 const treeRows = computed(() => flattenTree(buildFileTree(files.value)));
 
-/** fileIndexes in tree order, for keyboard navigation over file rows. */
+/**
+ * Per-folder collapse: tree-only view state keyed by the dir row's
+ * fullPath (for collapsed single-child chains that is the deepest
+ * segment, which is exactly what the row carries). A stale path after
+ * the file set changes just matches nothing — no reset bookkeeping.
+ */
+const collapsedDirs = reactive(new Set<string>());
+
+function setDirCollapsed(fullPath: string, collapsed: boolean): void {
+  if (collapsed) collapsedDirs.add(fullPath);
+  else collapsedDirs.delete(fullPath);
+}
+
+function toggleDir(fullPath: string): void {
+  setDirCollapsed(fullPath, !collapsedDirs.has(fullPath));
+}
+
+/**
+ * treeRows minus everything inside a collapsed directory. flattenTree
+ * is DFS: a dir is immediately followed by its descendants at greater
+ * depth, so a collapsed dir at depth D hides all subsequent rows with
+ * depth > D until the next row at depth <= D.
+ */
+const visibleRows = computed(() => {
+  const rows: TreeRowItem[] = [];
+  let hideDeeperThan: number | null = null;
+  for (const row of treeRows.value) {
+    if (hideDeeperThan !== null) {
+      if (row.depth > hideDeeperThan) continue;
+      hideDeeperThan = null;
+    }
+    rows.push(row);
+    if (row.type === 'directory' && collapsedDirs.has(row.fullPath)) {
+      hideDeeperThan = row.depth;
+    }
+  }
+  return rows;
+});
+
+/** fileIndexes of VISIBLE file rows in tree order, for keyboard
+ *  navigation — arrow-nav must never land on a file hidden under a
+ *  collapsed directory. */
 const treeFileOrder = computed(() =>
-  treeRows.value
+  visibleRows.value
     .filter((row) => row.type === 'file')
     .map((row) => row.fileIndex as number)
 );
@@ -300,15 +341,30 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
           aria-label="Changed files"
           data-testid="compare-files"
         >
-          <template v-for="row in treeRows" :key="`${row.type}:${row.fullPath}`">
-            <!-- role=presentation: only file rows are listbox options. -->
+          <template v-for="row in visibleRows" :key="`${row.type}:${row.fullPath}`">
+            <!-- role=presentation: only file rows are listbox options.
+                 The whole row toggles; the button is the a11y surface
+                 (aria-expanded + native Enter/Space activation). -->
             <div
               v-if="row.type === 'directory'"
               class="dir-row mono"
               role="presentation"
               :style="{ '--depth': row.depth }"
+              @click="toggleDir(row.fullPath)"
             >
-              {{ row.name }}/
+              <button
+                class="dir-collapse-btn"
+                :aria-expanded="!collapsedDirs.has(row.fullPath)"
+                :aria-label="`${collapsedDirs.has(row.fullPath) ? 'Expand' : 'Collapse'} ${row.fullPath}`"
+                @click.stop="toggleDir(row.fullPath)"
+                @keydown.enter.prevent="toggleDir(row.fullPath)"
+                @keydown.space.prevent="toggleDir(row.fullPath)"
+                @keydown.left.prevent="setDirCollapsed(row.fullPath, true)"
+                @keydown.right.prevent="setDirCollapsed(row.fullPath, false)"
+              >
+                {{ collapsedDirs.has(row.fullPath) ? '▸' : '▾' }}
+              </button>
+              <span class="dir-name">{{ row.name }}/</span>
             </div>
             <div
               v-else
@@ -613,10 +669,37 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
 }
 
 .dir-row {
+  display: flex;
+  align-items: baseline;
   padding: 0.1875rem 0.75rem;
   padding-left: calc(0.75rem + var(--depth, 0) * 0.875rem);
   color: var(--text-dim);
   font-size: var(--fs-base);
+  cursor: pointer;
+}
+
+.dir-row:hover {
+  color: var(--text);
+}
+
+/* Explorer-chevron styling: mono, muted, fixed 1-glyph slot. */
+.dir-collapse-btn {
+  flex: none;
+  width: 1.75ch;
+  font-family: var(--font-mono);
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+  text-align: left;
+  user-select: none;
+}
+
+.dir-row:hover .dir-collapse-btn,
+.dir-collapse-btn:hover {
+  color: var(--text);
+}
+
+.dir-name {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

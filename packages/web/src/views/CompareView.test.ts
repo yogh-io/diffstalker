@@ -4,7 +4,8 @@
  * no daemon-side persistence), the include-uncommitted toggle
  * (re-queries with the flag), the stats line, the
  * file tree (grouping, status letters, per-file stats, uncommitted
- * flags), stacked per-file DiffViews with collapsible sticky headers,
+ * flags, per-folder collapse), stacked per-file DiffViews with
+ * collapsible sticky headers,
  * the collapsible commits section, selection (click + keyboard), and
  * the noBaseBranch / clean / loading / error states.
  *
@@ -272,7 +273,10 @@ describe('file tree', () => {
 
     // Tree shape: src/ then app/ (dir→file chains don't collapse), the
     // files inside, then the root-level file (directories sort first).
-    expect(list.findAll('.dir-row').map((row) => row.text())).toEqual(['src/', 'app/']);
+    expect(list.findAll('.dir-row').map((row) => row.find('.dir-name').text())).toEqual([
+      'src/',
+      'app/',
+    ]);
     const rows = list.findAll('.file-row');
     expect(rows.map((row) => row.find('.name').text())).toEqual([
       'main.ts',
@@ -300,7 +304,9 @@ describe('file tree', () => {
     const { wrapper } = mountView(makeCompareDiff(files, []));
     const list = wrapper.find('[data-testid="compare-files"]');
 
-    expect(list.findAll('.dir-row').map((row) => row.text())).toEqual(['deep/one/two/']);
+    expect(list.findAll('.dir-row').map((row) => row.find('.dir-name').text())).toEqual([
+      'deep/one/two/',
+    ]);
     expect(list.findAll('.file-row').map((row) => row.find('.name').text())).toEqual([
       'leaf.ts',
       'root.ts',
@@ -383,6 +389,120 @@ describe('file tree', () => {
       'false',
     ]);
     expect(rows[1].classes()).toContain('selected');
+  });
+});
+
+describe('folder collapse', () => {
+  test('collapsing a directory hides its files AND subdirectories; expanding restores them', async () => {
+    const { wrapper } = mountView();
+    const list = wrapper.find('[data-testid="compare-files"]');
+
+    // src/ collapses: app/ and both files under it vanish; the
+    // root-level file stays. The stacked diffs on the right are a
+    // tree-unrelated concern and keep all sections.
+    await list.findAll('.dir-row')[0].find('.dir-collapse-btn').trigger('click');
+    expect(list.findAll('.dir-row').map((row) => row.find('.dir-name').text())).toEqual(['src/']);
+    expect(list.findAll('.file-row').map((row) => row.find('.name').text())).toEqual([
+      'notes.txt',
+    ]);
+    expect(wrapper.findAll('[data-testid="file-diff"]')).toHaveLength(3);
+
+    await list.findAll('.dir-row')[0].find('.dir-collapse-btn').trigger('click');
+    expect(list.findAll('.dir-row').map((row) => row.find('.dir-name').text())).toEqual([
+      'src/',
+      'app/',
+    ]);
+    expect(list.findAll('.file-row')).toHaveLength(3);
+  });
+
+  test('clicking the dir ROW (not just the button) toggles too', async () => {
+    const { wrapper } = mountView();
+    const list = wrapper.find('[data-testid="compare-files"]');
+
+    await list.findAll('.dir-row')[0].trigger('click');
+    expect(list.findAll('.file-row')).toHaveLength(1);
+    await list.findAll('.dir-row')[0].trigger('click');
+    expect(list.findAll('.file-row')).toHaveLength(3);
+  });
+
+  test('a collapsed single-child chain hides its whole subtree', async () => {
+    // deep→one→two merges into ONE dir row; collapsing it hides the
+    // nested subdir and every file under the chain.
+    const files = [
+      fileDiff('deep/one/two/leaf.ts', 'modified', 1, 0),
+      fileDiff('deep/one/two/sub/nested.ts', 'modified', 1, 0),
+      fileDiff('root.ts', 'modified', 1, 0),
+    ];
+    const { wrapper } = mountView(makeCompareDiff(files, []));
+    const list = wrapper.find('[data-testid="compare-files"]');
+    expect(list.findAll('.dir-row').map((row) => row.find('.dir-name').text())).toEqual([
+      'deep/one/two/',
+      'sub/',
+    ]);
+
+    await list.findAll('.dir-row')[0].find('.dir-collapse-btn').trigger('click');
+    expect(list.findAll('.dir-row').map((row) => row.find('.dir-name').text())).toEqual([
+      'deep/one/two/',
+    ]);
+    expect(list.findAll('.file-row').map((row) => row.find('.name').text())).toEqual(['root.ts']);
+  });
+
+  test('the toggle button carries aria-expanded/aria-label and toggles on click, Enter, and Space', async () => {
+    const { wrapper } = mountView();
+    const btn = () =>
+      wrapper.find('[data-testid="compare-files"]').findAll('.dir-row')[0].find('.dir-collapse-btn');
+
+    expect(btn().attributes('aria-expanded')).toBe('true');
+    expect(btn().attributes('aria-label')).toBe('Collapse src');
+    expect(btn().text()).toBe('▾');
+
+    await btn().trigger('click');
+    expect(btn().attributes('aria-expanded')).toBe('false');
+    expect(btn().attributes('aria-label')).toBe('Expand src');
+    expect(btn().text()).toBe('▸');
+
+    await btn().trigger('keydown', { key: 'Enter' });
+    expect(btn().attributes('aria-expanded')).toBe('true');
+    await btn().trigger('keydown', { key: ' ' });
+    expect(btn().attributes('aria-expanded')).toBe('false');
+
+    // Left/Right mirror the Explorer: collapse/expand, idempotent.
+    await btn().trigger('keydown', { key: 'ArrowLeft' });
+    expect(btn().attributes('aria-expanded')).toBe('false');
+    await btn().trigger('keydown', { key: 'ArrowRight' });
+    expect(btn().attributes('aria-expanded')).toBe('true');
+    await btn().trigger('keydown', { key: 'ArrowRight' });
+    expect(btn().attributes('aria-expanded')).toBe('true');
+  });
+
+  test('keyboard nav and the tab stop skip files hidden under a collapsed dir', async () => {
+    // Tree order: src/ (x.ts, y.ts), then a.ts, z.ts — dirs sort first.
+    const files = [
+      fileDiff('a.ts', 'modified', 1, 0), // files index 0
+      fileDiff('src/x.ts', 'modified', 1, 0), // 1
+      fileDiff('src/y.ts', 'modified', 1, 0), // 2
+      fileDiff('z.ts', 'modified', 1, 0), // 3
+    ];
+    const { wrapper, repo } = mountView(makeCompareDiff(files, []));
+
+    await wrapper.find('.dir-collapse-btn').trigger('click'); // collapse src/
+    const rows = wrapper.findAll('.file-row');
+    expect(rows.map((row) => row.find('.name').text())).toEqual(['a.ts', 'z.ts']);
+
+    // ArrowDown from a.ts lands on z.ts (index 3), NOT hidden x.ts (1).
+    await rows[0].trigger('click');
+    expect(repo.compare.selection).toMatchObject({ type: 'file', index: 0 });
+    await rows[0].trigger('keydown', { key: 'ArrowDown' });
+    expect(repo.compare.selection).toMatchObject({ type: 'file', index: 3 });
+
+    // Hide the SELECTED file: the tab stop falls back to the first
+    // visible file row instead of pointing at a hidden one.
+    await wrapper.find('.dir-collapse-btn').trigger('click'); // expand src/
+    await wrapper.findAll('.file-row')[0].trigger('click'); // x.ts (index 1)
+    expect(repo.compare.selection).toMatchObject({ type: 'file', index: 1 });
+    await wrapper.find('.dir-collapse-btn').trigger('click'); // collapse again
+    const visible = wrapper.findAll('.file-row');
+    expect(visible.map((row) => row.attributes('tabindex'))).toEqual(['0', '-1']);
   });
 });
 

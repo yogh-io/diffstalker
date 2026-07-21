@@ -676,6 +676,10 @@ git operations.
   (a client-side pick read via `GET /compare?base=…` — never persisted
   daemon-side), include-uncommitted toggle, stats, a collapsible commits list,
   a file tree, and stacked per-file diffs with sticky collapse headers.
+  Tree folders collapse per-directory (chevron button or row click,
+  Enter/Space/Left/Right on the button) — view state only; keyboard file
+  navigation skips files hidden under a collapsed folder, and the stacked
+  diffs on the right are unaffected.
 - **Explorer** — a VS Code-style lazy file tree with git-status decoration
   (dotfile / ignored / changed-only toggles) beside syntax-highlighted file
   content (highlight.js) with binary / truncated / too-large states.
