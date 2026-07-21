@@ -223,6 +223,12 @@ const isEmptyFile = computed(
   tab-size: 4;
   padding-right: 1.5ch;
   color: var(--diff-text);
+  /* Real content: opt back in against the body-wide non-selectable
+     default so the file text is copyable. The .ln gutter stays
+     user-select:none, so a selection copies clean code without line
+     numbers. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .truncated-note {

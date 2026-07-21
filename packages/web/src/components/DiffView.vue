@@ -389,6 +389,12 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
   tab-size: 4;
   padding-right: 1.5ch;
   color: var(--diff-text);
+  /* Real content: opt back in against the body-wide non-selectable
+     default so the diff text is copyable. The line-number and marker
+     gutters stay user-select:none, so a selection copies clean code
+     without the leading numbers or +/- symbols. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .row.add {

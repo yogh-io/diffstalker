@@ -39,6 +39,16 @@ body {
   font-size: var(--fs-base);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
+  /* App-like chrome: nothing is selectable by default — labels, headers,
+     list rows, buttons, counts. The genuinely copyable surfaces (diff
+     text, the file viewer, inputs) opt back in with `user-select: text`;
+     because those are class selectors they outrank this element rule, so
+     the cascade lands the right way. Stops the accidental blue-selection
+     smear when you click or drag across the UI. (Selection is a
+     user-select concern — NOT pointer-events, which would also kill
+     clicks.) */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 #app {
@@ -62,13 +72,24 @@ button:disabled {
   cursor: default;
 }
 
-input {
+/* Decorative icons never swallow the pointer — the <button> stays the
+   click target (event.target is always the button, never an inner path),
+   and an icon can't become the hover/drag focus. All SVGs here are icons. */
+button svg {
+  pointer-events: none;
+}
+
+input,
+textarea {
   font: inherit;
   color: var(--text);
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.375rem 0.5rem;
+  /* Typed/readable content: selectable, against the body-wide default. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 input::placeholder {
