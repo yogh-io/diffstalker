@@ -33,6 +33,7 @@ function wireState(overrides: Partial<WireSharedState> = {}): WireSharedState {
     error: null,
     stashList: [],
     operationInProgress: null,
+    mtimes: null,
     ...overrides,
   };
 }

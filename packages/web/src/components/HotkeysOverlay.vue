@@ -30,6 +30,7 @@ const GROUPS: HotkeyGroup[] = [
       { keys: '2', description: 'History view' },
       { keys: '3', description: 'Compare view' },
       { keys: '4', description: 'Explorer view' },
+      { keys: 'a', description: 'Toggle auto mode (follow the newest change)' },
       { keys: '?', description: 'This help' },
       { keys: 'Esc', description: 'Close dialog' },
     ],

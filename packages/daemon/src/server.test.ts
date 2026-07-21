@@ -55,6 +55,7 @@ interface WireStatus {
     unstaged: Record<string, number>;
   } | null;
   error: string | null;
+  mtimes: Record<string, number> | null;
 }
 
 /** Poll GET status until the predicate holds (staging refreshes are async). */
@@ -166,6 +167,16 @@ describe('daemon over unix socket', () => {
     expect(untracked!.status).toBe('untracked');
 
     expect(wire.hunkCounts!.unstaged['file.txt']).toBe(1);
+
+    // Working-file mtimes ride along for browser clients (they cannot
+    // stat files): one stat-backed entry per changed path.
+    expect(wire.mtimes).not.toBeNull();
+    expect(wire.mtimes!['file.txt']).toBe(
+      fs.statSync(path.join(repoPath, 'file.txt')).mtimeMs
+    );
+    expect(wire.mtimes!['untracked.txt']).toBe(
+      fs.statSync(path.join(repoPath, 'untracked.txt')).mtimeMs
+    );
   });
 
   test('status for an unknown repo id is 404', async () => {

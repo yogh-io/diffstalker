@@ -2,8 +2,12 @@
 /**
  * Global header: wordmark, repo switcher, branch + tracking + ahead/behind
  * (mono, diff-colored counts — read-only text), one calm error line, the
- * follow toggle, the fuzzy finder trigger, theme switcher. No git
- * controls: the web UI is a viewer.
+ * auto-mode toggle, the follow toggle, the fuzzy finder trigger, theme
+ * switcher. No git controls: the web UI is a viewer.
+ *
+ * Auto: flips the client-side auto-mode policy (useAutoMode acts on
+ * state changes only while it is on) — pure viewing: auto-select the
+ * newest-changed file, auto-switch Changes/History. Persisted in prefs.
  *
  * Follow: the daemon owns the watcher; the button flips the CLIENT-side
  * followEnabled policy toggle (useFollowMode acts on follow-change only
@@ -60,6 +64,12 @@ const followTitle = computed(() => {
     ? `${target}Click to stop switching repos on follow changes`
     : `${target}Click to switch repos when the follow hook changes`;
 });
+
+const autoTitle = computed(() =>
+  ui.autoModeEnabled
+    ? 'Auto mode is on: the newest change is selected and flashed, and the view follows changes appearing or drying up. Click to turn off (a)'
+    : 'Turn on auto mode: auto-select the newest-changed file and auto-switch Changes/History (a)'
+);
 </script>
 
 <template>
@@ -89,8 +99,19 @@ const followTitle = computed(() => {
     <div class="spacer"></div>
 
     <button
+      class="mode-toggle mono"
+      data-testid="auto-toggle"
+      :class="{ on: ui.autoModeEnabled }"
+      :aria-pressed="ui.autoModeEnabled"
+      :title="autoTitle"
+      @click="ui.toggleAutoMode()"
+    >
+      <span class="dot" aria-hidden="true"></span>{{ ui.autoModeEnabled ? 'auto on' : 'auto off' }}
+    </button>
+
+    <button
       v-if="daemon.follow"
-      class="follow mono"
+      class="mode-toggle mono"
       data-testid="follow-toggle"
       :class="{ on: followActive }"
       :disabled="!hasFollowTarget"
@@ -202,7 +223,8 @@ const followTitle = computed(() => {
   flex: 1;
 }
 
-.follow {
+/* Shared style for the auto and follow policy toggles. */
+.mode-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
@@ -214,22 +236,22 @@ const followTitle = computed(() => {
   white-space: nowrap;
 }
 
-.follow:hover:not(:disabled) {
+.mode-toggle:hover:not(:disabled) {
   border-color: var(--text-dim);
 }
 
-.follow .dot {
+.mode-toggle .dot {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
   background: var(--text-dim);
 }
 
-.follow.on {
+.mode-toggle.on {
   color: var(--text);
 }
 
-.follow.on .dot {
+.mode-toggle.on .dot {
   background: var(--add);
 }
 
@@ -258,7 +280,7 @@ const followTitle = computed(() => {
    it keeps the full header (finder + follow). */
 @media (max-width: 56rem) and (orientation: landscape) {
   .finder-btn,
-  .follow {
+  .mode-toggle {
     display: none;
   }
 }

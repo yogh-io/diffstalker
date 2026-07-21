@@ -35,6 +35,13 @@ export interface RepoSharedState {
   stashList: StashEntry[];
   /** Multi-step git operation the repo is stopped in, null when none. */
   operationInProgress: InProgressOperation | null;
+  /**
+   * Working-file mtimes (path -> mtimeMs) from the daemon, one entry
+   * per changed path; deleted/renamed files are omitted. Kept as the
+   * wire's plain object (like hunkCounts) — auto mode reads it to spot
+   * which file changed on disk; the browser cannot stat files itself.
+   */
+  mtimes: Record<string, number> | null;
   error: string | null;
   isLoading: boolean;
 }

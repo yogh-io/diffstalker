@@ -23,6 +23,11 @@ export interface Prefs {
   activeView: ViewName;
   recentRepos: string[];
   /**
+   * Auto mode (read-only viewing): auto-select the newest-changed file
+   * and auto-switch Changes/History on file-count transitions.
+   */
+  autoMode: boolean;
+  /**
    * Changes view files/diff split as a fraction of the container width
    * (landscape column layout); null = the view's default. Clamped to a
    * sane band on read.
@@ -61,6 +66,7 @@ function defaults(): Prefs {
     theme: null,
     activeView: 'changes',
     recentRepos: [],
+    autoMode: false,
     changesSplit: null,
     changesTop: null,
     historyTop: null,
@@ -88,6 +94,7 @@ function sanitize(raw: unknown): Prefs {
       .filter((entry): entry is string => typeof entry === 'string')
       .slice(0, MAX_RECENT_REPOS);
   }
+  if (typeof record.autoMode === 'boolean') prefs.autoMode = record.autoMode;
   prefs.changesSplit = readFraction(record.changesSplit, CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX);
   for (const key of TOP_KEYS) {
     prefs[key] = readFraction(record[key], TOP_MIN, TOP_MAX);

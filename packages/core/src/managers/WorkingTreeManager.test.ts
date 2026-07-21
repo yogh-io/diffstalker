@@ -101,6 +101,32 @@ describe('WorkingTreeManager', () => {
       resetRepo();
     });
 
+    test('populates mtimes for changed files: stat-backed, one entry per path, deleted omitted', async () => {
+      writeFixtureFile(repoPath, 'tracked.txt', 'staged change\n');
+      gitExec(repoPath, 'add tracked.txt');
+      writeFixtureFile(repoPath, 'tracked.txt', 'staged and unstaged change\n');
+      fs.rmSync(path.join(repoPath, 'other.txt'));
+
+      await manager.refresh();
+
+      const state = manager.state;
+      const mtimes = state.mtimes;
+      expect(mtimes).not.toBeNull();
+
+      // tracked.txt appears twice in status (staged + unstaged) but once here,
+      // stamped with the real on-disk mtime.
+      const pair = state.status!.files.filter((f) => f.path === 'tracked.txt');
+      expect(pair.length).toBe(2);
+      const onDisk = fs.statSync(path.join(repoPath, 'tracked.txt')).mtimeMs;
+      expect(mtimes!.get('tracked.txt')).toBe(onDisk);
+
+      // Deleted file is in status but has nothing on disk to stat.
+      expect(state.status!.files.some((f) => f.path === 'other.txt')).toBe(true);
+      expect(mtimes!.has('other.txt')).toBe(false);
+
+      resetRepo();
+    });
+
     test('sets isRepo false and error for a non-repo directory', async () => {
       const nonRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-nonrepo-'));
       try {

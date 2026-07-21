@@ -18,6 +18,7 @@
 
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRepoStore } from '../stores/repo';
+import { useUiStore } from '../stores/ui';
 import { categorizeFiles } from '@diffstalker/core/view/fileCategories';
 import { shortenPath } from '@diffstalker/core/view/formatPath';
 import type { FileEntry } from '@diffstalker/core/git/status';
@@ -29,8 +30,14 @@ import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePor
 import DiffView from '../components/DiffView.vue';
 
 const repo = useRepoStore();
+const ui = useUiStore();
 
 const status = computed(() => repo.shared.status);
+
+/** Auto mode just selected this file: flash its row briefly. */
+function isFlashed(file: FileEntry): boolean {
+  return ui.flashedFile === file.path;
+}
 const categories = computed(() => categorizeFiles(status.value?.files ?? []));
 
 /** The three sections, in the app-wide order; empty ones are hidden. */
@@ -201,7 +208,7 @@ const rootStyle = computed(() => ({
             v-for="file in section.files"
             :key="rowKey(file)"
             class="file-row mono"
-            :class="{ selected: isSelected(file) }"
+            :class="{ selected: isSelected(file), flash: isFlashed(file) }"
             role="option"
             :aria-selected="isSelected(file)"
             :tabindex="isTabStop(file) ? 0 : -1"
@@ -352,6 +359,33 @@ const rootStyle = computed(() => ({
 
 .file-row.selected .base {
   color: var(--selection);
+}
+
+/* Auto mode: the freshly-changed row flashes briefly (the class is
+   cleared on a timer in the ui store). */
+.file-row.flash {
+  animation: row-flash 0.9s ease-out;
+}
+
+@keyframes row-flash {
+  0%,
+  50% {
+    box-shadow: inset 0 0 0 1px var(--flash);
+    border-left-color: var(--flash);
+  }
+
+  100% {
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No animation — a static highlight that simply goes away when the
+     flash window closes. */
+  .file-row.flash {
+    animation: none;
+    box-shadow: inset 0 0 0 1px var(--flash);
+  }
 }
 
 .letter {

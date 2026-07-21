@@ -61,6 +61,14 @@ export interface WireSharedState {
    * cherry-pick, revert, or merge), null when none.
    */
   operationInProgress: InProgressOperation | null;
+  /**
+   * Working-file mtimes (path -> mtimeMs), one entry per changed path;
+   * files with nothing on disk (deleted/renamed) are omitted. Daemon-side
+   * stat results — the field browser clients build mtime-based auto mode
+   * on, since they cannot stat files themselves. An in-place edit bumps
+   * an mtime, so a state-change fires even when +/- counts are unchanged.
+   */
+  mtimes: Record<string, number> | null;
 }
 
 /**

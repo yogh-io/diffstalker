@@ -687,6 +687,16 @@ git operations.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.
+- **Auto mode** (header toggle or `a`, persisted): read-only auto-following of
+  the newest change — the web port of the CLI's auto mode. When a file's
+  content changes on disk, it is auto-selected and its row flashes briefly;
+  when the working tree goes clean on Changes, the view switches to History
+  with the newest commit selected; when changes appear on History, it switches
+  back to Changes. Detection is mtime-based via the daemon's `mtimes` map in
+  the shared state (the browser cannot stat files), so staging/SSE churn
+  without a content change never causes a jump. Tracking runs even while the
+  toggle is off, so turning it on never acts on a stale change, and the first
+  snapshot of a repo only seeds.
 
 ### Portrait layout (vertical monitors)
 

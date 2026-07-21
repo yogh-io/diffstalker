@@ -11,9 +11,10 @@
  *   followed repo, else the first open one. Latched after that first
  *   list — a later repo-opened (say, the CLI opening a repo) must never
  *   hijack a user sitting at the empty state;
- * - the global keyboard layer (useGlobalKeys) and follow-mode policy
- *   (useFollowMode) mount here, and the two overlays (fuzzy finder,
- *   hotkeys help) render at the shell level from ui.activeOverlay.
+ * - the global keyboard layer (useGlobalKeys), follow-mode policy
+ *   (useFollowMode) and auto-mode policy (useAutoMode) mount here, and
+ *   the two overlays (fuzzy finder, hotkeys help) render at the shell
+ *   level from ui.activeOverlay.
  */
 
 import { computed, onMounted, watch } from 'vue';
@@ -22,6 +23,7 @@ import { useUiStore } from './stores/ui';
 import { useRepoOpen } from './composables/useRepoOpen';
 import { useGlobalKeys } from './composables/useGlobalKeys';
 import { useFollowMode } from './composables/useFollowMode';
+import { useAutoMode } from './composables/useAutoMode';
 import AppHeader from './components/AppHeader.vue';
 import ActivityRail from './components/ActivityRail.vue';
 import StatusBar from './components/StatusBar.vue';
@@ -43,6 +45,7 @@ ui.init();
 
 useGlobalKeys();
 useFollowMode();
+useAutoMode();
 
 const VIEW_COMPONENTS: Record<ViewName, unknown> = {
   changes: ChangesView,

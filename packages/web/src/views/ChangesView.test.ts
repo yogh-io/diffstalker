@@ -17,6 +17,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
 import ChangesView from './ChangesView.vue';
 import { useRepoStore } from '../stores/repo';
+import { useUiStore } from '../stores/ui';
 import { PREFS_KEY, loadPrefs } from '../prefs';
 import { stubMatchMedia } from '../testing/portrait';
 import type { RepoSharedState } from '../stores/types';
@@ -44,6 +45,7 @@ function makeShared(files: FileEntry[]): RepoSharedState {
     },
     stashList: [],
     operationInProgress: null,
+    mtimes: null,
     error: null,
     isLoading: false,
   };
@@ -164,6 +166,29 @@ describe('selection', () => {
     const rows = wrapper.findAll('.file-row');
     expect(rows[0].classes()).toContain('selected');
     expect(rows.filter((row) => row.classes().includes('selected'))).toHaveLength(1);
+  });
+
+  test('the auto-flashed file row carries the flash class until the window closes', async () => {
+    vi.useFakeTimers();
+    try {
+      const { wrapper } = mountView();
+      const ui = useUiStore();
+
+      ui.flashFile('src/util.ts');
+      await wrapper.vm.$nextTick();
+
+      const flashed = wrapper.findAll('.file-row').filter((row) => row.classes().includes('flash'));
+      expect(flashed).toHaveLength(1);
+      expect(flashed[0].attributes('title')).toBe('src/util.ts');
+
+      vi.advanceTimersByTime(900);
+      await wrapper.vm.$nextTick();
+      expect(
+        wrapper.findAll('.file-row').filter((row) => row.classes().includes('flash'))
+      ).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('ArrowDown moves the selection to the next file in category order', async () => {

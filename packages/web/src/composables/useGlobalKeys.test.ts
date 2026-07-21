@@ -1,8 +1,8 @@
 /**
- * useGlobalKeys tests: 1–4 switch views (never while typing or with a
- * modifier held, never under an open overlay), Ctrl/⌘+P toggles the
- * finder (only with an active repo), ? toggles the help overlay, Esc
- * closes the open overlay. Driven through window keydown events on a
+ * useGlobalKeys tests: 1–4 switch views and `a` toggles auto mode
+ * (never while typing or with a modifier held, never under an open
+ * overlay), Ctrl/⌘+P toggles the finder (only with an active repo),
+ * ? toggles the help overlay, Esc closes the open overlay. Driven through window keydown events on a
  * bare harness component — the overlays themselves are covered by their
  * own component tests.
  */
@@ -84,6 +84,39 @@ describe('view switching (1-4)', () => {
     ui.openOverlay('help');
     press('2');
     expect(ui.activeView).toBe('changes');
+    expect(ui.activeOverlay).toBe('help');
+  });
+});
+
+describe('auto mode (a)', () => {
+  test('a toggles auto mode on and off', () => {
+    const ui = useUiStore();
+    expect(ui.autoModeEnabled).toBe(false);
+    press('a');
+    expect(ui.autoModeEnabled).toBe(true);
+    press('a');
+    expect(ui.autoModeEnabled).toBe(false);
+  });
+
+  test('typing a in a text input does NOT toggle', () => {
+    const ui = useUiStore();
+    pressInInput('a');
+    expect(ui.autoModeEnabled).toBe(false);
+  });
+
+  test('a modifier chord does NOT toggle', () => {
+    const ui = useUiStore();
+    press('a', { ctrlKey: true });
+    press('a', { metaKey: true });
+    press('a', { altKey: true });
+    expect(ui.autoModeEnabled).toBe(false);
+  });
+
+  test('a is inert while an overlay is open', () => {
+    const ui = useUiStore();
+    ui.openOverlay('help');
+    press('a');
+    expect(ui.autoModeEnabled).toBe(false);
     expect(ui.activeOverlay).toBe('help');
   });
 });

@@ -5,7 +5,8 @@
  *   browser's print dialog only when it acts; Ctrl+Shift+P is not ours);
  * - Esc — close the open overlay (finder/help);
  * - ? — toggle the hotkeys help;
- * - 1/2/3/4 — switch to Changes/History/Compare/Explorer.
+ * - 1/2/3/4 — switch to Changes/History/Compare/Explorer;
+ * - a — toggle auto mode (auto-select/auto-switch on changes).
  *
  * Bare keys (digits, ?) never fire while the user is typing in an
  * input/textarea/select/contenteditable (the finder's input included)
@@ -78,6 +79,11 @@ export function useGlobalKeys(): void {
     }
 
     if (ui.activeOverlay !== null) return; // overlays are modal
+
+    if (event.key === 'a') {
+      ui.toggleAutoMode();
+      return;
+    }
 
     const view = VIEW_KEYS[event.key];
     if (view !== undefined) ui.setActiveView(view);

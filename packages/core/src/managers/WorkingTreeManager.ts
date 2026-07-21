@@ -44,6 +44,18 @@ export interface GitState {
   stashList: StashEntry[];
   /** Multi-step git operation the repo is stopped in (conflicted rebase, cherry-pick, ...). */
   operationInProgress: InProgressOperation | null;
+  /**
+   * Working-file mtimes (path -> mtimeMs) for every changed file, one
+   * entry per path (the staged/unstaged pair collapses). Files that fail
+   * to stat (deleted/renamed) are omitted. This is what lets a BROWSER
+   * client run mtime-based auto mode — it cannot stat files itself.
+   *
+   * Intended side effect: a content edit bumps an mtime, so the
+   * serialized state changes even when the +/- line counts do not —
+   * the daemon's SSE payload dedup then still fires a state-change for
+   * in-place edits, which auto mode needs to catch them.
+   */
+  mtimes: Map<string, number> | null;
 }
 
 type WorkingTreeEventMap = {
@@ -70,6 +82,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     hunkCounts: null,
     stashList: [],
     operationInProgress: null,
+    mtimes: null,
   };
 
   constructor(repoPath: string, queue: GitOperationQueue) {
@@ -239,6 +252,24 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.workingDirWatcher?.close();
   }
 
+  /**
+   * Stat each changed file's WORKING path and map path -> mtimeMs.
+   * The changed-file set is small, so the sync stats are negligible.
+   * One entry per path; files with nothing on disk are omitted.
+   */
+  private statMtimes(status: GitStatus): Map<string, number> {
+    const mtimes = new Map<string, number>();
+    for (const file of status.files) {
+      if (mtimes.has(file.path)) continue; // staged/unstaged pair: one entry
+      try {
+        mtimes.set(file.path, fs.statSync(path.join(this.repoPath, file.path)).mtimeMs);
+      } catch {
+        // deleted/renamed — nothing on disk to stamp
+      }
+    }
+    return mtimes;
+  }
+
   // --- Refresh ---
 
   scheduleRefresh(): void {
@@ -259,7 +290,11 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
           });
           return;
         }
-        this.updateState({ status: newStatus, isLoading: false });
+        this.updateState({
+          status: newStatus,
+          mtimes: this.statMtimes(newStatus),
+          isLoading: false,
+        });
       } catch (err) {
         // Transient failure (e.g. index.lock contention): keep the previous
         // status and surface the error instead of wiping the file list
@@ -317,6 +352,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         hunkCounts,
         stashList,
         operationInProgress,
+        mtimes: this.statMtimes(newStatus),
         isLoading: false,
       });
     } catch (err) {

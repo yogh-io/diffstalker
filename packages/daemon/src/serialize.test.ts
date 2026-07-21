@@ -43,6 +43,7 @@ describe('serializeSharedState', () => {
       hunkCounts: { staged: new Map(), unstaged: new Map([['a.ts', 1]]) },
       stashList: [{ index: 0, message: 'WIP on main' }],
       operationInProgress: null,
+      mtimes: new Map([['a.ts', 1721480000000]]),
     };
 
     const wire = serializeSharedState(state);
@@ -52,6 +53,7 @@ describe('serializeSharedState', () => {
       error: null,
       stashList: [{ index: 0, message: 'WIP on main' }],
       operationInProgress: null,
+      mtimes: { 'a.ts': 1721480000000 },
     });
     expect(JSON.stringify(wire)).not.toContain('SECRET-PER-CLIENT');
     expect(wire).not.toHaveProperty('selectedFile');
@@ -66,10 +68,32 @@ describe('serializeSharedState', () => {
       hunkCounts: null,
       stashList: [],
       operationInProgress: 'rebase',
+      mtimes: null,
     };
     const wire = serializeSharedState(state);
     expect(wire.error).toBe('Git watcher error: boom');
     expect(wire.operationInProgress).toBe('rebase');
+    expect(wire.mtimes).toBeNull();
+  });
+
+  test('mtimes Map round-trips to a plain JSON object', () => {
+    const state: GitState = {
+      status: null,
+      isLoading: false,
+      error: null,
+      hunkCounts: null,
+      stashList: [],
+      operationInProgress: null,
+      mtimes: new Map([
+        ['src/a.ts', 100.5],
+        ['src/b.ts', 200],
+      ]),
+    };
+    const wire = serializeSharedState(state);
+    expect(wire.mtimes).toEqual({ 'src/a.ts': 100.5, 'src/b.ts': 200 });
+    // JSON-safe end to end: parse(stringify) preserves the record.
+    const parsed = JSON.parse(JSON.stringify(wire)) as { mtimes: Record<string, number> };
+    expect(parsed.mtimes).toEqual({ 'src/a.ts': 100.5, 'src/b.ts': 200 });
   });
 });
 

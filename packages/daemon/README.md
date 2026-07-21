@@ -103,7 +103,7 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | POST   | `/repos`                   | Open a repo: `{"path": "/abs/path"}` → `{id, path}` (201 created, 200 already open) |
 | DELETE | `/repos/:id`               | Close a repo (refcounted per open)               |
 | GET    | `/repos/:id/worktrees`     | Registered worktrees (`path`, `branch`, `head`, `isBare`): main worktree, linked worktrees, and the bare entry in a bare-worktree layout |
-| GET    | `/repos/:id/status`        | Shared state: status, hunk counts, stash list, in-progress operation, error |
+| GET    | `/repos/:id/status`        | Shared state: status, hunk counts, stash list, in-progress operation, error, working-file mtimes (path → mtimeMs; what browser clients build mtime-based auto mode on) |
 | GET    | `/repos/:id/diff?path=&staged=` | Diff; whole tree without `path`, staged side with `staged=true` |
 | GET    | `/repos/:id/history?count=` | Commit history (`CommitInfo[]`, default 100, ISO dates) |
 | GET    | `/repos/:id/commits/:hash/diff` | Diff introduced by one commit (404 on unknown hash; merge and `--allow-empty` commits are 200 with an empty diff, matching the CLI) |

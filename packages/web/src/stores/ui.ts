@@ -1,9 +1,10 @@
 /**
  * useUiStore: app-level UI state — theme, active view, recent repos,
- * and the active overlay (fuzzy finder / hotkeys help). Theme, view and
- * recents persist through prefs (localStorage); the theme lands on
+ * the auto-mode toggle (+ its row flash), and the active overlay
+ * (fuzzy finder / hotkeys help). Theme, view, recents and auto mode
+ * persist through prefs (localStorage); the theme lands on
  * <html data-theme="..."> so the CSS custom-property sets select.
- * Overlay state is session-only — never persisted.
+ * Overlay and flash state are session-only — never persisted.
  *
  * The initial theme honors prefers-color-scheme when no explicit choice
  * is stored (dark unless the browser asks for light).
@@ -26,6 +27,9 @@ export const VIEWS: { name: ViewName; label: string }[] = [
 /** The app's modal overlays. At most one is open at a time. */
 export type OverlayName = 'finder' | 'help';
 
+/** How long the auto-selected file's row stays flashed (CLI parity). */
+export const FLASH_MS = 900;
+
 function systemTheme(): ThemeName {
   if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
     if (window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
@@ -44,6 +48,11 @@ export const useUiStore = defineStore('ui', () => {
   const activeView = shallowRef<ViewName>(stored.activeView);
   const recentRepos = shallowRef<string[]>(stored.recentRepos);
   const activeOverlay = shallowRef<OverlayName | null>(null);
+  /** Auto mode: pure viewing — auto-select/auto-switch, no mutations. */
+  const autoModeEnabled = shallowRef<boolean>(stored.autoMode);
+  /** Path of the file row currently flashed by auto mode, null when none. */
+  const flashedFile = shallowRef<string | null>(null);
+  let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Stamp the current theme onto <html>. Called once at app setup. */
   function init(): void {
@@ -71,6 +80,23 @@ export const useUiStore = defineStore('ui', () => {
     savePrefs({ recentRepos: next });
   }
 
+  // --- Auto mode ---
+
+  function toggleAutoMode(): void {
+    autoModeEnabled.value = !autoModeEnabled.value;
+    savePrefs({ autoMode: autoModeEnabled.value });
+  }
+
+  /** Briefly highlight a file row (auto-selected), then clear. */
+  function flashFile(path: string): void {
+    flashedFile.value = path;
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => {
+      flashedFile.value = null;
+      flashTimer = null;
+    }, FLASH_MS);
+  }
+
   // --- Overlays (finder / help) ---
 
   function openOverlay(name: OverlayName): void {
@@ -91,10 +117,14 @@ export const useUiStore = defineStore('ui', () => {
     activeView,
     recentRepos,
     activeOverlay,
+    autoModeEnabled,
+    flashedFile,
     init,
     setTheme,
     setActiveView,
     addRecentRepo,
+    toggleAutoMode,
+    flashFile,
     openOverlay,
     toggleOverlay,
     closeOverlay,

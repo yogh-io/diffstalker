@@ -41,6 +41,7 @@ const SHARED_STATE = {
   hunkCounts: { staged: {}, unstaged: {} },
   stashList: [],
   operationInProgress: null,
+  mtimes: {},
   error: null,
 };
 

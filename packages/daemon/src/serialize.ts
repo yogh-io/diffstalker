@@ -29,6 +29,15 @@ export interface WireSharedState {
    * will keep failing until POST /abort (or /rebase-continue) resolves it.
    */
   operationInProgress: InProgressOperation | null;
+  /**
+   * Working-file mtimes (path -> mtimeMs), one entry per changed path;
+   * stat-failing (deleted/renamed) files are omitted. Browser clients
+   * cannot stat files — this field is what drives their mtime-based
+   * auto mode. Because an in-place edit bumps an mtime, it also makes
+   * the state-change payload differ so the SSE dedup still fires when
+   * the +/- line counts are unchanged.
+   */
+  mtimes: Record<string, number> | null;
 }
 
 /** Convert a string-keyed Map to a plain object for JSON. */
@@ -57,6 +66,7 @@ export function serializeSharedState(state: GitState): WireSharedState {
     error: state.error,
     stashList: state.stashList,
     operationInProgress: state.operationInProgress,
+    mtimes: state.mtimes ? mapToRecord(state.mtimes) : null,
   };
 }
 

@@ -75,6 +75,7 @@ function initialShared(): RepoSharedState {
     hunkCounts: null,
     stashList: [],
     operationInProgress: null,
+    mtimes: null,
     error: null,
     isLoading: true,
   };
@@ -333,6 +334,7 @@ export const useRepoStore = defineStore('repo', () => {
       hunkCounts: wire.hunkCounts,
       stashList: wire.stashList,
       operationInProgress: wire.operationInProgress,
+      mtimes: wire.mtimes,
       error: wire.error,
       isLoading: false,
     };

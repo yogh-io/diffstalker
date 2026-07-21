@@ -17,6 +17,7 @@ describe('loadPrefs', () => {
       theme: null,
       activeView: 'changes',
       recentRepos: [],
+      autoMode: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -31,6 +32,7 @@ describe('loadPrefs', () => {
       theme: null,
       activeView: 'changes',
       recentRepos: [],
+      autoMode: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -45,6 +47,7 @@ describe('loadPrefs', () => {
       theme: null,
       activeView: 'changes',
       recentRepos: [],
+      autoMode: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -66,6 +69,7 @@ describe('loadPrefs', () => {
       theme: null,
       activeView: 'history',
       recentRepos: ['/a', '/b'],
+      autoMode: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -91,6 +95,17 @@ describe('loadPrefs', () => {
     expect(loadPrefs().changesSplit).toBeNull();
   });
 
+  test('autoMode: persists a stored boolean, drops anything else', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ autoMode: true }));
+    expect(loadPrefs().autoMode).toBe(true);
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ autoMode: 'yes' }));
+    expect(loadPrefs().autoMode).toBe(false);
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ autoMode: 1 }));
+    expect(loadPrefs().autoMode).toBe(false);
+  });
+
   test('degrades to defaults when localStorage throws (private mode / quota)', () => {
     vi.stubGlobal('localStorage', {
       getItem(): string | null {
@@ -105,6 +120,7 @@ describe('loadPrefs', () => {
       theme: null,
       activeView: 'changes',
       recentRepos: [],
+      autoMode: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -124,6 +140,7 @@ describe('savePrefs', () => {
       theme: 'light-ansi',
       activeView: 'explorer',
       recentRepos: [],
+      autoMode: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -135,6 +152,13 @@ describe('savePrefs', () => {
   test('roundtrips recent repos', () => {
     savePrefs({ recentRepos: ['/x', '/y'] });
     expect(loadPrefs().recentRepos).toEqual(['/x', '/y']);
+  });
+
+  test('roundtrips autoMode', () => {
+    savePrefs({ autoMode: true });
+    expect(loadPrefs().autoMode).toBe(true);
+    savePrefs({ autoMode: false });
+    expect(loadPrefs().autoMode).toBe(false);
   });
 });
 

@@ -41,6 +41,34 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('auto toggle', () => {
+  test('honest off state by default; clicking flips autoModeEnabled and persists', async () => {
+    const ui = useUiStore();
+    const wrapper = mountHeader();
+    const toggle = wrapper.find('[data-testid="auto-toggle"]');
+
+    expect(toggle.text()).toBe('auto off');
+    expect(toggle.attributes('aria-pressed')).toBe('false');
+
+    await toggle.trigger('click');
+    expect(ui.autoModeEnabled).toBe(true);
+    expect(toggle.text()).toBe('auto on');
+    expect(toggle.attributes('aria-pressed')).toBe('true');
+
+    await toggle.trigger('click');
+    expect(ui.autoModeEnabled).toBe(false);
+    expect(toggle.text()).toBe('auto off');
+  });
+
+  test('reflects a stored auto-mode preference on mount', () => {
+    localStorage.setItem('diffstalker:prefs', JSON.stringify({ autoMode: true }));
+    const wrapper = mountHeader();
+    const toggle = wrapper.find('[data-testid="auto-toggle"]');
+    expect(toggle.text()).toBe('auto on');
+    expect(toggle.attributes('aria-pressed')).toBe('true');
+  });
+});
+
 describe('follow toggle', () => {
   test('hidden until the daemon follow state is loaded', () => {
     const wrapper = mountHeader();

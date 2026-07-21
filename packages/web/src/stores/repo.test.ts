@@ -32,6 +32,7 @@ function wireState(
     error: null,
     stashList: [],
     operationInProgress: null,
+    mtimes: {},
     ...overrides,
   };
 }
@@ -161,6 +162,15 @@ describe('open + applyWireState', () => {
     );
     expect(store.shared.hunkCounts).toEqual({ staged: { 'a.ts': 2 }, unstaged: { 'b.ts': 1 } });
     expect(store.shared.hunkCounts!.staged instanceof Map).toBe(false);
+  });
+
+  test('mtimes ride the wire into shared state as a plain object (auto mode reads them)', async () => {
+    const { store, source } = await openStore();
+    source.emit(
+      'state-change',
+      wireState([fileEntry('a.ts')], { mtimes: { 'a.ts': 1721480000000 } })
+    );
+    expect(store.shared.mtimes).toEqual({ 'a.ts': 1721480000000 });
   });
 
   test('a refused open lands in not-a-repo mode: null id, reason in shared.error', async () => {

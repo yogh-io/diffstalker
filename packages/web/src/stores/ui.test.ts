@@ -6,7 +6,7 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
-import { useUiStore } from './ui';
+import { useUiStore, FLASH_MS } from './ui';
 import { PREFS_KEY } from '../prefs';
 
 function stubColorScheme(scheme: 'light' | 'dark'): void {
@@ -101,6 +101,53 @@ describe('overlays', () => {
   test('overlay state is never persisted', () => {
     const store = useUiStore();
     store.openOverlay('finder');
+    expect(localStorage.getItem(PREFS_KEY)).toBeNull();
+  });
+});
+
+describe('auto mode', () => {
+  test('defaults off; toggleAutoMode flips and persists', () => {
+    const store = useUiStore();
+    expect(store.autoModeEnabled).toBe(false);
+
+    store.toggleAutoMode();
+    expect(store.autoModeEnabled).toBe(true);
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).autoMode).toBe(true);
+
+    store.toggleAutoMode();
+    expect(store.autoModeEnabled).toBe(false);
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).autoMode).toBe(false);
+  });
+
+  test('restores the stored toggle', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ autoMode: true }));
+    expect(useUiStore().autoModeEnabled).toBe(true);
+  });
+
+  test('flashFile flashes a row for FLASH_MS; a re-flash restarts the window', () => {
+    vi.useFakeTimers();
+    try {
+      const store = useUiStore();
+      expect(store.flashedFile).toBeNull();
+
+      store.flashFile('a.ts');
+      expect(store.flashedFile).toBe('a.ts');
+
+      vi.advanceTimersByTime(FLASH_MS - 100);
+      store.flashFile('b.ts'); // newer change wins, timer restarts
+      vi.advanceTimersByTime(FLASH_MS - 100);
+      expect(store.flashedFile).toBe('b.ts');
+
+      vi.advanceTimersByTime(100);
+      expect(store.flashedFile).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('flash state is never persisted', () => {
+    const store = useUiStore();
+    store.flashFile('a.ts');
     expect(localStorage.getItem(PREFS_KEY)).toBeNull();
   });
 });
