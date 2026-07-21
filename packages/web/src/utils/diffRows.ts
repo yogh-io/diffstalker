@@ -13,6 +13,13 @@
  * Grouping into per-hunk sections (instead of a flat row list) is what
  * lets the view give each hunk a sticky header that the next hunk's
  * header pushes away, plus a hairline between hunks.
+ *
+ * Keys are CONTENT-STABLE (docs/web-diff-stream-architecture.md, section
+ * 2): a rebuild from the same content yields the same keys, so Vue
+ * patches in place instead of tearing the DOM down. Section key comes
+ * from staged-ness + path, hunk key from a hash of (section key, header
+ * context, oldStart) with ordinal disambiguation, row key from the
+ * hunk key + the row's line number.
  */
 
 import type { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
@@ -29,7 +36,8 @@ import type { WordDiffSegment } from '@diffstalker/core/view/wordDiff';
 export type { WordDiffSegment } from '@diffstalker/core/view/wordDiff';
 
 export interface DiffContentRow {
-  key: number;
+  /** Content-stable: `${hunkKey}:${oldLineNum ?? '+' + newLineNum}`. */
+  key: string;
   kind: 'add' | 'del' | 'context';
   oldLineNum?: number;
   newLineNum?: number;
@@ -39,7 +47,11 @@ export interface DiffContentRow {
 }
 
 export interface DiffHunkGroup {
-  key: number;
+  /**
+   * Content-stable: section key + a hash of the @@ header's context and
+   * oldStart, with an ordinal suffix when two hunks in a file collide.
+   */
+  key: string;
   /**
    * 0-based ordinal of this hunk across the WHOLE diff (all file
    * sections, raw order) — exactly the index extractHunkPatch(raw, i)
@@ -61,7 +73,8 @@ export interface DiffHunkGroup {
 }
 
 export interface DiffFileSection {
-  key: number;
+  /** Content-stable: `${staged ? 's' : 'u'}:${filePath}`. */
+  key: string;
   /** Path from the diff --git header; null for a headerless fragment. */
   filePath: string | null;
   /** Informational headers (new file mode, rename from/to, Binary files…). */
@@ -151,33 +164,73 @@ function groupSections(lines: DiffLine[]): { sections: RawSection[]; isBinary: b
   return { sections, isBinary };
 }
 
-// --- Pass 2: content rows with word-diff pairing ---
+// --- Content-stable keys ---
 
-type NextKey = () => number;
+/** FNV-1a 32-bit hash, base36 — short, deterministic, dependency-free. */
+function hashKey(input: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+/** `${staged ? 's' : 'u'}:${filePath}` (empty path for headerless fragments). */
+function sectionKeyFor(staged: boolean, filePath: string | null): string {
+  return `${staged ? 's' : 'u'}:${filePath ?? ''}`;
+}
+
+/**
+ * Hunk key: hash of (section key, @@ context, oldStart). Two hunks in a
+ * file can legitimately collide on that (same enclosing function, same
+ * oldStart after an unparseable header); the caller disambiguates with
+ * an ordinal suffix via `seen`.
+ */
+function hunkKeyFor(sectionKey: string, headerContent: string, seen: Map<string, number>): string {
+  const header = parseHunkHeader(headerContent);
+  const identity = header ? `${header.context} ${header.oldStart}` : headerContent;
+  const hash = hashKey(`${sectionKey} ${identity}`);
+  let key = `${sectionKey}#${hash}`;
+  const count = seen.get(key) ?? 0;
+  seen.set(key, count + 1);
+  if (count > 0) key = `${key}~${count}`;
+  return key;
+}
+
+/** `${hunkKey}:${oldLineNum ?? '+' + newLineNum}` — old side wins for context/del rows. */
+function rowKeyFor(hunkKey: string, row: Omit<DiffContentRow, 'key'>, ordinal: number): string {
+  if (row.oldLineNum !== undefined) return `${hunkKey}:${row.oldLineNum}`;
+  if (row.newLineNum !== undefined) return `${hunkKey}:+${row.newLineNum}`;
+  return `${hunkKey}:r${ordinal}`; // Defensive: content lines always carry a line number.
+}
+
+// --- Pass 2: content rows with word-diff pairing ---
 
 function toContentRow(
   line: DiffLine,
   kind: DiffContentRow['kind'],
-  key: number,
+  hunkKey: string,
+  ordinal: number,
   segments?: WordDiffSegment[]
 ): DiffContentRow {
-  return {
-    key,
+  const row: Omit<DiffContentRow, 'key'> = {
     kind,
     ...(line.oldLineNum !== undefined && kind !== 'add' && { oldLineNum: line.oldLineNum }),
     ...(line.newLineNum !== undefined && kind !== 'del' && { newLineNum: line.newLineNum }),
     content: cleanContent(line),
     ...(segments && { segments }),
   };
+  return { key: rowKeyFor(hunkKey, row, ordinal), ...row };
 }
 
 /** Convert one hunk's body lines into content rows, pairing change runs. */
-function buildHunkRows(lines: DiffLine[], nextKey: NextKey): DiffContentRow[] {
+function buildHunkRows(lines: DiffLine[], hunkKey: string): DiffContentRow[] {
   const rows: DiffContentRow[] = [];
   let i = 0;
   while (i < lines.length) {
     if (lines[i].type === 'context') {
-      rows.push(toContentRow(lines[i], 'context', nextKey()));
+      rows.push(toContentRow(lines[i], 'context', hunkKey, rows.length));
       i++;
       continue;
     }
@@ -195,10 +248,10 @@ function buildHunkRows(lines: DiffLine[], nextKey: NextKey): DiffContentRow[] {
 
     const segments = pairChangeRuns(deletions, additions, cleanContent);
     deletions.forEach((line, j) => {
-      rows.push(toContentRow(line, 'del', nextKey(), segments.delSegments.get(j)));
+      rows.push(toContentRow(line, 'del', hunkKey, rows.length, segments.delSegments.get(j)));
     });
     additions.forEach((line, j) => {
-      rows.push(toContentRow(line, 'add', nextKey(), segments.addSegments.get(j)));
+      rows.push(toContentRow(line, 'add', hunkKey, rows.length, segments.addSegments.get(j)));
     });
   }
   return rows;
@@ -227,38 +280,48 @@ function maxLineNumber(sections: DiffFileSection[]): number {
   return max;
 }
 
-function buildSection(raw: RawSection, nextKey: NextKey, nextHunkIndex: NextKey): DiffFileSection {
+function buildSection(
+  raw: RawSection,
+  staged: boolean,
+  nextHunkIndex: () => number
+): DiffFileSection {
+  const sectionKey = sectionKeyFor(staged, raw.filePath);
   const section: DiffFileSection = {
-    key: nextKey(),
+    key: sectionKey,
     filePath: raw.filePath,
     notes: raw.notes,
     hunks: [],
   };
+  const seenHunkKeys = new Map<string, number>();
   for (const rawHunk of raw.hunks) {
+    const hunkKey = hunkKeyFor(sectionKey, rawHunk.header.content, seenHunkKeys);
     section.hunks.push({
-      key: nextKey(),
+      key: hunkKey,
       index: nextHunkIndex(),
       ...parseHunkRanges(rawHunk.header.content),
       raw: rawHunk.header.content,
       editedAt: resolveEditedAt(rawHunk.header, rawHunk.lines),
-      rows: buildHunkRows(rawHunk.lines, nextKey),
+      rows: buildHunkRows(rawHunk.lines, hunkKey),
     });
   }
   return section;
 }
 
-export function buildDiffModel(diff: DiffResult | null): DiffModel {
+/**
+ * `staged` feeds the section keys (`s:` vs `u:` prefix) so the same
+ * path staged AND unstaged yields two distinct sections. Callers where
+ * staged-ness has no meaning (History, Compare) omit it.
+ */
+export function buildDiffModel(diff: DiffResult | null, staged = false): DiffModel {
   const model: DiffModel = { sections: [], lineNumWidth: 3, rowCount: 0, isBinary: false };
   if (!diff) return model;
 
-  let key = 0;
-  const nextKey: NextKey = () => key++;
   let hunkIndex = 0;
-  const nextHunkIndex: NextKey = () => hunkIndex++;
+  const nextHunkIndex = (): number => hunkIndex++;
 
   const grouped = groupSections(diff.lines.filter(isDisplayableDiffLine));
   model.isBinary = grouped.isBinary;
-  model.sections = grouped.sections.map((raw) => buildSection(raw, nextKey, nextHunkIndex));
+  model.sections = grouped.sections.map((raw) => buildSection(raw, staged, nextHunkIndex));
 
   for (const section of model.sections) {
     for (const hunk of section.hunks) {

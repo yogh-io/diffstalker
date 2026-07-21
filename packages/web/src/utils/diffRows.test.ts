@@ -179,3 +179,97 @@ describe('buildDiffModel', () => {
     expect(model.lineNumWidth).toBe(4);
   });
 });
+
+describe('content-stable keys', () => {
+  const twoFileLines = (): DiffLine[] => [
+    { type: 'header', content: 'diff --git a/a.txt b/a.txt' },
+    { type: 'hunk', content: '@@ -1,2 +1,2 @@ function foo()' },
+    { type: 'context', content: ' one', oldLineNum: 1, newLineNum: 1 },
+    { type: 'deletion', content: '-old', oldLineNum: 2 },
+    { type: 'addition', content: '+new', newLineNum: 2 },
+    { type: 'header', content: 'diff --git a/b.txt b/b.txt' },
+    { type: 'hunk', content: '@@ -10,1 +10,1 @@' },
+    { type: 'context', content: ' ten', oldLineNum: 10, newLineNum: 10 },
+  ];
+
+  /** Every key in the model, in document order. */
+  function collectKeys(lines: DiffLine[], staged = false): string[] {
+    const keys: string[] = [];
+    for (const section of buildDiffModel(makeDiff(lines), staged).sections) {
+      keys.push(section.key);
+      for (const hunk of section.hunks) {
+        keys.push(hunk.key);
+        for (const row of hunk.rows) keys.push(row.key);
+      }
+    }
+    return keys;
+  }
+
+  test('same content built twice yields identical keys', () => {
+    expect(collectKeys(twoFileLines())).toEqual(collectKeys(twoFileLines()));
+  });
+
+  test('section key is staged-prefix + path; row keys use old line or +new line', () => {
+    const model = buildDiffModel(makeDiff(twoFileLines()));
+    const section = model.sections[0];
+    expect(section.key).toBe('u:a.txt');
+    const hunk = section.hunks[0];
+    const [ctx, del, add] = hunk.rows;
+    expect(ctx.key).toBe(`${hunk.key}:1`);
+    expect(del.key).toBe(`${hunk.key}:2`);
+    expect(add.key).toBe(`${hunk.key}:+2`);
+  });
+
+  test('editing a hunk keeps the section and hunk keys; only affected rows change', () => {
+    const before = buildDiffModel(makeDiff(twoFileLines()));
+    // Edit: the addition's content changes and grows an extra added line.
+    // Header context and oldStart are unchanged, so the hunk key holds.
+    const edited = twoFileLines();
+    edited[3] = { type: 'deletion', content: '-old', oldLineNum: 2 };
+    edited[4] = { type: 'addition', content: '+newer', newLineNum: 2 };
+    edited.splice(5, 0, { type: 'addition', content: '+extra', newLineNum: 3 });
+    const after = buildDiffModel(makeDiff(edited));
+
+    expect(after.sections[0].key).toBe(before.sections[0].key);
+    expect(after.sections[0].hunks[0].key).toBe(before.sections[0].hunks[0].key);
+
+    const beforeKeys = before.sections[0].hunks[0].rows.map((r) => r.key);
+    const afterKeys = after.sections[0].hunks[0].rows.map((r) => r.key);
+    // The pre-existing rows keep their keys; only the new row's key is new.
+    expect(afterKeys.slice(0, 3)).toEqual(beforeKeys);
+    expect(beforeKeys).not.toContain(afterKeys[3]);
+
+    // The untouched second file is key-identical throughout.
+    expect(after.sections[1].key).toBe(before.sections[1].key);
+    expect(after.sections[1].hunks[0].key).toBe(before.sections[1].hunks[0].key);
+    expect(after.sections[1].hunks[0].rows.map((r) => r.key)).toEqual(
+      before.sections[1].hunks[0].rows.map((r) => r.key)
+    );
+  });
+
+  test('two hunks in one file with identical header context get distinct, stable keys', () => {
+    const lines = (): DiffLine[] => [
+      { type: 'header', content: 'diff --git a/f.txt b/f.txt' },
+      { type: 'hunk', content: '@@ -5,1 +5,1 @@ fn()' },
+      { type: 'context', content: ' a', oldLineNum: 5, newLineNum: 5 },
+      { type: 'hunk', content: '@@ -5,1 +9,1 @@ fn()' },
+      { type: 'context', content: ' b', oldLineNum: 5, newLineNum: 9 },
+    ];
+    const model = buildDiffModel(makeDiff(lines()));
+    const [first, second] = model.sections[0].hunks;
+    expect(first.key).not.toBe(second.key);
+    // Disambiguation is ordinal, so a rebuild reproduces both keys.
+    const again = buildDiffModel(makeDiff(lines()));
+    expect(again.sections[0].hunks.map((h) => h.key)).toEqual([first.key, second.key]);
+  });
+
+  test('staged and unstaged builds of the same path get different section keys', () => {
+    const unstaged = buildDiffModel(makeDiff(twoFileLines()), false);
+    const staged = buildDiffModel(makeDiff(twoFileLines()), true);
+    expect(unstaged.sections[0].key).toBe('u:a.txt');
+    expect(staged.sections[0].key).toBe('s:a.txt');
+    expect(new Set(collectKeys(twoFileLines(), true)).size).toBe(
+      collectKeys(twoFileLines(), true).length
+    );
+  });
+});
