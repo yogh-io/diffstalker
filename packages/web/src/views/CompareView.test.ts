@@ -4,8 +4,9 @@
  * no daemon-side persistence), the include-uncommitted toggle
  * (re-queries with the flag), the stats line, the
  * file tree (grouping, status letters, per-file stats, uncommitted
- * flags, per-folder collapse), stacked per-file DiffViews with
- * collapsible sticky headers,
+ * flags, per-folder collapse), the stacked per-file diffs (DiffStack:
+ * collapsible sticky headers, scrollToFile jumps on the stack's OWN
+ * scroller — never scrollIntoView),
  * the collapsible commits section, selection (click + keyboard), and
  * the noBaseBranch / clean / loading / error states.
  *
@@ -19,6 +20,7 @@ import type { VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
 import CompareView from './CompareView.vue';
+import DiffStack from '../components/DiffStack.vue';
 import { useRepoStore } from '../stores/repo';
 import { makeFakeFetch } from '../testing/fakes';
 import type { CommitInfo } from '@diffstalker/core/git/status';
@@ -356,25 +358,21 @@ describe('file tree', () => {
     const { wrapper, repo } = mountView(makeCompareDiff(files, []));
     const spy = vi.spyOn(repo, 'selectCompareFile');
 
-    const scrollTargets: string[] = [];
-    const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = function (this: Element) {
-      const el = this as HTMLElement;
-      scrollTargets.push(`${el.dataset.testid}:${el.dataset.fileIndex}`);
-    };
-    try {
-      const rows = wrapper.findAll('.file-row');
-      expect(rows.map((row) => row.find('.name').text())).toEqual(['a.ts', 'notes.txt']);
+    const scroller = wrapper.find('[data-testid="compare-diffs"]').element as HTMLElement;
+    const scrollSpy = vi.spyOn(scroller, 'scrollTo').mockImplementation(() => {});
 
-      await rows[0].trigger('click');
-      await flushPromises();
-      expect(spy).toHaveBeenCalledWith(1); // a.ts's files-array index
-      expect(repo.compare.selection).toMatchObject({ type: 'file', index: 1 });
-      // The scroll target is a.ts's DIFF SECTION, not a tree row.
-      expect(scrollTargets).toEqual(['file-diff:1']);
-    } finally {
-      Element.prototype.scrollIntoView = original;
-    }
+    const rows = wrapper.findAll('.file-row');
+    expect(rows.map((row) => row.find('.name').text())).toEqual(['a.ts', 'notes.txt']);
+
+    await rows[0].trigger('click');
+    await flushPromises();
+    expect(spy).toHaveBeenCalledWith(1); // a.ts's files-array index
+    expect(repo.compare.selection).toMatchObject({ type: 'file', index: 1 });
+    // The stack jumps to a.ts's DIFF SECTION by scrolling its OWN
+    // scroller (scrollTo — never scrollIntoView, which would drag every
+    // ancestor and ignore the sticky header).
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+    expect(wrapper.findComponent(DiffStack).emitted('active-file')).toEqual([['src/a.ts']]);
   });
 
   test('the selected file row is aria-selected and highlighted', async () => {
@@ -538,6 +536,15 @@ describe('per-file diffs', () => {
     await button.trigger('click');
     expect(first.find('.file-diff-body').isVisible()).toBe(true);
   });
+
+  test('the selected file gets the highlight on its diff section', async () => {
+    const { wrapper, repo } = mountView();
+    repo.selectCompareFile(1);
+    await wrapper.vm.$nextTick();
+
+    const sections = wrapper.findAll('[data-testid="file-diff"]');
+    expect(sections.map((s) => s.classes().includes('selected'))).toEqual([false, true, false]);
+  });
 });
 
 describe('empty and edge states', () => {
@@ -654,22 +661,16 @@ describe('portrait layout', () => {
     const files = [fileDiff('notes.txt', 'modified', 1, 0), fileDiff('src/a.ts', 'modified', 2, 0)];
     const { wrapper, repo } = mountView(makeCompareDiff(files, []));
 
-    const scrollTargets: string[] = [];
-    const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = function (this: Element) {
-      const el = this as HTMLElement;
-      scrollTargets.push(`${el.dataset.testid}:${el.dataset.fileIndex}`);
-    };
-    try {
-      await wrapper.findAll('.file-row')[0].trigger('click'); // a.ts (files index 1)
-      await flushPromises();
-      // The stacked diffs scroll to a.ts's sticky header — nothing filters.
-      expect(scrollTargets).toEqual(['file-diff:1']);
-      expect(repo.compare.selection).toMatchObject({ type: 'file', index: 1 });
-      expect(wrapper.findAll('[data-testid="file-diff"]')).toHaveLength(2);
-    } finally {
-      Element.prototype.scrollIntoView = original;
-    }
+    const scroller = wrapper.find('[data-testid="compare-diffs"]').element as HTMLElement;
+    const scrollSpy = vi.spyOn(scroller, 'scrollTo').mockImplementation(() => {});
+
+    await wrapper.findAll('.file-row')[0].trigger('click'); // a.ts (files index 1)
+    await flushPromises();
+    // The stacked diffs scroll to a.ts's sticky header — nothing filters.
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+    expect(wrapper.findComponent(DiffStack).emitted('active-file')).toEqual([['src/a.ts']]);
+    expect(repo.compare.selection).toMatchObject({ type: 'file', index: 1 });
+    expect(wrapper.findAll('[data-testid="file-diff"]')).toHaveLength(2);
   });
 
   test('the PR body gets a horizontal row resizer that persists compareTop', async () => {

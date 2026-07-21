@@ -9,9 +9,12 @@
  *   and the diff-colored stats line.
  * - Commits section: collapsible, collapsed by default.
  * - PR body: file tree (left, core/view/fileTree — same collapsing tree
- *   the CLI renders) and stacked per-file diffs (right), each with a
- *   sticky header and a per-file collapse. Clicking a file selects it
- *   in the store (selectCompareFile) and scrolls its diff into view.
+ *   the CLI renders) and stacked per-file diffs (right, the shared
+ *   DiffStack — sticky headers, per-file collapse). Clicking a file
+ *   selects it in the store (selectCompareFile) and jumps the stack to
+ *   its diff via scrollToFile (the stack's own scroller — never
+ *   scrollIntoView, which scrolls every ancestor and ignores the
+ *   sticky header).
  *
  * Unified diffs only; side-by-side is later polish. Everything renders
  * from synchronous store state — nothing here hands the template a
@@ -30,7 +33,7 @@ import { TOP_MIN, TOP_MAX } from '../prefs';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
-import DiffView from '../components/DiffView.vue';
+import DiffStack, { type StackFile } from '../components/DiffStack.vue';
 
 const repo = useRepoStore();
 const { compare } = storeToRefs(repo);
@@ -42,7 +45,9 @@ const candidates = ref<string[]>([]);
 const commitsOpen = ref(false);
 const collapsedFiles = reactive(new Set<string>());
 const filesEl = ref<HTMLElement | null>(null);
-const diffsEl = ref<HTMLElement | null>(null);
+const stackEl = ref<InstanceType<typeof DiffStack> | null>(null);
+/** The stack's scroll container — the portrait j/k payload target. */
+const diffsEl = computed(() => stackEl.value?.scrollerEl ?? null);
 
 onMounted(() => {
   void refreshNow();
@@ -176,12 +181,9 @@ const selectedFileIndex = computed(() =>
 function selectFile(index: number): void {
   repo.selectCompareFile(index);
   const file = files.value[index];
-  if (file) collapsedFiles.delete(file.path); // selecting always reveals
-  void nextTick(() => {
-    diffsEl.value
-      ?.querySelector(`[data-file-index="${index}"]`)
-      ?.scrollIntoView({ block: 'start' });
-  });
+  if (!file) return;
+  collapsedFiles.delete(file.path); // selecting always reveals
+  void nextTick(() => stackEl.value?.scrollToFile(file.path));
 }
 
 /** The file row holding tabindex 0: the selected one, else the first. */
@@ -211,16 +213,32 @@ function moveFileSelection(delta: number): void {
   });
 }
 
-// --- Per-file diff sections (right) ---
+// --- Per-file diff sections (right, DiffStack) ---
 
 function toggleFileCollapsed(path: string): void {
   if (collapsedFiles.has(path)) collapsedFiles.delete(path);
   else collapsedFiles.add(path);
 }
 
-function fileStats(file: CompareFileDiff): { add: number; del: number } {
-  return { add: file.additions, del: file.deletions };
-}
+/** Compare files mapped onto the stack's shape; keyed by path (unique
+ *  within a compare — no staged/unstaged split here). Diffs are
+ *  pre-embedded, so the stack's placeholder branch never triggers. */
+const stackFiles = computed<StackFile[]>(() =>
+  files.value.map((file) => ({
+    key: file.path,
+    path: file.path,
+    status: file.status,
+    uncommitted: file.isUncommitted,
+    stats: { insertions: file.additions, deletions: file.deletions },
+    diff: file.diff,
+    collapsed: collapsedFiles.has(file.path),
+  }))
+);
+
+const activeStackKey = computed(() => {
+  const index = selectedFileIndex.value;
+  return index !== null ? (files.value[index]?.path ?? null) : null;
+});
 
 // --- Portrait: rotate the PR body (file band above, diffs below) ---
 //
@@ -237,7 +255,7 @@ const split = useSplitDrag({
 });
 
 const onRowBandKeydown = makeBandKeyHandler(isPortrait, moveFileSelection);
-// The diffs column is its own scroller — scroll it, not a nested DiffView.
+// The stack's root is the diffs scroller — scroll it, not a nested DiffView.
 const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true });
 </script>
 
@@ -443,49 +461,18 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
           @keydown="split.onKeydown"
         ></div>
 
-        <section
-          ref="diffsEl"
+        <DiffStack
+          ref="stackEl"
           class="diffs-col"
           data-testid="compare-diffs"
+          :files="stackFiles"
+          :active-key="activeStackKey"
           :tabindex="isPortrait ? 0 : undefined"
           :role="isPortrait ? 'region' : undefined"
           :aria-label="isPortrait ? 'File diffs' : undefined"
+          @toggle-collapse="toggleFileCollapsed"
           @keydown="onPayloadKeydown"
-        >
-          <section
-            v-for="(file, index) in files"
-            :key="file.path"
-            class="file-diff"
-            :class="{ selected: selectedFileIndex === index }"
-            :data-file-index="index"
-            data-testid="file-diff"
-          >
-            <header class="file-diff-header" :class="{ uncommitted: file.isUncommitted }">
-              <button
-                class="collapse-btn mono"
-                :aria-expanded="!collapsedFiles.has(file.path)"
-                :aria-label="`${collapsedFiles.has(file.path) ? 'Expand' : 'Collapse'} ${file.path}`"
-                @click="toggleFileCollapsed(file.path)"
-              >
-                {{ collapsedFiles.has(file.path) ? '▸' : '▾' }}
-              </button>
-              <span class="letter mono" :data-status="file.status">{{
-                statusLetter(file.status)
-              }}</span>
-              <span class="path mono">{{ file.path }}</span>
-              <span v-if="file.isUncommitted" class="uncommitted-tag mono">[uncommitted]</span>
-              <span class="stats mono">
-                <span v-if="fileStats(file).add" class="count-add">+{{ fileStats(file).add }}</span>
-                <span v-if="fileStats(file).del" class="count-del"
-                  >&minus;{{ fileStats(file).del }}</span
-                >
-              </span>
-            </header>
-            <div v-show="!collapsedFiles.has(file.path)" class="file-diff-body">
-              <DiffView :diff="file.diff" :file-path="file.path" />
-            </div>
-          </section>
-        </section>
+        />
       </div>
     </template>
   </div>
@@ -767,7 +754,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   font-size: var(--fs-small);
 }
 
-/* --- Status letters (shared coloring, Changes parity) --- */
+/* --- Status letters (tree rows; DiffStack colors its own) --- */
 
 .letter {
   flex: none;
@@ -799,65 +786,11 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
 
 /* --- Stacked per-file diffs (right) --- */
 
+/* Grid placement only — the stack itself (scroller, sticky headers,
+   collapse) lives in DiffStack; this scoped rule reaches its root via
+   the parent-scope attribute Vue puts on a child component's root. */
 .diffs-col {
   min-width: 0;
-  overflow-y: auto;
-}
-
-.file-diff + .file-diff {
-  margin-top: 0.75rem;
-}
-
-/* Sticky per-file header inside the diffs scroller; each .file-diff
-   section bounds its own header, so the next one pushes it away. */
-.file-diff-header {
-  position: sticky;
-  top: 0;
-  z-index: 4;
-  display: flex;
-  align-items: baseline;
-  gap: 0.625rem;
-  padding: 0.375rem 0.75rem;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  font-size: var(--fs-base);
-}
-
-.file-diff-header .path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-
-.file-diff.selected .file-diff-header .path {
-  color: var(--selection);
-}
-
-.file-diff-header.uncommitted .path {
-  color: var(--uncommitted);
-}
-
-.file-diff-header .stats {
-  flex: none;
-  margin-left: auto;
-  display: inline-flex;
-  gap: 0.375rem;
-  font-size: var(--fs-small);
-}
-
-.collapse-btn {
-  flex: none;
-  width: 1.25rem;
-  color: var(--text-dim);
-  font-size: var(--fs-base);
-  text-align: left;
-}
-
-.collapse-btn:hover {
-  color: var(--text);
 }
 
 /* Narrow widths: stack — files above, diffs below. */
