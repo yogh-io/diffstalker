@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * Changes view: the source-control panel — files | diff | commit, with
- * a draggable split between files and diff.
+ * Changes view: the working-tree viewer — files | diff, with a
+ * draggable split between them. READ-ONLY: no staging, no discard, no
+ * commit — the web UI only watches.
  *
  * Files column: shared.status.files grouped by core's fileCategories
  * into Modified / Untracked / Staged, each row a status letter, the
@@ -10,23 +11,12 @@
  * FileEntry object to repo.selectFile — the store's stale-guard is
  * identity-based, so rows never clone entries.
  *
- * Staging: every row carries its side's actions (unstaged → stage +
- * discard-behind-a-confirm, staged → unstage), section headers carry
- * stage all / unstage all. Actions stop propagation so they never
- * double as a row select, and each disables while its own mutation is
- * in flight — the applied envelope refreshes the list. Failures land
- * in shared.error (header), never here.
- *
- * Diff column: the shared DiffView over repo.selection.diff. In this
- * view it gets the hunk-staging gutter: an unstaged-side file's hunks
- * stage, a staged-side file's hunks unstage. Untracked files have no
- * stageable hunks (git can only add the whole file) — no gutter.
- *
- * Commit column: CommitPanel (message, amend, commit). All state reads
- * are synchronous store state; nothing here awaits for rendering.
+ * Diff column: the shared read-only DiffView over repo.selection.diff.
+ * All state reads are synchronous store state; nothing here awaits for
+ * rendering.
  */
 
-import { computed, nextTick, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useRepoStore } from '../stores/repo';
 import { categorizeFiles } from '@diffstalker/core/view/fileCategories';
 import { shortenPath } from '@diffstalker/core/view/formatPath';
@@ -34,8 +24,6 @@ import type { FileEntry } from '@diffstalker/core/git/status';
 import { statusLetter } from '../utils/format';
 import { loadPrefs, savePrefs, CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX } from '../prefs';
 import DiffView from '../components/DiffView.vue';
-import CommitPanel from '../components/CommitPanel.vue';
-import DiscardConfirm from '../components/DiscardConfirm.vue';
 
 const repo = useRepoStore();
 
@@ -46,26 +34,14 @@ const categories = computed(() => categorizeFiles(status.value?.files ?? []));
 const sections = computed(() =>
   (
     [
-      { name: 'Modified', files: categories.value.modified, action: 'stage-all' },
-      { name: 'Untracked', files: categories.value.untracked, action: 'stage-all' },
-      { name: 'Staged', files: categories.value.staged, action: 'unstage-all' },
+      { name: 'Modified', files: categories.value.modified },
+      { name: 'Untracked', files: categories.value.untracked },
+      { name: 'Staged', files: categories.value.staged },
     ] as const
   ).filter((section) => section.files.length > 0)
 );
 
 const selectedFile = computed(() => repo.selection.file);
-
-/**
- * Direction of the diff column's hunk buttons: the selected file's side
- * decides — an unstaged-side file's hunks stage, a staged-side file's
- * hunks unstage. Untracked files have no stageable hunks: null hides
- * the gutter (stage the whole file from its row instead — CLI parity).
- */
-const hunkStaging = computed<'stage' | 'unstage' | null>(() => {
-  const file = selectedFile.value;
-  if (!file || file.status === 'untracked') return null;
-  return file.staged ? 'unstage' : 'stage';
-});
 
 function isSelected(file: FileEntry): boolean {
   return repo.selection.file === file;
@@ -96,65 +72,6 @@ function hunkIndicator(file: FileEntry): string {
   if (total === 0) return '';
   const thisCount = file.staged ? staged : unstaged;
   return thisCount === total ? `●${total}` : `●${thisCount}/${total}`;
-}
-
-// --- Staging operations (per-op pending flags; errors land in shared.error) ---
-
-/**
- * Keys of mutations currently in flight ("stage:u:path", "stage-all",
- * …). Each button disables on its OWN key only; the applied response
- * envelope refreshes the list, so flags are short-lived.
- */
-const pendingOps = ref(new Set<string>());
-
-function fileOpKey(op: string, file: FileEntry): string {
-  return `${op}:${rowKey(file)}`;
-}
-
-function isPending(key: string): boolean {
-  return pendingOps.value.has(key);
-}
-
-async function runOp(key: string, fn: () => Promise<void>): Promise<void> {
-  if (pendingOps.value.has(key)) return;
-  pendingOps.value.add(key);
-  try {
-    await fn();
-  } finally {
-    pendingOps.value.delete(key);
-  }
-}
-
-async function stageFile(file: FileEntry): Promise<void> {
-  await runOp(fileOpKey('stage', file), () => repo.stage(file));
-}
-
-async function unstageFile(file: FileEntry): Promise<void> {
-  await runOp(fileOpKey('unstage', file), () => repo.unstage(file));
-}
-
-async function runSectionAction(action: 'stage-all' | 'unstage-all'): Promise<void> {
-  await runOp(action, () => (action === 'stage-all' ? repo.stageAll() : repo.unstageAll()));
-}
-
-// --- Discard (destructive → confirm dialog first) ---
-
-/**
- * The unstaged-side file a discard was requested for; null = no dialog.
- * shallowRef: a deep ref would proxy the FileEntry, and the store must
- * receive the EXACT status entry (identity discipline, like selectFile).
- */
-const discardTarget = shallowRef<FileEntry | null>(null);
-
-function askDiscard(file: FileEntry): void {
-  discardTarget.value = file;
-}
-
-async function confirmDiscard(): Promise<void> {
-  const file = discardTarget.value;
-  discardTarget.value = null;
-  if (!file) return;
-  await runOp(fileOpKey('discard', file), () => repo.discard(file));
 }
 
 // --- Keyboard selection (roving tabindex over the flat ordered list) ---
@@ -287,23 +204,9 @@ function onResizerKeydown(event: KeyboardEvent): void {
           :aria-labelledby="`files-section-${section.name.toLowerCase()}`"
           :data-testid="`section-${section.name.toLowerCase()}`"
         >
-          <div class="section-head">
-            <h3 :id="`files-section-${section.name.toLowerCase()}`" class="section-header">
-              {{ section.name }} <span class="section-count">{{ section.files.length }}</span>
-            </h3>
-            <button
-              class="action-btn section-action"
-              :class="section.action === 'stage-all' ? 'act-stage' : 'act-unstage'"
-              :data-testid="section.action"
-              :disabled="isPending(section.action)"
-              :title="
-                section.action === 'stage-all' ? 'Stage all changes' : 'Unstage all changes'
-              "
-              @click.stop="runSectionAction(section.action)"
-            >
-              {{ section.action === 'stage-all' ? 'stage all' : 'unstage all' }}
-            </button>
-          </div>
+          <h3 :id="`files-section-${section.name.toLowerCase()}`" class="section-header">
+            {{ section.name }} <span class="section-count">{{ section.files.length }}</span>
+          </h3>
           <div
             v-for="file in section.files"
             :key="rowKey(file)"
@@ -328,53 +231,6 @@ function onResizerKeydown(event: KeyboardEvent): void {
             <span class="stats">
               <span v-if="file.insertions" class="count-add">+{{ file.insertions }}</span>
               <span v-if="file.deletions" class="count-del">&minus;{{ file.deletions }}</span>
-            </span>
-            <span class="row-actions">
-              <template v-if="!file.staged">
-                <button
-                  class="action-btn act-stage"
-                  data-testid="stage-file"
-                  :disabled="isPending(fileOpKey('stage', file))"
-                  :aria-label="`Stage ${file.path}`"
-                  :title="`Stage ${file.path}`"
-                  @click.stop="stageFile(file)"
-                  @keydown.enter.stop
-                  @keydown.space.stop
-                >
-                  stage
-                </button>
-                <button
-                  class="action-btn act-discard"
-                  data-testid="discard-file"
-                  :disabled="isPending(fileOpKey('discard', file))"
-                  :aria-label="
-                    file.status === 'untracked' ? `Delete ${file.path}` : `Discard ${file.path}`
-                  "
-                  :title="
-                    file.status === 'untracked'
-                      ? `Delete ${file.path} (untracked)`
-                      : `Discard changes to ${file.path}`
-                  "
-                  @click.stop="askDiscard(file)"
-                  @keydown.enter.stop
-                  @keydown.space.stop
-                >
-                  {{ file.status === 'untracked' ? 'delete' : 'discard' }}
-                </button>
-              </template>
-              <button
-                v-else
-                class="action-btn act-unstage"
-                data-testid="unstage-file"
-                :disabled="isPending(fileOpKey('unstage', file))"
-                :aria-label="`Unstage ${file.path}`"
-                :title="`Unstage ${file.path}`"
-                @click.stop="unstageFile(file)"
-                @keydown.enter.stop
-                @keydown.space.stop
-              >
-                unstage
-              </button>
             </span>
           </div>
         </section>
@@ -416,29 +272,13 @@ function onResizerKeydown(event: KeyboardEvent): void {
         </header>
         <div class="diff-body">
           <p v-if="!repo.selection.diff" class="col-empty">Loading diff…</p>
-          <DiffView
-            v-else
-            :diff="repo.selection.diff"
-            :file-path="selectedFile.path"
-            :hunk-staging="hunkStaging"
-          />
+          <DiffView v-else :diff="repo.selection.diff" :file-path="selectedFile.path" />
         </div>
       </template>
       <p v-else class="col-empty diff-prompt" data-testid="diff-prompt">
         Select a file to view its diff
       </p>
     </section>
-
-    <aside class="commit-col" data-testid="commit-col">
-      <CommitPanel />
-    </aside>
-
-    <DiscardConfirm
-      v-if="discardTarget"
-      :file="discardTarget"
-      @confirm="confirmDiscard"
-      @cancel="discardTarget = null"
-    />
   </div>
 </template>
 
@@ -446,10 +286,8 @@ function onResizerKeydown(event: KeyboardEvent): void {
 .changes {
   height: 100%;
   display: grid;
-  /* files | resizer | diff | commit */
-  grid-template-columns:
-    clamp(12rem, var(--files-col, 32%), 65%) auto minmax(0, 1fr)
-    clamp(14rem, 22%, 20rem);
+  /* files | resizer | diff */
+  grid-template-columns: clamp(12rem, var(--files-col, 32%), 65%) auto minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   background: var(--bg);
 }
@@ -477,14 +315,6 @@ function onResizerKeydown(event: KeyboardEvent): void {
   margin-top: 0.5rem;
 }
 
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding-right: 0.75rem;
-}
-
 .section-header {
   margin: 0;
   padding: 0.25rem 0.75rem;
@@ -494,64 +324,6 @@ function onResizerKeydown(event: KeyboardEvent): void {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--text-dim);
-}
-
-/* --- Staging action buttons (rows + section headers) --- */
-
-.action-btn {
-  flex: none;
-  padding: 0 0.4375rem;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  line-height: 1.6;
-  color: var(--text-dim);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-}
-
-.action-btn:hover:not(:disabled) {
-  border-color: currentcolor;
-}
-
-.action-btn:disabled {
-  opacity: 0.5;
-}
-
-.act-stage:hover:not(:disabled),
-.act-stage:focus-visible {
-  color: var(--add);
-}
-
-.act-unstage:hover:not(:disabled),
-.act-unstage:focus-visible {
-  color: var(--del);
-}
-
-.act-discard:hover:not(:disabled),
-.act-discard:focus-visible {
-  color: var(--del);
-}
-
-/* Row actions sit at the far right; quiet until the row is hovered,
-   focused into, or selected — but always in the DOM (and tab order). */
-.row-actions {
-  flex: none;
-  display: inline-flex;
-  gap: 0.25rem;
-  opacity: 0;
-}
-
-.file-row:hover .row-actions,
-.file-row:focus-within .row-actions,
-.file-row.selected .row-actions {
-  opacity: 1;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .row-actions {
-    transition: opacity 80ms ease-out;
-  }
 }
 
 .section-count {
@@ -718,65 +490,20 @@ function onResizerKeydown(event: KeyboardEvent): void {
   margin: auto;
 }
 
-/* --- Commit column --- */
-
-.commit-col {
-  min-width: 0;
-  overflow: hidden;
-  border-left: 1px solid var(--border);
-  background: var(--surface);
-}
-
-/* Middling widths: the commit panel moves below the diff; files keep
-   their full-height column and the resizer keeps working. */
-@media (max-width: 64rem) {
-  .changes {
-    grid-template-columns: clamp(12rem, var(--files-col, 32%), 65%) auto minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto;
-  }
-
-  .files-col,
-  .resizer {
-    grid-row: 1 / -1;
-  }
-
-  .commit-col {
-    grid-column: 3;
-    border-left: none;
-    border-top: 1px solid var(--border);
-  }
-}
-
-/* Narrow widths: full stack — files, diff, commit. The diff row keeps
-   a usable minimum and the commit panel is height-capped with its own
-   internal scroll, so a tall commit panel cannot squeeze the diff to
-   nothing on a short viewport. */
+/* Narrow widths: stack — files above, diff below. */
 @media (max-width: 44rem) {
   .changes {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(6rem, 35%) minmax(8rem, 1fr) auto;
+    grid-template-rows: minmax(6rem, 35%) minmax(8rem, 1fr);
   }
 
   .files-col {
-    grid-row: auto;
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
 
   .resizer {
     display: none;
-  }
-
-  .commit-col {
-    grid-column: 1;
-    /* Cap the auto row; CommitPanel scrolls internally past this. */
-    max-height: min(16rem, 40vh);
-    overflow-y: auto;
-  }
-
-  /* Touch-first width: hover is unreliable, keep actions visible. */
-  .row-actions {
-    opacity: 1;
   }
 }
 </style>

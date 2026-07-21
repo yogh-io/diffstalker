@@ -1,9 +1,7 @@
 <script setup lang="ts">
 /**
- * App shell: header / wedged-op banner / activity rail / workspace /
- * status bar on a CSS grid (the banner row collapses when the repo is
- * not stopped mid-operation). Owns the daemon connection and the
- * warm-daemon auto-activation:
+ * App shell: header / activity rail / workspace / status bar on a CSS
+ * grid. Owns the daemon connection and the warm-daemon auto-activation:
  *
  * - onMounted: daemonStore.connect() (daemon-scope SSE);
  * - activation flows through useRepoOpen (switcher, open-by-path, and
@@ -25,7 +23,6 @@ import { useRepoOpen } from './composables/useRepoOpen';
 import { useGlobalKeys } from './composables/useGlobalKeys';
 import { useFollowMode } from './composables/useFollowMode';
 import AppHeader from './components/AppHeader.vue';
-import OperationBanner from './components/OperationBanner.vue';
 import ActivityRail from './components/ActivityRail.vue';
 import StatusBar from './components/StatusBar.vue';
 import RepoEmptyState from './components/RepoEmptyState.vue';
@@ -81,15 +78,13 @@ watch(
 <template>
   <div class="shell">
     <AppHeader />
-    <OperationBanner />
     <ActivityRail />
     <main class="workspace">
       <RepoEmptyState v-if="!hasActiveRepo" />
       <!-- Keyed on the active repo: a repo switch (switcher or follow
            mode) REMOUNTS the view, discarding component-local state that
-           belongs to the old repo — an open cherry-pick/revert confirm,
-           History's loaded-log latch — so a stale dialog can never run
-           an operation against the newly-active repo. -->
+           belongs to the old repo — History's loaded-log latch, Compare's
+           toggle — so a view never keeps showing the previous repo. -->
       <component :is="activeViewComponent" v-else :key="daemon.activeRepoId ?? ''" />
     </main>
     <StatusBar />
@@ -105,7 +100,6 @@ watch(
   display: grid;
   grid-template:
     'header header' auto
-    'banner banner' auto
     'rail main' 1fr
     'status status' auto
     / auto 1fr;

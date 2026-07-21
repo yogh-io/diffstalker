@@ -26,8 +26,8 @@ export interface CombinedFileDiffs {
 
 /**
  * Shared repo state: what the daemon broadcasts on the per-repo SSE
- * stream (and returns in mutation envelopes). isLoading is client-only —
- * true until the first snapshot arrives (and during an explicit refresh).
+ * stream. isLoading is client-only — true until the first snapshot
+ * arrives (and during an explicit refresh).
  */
 export interface RepoSharedState {
   status: GitStatus | null;

@@ -130,8 +130,8 @@ describe('restore fallback', () => {
     const { opener, fallback } = setupTargets();
     wrapper = mount(makeHarness(true, () => fallback), { attachTo: document.body });
 
-    // The confirmed action disables its own trigger before the dialog
-    // unmounts (e.g. remote.inProgress flips) — restoring there is a no-op.
+    // An opener can be disabled while the dialog is open (e.g. a repo
+    // switch disables it) — restoring focus there is a no-op.
     opener.disabled = true;
     wrapper.unmount();
 

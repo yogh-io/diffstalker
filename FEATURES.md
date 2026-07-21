@@ -6,7 +6,7 @@ Exhaustive feature inventory for diffstalker. This document serves as a migratio
 
 ## Architecture
 
-Every feature below is preserved; only the plumbing moved. The git state engine now lives in a **daemon** (`diffstalkerd`) that serves `@diffstalker/core` over REST + Server-Sent Events. The terminal UI (`diffstalker`) is a **client** of that daemon — it spawns or attaches to the daemon on a unix socket, opens repos over REST, and follows live state over SSE, holding no in-process git. The same daemon can back other clients (a web client is planned) with the identical feature set. See CLAUDE.md and `packages/daemon/README.md` for the split.
+Every feature below is preserved; only the plumbing moved. The git state engine now lives in a **daemon** (`diffstalkerd`) that serves `@diffstalker/core` over REST + Server-Sent Events. The terminal UI (`diffstalker`) is a **client** of that daemon — it spawns or attaches to the daemon on a unix socket, opens repos over REST, and follows live state over SSE, holding no in-process git. The same daemon also serves the read-only web viewer (see [Web UI](#web-ui-browser-client)). See CLAUDE.md and `packages/daemon/README.md` for the split.
 
 ---
 
@@ -656,31 +656,34 @@ When enabled (`a` toggle):
 `@diffstalker/web` is a Vue 3 single-page app served by the daemon at `GET /`
 (run `diffstalkerd --port N`, open `http://localhost:N` — same-origin, since the
 daemon has no CORS and a browser can't reach the unix socket). It is a pure daemon
-client over the same REST + SSE, at feature parity with the terminal UI, laid out
-for a real screen (persistent panes instead of tab-switching).
+client over the same REST + SSE, laid out for a real screen (persistent panes
+instead of tab-switching). The web UI is a **read-only viewer**: it runs no git
+mutations — no staging, committing, discarding, or remote/branch operations
+(those live in the terminal UI). Its only non-GET calls are opening a repo
+(`POST /repos`) and releasing it (`DELETE /repos/:id`) — attach/refcount, not
+git operations.
 
 ### Views
 
-- **Changes** — a source-control panel: a grouped file list (Modified / Untracked
-  / Staged) beside the selected file's diff, plus a commit column. Per-file
-  stage / unstage / discard and stage-all / unstage-all; per-hunk stage / unstage
-  in the diff gutter; word-level highlighting, per-hunk edit times, line-number
-  gutters. Commit box with amend (prefilled from HEAD) and Cmd/Ctrl+Enter.
+- **Changes** — the working-tree viewer: a grouped file list (Modified /
+  Untracked / Staged) with status letters, +/− stats, and hunk-count
+  indicators, beside the selected file's diff. Word-level highlighting,
+  per-hunk edit times, line-number gutters. No staging or commit controls.
 - **History** — commit list (hash, message, author, relative date, ref chips)
   beside a commit detail: metadata + a multi-file diff with per-file section
-  headers. Cherry-pick / revert (with a confirm dialog).
-- **Compare** — a GitHub-PR-style view against a base branch: base selector,
-  include-uncommitted toggle, stats, a collapsible commits list, a file tree, and
-  stacked per-file diffs with sticky collapse headers.
+  headers.
+- **Compare** — a GitHub-PR-style view against a base branch: base selector
+  (a client-side pick read via `GET /compare?base=…` — never persisted
+  daemon-side), include-uncommitted toggle, stats, a collapsible commits list,
+  a file tree, and stacked per-file diffs with sticky collapse headers.
 - **Explorer** — a VS Code-style lazy file tree with git-status decoration
   (dotfile / ignored / changed-only toggles) beside syntax-highlighted file
   content (highlight.js) with binary / truncated / too-large states.
 
 ### Header & global
 
-- Remote / branch operations: fetch / pull / push (with ahead/behind), a
-  branch-switch/create + stash + soft-reset menu, and a wedged-op banner
-  (abort / continue) for a conflicted rebase / cherry-pick / revert / merge.
+- Branch indicator: current branch → tracking, ahead/behind counts —
+  read-only text, no fetch/pull/push controls.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.

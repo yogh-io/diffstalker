@@ -1,10 +1,11 @@
 /**
- * useRepoStore tests: the RepoSession port. Covers the applyWireState
- * sink + cascade, selection re-anchoring, the 20ms leading+trailing diff
- * debounce, the identity stale-guard, mutation envelope application,
- * wire decoding, compare-422, remote-op synthesis, and the single-flight
- * reconnect loop. Driven entirely by a stubbed fetch + FakeEventSource —
- * no daemon, fake timers throughout.
+ * useRepoStore tests: the read-only RepoSession port. Covers the
+ * applyWireState sink + cascade, selection re-anchoring, the 20ms
+ * leading+trailing diff debounce, the identity stale-guard, wire
+ * decoding, compare-422, the read-only compare base pick, and the
+ * single-flight reconnect loop. Driven entirely by a stubbed fetch +
+ * FakeEventSource — no daemon, fake timers throughout. The store has
+ * no git-mutating actions — the web UI is a viewer.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -75,8 +76,8 @@ function defaultGetRoutes(url: string): FakeResponse | undefined {
   if (url.startsWith('/repos/r1/compare')) {
     return { body: compareBody() };
   }
-  if (url === '/repos/r1/head-message') {
-    return { body: { message: 'HEAD msg' } };
+  if (url === '/repos/r1/worktrees') {
+    return { body: [{ path: '/repo', branch: 'main', isMain: true }] };
   }
   return undefined;
 }
@@ -84,9 +85,6 @@ function defaultGetRoutes(url: string): FakeResponse | undefined {
 function defaultPostRoutes(call: FetchCall): FakeResponse | undefined {
   if (call.url === '/repos') {
     return { body: { id: 'r1', path: (call.body as { path: string }).path } };
-  }
-  if (call.url.startsWith('/repos/r1/')) {
-    return { body: { state: wireState() } };
   }
   return undefined;
 }
@@ -182,8 +180,8 @@ describe('open + applyWireState', () => {
     // Everything no-ops without an id — no throws, no requests.
     const before = fake.calls.length;
     store.selectFile(fileEntry('a.ts'));
-    await store.stageAll();
     await store.loadHistory();
+    await store.refreshCompare();
     await flush();
     expect(fake.calls.length).toBe(before);
   });
@@ -209,7 +207,7 @@ describe('open + applyWireState', () => {
         return { body: { id: 'r2', path: (call.body as { path: string }).path } };
       }
       if (call.url.startsWith('/repos/r2/')) {
-        return { body: call.url.endsWith('/status') ? wireState() : { state: wireState() } };
+        return { body: wireState() };
       }
       return undefined;
     };
@@ -233,7 +231,7 @@ describe('open + applyWireState', () => {
         return { body: { id: 'rb', path } };
       }
       if (call.url.startsWith('/repos/rb/')) {
-        return { body: call.url.endsWith('/status') ? wireState() : { state: wireState() } };
+        return { body: wireState() };
       }
       return undefined;
     };
@@ -430,7 +428,7 @@ describe('selection', () => {
         return { body: { id: 'r2', path: (call.body as { path: string }).path } };
       }
       if (call.url.startsWith('/repos/r2/')) {
-        return { body: call.url.endsWith('/status') ? wireState() : { state: wireState() } };
+        return { body: wireState() };
       }
       if (call.url.includes('/repos/r1/diff')) return slow.promise;
       return undefined;
@@ -502,62 +500,43 @@ describe('selection', () => {
   });
 });
 
-// --- Mutations ---
+// --- Read-only stance ---
 
-describe('mutations', () => {
-  test('a mutation envelope state flows through applyWireState', async () => {
-    const file = fileEntry('a.ts');
-    const { store } = await openStore([file]);
-
-    const staged = fileEntry('a.ts', { staged: true });
-    onRequest = (call) =>
-      call.url === '/repos/r1/stage' ? { body: { state: wireState([staged]) } } : undefined;
-
-    await store.stage(file);
-    expect(fake.callsTo('/stage')[0].body).toEqual({ path: 'a.ts' });
-    expect(store.shared.status!.files).toEqual([staged]);
-  });
-
-  test('a mutation DaemonError lands in shared.error, never throws', async () => {
-    const file = fileEntry('a.ts');
-    const { store } = await openStore([file]);
-    onRequest = (call) =>
-      call.url === '/repos/r1/stage' ? { status: 409, body: { error: 'index locked' } } : undefined;
-
-    await store.stage(file);
-    expect(store.shared.error).toBe('Failed to stage a.ts: index locked');
-  });
-
-  test('commit posts message and amend flag', async () => {
-    const { store } = await openStore();
-    await store.commit('fix things', true);
-    expect(fake.callsTo('/commit')[0].body).toEqual({ message: 'fix things', amend: true });
-  });
-
-  test('discard no-ops on a staged file (parity with the CLI)', async () => {
-    const { store } = await openStore();
-    await store.discard(fileEntry('a.ts', { staged: true }));
-    expect(fake.callsTo('/discard')).toHaveLength(0);
-  });
-
-  test('a mutation hitting a dead daemon enters the reconnect state', async () => {
-    const file = fileEntry('a.ts');
-    const { store } = await openStore([file]);
-    onRequest = (call) => {
-      if (call.url === '/repos/r1/stage') throw new TypeError('Failed to fetch');
-      return undefined;
-    };
-
-    await store.stage(file);
-    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
-
-    // Recovery re-POSTs /repos and pulls status, clearing the line.
-    onRequest = null;
-    const repoPosts = () => fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos');
-    expect(repoPosts()).toHaveLength(1);
-    await advance(1000);
-    expect(repoPosts()).toHaveLength(2);
-    expect(store.shared.error).toBeNull();
+describe('read-only stance', () => {
+  test('the store exposes NO git-mutating actions', async () => {
+    const { store } = await openStore([fileEntry('a.ts')]);
+    const forbidden = [
+      'stage',
+      'unstage',
+      'stageAll',
+      'unstageAll',
+      'discard',
+      'stageHunk',
+      'unstageHunk',
+      'commit',
+      'push',
+      'fetchRemote',
+      'pull',
+      'stash',
+      'stashPop',
+      'switchBranch',
+      'createBranch',
+      'softReset',
+      'cherryPick',
+      'revertCommit',
+      'abort',
+      'rebaseContinue',
+      'setCompareBaseBranch',
+      'getHeadCommitMessage',
+      'listBranches',
+      'clearRemoteState',
+    ];
+    for (const name of forbidden) {
+      expect((store as unknown as Record<string, unknown>)[name]).toBeUndefined();
+    }
+    // And a full read session issued nothing but GETs after the attach.
+    const nonGet = fake.calls.filter((c) => c.method !== 'GET');
+    expect(nonGet.map((c) => [c.method, c.url])).toEqual([['POST', '/repos']]);
   });
 });
 
@@ -608,15 +587,22 @@ describe('history', () => {
     expect(store.history.commitDiff).toBeNull();
   });
 
-  test('getHeadCommitMessage unwraps the message; empty on connection loss', async () => {
+});
+
+// --- Worktrees ---
+
+describe('listWorktrees', () => {
+  test('returns the daemon worktree list; empty on connection loss', async () => {
     const { store } = await openStore();
-    await expect(store.getHeadCommitMessage()).resolves.toBe('HEAD msg');
+    await expect(store.listWorktrees()).resolves.toEqual([
+      { path: '/repo', branch: 'main', isMain: true },
+    ]);
 
     onRequest = (call) => {
-      if (call.url === '/repos/r1/head-message') throw new TypeError('Failed to fetch');
+      if (call.url === '/repos/r1/worktrees') throw new TypeError('Failed to fetch');
       return undefined;
     };
-    await expect(store.getHeadCommitMessage()).resolves.toBe('');
+    await expect(store.listWorktrees()).resolves.toEqual([]);
     expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
   });
 });
@@ -770,17 +756,17 @@ describe('compare', () => {
     expect(store.getLastIncludeUncommitted()).toBe(true);
   });
 
-  test('setCompareBaseBranch persists then reloads; selectCompareFile picks from the loaded diff', async () => {
+  test('setSelectedCompareBase reads with ?base= and issues NO PUT', async () => {
     const { store } = await openStore();
-    onRequest = (call) =>
-      call.method === 'PUT' && call.url === '/repos/r1/compare/base'
-        ? { body: { base: 'origin/dev' } }
-        : undefined;
 
-    await store.setCompareBaseBranch('origin/dev');
-    expect(fake.calls.some((c) => c.method === 'PUT' && c.url === '/repos/r1/compare/base')).toBe(
-      true
-    );
+    await store.setSelectedCompareBase('origin/dev');
+    expect(store.selectedCompareBase).toBe('origin/dev');
+    expect(fake.callsTo('/compare')[0]).toMatchObject({
+      method: 'GET',
+      url: '/repos/r1/compare?base=origin%2Fdev&uncommitted=false',
+    });
+    // Read-only: nothing was persisted daemon-side.
+    expect(fake.calls.some((c) => c.method === 'PUT')).toBe(false);
     expect(store.compare.compareDiff).not.toBeNull();
 
     store.selectCompareFile(0);
@@ -794,74 +780,25 @@ describe('compare', () => {
     expect(store.compare.selection).toEqual({ type: null, index: 0, diff: null });
   });
 
+  test('the picked base rides every later refresh, including the state-change re-pull', async () => {
+    const { store, source } = await openStore();
+    await store.setSelectedCompareBase('origin/dev', true);
+
+    source.emit('state-change', wireState());
+    await flush();
+    const urls = fake.callsTo('/compare').map((c) => c.url);
+    expect(urls).toEqual([
+      '/repos/r1/compare?base=origin%2Fdev&uncommitted=true',
+      '/repos/r1/compare?base=origin%2Fdev&uncommitted=true',
+    ]);
+  });
+
   test('selectCompareCommit pulls the commit diff and guards the selection', async () => {
     const { store } = await openStore();
     await store.refreshCompare();
     await store.selectCompareCommit(0);
     expect(store.compare.selection.type).toBe('commit');
     expect(store.compare.selection.diff!.raw).toContain('commit-diff:');
-  });
-});
-
-// --- Remote operations (synthesized state) ---
-
-describe('remote operations', () => {
-  test('cherryPick drives the remote state machine and applies the envelope', async () => {
-    const { store } = await openStore();
-    const picked = fileEntry('picked.ts');
-    onRequest = (call) =>
-      call.url === '/repos/r1/cherry-pick'
-        ? { body: { state: wireState([picked]), result: 'Cherry-picked abc' } }
-        : undefined;
-
-    await store.cherryPick('abc');
-    expect(store.remote).toEqual({
-      operation: 'cherryPick',
-      inProgress: false,
-      error: null,
-      lastResult: 'Cherry-picked abc',
-    });
-    expect(store.shared.status!.files).toEqual([picked]);
-  });
-
-  test('a second remote op is refused while one is in flight', async () => {
-    const { store } = await openStore();
-    const slow = new Deferred<FakeResponse>();
-    onRequest = (call) => (call.url === '/repos/r1/push' ? slow.promise : undefined);
-
-    const pushPromise = store.push();
-    expect(store.remote.inProgress).toBe(true);
-
-    await store.pull(); // guarded: no request fired
-    expect(fake.callsTo('/pull')).toHaveLength(0);
-
-    slow.resolve({ body: { state: wireState(), result: 'Pushed' } });
-    await pushPromise;
-    expect(store.remote.inProgress).toBe(false);
-    expect(store.remote.lastResult).toBe('Pushed');
-  });
-
-  test('a remote-op daemon error lands in remote.error', async () => {
-    const { store } = await openStore();
-    onRequest = (call) =>
-      call.url === '/repos/r1/push' ? { status: 409, body: { error: 'push rejected' } } : undefined;
-
-    await store.push();
-    expect(store.remote.inProgress).toBe(false);
-    expect(store.remote.error).toBe('push rejected');
-    expect(store.shared.error).toBeNull(); // remote errors stay off the shared banner
-  });
-
-  test('clearRemoteState resets the machine', async () => {
-    const { store } = await openStore();
-    await store.revertCommit('abc');
-    store.clearRemoteState();
-    expect(store.remote).toEqual({
-      operation: null,
-      inProgress: false,
-      error: null,
-      lastResult: null,
-    });
   });
 });
 
@@ -888,10 +825,10 @@ describe('reconnect', () => {
     // A second loss signal must not rewrite the state (no flicker).
     const before = store.shared;
     onRequest = (call) => {
-      if (call.url === '/repos/r1/head-message') throw new TypeError('Failed to fetch');
+      if (call.url === '/repos/r1/worktrees') throw new TypeError('Failed to fetch');
       return undefined;
     };
-    await store.getHeadCommitMessage();
+    await store.listWorktrees();
     expect(store.shared).toBe(before);
 
     // Daemon back: recovery re-POSTs /repos, resubscribes, pulls status.
@@ -909,7 +846,7 @@ describe('reconnect', () => {
     const slowOpen = new Deferred<FakeResponse>();
     onRequest = (call) => {
       if (call.method === 'POST' && call.url === '/repos') return slowOpen.promise;
-      if (call.url === '/repos/r1/head-message') throw new TypeError('Failed to fetch');
+      if (call.url === '/repos/r1/worktrees') throw new TypeError('Failed to fetch');
       return undefined;
     };
 
@@ -917,7 +854,7 @@ describe('reconnect', () => {
     await advance(1000); // recovery starts, held on the deferred
 
     // More failures while recovery is in flight: no second attempt.
-    await store.getHeadCommitMessage();
+    await store.listWorktrees();
     await advance(3000);
     const repoPosts = fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos');
     expect(repoPosts).toHaveLength(2); // initial open + ONE recovery
@@ -972,32 +909,5 @@ describe('reconnect', () => {
     slowOpen.resolve({ body: { id: 'r1', path: '/repo' } });
     await flush();
     expect(store.repoId).toBe('r2');
-  });
-});
-
-// --- Branch listing (read-only, for the actions menu) ---
-
-describe('listBranches', () => {
-  test('returns the daemon branch list', async () => {
-    const { store } = await openStore();
-    onRequest = (call) =>
-      call.url === '/repos/r1/branches'
-        ? {
-            body: [
-              { name: 'main', current: true, tracking: 'origin/main' },
-              { name: 'feat-x', current: false },
-            ],
-          }
-        : undefined;
-
-    const branches = await store.listBranches();
-    expect(branches.map((b) => b.name)).toEqual(['main', 'feat-x']);
-    expect(branches[0].current).toBe(true);
-  });
-
-  test('resolves empty without a repo', async () => {
-    const store = useRepoStore();
-    expect(await store.listBranches()).toEqual([]);
-    expect(fake.callsTo('/branches')).toHaveLength(0);
   });
 });

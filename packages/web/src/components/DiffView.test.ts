@@ -4,18 +4,13 @@
  * diffs, prop-forced/suppressed), hunk headers with relative edit times
  * and the fresh-hunk flash, word-level highlighting for similar del/add
  * pairs (positional pairing within a run, none for dissimilar lines),
- * empty/binary states, a large diff rendering without error, and hunk
- * staging: buttons gated to the file section matching filePath (stale
- * or multi-file diffs get none elsewhere) and the double-fire guard
- * that holds until the refreshed diff replaces the prop.
+ * empty/binary states, a large diff rendering without error, and the
+ * viewer stance: the diff is READ-ONLY — no hunk-staging buttons exist.
  */
 
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, test, expect, vi, afterEach } from 'vitest';
 import { mount } from '@vue/test-utils';
-import { createPinia, setActivePinia } from 'pinia';
 import DiffView from './DiffView.vue';
-import { useRepoStore } from '../stores/repo';
-import { extractHunkPatch } from '@diffstalker/core/git/diffParse';
 import type { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
 
 function header(path: string): DiffLine {
@@ -46,18 +41,11 @@ function mountDiff(
   diff: DiffResult | null,
   props: {
     showFileHeaders?: boolean;
-    hunkStaging?: 'stage' | 'unstage' | null;
     filePath?: string;
   } = {}
 ) {
   return mount(DiffView, { props: { diff, ...props } });
 }
-
-beforeEach(() => {
-  // The component reads the repo store (hunk staging); tests without
-  // staging never touch it, but setup still needs an active pinia.
-  setActivePinia(createPinia());
-});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -371,7 +359,7 @@ describe('empty and edge states', () => {
   });
 });
 
-describe('hunk staging', () => {
+describe('viewer stance (read-only)', () => {
   const twoHunkDiff = makeDiff([
     header('src/foo.ts'),
     hunk('@@ -1,2 +1,2 @@'),
@@ -383,203 +371,13 @@ describe('hunk staging', () => {
     add('second new', 10),
   ]);
 
-  /** Matching filePath: the diff's one section is the pane's file. */
-  const FOO = { hunkStaging: 'stage' as const, filePath: 'src/foo.ts' };
-
-  test('without hunkStaging (History/Compare) no hunk buttons render', () => {
+  test('a working-tree diff renders NO hunk buttons — and no buttons at all', () => {
     const wrapper = mountDiff(twoHunkDiff, { filePath: 'src/foo.ts' });
+    // The read rendering is intact…
+    expect(wrapper.findAll('[data-testid="hunk-header"]')).toHaveLength(2);
+    expect(wrapper.find('.row.del .content').text()).toBe('first old');
+    // …and there is no staging affordance anywhere in the diff.
     expect(wrapper.findAll('[data-testid="hunk-action"]')).toHaveLength(0);
-  });
-
-  test("hunkStaging='stage' + matching filePath renders one stage button per hunk", () => {
-    const wrapper = mountDiff(twoHunkDiff, FOO);
-    const buttons = wrapper.findAll('[data-testid="hunk-action"]');
-    expect(buttons).toHaveLength(2);
-    expect(buttons[0].text()).toBe('stage hunk');
-    expect(buttons[0].attributes('aria-label')).toBe('Stage hunk');
-  });
-
-  test("clicking the 2nd hunk's button stages extractHunkPatch(raw, 1) — not hunk 1", async () => {
-    const repo = useRepoStore();
-    const stageSpy = vi.spyOn(repo, 'stageHunk').mockResolvedValue();
-
-    const wrapper = mountDiff(twoHunkDiff, FOO);
-    await wrapper.findAll('[data-testid="hunk-action"]')[1].trigger('click');
-
-    const expected = extractHunkPatch(twoHunkDiff.raw, 1);
-    expect(expected).not.toBeNull();
-    expect(stageSpy).toHaveBeenCalledTimes(1);
-    expect(stageSpy).toHaveBeenCalledWith(expected);
-    // The patch really is the SECOND hunk of the same raw the view rendered.
-    const patch = stageSpy.mock.calls[0][0];
-    expect(patch).toContain('@@ -10,2 +10,2 @@');
-    expect(patch).toContain('second old');
-    expect(patch).not.toContain('first old');
-  });
-
-  test("hunkStaging='unstage' routes to repo.unstageHunk with the hunk's patch", async () => {
-    const repo = useRepoStore();
-    const stageSpy = vi.spyOn(repo, 'stageHunk').mockResolvedValue();
-    const unstageSpy = vi.spyOn(repo, 'unstageHunk').mockResolvedValue();
-
-    const wrapper = mountDiff(twoHunkDiff, { hunkStaging: 'unstage', filePath: 'src/foo.ts' });
-    expect(wrapper.findAll('[data-testid="hunk-action"]')[0].text()).toBe('unstage hunk');
-    await wrapper.findAll('[data-testid="hunk-action"]')[0].trigger('click');
-
-    expect(unstageSpy).toHaveBeenCalledTimes(1);
-    expect(unstageSpy).toHaveBeenCalledWith(extractHunkPatch(twoHunkDiff.raw, 0));
-    expect(stageSpy).not.toHaveBeenCalled();
-  });
-
-  test('a null patch is a no-op (raw the extractor cannot parse)', async () => {
-    const repo = useRepoStore();
-    const stageSpy = vi.spyOn(repo, 'stageHunk').mockResolvedValue();
-
-    // Model rows come from lines; the raw has no @@ at all → null patch.
-    const broken: DiffResult = { ...twoHunkDiff, raw: 'not a diff\n' };
-    const wrapper = mountDiff(broken, FOO);
-    await wrapper.findAll('[data-testid="hunk-action"]')[0].trigger('click');
-
-    expect(stageSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe('hunk buttons are gated to the file the pane intends to stage', () => {
-  const multi = makeDiff([
-    header('src/foo.ts'),
-    hunk('@@ -1 +1 @@'),
-    add('foo one', 1),
-    hunk('@@ -5 +5 @@'),
-    add('foo two', 5),
-    header('src/bar.ts'),
-    hunk('@@ -9 +9 @@'),
-    add('bar one', 9),
-  ]);
-
-  test('a stale diff (previous file, selection already moved on) shows NO buttons', () => {
-    // selectFile set filePath to the NEW file; the parked diff still
-    // belongs to the previous one — nothing may be stageable.
-    const previousFileDiff = makeDiff([
-      header('src/previous.ts'),
-      hunk('@@ -1 +1 @@'),
-      add('previous content', 1),
-    ]);
-    const wrapper = mountDiff(previousFileDiff, {
-      hunkStaging: 'stage',
-      filePath: 'src/next.ts',
-    });
-    expect(wrapper.findAll('[data-testid="hunk-action"]')).toHaveLength(0);
-    // Read-only rendering is fully intact — only the button is gated.
-    expect(wrapper.find('.row.add .content').text()).toBe('previous content');
-    expect(wrapper.find('[data-testid="hunk-header"]').exists()).toBe(true);
-  });
-
-  test('a multi-file diff shows buttons ONLY in the section matching filePath', async () => {
-    const repo = useRepoStore();
-    const stageSpy = vi.spyOn(repo, 'stageHunk').mockResolvedValue();
-
-    const wrapper = mountDiff(multi, { hunkStaging: 'stage', filePath: 'src/bar.ts' });
-
-    // Only bar's single hunk carries a button; foo's two hunks do not.
-    const buttons = wrapper.findAll('[data-testid="hunk-action"]');
-    expect(buttons).toHaveLength(1);
-    const sections = wrapper.findAll('.file-section');
-    expect(sections[0].findAll('[data-testid="hunk-action"]')).toHaveLength(0);
-    expect(sections[1].findAll('[data-testid="hunk-action"]')).toHaveLength(1);
-
-    // Clicking it stages bar's hunk by its GLOBAL index (2) — and the
-    // patch carries bar's file header, not foo's.
-    await buttons[0].trigger('click');
-    expect(stageSpy).toHaveBeenCalledTimes(1);
-    expect(stageSpy).toHaveBeenCalledWith(extractHunkPatch(multi.raw, 2));
-    const patch = stageSpy.mock.calls[0][0];
-    expect(patch).toContain('diff --git a/src/bar.ts b/src/bar.ts');
-    expect(patch).toContain('bar one');
-    expect(patch).not.toContain('foo');
-  });
-
-  test('a matching filePath still shows buttons in the matching section only', () => {
-    const wrapper = mountDiff(multi, { hunkStaging: 'stage', filePath: 'src/foo.ts' });
-    const sections = wrapper.findAll('.file-section');
-    expect(sections[0].findAll('[data-testid="hunk-action"]')).toHaveLength(2);
-    expect(sections[1].findAll('[data-testid="hunk-action"]')).toHaveLength(0);
-  });
-
-  test('no filePath at all (undefined) shows no buttons even with hunkStaging', () => {
-    const wrapper = mountDiff(multi, { hunkStaging: 'stage' });
-    expect(wrapper.findAll('[data-testid="hunk-action"]')).toHaveLength(0);
-  });
-});
-
-describe('hunk double-fire guard', () => {
-  const fooDiff = makeDiff([
-    header('src/foo.ts'),
-    hunk('@@ -1,2 +1,2 @@'),
-    del('first old', 1),
-    add('first new', 1),
-    hunk('@@ -10,2 +10,2 @@'),
-    del('second old', 10),
-    add('second new', 10),
-  ]);
-  const FOO = { hunkStaging: 'stage' as const, filePath: 'src/foo.ts' };
-
-  test('buttons stay disabled after the envelope resolves, until the diff prop CHANGES', async () => {
-    const repo = useRepoStore();
-    let resolveOp!: () => void;
-    const stageSpy = vi
-      .spyOn(repo, 'stageHunk')
-      .mockImplementation(() => new Promise<void>((resolve) => (resolveOp = resolve)));
-
-    const wrapper = mountDiff(fooDiff, FOO);
-    await wrapper.findAll('[data-testid="hunk-action"]')[0].trigger('click');
-
-    // In flight: every button disabled.
-    for (const button of wrapper.findAll('[data-testid="hunk-action"]')) {
-      expect(button.attributes('disabled')).toBeDefined();
-    }
-
-    // Envelope resolved, but the refreshed diff has NOT arrived: the
-    // rendered raw is about to be replaced — still disabled, and a
-    // fast second click cannot extract from it.
-    resolveOp();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await wrapper.vm.$nextTick();
-    for (const button of wrapper.findAll('[data-testid="hunk-action"]')) {
-      expect(button.attributes('disabled')).toBeDefined();
-    }
-    await wrapper.findAll('[data-testid="hunk-action"]')[1].trigger('click');
-    expect(stageSpy).toHaveBeenCalledTimes(1);
-
-    // The refreshed diff lands (new identity) → re-enabled.
-    const refreshed = makeDiff([
-      header('src/foo.ts'),
-      hunk('@@ -10,2 +10,2 @@'),
-      del('second old', 10),
-      add('second new', 10),
-    ]);
-    await wrapper.setProps({ diff: refreshed });
-    for (const button of wrapper.findAll('[data-testid="hunk-action"]')) {
-      expect(button.attributes('disabled')).toBeUndefined();
-    }
-  });
-
-  test('a FAILED mutation re-enables without a diff change (the raw was never replaced)', async () => {
-    const repo = useRepoStore();
-    const stageSpy = vi.spyOn(repo, 'stageHunk').mockImplementation(() => {
-      // The store never throws: a failed mutation lands in shared.error
-      // and does NOT apply an envelope — the rendered diff stays valid.
-      repo.shared = { ...repo.shared, error: 'Failed to stage hunk: patch does not apply' };
-      return Promise.resolve();
-    });
-
-    const wrapper = mountDiff(fooDiff, FOO);
-    await wrapper.findAll('[data-testid="hunk-action"]')[0].trigger('click');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await wrapper.vm.$nextTick();
-
-    expect(stageSpy).toHaveBeenCalledTimes(1);
-    for (const button of wrapper.findAll('[data-testid="hunk-action"]')) {
-      expect(button.attributes('disabled')).toBeUndefined();
-    }
+    expect(wrapper.findAll('button')).toHaveLength(0);
   });
 });

@@ -1,17 +1,20 @@
 /**
  * useRepoStore: the per-active-repo Pinia store — the browser port of the
- * CLI's RepoSession (packages/cli/src/daemon/RepoSession.ts).
+ * CLI's RepoSession (packages/cli/src/daemon/RepoSession.ts), READ-ONLY:
+ * the web UI is a viewer, so this store runs no git mutations. The only
+ * non-GET requests it makes are POST /repos (attach) and DELETE /repos/:id
+ * (release) — refcounting, not git operations.
  *
  * - shared state (status, hunk counts, stash list, in-progress op, error)
- *   is fed by the per-repo SSE stream and by mutation response envelopes,
- *   all through the single applyWireState sink;
+ *   is fed by the per-repo SSE stream through the single applyWireState
+ *   sink;
  * - selection (file + its diffs) is per-client and fetched on demand via
  *   GET /diff, with the 20ms leading+trailing debounce + identity
  *   stale-guard ported verbatim;
  * - history and compare are pulled on demand and re-pulled on state-change
  *   when previously loaded;
- * - remote operation state is synthesized locally around the mutation call
- *   (there is no remote SSE channel).
+ * - the compare base is per-client too: selectedCompareBase rides along
+ *   as GET /compare?base=… — nothing is persisted daemon-side.
  *
  * Everything a view reads is synchronous reactive state (shallowRefs whose
  * whole value is replaced — shallow so object identity survives, which the
@@ -41,11 +44,10 @@ import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import { DaemonError, isConnectionError } from '../api/errors';
 import type { SseHandle } from '../api/transport';
-import type { MutationEnvelope, RepoRef, WireSharedState } from '@diffstalker/client';
-import type { FileEntry, CommitInfo, LocalBranch } from '@diffstalker/core/git/status';
+import type { RepoRef, WireSharedState } from '@diffstalker/client';
+import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
-import type { RemoteOperation, RemoteOperationState } from '@diffstalker/core/types/remote';
 import type {
   RepoSharedState,
   RepoSelectionState,
@@ -97,10 +99,6 @@ function initialCompare(): RepoCompareState {
   };
 }
 
-function initialRemote(): RemoteOperationState {
-  return { operation: null, inProgress: false, error: null, lastResult: null };
-}
-
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -116,7 +114,12 @@ export const useRepoStore = defineStore('repo', () => {
   const selection = shallowRef<RepoSelectionState>(initialSelection());
   const history = shallowRef<RepoHistoryState>(initialHistory());
   const compare = shallowRef<RepoCompareState>(initialCompare());
-  const remote = shallowRef<RemoteOperationState>(initialRemote());
+  /**
+   * The base branch the compare view reads against, per-client. Null
+   * means "let the daemon detect one". Sent as GET /compare?base=… —
+   * never persisted daemon-side (the viewer mutates nothing).
+   */
+  const selectedCompareBase = shallowRef<string | null>(null);
 
   const isRepo = computed(() => repoId.value !== null);
 
@@ -192,7 +195,7 @@ export const useRepoStore = defineStore('repo', () => {
     selection.value = initialSelection();
     history.value = initialHistory();
     compare.value = initialCompare();
-    remote.value = initialRemote();
+    selectedCompareBase.value = null;
 
     try {
       const ref = await client.openRepo(path);
@@ -320,9 +323,9 @@ export const useRepoStore = defineStore('repo', () => {
   // --- Shared state ---
 
   /**
-   * THE single sink: applies a wire state (SSE snapshot/state-change or a
-   * mutation response envelope), then cascades — re-anchor the selection
-   * and re-fetch its diff, re-pull history/compare when already loaded.
+   * THE single sink: applies a wire state (SSE snapshot/state-change),
+   * then cascades — re-anchor the selection and re-fetch its diff,
+   * re-pull history/compare when already loaded.
    */
   function applyWireState(wire: WireSharedState): void {
     shared.value = {
@@ -497,65 +500,6 @@ export const useRepoStore = defineStore('repo', () => {
     scheduleDiffFetch();
   }
 
-  // --- Mutations (never throw to the UI; failures land in shared.error) ---
-
-  async function runMutation(
-    describe: string,
-    fn: (id: string) => Promise<MutationEnvelope>
-  ): Promise<void> {
-    const id = repoId.value;
-    if (id === null) return;
-    const gen = generation;
-    try {
-      const envelope = await fn(id);
-      if (gen !== generation) return;
-      // Apply the response state through the same path as SSE events so a
-      // pending selection anchor is consumed against post-mutation status.
-      applyWireState(envelope.state);
-    } catch (err) {
-      if (gen !== generation) return;
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return;
-      }
-      setError(`${describe}: ${errorMessage(err)}`);
-    }
-  }
-
-  async function stage(file: FileEntry): Promise<void> {
-    await runMutation(`Failed to stage ${file.path}`, (id) => client.stage(id, file.path));
-  }
-
-  async function unstage(file: FileEntry): Promise<void> {
-    await runMutation(`Failed to unstage ${file.path}`, (id) => client.unstage(id, file.path));
-  }
-
-  async function stageAll(): Promise<void> {
-    await runMutation('Failed to stage all', (id) => client.stageAll(id));
-  }
-
-  async function unstageAll(): Promise<void> {
-    await runMutation('Failed to unstage all', (id) => client.unstageAll(id));
-  }
-
-  async function discard(file: FileEntry): Promise<void> {
-    // Parity with the CLI: discard is only for the unstaged side.
-    if (file.staged) return;
-    await runMutation(`Failed to discard ${file.path}`, (id) => client.discard(id, file.path));
-  }
-
-  async function stageHunk(patch: string): Promise<void> {
-    await runMutation('Failed to stage hunk', (id) => client.stageHunk(id, patch));
-  }
-
-  async function unstageHunk(patch: string): Promise<void> {
-    await runMutation('Failed to unstage hunk', (id) => client.unstageHunk(id, patch));
-  }
-
-  async function commit(message: string, amend: boolean = false): Promise<void> {
-    await runMutation('Failed to commit', (id) => client.commit(id, message, { amend }));
-  }
-
   // --- History ---
 
   async function loadHistory(count: number = 100): Promise<void> {
@@ -605,13 +549,6 @@ export const useRepoStore = defineStore('repo', () => {
     }
   }
 
-  /** HEAD commit message for the amend prefill ("" without commits). */
-  async function getHeadCommitMessage(): Promise<string> {
-    const id = repoId.value;
-    if (id === null) return '';
-    return read(() => client.headMessage(id), '');
-  }
-
   // --- Compare ---
 
   /** The include-uncommitted flag of the most recent compare pull — lets
@@ -645,7 +582,10 @@ export const useRepoStore = defineStore('repo', () => {
     const seq = ++compareRequestSeq;
     compare.value = { ...compare.value, loading: true, error: null, noBaseBranch: false };
     try {
-      const diff = await client.compare(id, { uncommitted: includeUncommitted });
+      const diff = await client.compare(id, {
+        base: selectedCompareBase.value ?? undefined,
+        uncommitted: includeUncommitted,
+      });
       if (gen !== generation || seq !== compareRequestSeq) return;
       compare.value = {
         ...compare.value,
@@ -695,29 +635,16 @@ export const useRepoStore = defineStore('repo', () => {
     return read<string[]>(() => client.baseBranches(id), []);
   }
 
-  async function setCompareBaseBranch(
+  /**
+   * Pick the base the compare view reads against (read-only: rides the
+   * next GET /compare as ?base=…, never persisted daemon-side) and
+   * re-pull with it.
+   */
+  async function setSelectedCompareBase(
     branch: string,
     includeUncommitted: boolean = false
   ): Promise<void> {
-    const id = repoId.value;
-    if (id === null) return;
-    const gen = generation;
-    try {
-      await client.setCompareBase(id, branch);
-    } catch (err) {
-      if (gen !== generation) return;
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return;
-      }
-      compare.value = {
-        ...compare.value,
-        error: `Failed to set base branch: ${errorMessage(err)}`,
-      };
-      return;
-    }
-    if (gen !== generation) return;
-    compare.value = { ...compare.value, baseBranch: branch };
+    selectedCompareBase.value = branch;
     await refreshCompare(includeUncommitted);
   }
 
@@ -753,91 +680,6 @@ export const useRepoStore = defineStore('repo', () => {
     };
   }
 
-  // --- Remote operations (state synthesized client-side) ---
-
-  async function runRemoteOperation(
-    operation: RemoteOperation,
-    fn: (id: string) => Promise<MutationEnvelope>
-  ): Promise<void> {
-    const id = repoId.value;
-    if (id === null || remote.value.inProgress) return;
-    const gen = generation;
-    remote.value = { operation, inProgress: true, error: null, lastResult: null };
-    try {
-      const envelope = await fn(id);
-      if (gen !== generation) return;
-      applyWireState(envelope.state);
-      remote.value = { ...remote.value, inProgress: false, lastResult: envelope.result ?? null };
-    } catch (err) {
-      if (gen !== generation) return;
-      if (isConnectionError(err)) {
-        remote.value = { ...remote.value, inProgress: false };
-        handleConnectionLoss();
-        return;
-      }
-      remote.value = { ...remote.value, inProgress: false, error: errorMessage(err) };
-    }
-  }
-
-  async function push(): Promise<void> {
-    await runRemoteOperation('push', (id) => client.push(id));
-  }
-
-  async function fetchRemote(): Promise<void> {
-    await runRemoteOperation('fetch', (id) => client.fetch(id));
-  }
-
-  async function pull(): Promise<void> {
-    await runRemoteOperation('pull', (id) => client.pull(id));
-  }
-
-  async function stash(message?: string): Promise<void> {
-    await runRemoteOperation('stash', (id) => client.stash(id, message));
-  }
-
-  async function stashPop(index?: number): Promise<void> {
-    await runRemoteOperation('stashPop', (id) => client.stashPop(id, index));
-  }
-
-  async function switchBranch(name: string): Promise<void> {
-    await runRemoteOperation('branchSwitch', (id) => client.switchBranch(id, name));
-  }
-
-  async function createBranch(name: string): Promise<void> {
-    await runRemoteOperation('branchCreate', (id) => client.createBranch(id, name));
-  }
-
-  async function softReset(count?: number): Promise<void> {
-    await runRemoteOperation('softReset', (id) => client.softReset(id, count));
-  }
-
-  async function cherryPick(hash: string): Promise<void> {
-    await runRemoteOperation('cherryPick', (id) => client.cherryPick(id, hash));
-  }
-
-  async function revertCommit(hash: string): Promise<void> {
-    await runRemoteOperation('revert', (id) => client.revert(id, hash));
-  }
-
-  async function abort(): Promise<void> {
-    await runRemoteOperation('abort', (id) => client.abort(id));
-  }
-
-  async function rebaseContinue(): Promise<void> {
-    await runRemoteOperation('rebaseContinue', (id) => client.rebaseContinue(id));
-  }
-
-  function clearRemoteState(): void {
-    remote.value = initialRemote();
-  }
-
-  /** Local branches for the switcher (read-only; empty when unavailable). */
-  async function listBranches(): Promise<LocalBranch[]> {
-    const id = repoId.value;
-    if (id === null) return [];
-    return read<LocalBranch[]>(() => client.branches(id), []);
-  }
-
   // --- Worktrees / explorer sources ---
 
   async function listWorktrees(): Promise<WorktreeInfo[]> {
@@ -855,7 +697,7 @@ export const useRepoStore = defineStore('repo', () => {
     selection,
     history,
     compare,
-    remote,
+    selectedCompareBase,
     // lifecycle
     open,
     dispose,
@@ -863,41 +705,16 @@ export const useRepoStore = defineStore('repo', () => {
     setError,
     // selection
     selectFile,
-    // staging / commit
-    stage,
-    unstage,
-    stageAll,
-    unstageAll,
-    discard,
-    stageHunk,
-    unstageHunk,
-    commit,
     // history
     loadHistory,
     selectHistoryCommit,
-    getHeadCommitMessage,
     // compare
     refreshCompare,
     getLastIncludeUncommitted,
     getCandidateBaseBranches,
-    setCompareBaseBranch,
+    setSelectedCompareBase,
     selectCompareCommit,
     selectCompareFile,
-    // remote / branch / undo
-    push,
-    fetchRemote,
-    pull,
-    stash,
-    stashPop,
-    switchBranch,
-    createBranch,
-    softReset,
-    cherryPick,
-    revertCommit,
-    abort,
-    rebaseContinue,
-    clearRemoteState,
-    listBranches,
     // worktrees
     listWorktrees,
   };

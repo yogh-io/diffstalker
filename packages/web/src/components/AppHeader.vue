@@ -1,10 +1,9 @@
 <script setup lang="ts">
 /**
  * Global header: wordmark, repo switcher, branch + tracking + ahead/behind
- * (mono, diff-colored counts), one calm error line, the follow toggle,
- * the remote-op controls (fetch/pull/push + the branch/stash/reset menu,
- * over the store's remote-operation machine), the fuzzy finder trigger,
- * theme switcher.
+ * (mono, diff-colored counts — read-only text), one calm error line, the
+ * follow toggle, the fuzzy finder trigger, theme switcher. No git
+ * controls: the web UI is a viewer.
  *
  * Follow: the daemon owns the watcher; the button flips the CLIENT-side
  * followEnabled policy toggle (useFollowMode acts on follow-change only
@@ -20,8 +19,6 @@ import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import RepoSwitcher from './RepoSwitcher.vue';
-import RemoteActions from './RemoteActions.vue';
-import RepoActionsMenu from './RepoActionsMenu.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
 
 const daemon = useDaemonStore();
@@ -103,11 +100,6 @@ const followTitle = computed(() => {
     >
       <span class="dot" aria-hidden="true"></span>{{ followLabel }}
     </button>
-
-    <div class="remote-cluster">
-      <RemoteActions />
-      <RepoActionsMenu />
-    </div>
 
     <button
       class="finder-btn"
@@ -241,13 +233,6 @@ const followTitle = computed(() => {
   background: var(--add);
 }
 
-.remote-cluster {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  min-width: 0;
-}
-
 .finder-btn {
   padding: 0.25rem 0.5rem;
   border: 1px solid var(--border);
@@ -270,7 +255,6 @@ const followTitle = computed(() => {
 }
 
 @media (max-width: 56rem) {
-  .remote-cluster,
   .finder-btn,
   .follow {
     display: none;

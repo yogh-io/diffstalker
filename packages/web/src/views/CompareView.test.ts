@@ -1,7 +1,8 @@
 /**
  * CompareView tests: refresh-on-activation, the base-branch selector
- * (candidates listed, change → setCompareBaseBranch), the include-
- * uncommitted toggle (re-queries with the flag), the stats line, the
+ * (candidates listed, change → the read-only setSelectedCompareBase —
+ * no daemon-side persistence), the include-uncommitted toggle
+ * (re-queries with the flag), the stats line, the
  * file tree (grouping, status letters, per-file stats, uncommitted
  * flags), stacked per-file DiffViews with collapsible sticky headers,
  * the collapsible commits section, selection (click + keyboard), and
@@ -18,6 +19,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
 import CompareView from './CompareView.vue';
 import { useRepoStore } from '../stores/repo';
+import { makeFakeFetch } from '../testing/fakes';
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareDiff, CompareFileDiff, DiffResult } from '@diffstalker/core/git/diff';
 
@@ -128,10 +130,10 @@ describe('top bar', () => {
     expect((select.element as HTMLSelectElement).value).toBe('origin/main');
   });
 
-  test('picking a base calls setCompareBaseBranch with the branch + the toggle state', async () => {
+  test('picking a base calls the read-only setSelectedCompareBase with branch + toggle state', async () => {
     const repo = useRepoStore();
     vi.spyOn(repo, 'getCandidateBaseBranches').mockResolvedValue(['origin/main', 'origin/dev']);
-    const setBase = vi.spyOn(repo, 'setCompareBaseBranch').mockResolvedValue(undefined);
+    const setBase = vi.spyOn(repo, 'setSelectedCompareBase').mockResolvedValue(undefined);
     const { wrapper } = mountView();
     await flushPromises();
 
@@ -140,10 +142,42 @@ describe('top bar', () => {
     expect(setBase).toHaveBeenCalledWith('origin/dev', false);
   });
 
+  test('the base pick stays client-side: a GET with ?base=…, never a PUT', async () => {
+    // Real store, real setSelectedCompareBase: with a repo attached the
+    // pick must produce a GET /compare?base=… and nothing else.
+    const fake = makeFakeFetch(() => ({
+      body: {
+        baseBranch: 'origin/dev',
+        stats: { filesChanged: 0, additions: 0, deletions: 0 },
+        files: [],
+        commits: [],
+        uncommittedCount: 0,
+      },
+    }));
+    vi.stubGlobal('fetch', fake.fn);
+    try {
+      const repo = useRepoStore();
+      vi.spyOn(repo, 'getCandidateBaseBranches').mockResolvedValue(['origin/main', 'origin/dev']);
+      const { wrapper } = mountView();
+      repo.repoId = 'r1';
+      await flushPromises();
+      fake.calls.length = 0; // drop the activation refresh
+
+      await wrapper.find('[data-testid="base-select"]').setValue('origin/dev');
+      await flushPromises();
+
+      expect(fake.calls.map((c) => [c.method, c.url])).toEqual([
+        ['GET', '/repos/r1/compare?base=origin%2Fdev&uncommitted=false'],
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   test('re-picking the current base is a no-op', async () => {
     const repo = useRepoStore();
     vi.spyOn(repo, 'getCandidateBaseBranches').mockResolvedValue(['origin/main', 'origin/dev']);
-    const setBase = vi.spyOn(repo, 'setCompareBaseBranch').mockResolvedValue(undefined);
+    const setBase = vi.spyOn(repo, 'setSelectedCompareBase').mockResolvedValue(undefined);
     const { wrapper } = mountView();
     await flushPromises();
 
@@ -172,10 +206,10 @@ describe('top bar', () => {
     expect(spy).toHaveBeenLastCalledWith(false);
   });
 
-  test('uncommitted ON, then a base change: setCompareBaseBranch gets the flag', async () => {
+  test('uncommitted ON, then a base change: setSelectedCompareBase gets the flag', async () => {
     const repo = useRepoStore();
     vi.spyOn(repo, 'getCandidateBaseBranches').mockResolvedValue(['origin/main', 'origin/dev']);
-    const setBase = vi.spyOn(repo, 'setCompareBaseBranch').mockResolvedValue(undefined);
+    const setBase = vi.spyOn(repo, 'setSelectedCompareBase').mockResolvedValue(undefined);
     const { wrapper } = mountView();
     await flushPromises();
 

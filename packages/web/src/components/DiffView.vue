@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * DiffView: renders ONE DiffResult as a DOM diff. Self-contained and
- * data-driven — shared by Changes, History (commit diffs), and Compare
- * (per-file diffs).
+ * DiffView: renders ONE DiffResult as a READ-ONLY DOM diff.
+ * Self-contained and data-driven — shared by Changes, History (commit
+ * diffs), and Compare (per-file diffs).
  *
  * Layout: per hunk, a sticky header (readable ranges + relative edit
  * time) and a run of grid rows: old line number | new line number |
@@ -22,40 +22,19 @@
  * core/view/wordDiff (via buildDiffModel); changed segments render as
  * .word-hl spans on the add/del highlight background.
  *
- * Hunk staging (Changes only): when `hunkStaging` is set, a hunk
- * header carries a stage/unstage button — but ONLY inside a file
- * section whose path matches `filePath`, the file the pane intends to
- * stage. During the selection→diff race (selectFile sets the file
- * immediately; the debounced fetch replaces the diff ~20ms later) the
- * parked diff belongs to the PREVIOUS file, its section path doesn't
- * match, and no buttons render — nothing to mis-stage. The same gate
- * suppresses buttons on the non-matching sections of a multi-file
- * diff. Clicking extracts THAT hunk's single-hunk patch from the same
- * raw diff this view rendered (extractHunkPatch — pure,
- * dependency-free core) and hands it to the repo store. The hunk's
- * `index` in the row model is its 0-based ordinal across the whole
- * raw diff, which is exactly the index extractHunkPatch expects.
- * History and Compare pass no hunkStaging and stay read-only.
- *
  * Syntax highlighting is a later slice — the content cell (.content)
  * is the seam: swap its text interpolation for highlighted spans.
  */
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { DiffResult } from '@diffstalker/core/git/diff';
-import { extractHunkPatch } from '@diffstalker/core/git/diffParse';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
-import { useRepoStore } from '../stores/repo';
 import { buildDiffModel } from '../utils/diffRows';
-import type { DiffContentRow, DiffFileSection, DiffHunkGroup } from '../utils/diffRows';
+import type { DiffContentRow, DiffHunkGroup } from '../utils/diffRows';
 
 const props = defineProps<{
   diff: DiffResult | null;
-  /**
-   * Selected file's path — the file the pane intends to stage. Hunk
-   * buttons render only in the file section matching this path (see
-   * the hunk-staging note above). Also the syntax-highlighting seam.
-   */
+  /** Selected file's path — the syntax-highlighting seam (later slice). */
   filePath?: string;
   /** Unified is the only mode this slice; side-by-side comes with Compare. */
   mode?: 'unified';
@@ -66,15 +45,7 @@ const props = defineProps<{
    * the pane chrome above the diff already names the file.
    */
   showFileHeaders?: boolean;
-  /**
-   * Per-hunk staging buttons (Changes view only). 'stage' on an
-   * unstaged-side diff, 'unstage' on a staged-side one; unset/null
-   * renders read-only (History, Compare).
-   */
-  hunkStaging?: 'stage' | 'unstage' | null;
 }>();
-
-const repo = useRepoStore();
 
 /** Hunks edited within this window get the flash background (CLI parity). */
 const HUNK_FLASH_MS = 1500;
@@ -145,67 +116,6 @@ function marker(row: DiffContentRow): string {
   return '';
 }
 
-// --- Hunk staging (only when the hunkStaging prop is set) ---
-
-/**
- * A hunk button renders only when its file section IS the file this
- * pane intends to stage: a stale diff (the previous file's, parked
- * during the selection→fetch window) and the non-matching sections of
- * a multi-file diff both fail the match and get no buttons. Read-only
- * rendering is untouched — only the button is gated.
- */
-function sectionStageable(section: DiffFileSection): boolean {
-  return (
-    props.hunkStaging != null &&
-    section.filePath !== null &&
-    section.filePath === props.filePath
-  );
-}
-
-/**
- * One hunk mutation at a time: the patch is computed against the raw
- * diff currently rendered; once an op is running that raw is about to
- * be replaced, so firing a second (possibly stale) patch just produces
- * a confusing git error. The flag stays set until the diff prop's
- * IDENTITY changes (the refreshed diff arrived) — resolving the
- * mutation envelope is not enough, the about-to-be-replaced raw is
- * still the one rendered. A failed mutation never replaces the diff
- * (the store only sets shared.error), so that path re-enables in the
- * finally instead.
- */
-const hunkOpPending = ref(false);
-
-watch(
-  () => props.diff,
-  () => {
-    hunkOpPending.value = false;
-  }
-);
-
-async function onHunkAction(section: DiffFileSection, hunk: DiffHunkGroup): Promise<void> {
-  const direction = props.hunkStaging;
-  if (!direction || hunkOpPending.value || !sectionStageable(section)) return;
-  const patch = extractHunkPatch(props.diff?.raw ?? '', hunk.index);
-  if (patch === null) return;
-  const rendered = props.diff;
-  hunkOpPending.value = true;
-  try {
-    if (direction === 'stage') {
-      await repo.stageHunk(patch);
-    } else {
-      await repo.unstageHunk(patch);
-    }
-  } finally {
-    // Failure: shared.error is set and the rendered raw was NOT
-    // replaced — it is still valid, so re-arm. Success clears the
-    // error in the applied envelope; the diff watcher re-arms when
-    // the refreshed diff lands.
-    if (repo.shared.error !== null && props.diff === rendered) {
-      hunkOpPending.value = false;
-    }
-  }
-}
-
 const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length > 0));
 </script>
 
@@ -258,22 +168,6 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
             <span v-if="h.editedAt !== undefined" class="hunk-time" data-testid="hunk-time">{{
               hunkTime(h)
             }}</span>
-            <button
-              v-if="sectionStageable(s)"
-              class="hunk-action"
-              :class="hunkStaging"
-              data-testid="hunk-action"
-              :disabled="hunkOpPending"
-              :aria-label="hunkStaging === 'stage' ? 'Stage hunk' : 'Unstage hunk'"
-              :title="
-                hunkStaging === 'stage'
-                  ? 'Stage only this hunk'
-                  : 'Unstage only this hunk'
-              "
-              @click.stop="onHunkAction(s, h)"
-            >
-              {{ hunkStaging === 'stage' ? 'stage hunk' : 'unstage hunk' }}
-            </button>
           </span>
         </div>
 
@@ -421,37 +315,6 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
 
 .hunk-header .hunk-time::before {
   content: '· ';
-}
-
-.hunk-action {
-  margin-left: 1.25ch;
-  padding: 0 0.5ch;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  line-height: 1.5;
-  color: var(--text-dim);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: var(--bg);
-  vertical-align: 1px;
-}
-
-.hunk-action:hover:not(:disabled) {
-  border-color: currentcolor;
-}
-
-.hunk-action.stage:hover:not(:disabled),
-.hunk-action.stage:focus-visible {
-  color: var(--add);
-}
-
-.hunk-action.unstage:hover:not(:disabled),
-.hunk-action.unstage:focus-visible {
-  color: var(--del);
-}
-
-.hunk-action:disabled {
-  opacity: 0.5;
 }
 
 .hunk-header.flash {

@@ -1,7 +1,9 @@
 /**
- * Browser DiffstalkerClient tests: URL/method/body shapes for the full
- * endpoint surface, wire decoding (ISO dates → Date, hunkCounts staying
- * plain objects), and the SSE subscription dispatch. Globals stubbed.
+ * Browser DiffstalkerClient tests: URL/method/body shapes for the
+ * read-only endpoint surface, wire decoding (ISO dates → Date,
+ * hunkCounts staying plain objects), and the SSE subscription dispatch.
+ * Globals stubbed. The client has no git-mutating methods — the web UI
+ * is a viewer.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -74,33 +76,6 @@ describe('working tree', () => {
     expect(fake.calls[0].url).toBe('/repos/r1/diff?path=src%2Fa.ts&staged=false');
   });
 
-  test('stage/unstage post the file path', async () => {
-    respond = () => ({ body: { state: {} } });
-    await client.stage('r1', 'a.ts');
-    await client.unstage('r1', 'a.ts');
-    expect(fake.calls[0]).toMatchObject({ url: '/repos/r1/stage', body: { path: 'a.ts' } });
-    expect(fake.calls[1]).toMatchObject({ url: '/repos/r1/unstage', body: { path: 'a.ts' } });
-  });
-
-  test('commit omits amend unless given, includes it when set', async () => {
-    respond = () => ({ body: { state: {} } });
-    await client.commit('r1', 'msg');
-    await client.commit('r1', 'msg', { amend: true });
-    expect(fake.calls[0].body).toEqual({ message: 'msg' });
-    expect(fake.calls[1].body).toEqual({ message: 'msg', amend: true });
-  });
-
-  test('stageHunk/unstageHunk post the patch', async () => {
-    respond = () => ({ body: { state: {} } });
-    await client.stageHunk('r1', 'PATCH');
-    await client.unstageHunk('r1', 'PATCH');
-    expect(fake.calls[0]).toMatchObject({ url: '/repos/r1/stage-hunk', body: { patch: 'PATCH' } });
-    expect(fake.calls[1]).toMatchObject({
-      url: '/repos/r1/unstage-hunk',
-      body: { patch: 'PATCH' },
-    });
-  });
-
   test('status returns hunkCounts as plain objects, untouched', async () => {
     respond = () => ({
       body: {
@@ -140,11 +115,6 @@ describe('history / compare decoding', () => {
     expect(fake.calls[0].url).toBe('/repos/r1/commits/abc%2Fdef/diff');
   });
 
-  test('headMessage unwraps {message}', async () => {
-    respond = () => ({ body: { message: 'last commit' } });
-    await expect(client.headMessage('r1')).resolves.toBe('last commit');
-  });
-
   test('compare revives commit dates and forwards query flags', async () => {
     respond = () => ({
       body: {
@@ -160,15 +130,28 @@ describe('history / compare decoding', () => {
     expect(diff.commits[0].date).toBeInstanceOf(Date);
   });
 
-  test('getCompareBase/setCompareBase unwrap {base}', async () => {
+  test('compare forwards a base pick as a query param — a GET, never a PUT', async () => {
+    respond = () => ({
+      body: {
+        baseBranch: 'origin/dev',
+        stats: { filesChanged: 0, additions: 0, deletions: 0 },
+        files: [],
+        commits: [],
+        uncommittedCount: 0,
+      },
+    });
+    await client.compare('r1', { base: 'origin/dev', uncommitted: false });
+    expect(fake.calls[0]).toMatchObject({
+      method: 'GET',
+      url: '/repos/r1/compare?base=origin%2Fdev&uncommitted=false',
+    });
+    expect(fake.calls.every((c) => c.method === 'GET')).toBe(true);
+  });
+
+  test('getCompareBase unwraps {base} (read of the effective base)', async () => {
     respond = () => ({ body: { base: 'origin/main' } });
     await expect(client.getCompareBase('r1')).resolves.toBe('origin/main');
-    await expect(client.setCompareBase('r1', 'origin/dev')).resolves.toBe('origin/main');
-    expect(fake.calls[1]).toMatchObject({
-      method: 'PUT',
-      url: '/repos/r1/compare/base',
-      body: { branch: 'origin/dev' },
-    });
+    expect(fake.calls[0]).toMatchObject({ method: 'GET', url: '/repos/r1/compare/base' });
   });
 });
 
@@ -195,53 +178,36 @@ describe('explorer', () => {
   });
 });
 
-describe('remote / branch / undo bodies', () => {
-  test('stash omits an empty body message; stashPop sends the index', async () => {
-    respond = () => ({ body: { state: {} } });
-    await client.stash('r1');
-    await client.stash('r1', 'wip');
-    await client.stashPop('r1', 2);
-    await client.stashPop('r1');
-    expect(fake.calls[0].body).toEqual({});
-    expect(fake.calls[1].body).toEqual({ message: 'wip' });
-    expect(fake.calls[2].body).toEqual({ index: 2 });
-    expect(fake.calls[3].body).toEqual({});
-  });
-
-  test('branch, reset, cherry-pick, revert, abort, rebase-continue endpoints', async () => {
-    respond = () => ({ body: { state: {} } });
-    await client.switchBranch('r1', 'main');
-    await client.createBranch('r1', 'feat');
-    await client.softReset('r1', 2);
-    await client.cherryPick('r1', 'abc');
-    await client.revert('r1', 'abc');
-    await client.abort('r1');
-    await client.rebaseContinue('r1');
-    expect(fake.calls.map((c) => c.url)).toEqual([
-      '/repos/r1/switch-branch',
-      '/repos/r1/create-branch',
-      '/repos/r1/soft-reset',
-      '/repos/r1/cherry-pick',
-      '/repos/r1/revert',
-      '/repos/r1/abort',
-      '/repos/r1/rebase-continue',
-    ]);
-    expect(fake.calls[0].body).toEqual({ name: 'main' });
-    expect(fake.calls[2].body).toEqual({ count: 2 });
-    expect(fake.calls[3].body).toEqual({ hash: 'abc' });
-  });
-
-  test('push/fetch/pull are bodyless POSTs', async () => {
-    respond = () => ({ body: { state: {}, result: 'Pushed' } });
-    const envelope = await client.push('r1');
-    await client.fetch('r1');
-    await client.pull('r1');
-    expect(envelope.result).toBe('Pushed');
-    expect(fake.calls.map((c) => [c.method, c.url, c.body])).toEqual([
-      ['POST', '/repos/r1/push', undefined],
-      ['POST', '/repos/r1/fetch', undefined],
-      ['POST', '/repos/r1/pull', undefined],
-    ]);
+describe('read-only surface', () => {
+  test('the client exposes NO git-mutating methods', () => {
+    // The viewer stance, asserted structurally: none of the removed
+    // mutation methods exist on the client anymore.
+    const forbidden = [
+      'stage',
+      'unstage',
+      'stageAll',
+      'unstageAll',
+      'discard',
+      'commit',
+      'stageHunk',
+      'unstageHunk',
+      'push',
+      'fetch',
+      'pull',
+      'stash',
+      'stashPop',
+      'switchBranch',
+      'createBranch',
+      'softReset',
+      'cherryPick',
+      'revert',
+      'abort',
+      'rebaseContinue',
+      'setCompareBase',
+    ];
+    for (const name of forbidden) {
+      expect((client as unknown as Record<string, unknown>)[name]).toBeUndefined();
+    }
   });
 });
 

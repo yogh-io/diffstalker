@@ -1,8 +1,10 @@
 /**
- * AppHeader tests for the Slice-8 controls: the follow indicator is a
- * real toggle over the client-side followEnabled policy with honest
- * states (no follow target / follow off / following <target>), and the
- * finder trigger opens the overlay (disabled without an active repo).
+ * AppHeader tests: the follow indicator is a real toggle over the
+ * client-side followEnabled policy with honest states (no follow
+ * target / follow off / following <target>), the finder trigger opens
+ * the overlay (disabled without an active repo), and the viewer stance
+ * — the header carries NO git controls (fetch/pull/push, branch,
+ * stash, reset are gone).
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -84,13 +86,19 @@ describe('follow toggle', () => {
   });
 });
 
-describe('remote action cluster', () => {
-  test('the real fetch/pull/push buttons and the actions menu render (no stubs)', () => {
+describe('viewer stance (read-only)', () => {
+  test('the header carries NO fetch/pull/push/branch/stash controls', () => {
+    useDaemonStore().follow = followState();
+    useDaemonStore().activeRepoId = 'r1';
     const wrapper = mountHeader();
+
     for (const id of ['remote-fetch', 'remote-pull', 'remote-push', 'actions-trigger']) {
-      expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(true);
+      expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(false);
     }
-    expect(wrapper.text()).not.toContain('later slice');
+    // The only buttons left are the read-side chrome: follow toggle,
+    // repo switcher, finder trigger, theme switcher.
+    const labels = wrapper.findAll('button').map((b) => b.text());
+    expect(labels.join(' ')).not.toMatch(/fetch|pull|push|stash|branch|reset/i);
   });
 });
 

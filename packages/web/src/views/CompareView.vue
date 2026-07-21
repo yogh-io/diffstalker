@@ -4,8 +4,9 @@
  * branch against a base branch.
  *
  * - Top bar (persistent): base-branch selector (candidates pulled once
- *   per activation; changing it PUTs the compare config and re-pulls),
- *   the include-uncommitted toggle, and the diff-colored stats line.
+ *   per activation; changing it re-reads the compare with ?base=… —
+ *   nothing is persisted daemon-side), the include-uncommitted toggle,
+ *   and the diff-colored stats line.
  * - Commits section: collapsible, collapsed by default.
  * - PR body: file tree (left, core/view/fileTree — same collapsing tree
  *   the CLI renders) and stacked per-file diffs (right), each with a
@@ -74,8 +75,9 @@ const baseOptions = computed(() => {
 async function onBaseChange(event: Event): Promise<void> {
   const branch = (event.target as HTMLSelectElement).value;
   if (!branch || branch === compare.value.baseBranch) return;
-  // A compare-config PUT (not a git mutation) + re-pull.
-  await repo.setCompareBaseBranch(branch, includeUncommitted.value);
+  // Read-only: the pick rides the next GET /compare as ?base=… —
+  // nothing is persisted daemon-side.
+  await repo.setSelectedCompareBase(branch, includeUncommitted.value);
 }
 
 /**

@@ -1,7 +1,11 @@
 /**
- * DiffstalkerClient (browser): a typed client for every diffstalkerd
- * endpoint, mirroring @diffstalker/client's method surface over the
- * browser transport (fetch + EventSource, same-origin relative URLs).
+ * DiffstalkerClient (browser): a typed READ-ONLY client for the
+ * diffstalkerd endpoints the web viewer uses, mirroring
+ * @diffstalker/client's method surface over the browser transport
+ * (fetch + EventSource, same-origin relative URLs). The web UI is a
+ * viewer: the only non-GET calls are opening a repo (POST /repos) and
+ * releasing it (DELETE /repos/:id) — attach/refcount, not git
+ * mutations.
  *
  * Wire types are reused TYPE-ONLY from @diffstalker/client and core DTO
  * types TYPE-ONLY from @diffstalker/core — both erase at build, so no
@@ -9,9 +13,7 @@
  *
  * Decoding: commit dates arrive as ISO strings and are revived to Date
  * (history, compare commits); hunkCounts arrive as plain {path: number}
- * objects and STAY plain objects (no Map in the browser). Mutations
- * return the unified {state, result?} envelope; success is the HTTP
- * status, never an envelope field.
+ * objects and STAY plain objects (no Map in the browser).
  */
 
 import { request, subscribe } from './transport';
@@ -20,7 +22,6 @@ import type {
   FollowChangeEvent,
   FollowState,
   HealthState,
-  MutationEnvelope,
   RepoClosedEvent,
   RepoOpenedEvent,
   RepoRef,
@@ -29,7 +30,7 @@ import type {
   WireCompareDiff,
   WireSharedState,
 } from '@diffstalker/client';
-import type { CommitInfo, LocalBranch } from '@diffstalker/core/git/status';
+import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
@@ -109,41 +110,6 @@ export class DiffstalkerClient {
     );
   }
 
-  stage(id: string, path: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/stage', { path });
-  }
-
-  unstage(id: string, path: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/unstage', { path });
-  }
-
-  stageAll(id: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/stage-all');
-  }
-
-  unstageAll(id: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/unstage-all');
-  }
-
-  discard(id: string, path: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/discard', { path });
-  }
-
-  commit(id: string, message: string, opts: { amend?: boolean } = {}): Promise<MutationEnvelope> {
-    return this.mutate(id, '/commit', {
-      message,
-      ...(opts.amend !== undefined ? { amend: opts.amend } : {}),
-    });
-  }
-
-  stageHunk(id: string, patch: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/stage-hunk', { patch });
-  }
-
-  unstageHunk(id: string, patch: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/unstage-hunk', { patch });
-  }
-
   // --- History / compare ---
 
   async history(id: string, count?: number): Promise<CommitInfo[]> {
@@ -158,19 +124,6 @@ export class DiffstalkerClient {
     return request('GET', this.repoPath(id, `/commits/${encodeURIComponent(hash)}/diff`));
   }
 
-  /** HEAD commit message (amend prefill); "" when the repo has no commits. */
-  async headMessage(id: string): Promise<string> {
-    const { message } = await request<{ message: string }>(
-      'GET',
-      this.repoPath(id, '/head-message')
-    );
-    return message;
-  }
-
-  branches(id: string): Promise<LocalBranch[]> {
-    return request('GET', this.repoPath(id, '/branches'));
-  }
-
   baseBranches(id: string): Promise<string[]> {
     return request('GET', this.repoPath(id, '/base-branches'));
   }
@@ -180,13 +133,6 @@ export class DiffstalkerClient {
       'GET',
       this.repoPath(id, '/compare/base')
     );
-    return base;
-  }
-
-  async setCompareBase(id: string, branch: string): Promise<string> {
-    const { base } = await request<{ base: string }>('PUT', this.repoPath(id, '/compare/base'), {
-      branch,
-    });
     return base;
   }
 
@@ -220,56 +166,6 @@ export class DiffstalkerClient {
 
   files(id: string): Promise<string[]> {
     return request('GET', this.repoPath(id, '/files'));
-  }
-
-  // --- Remote / branch / undo ---
-
-  push(id: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/push');
-  }
-
-  fetch(id: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/fetch');
-  }
-
-  pull(id: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/pull');
-  }
-
-  stash(id: string, message?: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/stash', message === undefined ? {} : { message });
-  }
-
-  stashPop(id: string, index?: number): Promise<MutationEnvelope> {
-    return this.mutate(id, '/stash-pop', index === undefined ? {} : { index });
-  }
-
-  switchBranch(id: string, name: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/switch-branch', { name });
-  }
-
-  createBranch(id: string, name: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/create-branch', { name });
-  }
-
-  softReset(id: string, count?: number): Promise<MutationEnvelope> {
-    return this.mutate(id, '/soft-reset', count === undefined ? {} : { count });
-  }
-
-  cherryPick(id: string, hash: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/cherry-pick', { hash });
-  }
-
-  revert(id: string, hash: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/revert', { hash });
-  }
-
-  abort(id: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/abort');
-  }
-
-  rebaseContinue(id: string): Promise<MutationEnvelope> {
-    return this.mutate(id, '/rebase-continue');
   }
 
   // --- SSE ---
@@ -326,9 +222,5 @@ export class DiffstalkerClient {
 
   private repoPath(id: string, suffix: string): string {
     return `/repos/${encodeURIComponent(id)}${suffix}`;
-  }
-
-  private mutate(id: string, suffix: string, body?: unknown): Promise<MutationEnvelope> {
-    return request('POST', this.repoPath(id, suffix), body);
   }
 }
