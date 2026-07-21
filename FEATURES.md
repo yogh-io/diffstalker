@@ -648,3 +648,45 @@ When enabled (`a` toggle):
   the diff resets to its first hunk, and the file briefly flashes. Detection is
   by file mtime, so staging or moving the selection never triggers a jump —
   only real content changes do.
+
+---
+
+## Web UI (browser client)
+
+`@diffstalker/web` is a Vue 3 single-page app served by the daemon at `GET /`
+(run `diffstalkerd --port N`, open `http://localhost:N` — same-origin, since the
+daemon has no CORS and a browser can't reach the unix socket). It is a pure daemon
+client over the same REST + SSE, at feature parity with the terminal UI, laid out
+for a real screen (persistent panes instead of tab-switching).
+
+### Views
+
+- **Changes** — a source-control panel: a grouped file list (Modified / Untracked
+  / Staged) beside the selected file's diff, plus a commit column. Per-file
+  stage / unstage / discard and stage-all / unstage-all; per-hunk stage / unstage
+  in the diff gutter; word-level highlighting, per-hunk edit times, line-number
+  gutters. Commit box with amend (prefilled from HEAD) and Cmd/Ctrl+Enter.
+- **History** — commit list (hash, message, author, relative date, ref chips)
+  beside a commit detail: metadata + a multi-file diff with per-file section
+  headers. Cherry-pick / revert (with a confirm dialog).
+- **Compare** — a GitHub-PR-style view against a base branch: base selector,
+  include-uncommitted toggle, stats, a collapsible commits list, a file tree, and
+  stacked per-file diffs with sticky collapse headers.
+- **Explorer** — a VS Code-style lazy file tree with git-status decoration
+  (dotfile / ignored / changed-only toggles) beside syntax-highlighted file
+  content (highlight.js) with binary / truncated / too-large states.
+
+### Header & global
+
+- Remote / branch operations: fetch / pull / push (with ahead/behind), a
+  branch-switch/create + stash + soft-reset menu, and a wedged-op banner
+  (abort / continue) for a conflicted rebase / cherry-pick / revert / merge.
+- Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
+  switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
+  and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.
+
+### Notes
+
+- The web build ships inside the published `diffstalkerd` tarball (it is not a
+  separately published package).
+- No authentication yet; the daemon binds `127.0.0.1` — keep it on localhost.

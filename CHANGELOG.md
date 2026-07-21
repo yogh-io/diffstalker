@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Web UI.** `diffstalkerd` now serves a Vue 3 browser client at `GET /` (run it
+  with `--port N`, open `http://localhost:N`) at feature parity with the terminal
+  UI: a Changes source-control panel (file + per-hunk staging, discard, commit /
+  amend), History (commit diff, cherry-pick / revert), a GitHub-PR-style Compare
+  view, an Explorer with syntax highlighting, remote/branch operations (fetch /
+  pull / push, branch switch/create, stash, soft reset, abort/continue), a fuzzy
+  file finder, follow mode, the six themes, and live updates over SSE. The web
+  build ships inside the `diffstalkerd` tarball — it is not a separately published
+  package. No authentication yet; the daemon binds `127.0.0.1` — keep it on
+  localhost.
+
 ### Internal
 
 - **Single-source versioning.** The root `package.json` is now the one source of
@@ -17,9 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ship inside the published bundles, never on their own. The release's bun.lock
   patch is now equality-scoped to the outgoing version and asserts the published
   entries landed on the new one, so it can't silently ship a stale pin.
-- Groundwork for the web frontend (Phase 5): a shared `@diffstalker/core/view/*`
-  presentation-logic layer and the `@diffstalker/web` Vue scaffold served by the
-  daemon. Not user-facing yet.
+- A shared `@diffstalker/core/view/*` presentation-logic layer (diff/word/tree/
+  format helpers) extracted from the CLI and reused by the web client.
 
 ## [0.5.1] - 2026-07-20
 

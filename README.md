@@ -39,8 +39,9 @@ The git engine runs in a background daemon, **diffstalkerd**, which serves
 terminal UI is a lean client: it installs `diffstalkerd` as a dependency and
 auto-spawns it on a unix socket, opening repos over REST and following live
 state over SSE. It holds no in-process git of its own. The UX is unchanged —
-the split just means the same daemon can back other clients (a web client is
-planned) with the identical feature set.
+the split just means the same daemon can back other clients. A **web UI** (Vue 3)
+is now built in: the daemon serves it at `GET /` over the same REST + SSE, at
+full feature parity with the terminal UI (see below).
 
 ## Installation
 
@@ -170,6 +171,37 @@ Options:
   -d, --debug          Log path changes to stderr
   -h, --help           Show help
 ```
+
+## Web UI
+
+The daemon ships a browser UI (Vue 3), served at `GET /`. A browser can't reach a
+unix socket and the daemon sends no CORS headers, so run the daemon on a TCP port
+and open it same-origin:
+
+```bash
+diffstalkerd --port 4600
+# then open http://localhost:4600
+```
+
+Open a repository by its absolute path (the switcher, top-left), or launch the
+daemon in follow mode and the UI switches with your hook file. The web UI has the
+same feature set as the terminal:
+
+- **Changes** — a source-control panel: file list + diff with word-level
+  highlighting, per-file and per-hunk staging, discard, and a commit box (amend,
+  Cmd/Ctrl+Enter to commit).
+- **History** — commit log + a multi-file commit diff; cherry-pick / revert.
+- **Compare** — a GitHub-style PR view against a base branch: file tree + stacked
+  per-file diffs, include-uncommitted, stats.
+- **Explorer** — a file tree with git-status decoration + syntax-highlighted
+  content.
+- **Remote/branch ops** in the header — fetch / pull / push, branch switch/create,
+  stash, soft reset, and abort/continue for a conflicted operation.
+- Fuzzy file finder (Ctrl+P), follow mode, the six themes, and keyboard shortcuts
+  (`?` for help).
+
+> Security: the daemon has no authentication yet and binds `127.0.0.1` by default.
+> Keep it on localhost — do not expose the port to a network.
 
 ## License
 
