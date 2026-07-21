@@ -183,6 +183,17 @@ async function main(): Promise<void> {
   }
   if (webRoot) {
     console.error(`diffstalkerd serving web UI from ${webRoot}`);
+    // Print the browser URL when the web UI is reachable from one (a TCP port —
+    // a browser can't open a unix socket). *.localhost resolves to loopback with
+    // no config, so the friendly host is the canonical bookmark.
+    if (options.port !== undefined) {
+      const host = options.host ?? '127.0.0.1';
+      const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+      const url = loopback
+        ? `http://diffstalker.localhost:${options.port}/`
+        : `http://${host}:${options.port}/`;
+      console.error(`diffstalkerd: web UI at ${url}`);
+    }
   }
 
   let shuttingDown = false;
