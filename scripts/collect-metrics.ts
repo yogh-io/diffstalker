@@ -84,7 +84,11 @@ async function collectSourceFiles(dir: string): Promise<string[]> {
     if (entry.isDirectory()) {
       if (entry.name === 'node_modules' || entry.name === 'dist') continue;
       files.push(...(await collectSourceFiles(full)));
-    } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx')) {
+    } else if (
+      entry.name.endsWith('.ts') ||
+      entry.name.endsWith('.tsx') ||
+      entry.name.endsWith('.vue')
+    ) {
       files.push(full);
     }
   }

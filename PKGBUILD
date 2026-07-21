@@ -58,6 +58,11 @@ package() {
     install -m644 packages/cli/dist/index.js "$pkgdir/usr/lib/diffstalker/cli/index.js"
     install -m644 packages/daemon/dist/index.js "$pkgdir/usr/lib/diffstalker/daemon/index.js"
 
+    # Web UI assets. The daemon serves the SPA at GET / from web/ next to its
+    # own module (resolveWebRoot); build:prod placed them at dist/web.
+    install -dm755 "$pkgdir/usr/lib/diffstalker/daemon/web"
+    cp -r packages/daemon/dist/web/. "$pkgdir/usr/lib/diffstalker/daemon/web/"
+
     _install_runtime_modules packages/cli "$pkgdir/usr/lib/diffstalker/cli"
     _install_runtime_modules packages/daemon "$pkgdir/usr/lib/diffstalker/daemon"
 

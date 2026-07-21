@@ -3,7 +3,7 @@
 // Loaded by scripts/collect-metrics.ts for each package (with cwd set to the
 // package dir). It layers low complexity/size thresholds on top of that
 // package's own eslint.config.js so every function shows up in the metrics
-// output. Kept here at the root so the four packages don't each carry an
+// output. Kept here at the root so the packages don't each carry an
 // identical copy.
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';

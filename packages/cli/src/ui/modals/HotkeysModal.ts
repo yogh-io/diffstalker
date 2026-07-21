@@ -1,9 +1,12 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import type { Modal } from './Modal.js';
-import pkg from '../../../package.json' with { type: 'json' };
-
-const { version } = pkg;
+// @ts-expect-error TS1544: NodeNext only allows default imports from JSON, but the
+// named form is what lets bun's bundler tree-shake the manifest down to just the
+// version string (a default import inlines the whole package.json into the prod
+// bundle). bun (dev/start) supports named JSON imports at runtime; the published
+// bundle has the literal baked in.
+import { version } from '../../../package.json' with { type: 'json' };
 
 interface HotkeyEntry {
   key: string;

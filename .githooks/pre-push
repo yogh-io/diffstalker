@@ -10,6 +10,10 @@ while read local_ref local_sha remote_ref remote_sha; do
 done
 
 if [ "$pushing_tag" = true ]; then
+  if ! command -v act >/dev/null 2>&1; then
+    echo "Tag push detected, but 'act' is not installed — skipping CI dry-run."
+    exit 0
+  fi
   echo "Tag push detected — dry-running CI workflow..."
   act push --env ACT=true --workflows .github/workflows/release.yml
 fi
