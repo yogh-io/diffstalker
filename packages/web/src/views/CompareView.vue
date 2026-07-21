@@ -142,13 +142,31 @@ const visibleRows = computed(() => {
   return rows;
 });
 
+/** A visible tree row, with each file row's file resolved once so the
+ *  template never indexes files[] (and needs no non-null assertions). */
+type RenderRow =
+  | (TreeRowItem & { type: 'directory' })
+  | (TreeRowItem & { type: 'file'; fileIndex: number; file: CompareFileDiff });
+
+const renderRows = computed<RenderRow[]>(() => {
+  const rows: RenderRow[] = [];
+  for (const row of visibleRows.value) {
+    if (row.type === 'directory') {
+      rows.push({ ...row, type: 'directory' });
+      continue;
+    }
+    if (row.fileIndex === undefined) continue;
+    const file = files.value[row.fileIndex];
+    if (file) rows.push({ ...row, type: 'file', fileIndex: row.fileIndex, file });
+  }
+  return rows;
+});
+
 /** fileIndexes of VISIBLE file rows in tree order, for keyboard
  *  navigation — arrow-nav must never land on a file hidden under a
  *  collapsed directory. */
 const treeFileOrder = computed(() =>
-  visibleRows.value
-    .filter((row) => row.type === 'file')
-    .map((row) => row.fileIndex as number)
+  renderRows.value.flatMap((row) => (row.type === 'file' ? [row.fileIndex] : []))
 );
 
 const selectedFileIndex = computed(() =>
@@ -341,7 +359,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
           aria-label="Changed files"
           data-testid="compare-files"
         >
-          <template v-for="row in visibleRows" :key="`${row.type}:${row.fullPath}`">
+          <template v-for="row in renderRows" :key="`${row.type}:${row.fullPath}`">
             <!-- role=presentation: only file rows are listbox options.
                  The whole row toggles; the button is the a11y surface
                  (aria-expanded + native Enter/Space activation). -->
@@ -371,37 +389,37 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
               class="file-row mono"
               :class="{
                 selected: selectedFileIndex === row.fileIndex,
-                uncommitted: files[row.fileIndex!].isUncommitted,
+                uncommitted: row.file.isUncommitted,
               }"
               :style="{ '--depth': row.depth }"
               :data-file-index="row.fileIndex"
               role="option"
               :aria-selected="selectedFileIndex === row.fileIndex"
-              :tabindex="isTabStop(row.fileIndex!) ? 0 : -1"
-              :title="files[row.fileIndex!].path"
-              @click="selectFile(row.fileIndex!)"
+              :tabindex="isTabStop(row.fileIndex) ? 0 : -1"
+              :title="row.file.path"
+              @click="selectFile(row.fileIndex)"
               @keydown.down.prevent="moveFileSelection(1)"
               @keydown.up.prevent="moveFileSelection(-1)"
-              @keydown.enter.prevent="selectFile(row.fileIndex!)"
-              @keydown.space.prevent="selectFile(row.fileIndex!)"
+              @keydown.enter.prevent="selectFile(row.fileIndex)"
+              @keydown.space.prevent="selectFile(row.fileIndex)"
               @keydown="onRowBandKeydown"
             >
-              <span class="letter" :data-status="files[row.fileIndex!].status">{{
-                statusLetter(files[row.fileIndex!].status)
+              <span class="letter" :data-status="row.file.status">{{
+                statusLetter(row.file.status)
               }}</span>
               <span class="name">{{ row.name }}</span>
               <span
-                v-if="files[row.fileIndex!].isUncommitted"
+                v-if="row.file.isUncommitted"
                 class="uncommitted-tag"
                 data-testid="uncommitted-tag"
                 >[uncommitted]</span
               >
               <span class="stats">
-                <span v-if="files[row.fileIndex!].additions" class="count-add"
-                  >+{{ files[row.fileIndex!].additions }}</span
+                <span v-if="row.file.additions" class="count-add"
+                  >+{{ row.file.additions }}</span
                 >
-                <span v-if="files[row.fileIndex!].deletions" class="count-del"
-                  >&minus;{{ files[row.fileIndex!].deletions }}</span
+                <span v-if="row.file.deletions" class="count-del"
+                  >&minus;{{ row.file.deletions }}</span
                 >
               </span>
             </div>
