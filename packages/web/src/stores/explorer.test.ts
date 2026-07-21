@@ -179,6 +179,173 @@ describe('expansion', () => {
   });
 });
 
+describe('single-child chain collapse', () => {
+  /** packages → cli → src is a single-child dir run; src holds files. */
+  function chainRoutes(call: FetchCall): FakeResponse | undefined {
+    if (!call.url.startsWith('/repos/r1/tree?')) return undefined;
+    const dir = params(call).get('dir');
+    if (dir === '') {
+      return {
+        body: [
+          { name: 'packages', path: 'packages', type: 'dir', hasChanges: true },
+          { name: 'README.md', path: 'README.md', type: 'file' },
+        ] satisfies DirEntry[],
+      };
+    }
+    if (dir === 'packages') {
+      return {
+        body: [
+          { name: 'cli', path: 'packages/cli', type: 'dir', hasChanges: true },
+        ] satisfies DirEntry[],
+      };
+    }
+    if (dir === 'packages/cli') {
+      return {
+        body: [
+          { name: 'src', path: 'packages/cli/src', type: 'dir', hasChanges: true },
+        ] satisfies DirEntry[],
+      };
+    }
+    if (dir === 'packages/cli/src') {
+      return {
+        body: [
+          { name: 'a.ts', path: 'packages/cli/src/a.ts', type: 'file', gitStatus: 'modified' },
+          { name: 'b.ts', path: 'packages/cli/src/b.ts', type: 'file' },
+        ] satisfies DirEntry[],
+      };
+    }
+    return { status: 404, body: { error: `no such dir: ${dir}` } };
+  }
+
+  test('expanding the chain head auto-fetches the run and yields ONE combined row', async () => {
+    onRequest = chainRoutes;
+    const { explorer } = setup();
+    await explorer.ensureRoot();
+    await explorer.toggleDir('packages');
+
+    // The whole run was fetched, one level at a time.
+    expect(treeCalls().map((c) => params(c).get('dir'))).toEqual([
+      '',
+      'packages',
+      'packages/cli',
+      'packages/cli/src',
+    ]);
+    // One combined row — not three nested dir rows.
+    expect(explorer.rows.map((r) => `${r.depth}:${r.displayName}`)).toEqual([
+      '0:packages/cli/src',
+      '1:a.ts',
+      '1:b.ts',
+      '0:README.md',
+    ]);
+    const combined = explorer.rows[0];
+    expect(combined.entry.path).toBe('packages/cli/src'); // deepest dir
+    expect(combined.isExpanded).toBe(true);
+    expect(combined.entry.hasChanges).toBe(true); // decoration intact
+  });
+
+  test('collapsing the combined row hides the whole chain; re-expand serves the cache', async () => {
+    onRequest = chainRoutes;
+    const { explorer } = setup();
+    await explorer.ensureRoot();
+    await explorer.toggleDir('packages');
+    const fetches = treeCalls().length;
+
+    await explorer.toggleDir('packages/cli/src'); // collapse the combined row
+    expect(explorer.rows.map((r) => r.displayName)).toEqual(['packages/cli/src', 'README.md']);
+    expect(explorer.rows[0].isExpanded).toBe(false);
+
+    await explorer.toggleDir('packages/cli/src'); // re-expand — cached
+    expect(explorer.rows.map((r) => r.displayName)).toContain('a.ts');
+    expect(treeCalls()).toHaveLength(fetches);
+  });
+
+  test('a dir with multiple children or files does NOT collapse', async () => {
+    onRequest = (call) => {
+      if (!call.url.startsWith('/repos/r1/tree?')) return undefined;
+      const dir = params(call).get('dir');
+      if (dir === '') return { body: [{ name: 'packages', path: 'packages', type: 'dir' }] };
+      if (dir === 'packages') {
+        // One subdir PLUS a file: not a pure chain link.
+        return {
+          body: [
+            { name: 'cli', path: 'packages/cli', type: 'dir' },
+            { name: 'README.md', path: 'packages/README.md', type: 'file' },
+          ] satisfies DirEntry[],
+        };
+      }
+      return { status: 404, body: { error: `no such dir: ${dir}` } };
+    };
+    const { explorer } = setup();
+    await explorer.ensureRoot();
+    await explorer.toggleDir('packages');
+
+    expect(explorer.rows.map((r) => `${r.depth}:${r.displayName}`)).toEqual([
+      '0:packages',
+      '1:cli',
+      '1:README.md',
+    ]);
+    // The lone subdir was NOT probed — no speculative fetch.
+    expect(treeCalls().map((c) => params(c).get('dir'))).toEqual(['', 'packages']);
+  });
+
+  test('a filter toggle reloads the whole chain and the merge survives', async () => {
+    onRequest = chainRoutes;
+    const { explorer } = setup();
+    await explorer.ensureRoot();
+    await explorer.toggleDir('packages');
+    const before = treeCalls().length;
+
+    await explorer.setShowHidden(true);
+
+    // Every chain link is in the expansion set, so the reload re-pulls
+    // the full run with the new params.
+    const reloads = treeCalls().slice(before);
+    expect(reloads.map((c) => params(c).get('dir'))).toEqual([
+      '',
+      'packages',
+      'packages/cli',
+      'packages/cli/src',
+    ]);
+    expect(reloads.every((c) => params(c).get('hidden') === 'true')).toBe(true);
+    expect(explorer.rows.map((r) => r.displayName)).toEqual([
+      'packages/cli/src',
+      'a.ts',
+      'b.ts',
+      'README.md',
+    ]);
+  });
+
+  test('changedOnly filters on the combined row like any dir row', async () => {
+    onRequest = chainRoutes;
+    const { explorer } = setup();
+    await explorer.ensureRoot();
+    await explorer.toggleDir('packages');
+
+    explorer.setChangedOnly(true);
+    expect(explorer.rows.map((r) => r.displayName)).toEqual(['packages/cli/src', 'a.ts']);
+
+    explorer.setChangedOnly(false);
+    expect(explorer.rows).toHaveLength(4);
+  });
+
+  test('a failed fetch mid-chain stops the run and surfaces the error', async () => {
+    onRequest = (call) => {
+      if (!call.url.startsWith('/repos/r1/tree?')) return undefined;
+      const dir = params(call).get('dir');
+      if (dir === 'packages/cli') return { status: 500, body: { error: 'boom' } };
+      return chainRoutes(call);
+    };
+    const { explorer } = setup();
+    await explorer.ensureRoot();
+    await explorer.toggleDir('packages');
+
+    // The merge reaches the broken link and stops; the error shows.
+    expect(explorer.error).toBe('boom');
+    expect(explorer.rows.map((r) => r.displayName)).toEqual(['packages/cli', 'README.md']);
+    expect(explorer.rows[0].isExpanded).toBe(false); // chevron stays truthful
+  });
+});
+
 describe('filters', () => {
   test('setShowHidden(true) refetches root AND expanded dirs with hidden=true', async () => {
     const { explorer } = setup();
@@ -447,13 +614,12 @@ describe('revealFile', () => {
 
     // Root, then each ancestor level, in order.
     expect(treeCalls().map((c) => params(c).get('dir'))).toEqual(['', 'src', 'src/utils']);
-    expect(explorer.rows.map((r) => `${r.depth}:${r.entry.name}`)).toEqual([
-      '0:src',
-      '1:utils',
-      '2:deep.ts',
+    // src → utils is a single-child chain: it collapses onto ONE row.
+    expect(explorer.rows.map((r) => `${r.depth}:${r.displayName}`)).toEqual([
+      '0:src/utils',
+      '1:deep.ts',
     ]);
     expect(explorer.rows[0].isExpanded).toBe(true);
-    expect(explorer.rows[1].isExpanded).toBe(true);
     expect(explorer.selectedPath).toBe('src/utils/deep.ts');
     expect(explorer.file).toEqual(TEXT_FILE);
   });

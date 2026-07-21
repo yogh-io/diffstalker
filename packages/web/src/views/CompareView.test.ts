@@ -290,6 +290,23 @@ describe('file tree', () => {
     expect(rows[0].find('[data-testid="uncommitted-tag"]').exists()).toBe(false);
   });
 
+  test('a single-child directory chain renders as ONE combined dir row', () => {
+    // core's buildFileTree+collapseTree merge deep→one→two; the view
+    // renders the merged name on a single row.
+    const files = [
+      fileDiff('deep/one/two/leaf.ts', 'modified', 1, 0),
+      fileDiff('root.ts', 'modified', 1, 0),
+    ];
+    const { wrapper } = mountView(makeCompareDiff(files, []));
+    const list = wrapper.find('[data-testid="compare-files"]');
+
+    expect(list.findAll('.dir-row').map((row) => row.text())).toEqual(['deep/one/two/']);
+    expect(list.findAll('.file-row').map((row) => row.find('.name').text())).toEqual([
+      'leaf.ts',
+      'root.ts',
+    ]);
+  });
+
   test('clicking a file selects it in the store', async () => {
     const { wrapper, repo } = mountView();
     const spy = vi.spyOn(repo, 'selectCompareFile');

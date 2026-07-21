@@ -679,6 +679,8 @@ git operations.
 - **Explorer** — a VS Code-style lazy file tree with git-status decoration
   (dotfile / ignored / changed-only toggles) beside syntax-highlighted file
   content (highlight.js) with binary / truncated / too-large states.
+  Single-child directory chains collapse onto one combined row
+  (`packages/cli/src`) on expand, like the CLI's explorer.
 
 ### Header & global
 
@@ -703,8 +705,10 @@ git operations.
 - One trigger — `(orientation: portrait), (max-aspect-ratio: 1/1)` — fires on
   window SHAPE, not width; landscape renders the classic layout untouched.
 - The activity rail becomes a full-width horizontal tab band under the header;
-  its right edge hosts the active view's lifted toolbar (Explorer's filter
-  toggles + refresh, Compare's base picker + commits toggle) via Teleport.
+  the active view's lifted toolbar (Explorer's filter toggles + refresh,
+  Compare's base picker + commits toggle) sits beside the tabs as a
+  right-aligned flex item in the same row (via Teleport), wrapping to its own
+  line when the band runs out of width.
 - Every view rotates column → row: the list/tree/commit band on top (bounded
   height), the diff/content payload full-width below, split by a draggable +
   keyboard-accessible row resizer. Per-view top-band heights persist in

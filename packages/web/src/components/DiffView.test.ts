@@ -176,7 +176,7 @@ describe('hunk headers', () => {
     expect(wrapper.find('[data-testid="hunk-time"]').exists()).toBe(false);
   });
 
-  test('a freshly-edited hunk gets the flash class; an old one does not', () => {
+  test('a freshly-edited hunk flashes the WHOLE hunk group; an old one does not', () => {
     const wrapper = mountDiff(
       makeDiff([
         header('a.ts'),
@@ -186,9 +186,15 @@ describe('hunk headers', () => {
         ctx('y', 5, 5),
       ])
     );
-    const headers = wrapper.findAll('[data-testid="hunk-header"]');
-    expect(headers[0].classes()).toContain('flash');
-    expect(headers[1].classes()).not.toContain('flash');
+    // The flash rides the hunk GROUP (header + rows), not the header.
+    const hunks = wrapper.findAll('.hunk');
+    expect(hunks[0].classes()).toContain('flash');
+    expect(hunks[1].classes()).not.toContain('flash');
+    // The flashed group wraps both the header and its rows.
+    expect(hunks[0].find('[data-testid="hunk-header"]').exists()).toBe(true);
+    expect(hunks[0].findAll('.row')).toHaveLength(1);
+    // No header-only flash remains.
+    expect(wrapper.findAll('[data-testid="hunk-header"].flash')).toHaveLength(0);
   });
 
   test('sub-minute times tick: the 1s interval re-renders the relative time', async () => {

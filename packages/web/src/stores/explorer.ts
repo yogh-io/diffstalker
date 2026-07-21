@@ -7,6 +7,12 @@
  * synchronously: loaded children per directory, the expansion set, the
  * flattened display rows, the selected file and its FileForDisplay flags.
  *
+ * Single-child directory chains collapse onto one combined row (like
+ * the CLI's explorer and core/view/fileTree's collapseTree): expanding
+ * a directory whose listing is exactly one subdirectory auto-fetches
+ * down the run (followChain) and the rows computed merges it into a
+ * single row (`cli/src/ui`) keyed on the deepest directory.
+ *
  * Wire note — the daemon's query params are SHOW flags, inverted from
  * core's hide options: `hidden=false` hides dotfiles, `ignored=false`
  * hides gitignored entries. The store's showHidden/showIgnored toggles
@@ -43,8 +49,19 @@ import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerDat
 
 /** One flattened tree row the view renders. */
 export interface ExplorerRow {
+  /**
+   * The entry the row acts on. For a collapsed single-child directory
+   * chain this is the DEEPEST directory — expanding/collapsing the row
+   * expands/collapses the whole chain.
+   */
   entry: DirEntry;
-  /** 0 for root-level entries. */
+  /**
+   * What the row shows. Equals entry.name except for a collapsed chain,
+   * where it is the joined path of the merged run (`cli/src/ui`) — the
+   * same display the CLI's ExplorerViewModel produces.
+   */
+  displayName: string;
+  /** 0 for root-level entries (a collapsed chain counts as ONE level). */
   depth: number;
   /** Dirs only: currently expanded. */
   isExpanded: boolean;
@@ -233,7 +250,9 @@ export const useExplorerStore = defineStore('explorer', () => {
 
   /**
    * Expand or collapse a directory. First expand fetches its children;
-   * a re-expand serves the cached listing (a refresh() re-pulls).
+   * a re-expand serves the cached listing (a refresh() re-pulls). After
+   * an expand, a run of single-child directories below it is followed
+   * so the chain renders as one combined row (CLI parity).
    */
   async function toggleDir(path: string): Promise<void> {
     if (expanded.value.has(path)) {
@@ -244,7 +263,34 @@ export const useExplorerStore = defineStore('explorer', () => {
     }
     expanded.value = new Set([...expanded.value, path]);
     if (!children.value.has(path)) {
-      await loadChildren(path);
+      if (!(await loadChildren(path))) return;
+    }
+    await followChain(path);
+  }
+
+  /**
+   * Auto-expand a run of single-child directories starting below
+   * `start`: while a listing is exactly ONE subdirectory (and nothing
+   * else), that subdirectory is expanded and its listing fetched too.
+   * The rows computed then merges the run into one combined row. Every
+   * chain link lands in the expansion set, so a full reload
+   * (fetchExpandedInto) re-pulls the whole chain and the merge
+   * survives filter toggles and refresh. Stops on a failed or stale
+   * fetch (loadChildren's guards).
+   */
+  async function followChain(start: string): Promise<void> {
+    let current = start;
+    for (;;) {
+      const listing = children.value.get(current);
+      if (listing === undefined || listing.length !== 1 || listing[0].type !== 'dir') return;
+      const next = listing[0].path;
+      if (!expanded.value.has(next)) {
+        expanded.value = new Set([...expanded.value, next]);
+      }
+      if (!children.value.has(next)) {
+        if (!(await loadChildren(next))) return;
+      }
+      current = next;
     }
   }
 
@@ -354,6 +400,9 @@ export const useExplorerStore = defineStore('explorer', () => {
       prefix = current;
     }
     // Every segment was a directory: the target is a dir, now expanded.
+    // Follow a single-child chain below it so it merges like a click
+    // expansion would.
+    if (gen === generation) await followChain(prefix);
   }
 
   /**
@@ -403,20 +452,39 @@ export const useExplorerStore = defineStore('explorer', () => {
    * The flattened visible tree: loaded children of the root, expanded
    * dirs inlined depth-first — the single row model both rendering and
    * keyboard navigation consume.
+   *
+   * Single-child directory chains collapse onto ONE row (CLI parity:
+   * ExplorerViewModel.collapseNode): a run of cached listings that are
+   * each exactly one subdirectory merges into a combined row whose
+   * displayName is the joined path and whose entry is the DEEPEST
+   * directory. The merge follows the cache only — a never-expanded dir
+   * (listing unknown) renders under its own name until expanded. A dir
+   * with files or multiple children never merges.
    */
   const rows = computed<ExplorerRow[]>(() => {
     const out: ExplorerRow[] = [];
     const walk = (dir: string, depth: number): void => {
       for (const entry of children.value.get(dir) ?? []) {
-        if (!passesChangedOnly(entry)) continue;
-        const isExpanded = entry.type === 'dir' && expanded.value.has(entry.path);
+        let deep = entry;
+        let displayName = entry.name;
+        if (entry.type === 'dir') {
+          for (;;) {
+            const listing = children.value.get(deep.path);
+            if (listing === undefined || listing.length !== 1 || listing[0].type !== 'dir') break;
+            deep = listing[0];
+            displayName = `${displayName}/${deep.name}`;
+          }
+        }
+        if (!passesChangedOnly(deep)) continue;
+        const isExpanded = deep.type === 'dir' && expanded.value.has(deep.path);
         out.push({
-          entry,
+          entry: deep,
+          displayName,
           depth,
           isExpanded,
-          isLoading: loadingDirs.value.has(entry.path),
+          isLoading: loadingDirs.value.has(deep.path),
         });
-        if (isExpanded) walk(entry.path, depth + 1);
+        if (isExpanded) walk(deep.path, depth + 1);
       }
     };
     walk('', 0);

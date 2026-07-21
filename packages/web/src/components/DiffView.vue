@@ -158,9 +158,10 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
         v-for="h in s.hunks"
         :key="h.key"
         class="hunk"
+        :class="{ flash: isFresh(h) }"
         :data-edited-at="h.editedAt"
       >
-        <div class="hunk-header" :class="{ flash: isFresh(h) }" data-testid="hunk-header">
+        <div class="hunk-header" data-testid="hunk-header">
           <span class="pin-x">
             <span v-if="h.oldRange" class="ranges">Lines {{ h.oldRange }} → {{ h.newRange }}</span>
             <span v-else class="ranges">{{ h.raw }}</span>
@@ -269,8 +270,10 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
 }
 
 /* Each hunk is its own section so its sticky header is pushed away by
-   the next hunk's header instead of piling up. */
+   the next hunk's header instead of piling up. position:relative
+   anchors the fresh-hunk flash overlay. */
 .hunk {
+  position: relative;
   border-bottom: 1px solid var(--border);
 }
 
@@ -317,17 +320,40 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
   content: '· ';
 }
 
-.hunk-header.flash {
+/* Fresh-hunk flash: a translucent overlay across the WHOLE hunk —
+   header and rows — that fades out. An overlay (::after) rather than a
+   background because the rows paint their own backgrounds, which would
+   cover a background on the group. z-index 2 with later document order:
+   above the sticky hunk header (so the header flashes too — but the
+   overlay is translucent, keeping it readable) and below the z-3
+   file-section headers. pointer-events off so text selection keeps
+   working. */
+.hunk.flash::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--flash);
+  opacity: 0;
   animation: hunk-flash 1.4s ease-out;
 }
 
 @keyframes hunk-flash {
   0% {
-    background: var(--flash);
-    color: #000;
+    opacity: 0.3;
   }
   100% {
-    background: var(--surface);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* No animation — a static highlight that simply goes away when the
+     flash window closes (isFresh flips off). */
+  .hunk.flash::after {
+    animation: none;
+    opacity: 0.18;
   }
 }
 

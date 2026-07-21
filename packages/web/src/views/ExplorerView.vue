@@ -140,17 +140,23 @@ function onRight(row: ExplorerRow): void {
   if (next && next.depth > row.depth) focusRow(current + 1);
 }
 
-/** Left: collapse an expanded dir; otherwise jump to the parent row. */
+/** Left: collapse an expanded dir; otherwise jump to the parent row.
+ *  With collapsed chains the direct parent may have no row of its own
+ *  (it is merged into a combined row), so walk up until a row exists. */
 function onLeft(row: ExplorerRow): void {
   if (row.entry.type === 'dir' && row.isExpanded) {
     explorer.collapseDir(row.entry.path);
     return;
   }
-  const slash = row.entry.path.lastIndexOf('/');
-  if (slash === -1) return; // root level — nowhere up to go
-  const parent = row.entry.path.slice(0, slash);
-  const parentIndex = rows.value.findIndex((r) => r.entry.path === parent);
-  if (parentIndex !== -1) focusRow(parentIndex);
+  let path = row.entry.path;
+  for (let slash = path.lastIndexOf('/'); slash !== -1; slash = path.lastIndexOf('/')) {
+    path = path.slice(0, slash);
+    const parentIndex = rows.value.findIndex((r) => r.entry.path === path);
+    if (parentIndex !== -1) {
+      focusRow(parentIndex);
+      return;
+    }
+  }
 }
 
 // Focus recovery: if a reload or filter change removes the row that
@@ -309,7 +315,7 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
                 row.entry.type === 'dir' ? (row.isExpanded ? '▾' : '▸') : ''
               }}</span>
               <span class="name" :class="{ dir: row.entry.type === 'dir' }">{{
-                row.entry.name
+                row.displayName
               }}</span>
               <span
                 v-if="row.entry.type === 'dir' && row.entry.hasChanges"

@@ -157,6 +157,65 @@ describe('expansion by mouse', () => {
   });
 });
 
+describe('single-child chain collapse', () => {
+  beforeEach(() => {
+    onRequest = (call) => {
+      if (!call.url.startsWith('/repos/r1/tree?')) return undefined;
+      const dir = params(call).get('dir');
+      if (dir === '') {
+        return {
+          body: [
+            { name: 'a', path: 'a', type: 'dir' },
+            { name: 'main.ts', path: 'main.ts', type: 'file' },
+          ] satisfies DirEntry[],
+        };
+      }
+      if (dir === 'a') return { body: [{ name: 'b', path: 'a/b', type: 'dir' }] };
+      if (dir === 'a/b') {
+        return { body: [{ name: 'leaf.ts', path: 'a/b/leaf.ts', type: 'file' }] };
+      }
+      return { status: 404, body: { error: `no such dir: ${dir}` } };
+    };
+  });
+
+  test('expanding the chain renders ONE combined row with working chevron and levels', async () => {
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[0].trigger('click');
+    await flushPromises();
+
+    // One combined row (a/b), not two nested dir rows.
+    expect(rowNames(wrapper)).toEqual(['a/b', 'leaf.ts', 'main.ts']);
+    const combined = wrapper.findAll('.tree-row')[0];
+    expect(combined.find('.chevron').text()).toBe('▾');
+    expect(combined.attributes('aria-expanded')).toBe('true');
+    expect(combined.attributes('aria-level')).toBe('1');
+    // The child sits ONE level under the combined row.
+    expect(wrapper.findAll('.tree-row')[1].attributes('aria-level')).toBe('2');
+  });
+
+  test('clicking the combined row collapses the whole chain', async () => {
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[0].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.tree-row')[0].trigger('click');
+
+    expect(rowNames(wrapper)).toEqual(['a/b', 'main.ts']);
+    expect(wrapper.findAll('.tree-row')[0].attributes('aria-expanded')).toBe('false');
+  });
+
+  test('ArrowLeft on a chain child jumps to the combined row', async () => {
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[0].trigger('click');
+    await flushPromises();
+
+    // leaf.ts's direct parent (a/b) has no row of its own — the walk-up
+    // lands on the combined row.
+    await wrapper.findAll('.tree-row')[1].trigger('keydown', { key: 'ArrowLeft' });
+    const stops = wrapper.findAll('.tree-row').map((r) => r.attributes('tabindex'));
+    expect(stops[0]).toBe('0');
+  });
+});
+
 describe('file selection and the content pane', () => {
   test('nothing selected shows the prompt', async () => {
     const { wrapper } = await mountView();

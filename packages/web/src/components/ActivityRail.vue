@@ -6,12 +6,16 @@
  * in the chrome. Collapses to icons on narrow screens.
  *
  * Portrait: the rail rotates into a full-width horizontal tab band
- * under the header (grid-area railband). Its right edge hosts the
- * #view-toolbar-slot Teleport target: the active view lifts its
- * toolbar controls (Explorer's filters, Compare's base picker) into
- * the band there, freeing a toolbar row inside the view. The slot is
- * display:none in landscape — views keep their toolbars inline
- * (Teleport disabled), so the landscape layout is untouched.
+ * under the header (grid-area railband). The band is ONE flex row: the
+ * tabs, then the #view-toolbar-slot Teleport target as a right-aligned
+ * flex sibling (margin-left auto) — never absolutely positioned, so
+ * lifted controls (Explorer's filters, Compare's base picker) share
+ * the row with the tabs instead of overlapping them; on narrow widths
+ * the row wraps and the controls drop to their own line. With nothing
+ * teleported the slot is empty and removed from flow, so the tabs stay
+ * centered. The slot is display:none in landscape — views keep their
+ * toolbars inline (Teleport disabled), so the landscape layout is
+ * untouched.
  */
 
 import { useUiStore, VIEWS } from '../stores/ui';
@@ -132,14 +136,14 @@ const ICON_PATHS: Record<ViewName, string> = {
 @media (orientation: portrait), (max-aspect-ratio: 1/1) {
   .rail {
     grid-area: railband;
-    position: relative;
     flex-direction: row;
     align-items: center;
     justify-content: center;
+    flex-wrap: wrap;
     gap: 0.25rem;
     width: auto;
     min-height: 2.75rem;
-    padding: 0 0.75rem;
+    padding: 0.25rem 0.75rem;
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
@@ -158,15 +162,26 @@ const ICON_PATHS: Record<ViewName, string> = {
     height: 2px;
   }
 
-  /* Right-aligned toolbar region for the active view's lifted controls. */
+  /* Toolbar region for the active view's lifted controls: a flex
+     SIBLING of the tabs in the same row (never absolutely positioned,
+     so it cannot overlap them). margin-left:auto pushes it to the
+     right edge; when the band runs out of width the row wraps and the
+     controls drop to their own line. The controls themselves may wrap
+     too. */
   .toolbar-slot {
-    position: absolute;
-    right: 0.75rem;
-    top: 0;
-    bottom: 0;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 0.625rem;
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  /* Nothing teleported (Changes/History): drop the slot from flow so
+     justify-content keeps the tabs centered. */
+  .toolbar-slot:empty {
+    display: none;
   }
 }
 </style>
