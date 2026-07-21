@@ -26,7 +26,7 @@ The git state engine now lives in a **daemon** (`diffstalkerd`): a Node http ser
 
 ## Build Commands
 
-The repo has four packages (`packages/core`, `packages/daemon`, `packages/client`, `packages/cli`); root scripts delegate to them, so these all work from the repo root (`dev`/`start` target the cli):
+The repo has five packages (`packages/core`, `packages/daemon`, `packages/client`, `packages/cli`, `packages/web`); root scripts delegate to them, so these all work from the repo root (`dev`/`start` target the cli):
 
 ```bash
 bun run dev           # Run the CLI with bun --watch (development)
@@ -248,7 +248,7 @@ When building UI structures with rows (diff views, file lists), always use a sin
 
 ### Pre-commit Hook
 
-A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 18 pre-existing sonarjs cognitive-complexity warnings are expected (7 in packages/core + 11 in packages/cli; daemon and client 0), 0 errors.
+A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 17 pre-existing sonarjs cognitive-complexity warnings are expected (6 in packages/core + 11 in packages/cli; daemon, client, and web 0), 0 errors.
 
 ### Architecture Layering (dependency-cruiser)
 
@@ -279,7 +279,7 @@ managers/
 git/  utils/  services/  types/
 ```
 
-Circular dependencies are forbidden. Run `bun run deps` to check (covers all four packages).
+Circular dependencies are forbidden. Run `bun run deps` to check (covers all five packages).
 
 ## Interactive Testing with tmux
 

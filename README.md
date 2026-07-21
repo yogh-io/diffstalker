@@ -40,8 +40,8 @@ terminal UI is a lean client: it installs `diffstalkerd` as a dependency and
 auto-spawns it on a unix socket, opening repos over REST and following live
 state over SSE. It holds no in-process git of its own. The UX is unchanged —
 the split just means the same daemon can back other clients. A **web UI** (Vue 3)
-is now built in: the daemon serves it at `GET /` over the same REST + SSE, at
-full feature parity with the terminal UI (see below).
+is now built in: the daemon serves a read-only viewer at `GET /` over the same
+REST + SSE (see below).
 
 ## Installation
 
@@ -184,24 +184,27 @@ diffstalkerd --port 4600
 ```
 
 Open a repository by its absolute path (the switcher, top-left), or launch the
-daemon in follow mode and the UI switches with your hook file. The web UI has the
-same feature set as the terminal:
+daemon in follow mode and the UI switches with your hook file. The web UI is a
+**read-only viewer** — it runs no git mutations (no staging, committing,
+discarding, or remote/branch operations; those live in the terminal UI):
 
-- **Changes** — a source-control panel: file list + diff with word-level
-  highlighting, per-file and per-hunk staging, discard, and a commit box (amend,
-  Cmd/Ctrl+Enter to commit).
-- **History** — commit log + a multi-file commit diff; cherry-pick / revert.
-- **Compare** — a GitHub-style PR view against a base branch: file tree + stacked
-  per-file diffs, include-uncommitted, stats.
+- **Changes** — file list + working-tree diffs with word-level highlighting
+  (view only).
+- **History** — commit log + a multi-file commit diff.
+- **Compare** — a GitHub-style PR view against a base branch: file tree +
+  stacked per-file diffs, collapsible folders.
 - **Explorer** — a file tree with git-status decoration + syntax-highlighted
   content.
-- **Remote/branch ops** in the header — fetch / pull / push, branch switch/create,
-  stash, soft reset, and abort/continue for a conflicted operation.
-- Fuzzy file finder (Ctrl+P), follow mode, the six themes, and keyboard shortcuts
-  (`?` for help).
+- Follow and auto mode, fuzzy file finder (Ctrl+P), the six themes, and keyboard
+  shortcuts (`?` for help).
 
-> Security: the daemon has no authentication yet and binds `127.0.0.1` by default.
-> Keep it on localhost — do not expose the port to a network.
+See the Web UI section of [FEATURES.md](FEATURES.md) for the full list.
+
+> Security: the daemon has no authentication yet. By default it binds an
+> owner-only unix socket (directory `0700`, socket `0600`) and no TCP port at
+> all; a port is only opened when you pass `--port` (bound to `127.0.0.1`
+> unless you set `--host`). Keep any port on localhost — do not expose it to a
+> network.
 
 ## License
 

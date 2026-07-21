@@ -4,6 +4,11 @@ Phase 5 of the daemon split (`~/.claude/plans/buzzing-hugging-pinwheel.md`). Thi
 spec for `@diffstalker/web`: a browser client for `diffstalkerd` that mirrors every CLI feature
 but is laid out for a real screen, not an 80-column terminal.
 
+> **Status (2026-07-21):** Phase 5a — the read-only viewer — shipped in 0.6.0. The mutation
+> phases (staging, commit, remote/branch ops) have NOT shipped. Present-tense claims below like
+> "mirrors every CLI feature" describe the plan, not current behavior; today the web UI is a
+> viewer only (see the Web UI section of `FEATURES.md`).
+
 Last reviewed: 2026-07-20.
 
 ---
