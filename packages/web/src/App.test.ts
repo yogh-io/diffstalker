@@ -459,3 +459,11 @@ describe('live readouts', () => {
     wrapper.unmount();
   });
 });
+
+describe('portrait toolbar slot', () => {
+  test('the rail hosts the Teleport target for lifted view toolbars', async () => {
+    const wrapper = await mountWithRepos([]);
+    expect(wrapper.find('nav[aria-label="Views"] #view-toolbar-slot').exists()).toBe(true);
+    wrapper.unmount();
+  });
+});

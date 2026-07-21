@@ -254,7 +254,9 @@ const followTitle = computed(() => {
   border-radius: 3px;
 }
 
-@media (max-width: 56rem) {
+/* Landscape-only: a portrait monitor is narrow by shape, not by space —
+   it keeps the full header (finder + follow). */
+@media (max-width: 56rem) and (orientation: landscape) {
   .finder-btn,
   .follow {
     display: none;

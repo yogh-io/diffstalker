@@ -17,7 +17,8 @@ import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
 import ChangesView from './ChangesView.vue';
 import { useRepoStore } from '../stores/repo';
-import { PREFS_KEY } from '../prefs';
+import { PREFS_KEY, loadPrefs } from '../prefs';
+import { stubMatchMedia } from '../testing/portrait';
 import type { RepoSharedState } from '../stores/types';
 import type { FileEntry, GitStatus } from '@diffstalker/core/git/status';
 import type { DiffResult } from '@diffstalker/core/git/diff';
@@ -361,5 +362,76 @@ describe('viewer stance (read-only)', () => {
     expect(wrapper.find('[data-testid="diff-col"] .row.add .content').text()).toBe('new');
     // …with no staging affordance on its hunks.
     expect(wrapper.find('[data-testid="hunk-action"]').exists()).toBe(false);
+  });
+});
+
+describe('portrait layout', () => {
+  beforeEach(() => {
+    stubMatchMedia(true);
+  });
+
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test('rotates: portrait class, row-split var, horizontal separator', () => {
+    const { wrapper } = mountView();
+    const root = wrapper.find('.changes');
+    expect(root.classes()).toContain('portrait');
+    expect(root.attributes('style')).toContain('--changes-top: 30.00%');
+
+    const resizer = wrapper.find('[role="separator"]');
+    expect(resizer.attributes('aria-orientation')).toBe('horizontal');
+    expect(resizer.attributes('aria-valuemin')).toBe('10');
+    expect(resizer.attributes('aria-valuemax')).toBe('60');
+    expect(resizer.attributes('aria-valuenow')).toBe('30');
+  });
+
+  test('the separator drags the ROW split: ArrowDown persists changesTop', async () => {
+    const { wrapper } = mountView();
+    const resizer = wrapper.find('[role="separator"]');
+
+    await resizer.trigger('keydown', { key: 'ArrowDown' });
+    expect(loadPrefs().changesTop).toBeCloseTo(0.32);
+    expect(loadPrefs().changesSplit).toBeNull(); // landscape fraction untouched
+    expect(wrapper.find('.changes').attributes('style')).toContain('--changes-top: 32.00%');
+
+    // Column keys are inert on the row axis.
+    await resizer.trigger('keydown', { key: 'ArrowRight' });
+    expect(loadPrefs().changesTop).toBeCloseTo(0.32);
+  });
+
+  test('a stored changesTop is restored on mount', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ changesTop: 0.5 }));
+    const { wrapper } = mountView();
+    expect(wrapper.find('.changes').attributes('style')).toContain('--changes-top: 50.00%');
+  });
+
+  test('j/k move the selection within the file band', async () => {
+    const { wrapper, repo } = mountView();
+    const files = repo.shared.status!.files;
+    repo.selection = { file: files[0], diff: null, combined: null };
+    await wrapper.vm.$nextTick();
+
+    await wrapper.findAll('.file-row')[0].trigger('keydown', { key: 'j' });
+    expect(repo.selection.file).toBe(files[1]);
+    await wrapper.findAll('.file-row')[1].trigger('keydown', { key: 'k' });
+    expect(repo.selection.file).toBe(files[0]);
+  });
+
+  test('the diff pane is a focusable region; Enter on a row focuses it', async () => {
+    const { wrapper, repo } = mountView();
+    const files = repo.shared.status!.files;
+    repo.selection = { file: files[0], diff: SAMPLE_DIFF, combined: null };
+    await wrapper.vm.$nextTick();
+
+    const pane = wrapper.find('.diff-body');
+    expect(pane.attributes('tabindex')).toBe('0');
+    expect(pane.attributes('role')).toBe('region');
+
+    await wrapper.findAll('.file-row')[0].trigger('keydown', { key: 'Enter' });
+    await wrapper.vm.$nextTick();
+    expect(document.activeElement).toBe(pane.element);
   });
 });

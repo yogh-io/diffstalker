@@ -23,11 +23,28 @@ export interface Prefs {
   activeView: ViewName;
   recentRepos: string[];
   /**
-   * Changes view files/diff split as a fraction of the container width;
-   * null = the view's default. Clamped to a sane band on read.
+   * Changes view files/diff split as a fraction of the container width
+   * (landscape column layout); null = the view's default. Clamped to a
+   * sane band on read.
    */
   changesSplit: number | null;
+  /**
+   * Portrait top-band heights, one per view, as a fraction of the
+   * view's height; null = the view's default. Clamped on read.
+   */
+  changesTop: number | null;
+  historyTop: number | null;
+  compareTop: number | null;
+  explorerTop: number | null;
 }
+
+/** The prefs fields that store a split fraction (number | null). */
+export type SplitPrefKey =
+  | 'changesSplit'
+  | 'changesTop'
+  | 'historyTop'
+  | 'compareTop'
+  | 'explorerTop';
 
 export const MAX_RECENT_REPOS = 8;
 
@@ -35,9 +52,30 @@ export const MAX_RECENT_REPOS = 8;
 export const CHANGES_SPLIT_MIN = 0.15;
 export const CHANGES_SPLIT_MAX = 0.65;
 
+/** The band a stored portrait top fraction must fall in to be believed. */
+export const TOP_MIN = 0.1;
+export const TOP_MAX = 0.6;
+
 function defaults(): Prefs {
-  return { theme: null, activeView: 'changes', recentRepos: [], changesSplit: null };
+  return {
+    theme: null,
+    activeView: 'changes',
+    recentRepos: [],
+    changesSplit: null,
+    changesTop: null,
+    historyTop: null,
+    compareTop: null,
+    explorerTop: null,
+  };
 }
+
+/** A stored fraction is believed only when finite and inside its band. */
+function readFraction(value: unknown, min: number, max: number): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return value >= min && value <= max ? value : null;
+}
+
+const TOP_KEYS = ['changesTop', 'historyTop', 'compareTop', 'explorerTop'] as const;
 
 function sanitize(raw: unknown): Prefs {
   const prefs = defaults();
@@ -50,13 +88,9 @@ function sanitize(raw: unknown): Prefs {
       .filter((entry): entry is string => typeof entry === 'string')
       .slice(0, MAX_RECENT_REPOS);
   }
-  if (
-    typeof record.changesSplit === 'number' &&
-    Number.isFinite(record.changesSplit) &&
-    record.changesSplit >= CHANGES_SPLIT_MIN &&
-    record.changesSplit <= CHANGES_SPLIT_MAX
-  ) {
-    prefs.changesSplit = record.changesSplit;
+  prefs.changesSplit = readFraction(record.changesSplit, CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX);
+  for (const key of TOP_KEYS) {
+    prefs[key] = readFraction(record[key], TOP_MIN, TOP_MAX);
   }
   return prefs;
 }

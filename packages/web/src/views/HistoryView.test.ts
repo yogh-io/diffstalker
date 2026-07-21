@@ -22,6 +22,8 @@ import { useRepoStore } from '../stores/repo';
 import { formatDateAbsolute } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { DiffResult } from '@diffstalker/core/git/diff';
+import { loadPrefs } from '../prefs';
+import { stubMatchMedia } from '../testing/portrait';
 
 function commit(overrides: Partial<CommitInfo> = {}): CommitInfo {
   const hash = overrides.hash ?? 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
@@ -362,5 +364,63 @@ describe('viewer stance (read-only)', () => {
     expect(wrapper.find('[data-testid="revert"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="commit-action-confirm"]').exists()).toBe(false);
     expect(detail.find('.detail-header').findAll('button')).toHaveLength(0);
+  });
+});
+
+describe('portrait layout', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test('landscape renders NO row resizer', () => {
+    stubMatchMedia(false);
+    const { wrapper } = mountView([commit()]);
+    expect(wrapper.find('.row-resizer').exists()).toBe(false);
+  });
+
+  test('portrait adds a horizontal row resizer that persists historyTop', async () => {
+    stubMatchMedia(true);
+    const { wrapper } = mountView([commit()]);
+    expect(wrapper.find('.history').classes()).toContain('portrait');
+    expect(wrapper.find('.history').attributes('style')).toContain('--history-top: 28.00%');
+
+    const resizer = wrapper.find('.row-resizer');
+    expect(resizer.attributes('role')).toBe('separator');
+    expect(resizer.attributes('aria-orientation')).toBe('horizontal');
+
+    await resizer.trigger('keydown', { key: 'ArrowDown' });
+    expect(loadPrefs().historyTop).toBeCloseTo(0.3);
+    expect(wrapper.find('.history').attributes('style')).toContain('--history-top: 30.00%');
+  });
+
+  test('j/k move the commit selection within the band', async () => {
+    stubMatchMedia(true);
+    const commits = [commit({ hash: 'a'.repeat(40) }), commit({ hash: 'b'.repeat(40) })];
+    const { wrapper, repo } = mountView(commits);
+    const spy = vi.spyOn(repo, 'selectHistoryCommit').mockResolvedValue(undefined);
+
+    await wrapper.findAll('.commit-row')[0].trigger('keydown', { key: 'j' });
+    expect(spy).toHaveBeenCalledWith(commits[0]); // nothing selected: j picks the first
+  });
+
+  test('the detail pane is a focusable region in portrait', async () => {
+    stubMatchMedia(true);
+    const commits = [commit()];
+    const { wrapper, repo } = mountView(commits);
+    repo.history = {
+      commits,
+      selectedCommit: commits[0],
+      commitDiff: TWO_FILE_DIFF,
+      isLoading: false,
+    };
+    await wrapper.vm.$nextTick();
+
+    const pane = wrapper.find('.detail-diff');
+    expect(pane.attributes('tabindex')).toBe('0');
+    expect(pane.attributes('role')).toBe('region');
   });
 });

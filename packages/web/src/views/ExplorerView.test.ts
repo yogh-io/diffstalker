@@ -21,6 +21,8 @@ import { useExplorerStore } from '../stores/explorer';
 import { makeFakeFetch } from '../testing/fakes';
 import type { FakeFetch, FetchCall, FakeResponse } from '../testing/fakes';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
+import { loadPrefs } from '../prefs';
+import { stubMatchMedia, addToolbarSlot } from '../testing/portrait';
 
 const ROOT_ENTRIES: DirEntry[] = [
   { name: 'src', path: 'src', type: 'dir', hasChanges: true },
@@ -390,5 +392,69 @@ describe('toolbar toggles', () => {
     // (covered by the store test; here just flip back)
     await wrapper.find('[data-testid="toggle-changed"]').trigger('click');
     expect(rowNames(wrapper)).toHaveLength(3);
+  });
+});
+
+describe('portrait layout', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test('lifts the toolbar into the tab-band slot', async () => {
+    stubMatchMedia(true);
+    addToolbarSlot();
+    const { wrapper } = await mountView();
+    const slot = document.querySelector('#view-toolbar-slot')!;
+
+    for (const id of ['toggle-hidden', 'toggle-ignored', 'toggle-changed', 'tree-refresh']) {
+      expect(slot.querySelector(`[data-testid="${id}"]`)).not.toBeNull();
+    }
+    expect(wrapper.find('.tree-col [data-testid="toggle-hidden"]').exists()).toBe(false);
+
+    // A lifted toggle still drives the store (re-fetches the tree).
+    const changed = slot.querySelector<HTMLButtonElement>('[data-testid="toggle-changed"]')!;
+    changed.click();
+    await wrapper.vm.$nextTick();
+    expect(changed.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  test('portrait adds a horizontal row resizer that persists explorerTop', async () => {
+    stubMatchMedia(true);
+    addToolbarSlot();
+    const { wrapper } = await mountView();
+    expect(wrapper.find('.explorer').classes()).toContain('portrait');
+    expect(wrapper.find('.explorer').attributes('style')).toContain('--explorer-top: 34.00%');
+
+    const resizer = wrapper.find('.row-resizer');
+    expect(resizer.attributes('aria-orientation')).toBe('horizontal');
+    await resizer.trigger('keydown', { key: 'ArrowDown' });
+    expect(loadPrefs().explorerTop).toBeCloseTo(0.36);
+    expect(wrapper.find('.explorer').attributes('style')).toContain('--explorer-top: 36.00%');
+  });
+
+  test('j/k move the tree focus; the content pane is a focusable region', async () => {
+    stubMatchMedia(true);
+    addToolbarSlot();
+    const { wrapper } = await mountView();
+
+    const rows = wrapper.findAll('.tree-row');
+    (rows[0].element as HTMLElement).focus();
+    await rows[0].trigger('keydown', { key: 'j' });
+    await wrapper.vm.$nextTick();
+    expect(document.activeElement).toBe(rows[1].element);
+    await rows[1].trigger('keydown', { key: 'k' });
+    await wrapper.vm.$nextTick();
+    expect(document.activeElement).toBe(rows[0].element);
+
+    const pane = wrapper.find('.content-col');
+    expect(pane.attributes('tabindex')).toBe('0');
+    expect(pane.attributes('role')).toBe('region');
+  });
+
+  test('landscape keeps the toolbar inline and renders NO resizer', async () => {
+    const { wrapper } = await mountView();
+    expect(wrapper.find('.tree-col [data-testid="toggle-hidden"]').exists()).toBe(true);
+    expect(wrapper.find('.row-resizer').exists()).toBe(false);
+    expect(wrapper.find('.content-col').attributes('tabindex')).toBeUndefined();
   });
 });

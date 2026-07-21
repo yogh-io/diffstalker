@@ -22,7 +22,10 @@ import { categorizeFiles } from '@diffstalker/core/view/fileCategories';
 import { shortenPath } from '@diffstalker/core/view/formatPath';
 import type { FileEntry } from '@diffstalker/core/git/status';
 import { statusLetter } from '../utils/format';
-import { loadPrefs, savePrefs, CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX } from '../prefs';
+import { CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX, TOP_MIN, TOP_MAX } from '../prefs';
+import { usePortrait } from '../composables/useMediaQuery';
+import { useSplitDrag } from '../composables/useSplitDrag';
+import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
 import DiffView from '../components/DiffView.vue';
 
 const repo = useRepoStore();
@@ -123,63 +126,50 @@ watch(
   }
 );
 
-// --- Resizable split (persisted as a fraction of the container width) ---
+// --- Resizable split (column fraction in landscape, row in portrait) ---
 
-const DEFAULT_SPLIT = 0.32;
-const KEYBOARD_STEP = 0.02;
-
+const isPortrait = usePortrait();
 const containerEl = ref<HTMLElement | null>(null);
-const splitRatio = ref(loadPrefs().changesSplit ?? DEFAULT_SPLIT);
-let dragging = false;
+const split = useSplitDrag({
+  container: containerEl,
+  isRow: isPortrait,
+  column: {
+    pref: 'changesSplit',
+    defaultRatio: 0.32,
+    min: CHANGES_SPLIT_MIN,
+    max: CHANGES_SPLIT_MAX,
+  },
+  row: { pref: 'changesTop', defaultRatio: 0.3, min: TOP_MIN, max: TOP_MAX },
+});
 
-function clampRatio(ratio: number): number {
-  return Math.min(CHANGES_SPLIT_MAX, Math.max(CHANGES_SPLIT_MIN, ratio));
+// --- Portrait keyboard: j/k in the band, j/k scroll in the payload ---
+
+const payloadEl = ref<HTMLElement | null>(null);
+const onRowBandKeydown = makeBandKeyHandler(isPortrait, moveSelection);
+const onPayloadKeydown = makePayloadKeyHandler(isPortrait, payloadEl);
+
+/** Enter on a row: select; in portrait also hand focus to the payload. */
+function selectAndFocusPayload(file: FileEntry): void {
+  repo.selectFile(file);
+  if (!isPortrait.value) return;
+  void nextTick(() => payloadEl.value?.focus());
 }
 
-function onResizerPointerDown(event: PointerEvent): void {
-  if (event.button !== 0) return; // primary button only — no right-click drags
-  dragging = true;
-  (event.target as HTMLElement).setPointerCapture(event.pointerId);
-}
-
-function onResizerPointerMove(event: PointerEvent): void {
-  if (!dragging || !containerEl.value) return;
-  const rect = containerEl.value.getBoundingClientRect();
-  if (rect.width <= 0) return;
-  splitRatio.value = clampRatio((event.clientX - rect.left) / rect.width);
-}
-
-function endDrag(): void {
-  if (!dragging) return;
-  dragging = false;
-  savePrefs({ changesSplit: splitRatio.value });
-}
-
-function onResizerPointerUp(event: PointerEvent): void {
-  if (!dragging) return;
-  (event.target as HTMLElement).releasePointerCapture(event.pointerId);
-  endDrag();
-}
-
-/** Touch cancel / context menu: end the drag so hover can't keep resizing. */
-function onResizerPointerCancel(): void {
-  endDrag();
-}
-
-function onResizerKeydown(event: KeyboardEvent): void {
-  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-  const delta = event.key === 'ArrowLeft' ? -KEYBOARD_STEP : KEYBOARD_STEP;
-  event.preventDefault();
-  splitRatio.value = clampRatio(splitRatio.value + delta);
-  savePrefs({ changesSplit: splitRatio.value });
-}
+/** Landscape emits exactly the pre-portrait style (only --files-col). */
+const rootStyle = computed(() => ({
+  '--files-col': `${(split.columnRatio.value * 100).toFixed(2)}%`,
+  ...(isPortrait.value
+    ? { '--changes-top': `${(split.rowRatio.value * 100).toFixed(2)}%` }
+    : {}),
+}));
 </script>
 
 <template>
   <div
     ref="containerEl"
     class="changes"
-    :style="{ '--files-col': `${(splitRatio * 100).toFixed(2)}%` }"
+    :class="{ portrait: isPortrait }"
+    :style="rootStyle"
   >
     <aside class="files-col" aria-label="Changed files">
       <p v-if="repo.shared.isLoading" class="col-empty">Loading status…</p>
@@ -219,8 +209,9 @@ function onResizerKeydown(event: KeyboardEvent): void {
             @click="repo.selectFile(file)"
             @keydown.down.prevent="moveSelection(1)"
             @keydown.up.prevent="moveSelection(-1)"
-            @keydown.enter.prevent="repo.selectFile(file)"
+            @keydown.enter.prevent="selectAndFocusPayload(file)"
             @keydown.space.prevent="repo.selectFile(file)"
+            @keydown="onRowBandKeydown"
           >
             <span class="letter" :data-status="file.status">{{ statusLetter(file.status) }}</span>
             <span class="path"
@@ -240,17 +231,17 @@ function onResizerKeydown(event: KeyboardEvent): void {
     <div
       class="resizer"
       role="separator"
-      aria-orientation="vertical"
+      :aria-orientation="split.ariaOrientation.value"
       aria-label="Resize file list"
-      :aria-valuenow="Math.round(splitRatio * 100)"
-      aria-valuemin="15"
-      aria-valuemax="65"
+      :aria-valuenow="split.ariaValueNow.value"
+      :aria-valuemin="split.ariaValueMin.value"
+      :aria-valuemax="split.ariaValueMax.value"
       tabindex="0"
-      @pointerdown="onResizerPointerDown"
-      @pointermove="onResizerPointerMove"
-      @pointerup="onResizerPointerUp"
-      @pointercancel="onResizerPointerCancel"
-      @keydown="onResizerKeydown"
+      @pointerdown="split.onPointerDown"
+      @pointermove="split.onPointerMove"
+      @pointerup="split.onPointerUp"
+      @pointercancel="split.onPointerCancel"
+      @keydown="split.onKeydown"
     ></div>
 
     <section class="diff-col" data-testid="diff-col">
@@ -270,7 +261,14 @@ function onResizerKeydown(event: KeyboardEvent): void {
             >
           </span>
         </header>
-        <div class="diff-body">
+        <div
+          ref="payloadEl"
+          class="diff-body"
+          :tabindex="isPortrait ? 0 : undefined"
+          :role="isPortrait ? 'region' : undefined"
+          :aria-label="isPortrait ? 'Diff content' : undefined"
+          @keydown="onPayloadKeydown"
+        >
           <p v-if="!repo.selection.diff" class="col-empty">Loading diff…</p>
           <DiffView v-else :diff="repo.selection.diff" :file-path="selectedFile.path" />
         </div>
@@ -504,6 +502,28 @@ function onResizerKeydown(event: KeyboardEvent): void {
 
   .resizer {
     display: none;
+  }
+}
+
+/* Portrait: rotate column → row. Full-width diff below a bounded file
+   band; the same resizer drags the row split (after the 44rem block so
+   a narrow portrait window gets this layout, resizer included). */
+@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+  .changes {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(6rem, var(--changes-top, 30vh)) 6px minmax(0, 1fr);
+  }
+
+  .files-col {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .resizer {
+    display: block;
+    width: auto;
+    height: 6px;
+    cursor: row-resize;
   }
 }
 </style>

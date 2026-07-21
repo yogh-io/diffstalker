@@ -110,4 +110,19 @@ watch(
   overflow: auto;
   background: var(--bg);
 }
+
+/* Portrait/vertical monitors: the rail becomes a full-width tab band
+   between the header and the workspace. Fires on window SHAPE (see
+   useMediaQuery.PORTRAIT_QUERY) — landscape renders the grid above,
+   byte for byte. */
+@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+  .shell {
+    grid-template:
+      'header' auto
+      'railband' auto
+      'main' 1fr
+      'status' auto
+      / 1fr;
+  }
+}
 </style>

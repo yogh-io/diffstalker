@@ -4,6 +4,14 @@
  * History, Compare, Explorer (Commit lives inside Changes). The active
  * entry carries the add-green indicator bar: the diff palette speaking
  * in the chrome. Collapses to icons on narrow screens.
+ *
+ * Portrait: the rail rotates into a full-width horizontal tab band
+ * under the header (grid-area railband). Its right edge hosts the
+ * #view-toolbar-slot Teleport target: the active view lifts its
+ * toolbar controls (Explorer's filters, Compare's base picker) into
+ * the band there, freeing a toolbar row inside the view. The slot is
+ * display:none in landscape — views keep their toolbars inline
+ * (Teleport disabled), so the landscape layout is untouched.
  */
 
 import { useUiStore, VIEWS } from '../stores/ui';
@@ -43,6 +51,10 @@ const ICON_PATHS: Record<ViewName, string> = {
       </svg>
       <span class="rail-label">{{ view.label }}</span>
     </button>
+
+    <!-- Portrait toolbar slot: the active view Teleports its toolbar
+         controls here. Hidden (and empty) in landscape. -->
+    <div id="view-toolbar-slot" class="toolbar-slot"></div>
   </nav>
 </template>
 
@@ -96,6 +108,11 @@ const ICON_PATHS: Record<ViewName, string> = {
   white-space: nowrap;
 }
 
+/* Landscape: the slot is inert — views render their toolbars inline. */
+.toolbar-slot {
+  display: none;
+}
+
 @media (max-width: 56rem) {
   .rail {
     width: 3rem;
@@ -108,6 +125,48 @@ const ICON_PATHS: Record<ViewName, string> = {
 
   .rail-label {
     display: none;
+  }
+}
+
+/* Portrait: a horizontal tab band, full width under the header. */
+@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+  .rail {
+    grid-area: railband;
+    position: relative;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+    width: auto;
+    min-height: 2.75rem;
+    padding: 0 0.75rem;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .rail-item {
+    padding: 0.375rem 0.75rem;
+  }
+
+  /* The add-green indicator moves under the active tab. */
+  .rail-item.active::before {
+    top: auto;
+    bottom: 0;
+    left: 0.375rem;
+    right: 0.375rem;
+    width: auto;
+    height: 2px;
+  }
+
+  /* Right-aligned toolbar region for the active view's lifted controls. */
+  .toolbar-slot {
+    position: absolute;
+    right: 0.75rem;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
   }
 }
 </style>

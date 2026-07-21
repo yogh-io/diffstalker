@@ -18,6 +18,10 @@ import { storeToRefs } from 'pinia';
 import { useRepoStore } from '../stores/repo';
 import { formatRelativeTime, formatDateAbsolute } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
+import { TOP_MIN, TOP_MAX } from '../prefs';
+import { usePortrait } from '../composables/useMediaQuery';
+import { useSplitDrag } from '../composables/useSplitDrag';
+import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
 import DiffView from '../components/DiffView.vue';
 
 const PAGE_SIZE = 100;
@@ -140,10 +144,36 @@ function moveSelection(delta: number): void {
     listEl.value?.querySelectorAll<HTMLElement>('.commit-row')[next]?.focus();
   });
 }
+
+// --- Portrait: row split (commit band above, detail below) + j/k keys ---
+
+const isPortrait = usePortrait();
+const containerEl = ref<HTMLElement | null>(null);
+const split = useSplitDrag({
+  container: containerEl,
+  isRow: isPortrait,
+  row: { pref: 'historyTop', defaultRatio: 0.28, min: TOP_MIN, max: TOP_MAX },
+});
+
+const payloadEl = ref<HTMLElement | null>(null);
+const onRowBandKeydown = makeBandKeyHandler(isPortrait, moveSelection);
+const onPayloadKeydown = makePayloadKeyHandler(isPortrait, payloadEl);
+
+/** Enter on a row: select; in portrait also hand focus to the payload. */
+function selectAndFocusPayload(commit: CommitInfo): void {
+  void select(commit);
+  if (!isPortrait.value) return;
+  void nextTick(() => payloadEl.value?.focus());
+}
 </script>
 
 <template>
-  <div class="history">
+  <div
+    ref="containerEl"
+    class="history"
+    :class="{ portrait: isPortrait }"
+    :style="isPortrait ? { '--history-top': `${(split.rowRatio.value * 100).toFixed(2)}%` } : undefined"
+  >
     <aside class="commits-col" aria-label="Commit history">
       <p v-if="history.isLoading && commits.length === 0" class="col-empty">Loading history…</p>
       <!-- Full-pane error only when there is nothing to show; with commits
@@ -175,8 +205,9 @@ function moveSelection(delta: number): void {
             @click="select(commit)"
             @keydown.down.prevent="moveSelection(1)"
             @keydown.up.prevent="moveSelection(-1)"
-            @keydown.enter.prevent="select(commit)"
+            @keydown.enter.prevent="selectAndFocusPayload(commit)"
             @keydown.space.prevent="select(commit)"
+            @keydown="onRowBandKeydown"
           >
             <span class="row-top">
               <span class="hash mono">{{ commit.shortHash }}</span>
@@ -207,6 +238,23 @@ function moveSelection(delta: number): void {
       </template>
     </aside>
 
+    <div
+      v-if="isPortrait"
+      class="row-resizer"
+      role="separator"
+      :aria-orientation="split.ariaOrientation.value"
+      aria-label="Resize commit list"
+      :aria-valuenow="split.ariaValueNow.value"
+      :aria-valuemin="split.ariaValueMin.value"
+      :aria-valuemax="split.ariaValueMax.value"
+      tabindex="0"
+      @pointerdown="split.onPointerDown"
+      @pointermove="split.onPointerMove"
+      @pointerup="split.onPointerUp"
+      @pointercancel="split.onPointerCancel"
+      @keydown="split.onKeydown"
+    ></div>
+
     <section class="detail-col" data-testid="commit-detail">
       <template v-if="selected">
         <header class="detail-header">
@@ -219,7 +267,14 @@ function moveSelection(delta: number): void {
             <span class="abs-date">{{ formatDateAbsolute(selected.date) }}</span>
           </p>
         </header>
-        <div class="detail-diff">
+        <div
+          ref="payloadEl"
+          class="detail-diff"
+          :tabindex="isPortrait ? 0 : undefined"
+          :role="isPortrait ? 'region' : undefined"
+          :aria-label="isPortrait ? 'Commit diff' : undefined"
+          @keydown="onPayloadKeydown"
+        >
           <p v-if="detailError" class="col-empty view-error" data-testid="detail-error">
             {{ detailError }}
           </p>
@@ -443,6 +498,33 @@ function moveSelection(delta: number): void {
   .commits-col {
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+}
+
+/* Portrait: rotate column → row. Full-width detail below a bounded
+   commit band, with a draggable row resizer (portrait-only element). */
+@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+  .history {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(6rem, var(--history-top, 28vh)) 6px minmax(0, 1fr);
+  }
+
+  .commits-col {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .row-resizer {
+    height: 6px;
+    cursor: row-resize;
+    background: transparent;
+    touch-action: none;
+  }
+
+  .row-resizer:hover,
+  .row-resizer:focus-visible {
+    background: var(--selection);
+    opacity: 0.5;
   }
 }
 </style>

@@ -24,6 +24,10 @@ import { useRepoStore } from '../stores/repo';
 import { useExplorerStore } from '../stores/explorer';
 import type { ExplorerRow } from '../stores/explorer';
 import { statusLetter } from '../utils/format';
+import { TOP_MIN, TOP_MAX } from '../prefs';
+import { usePortrait } from '../composables/useMediaQuery';
+import { useSplitDrag } from '../composables/useSplitDrag';
+import { makePayloadKeyHandler } from '../composables/usePortraitKeys';
 import FileContentPane from '../components/FileContentPane.vue';
 
 const repo = useRepoStore();
@@ -185,49 +189,84 @@ watch(selectedPath, () => {
 function statusClass(row: ExplorerRow): string | null {
   return row.entry.gitStatus ? `st-${row.entry.gitStatus}` : null;
 }
+
+// --- Portrait: row split (tree band above, content below) + j/k keys ---
+
+const isPortrait = usePortrait();
+const containerEl = ref<HTMLElement | null>(null);
+const split = useSplitDrag({
+  container: containerEl,
+  isRow: isPortrait,
+  // Taller default than the other views: a tree needs vertical room.
+  row: { pref: 'explorerTop', defaultRatio: 0.34, min: TOP_MIN, max: TOP_MAX },
+});
+
+const payloadEl = ref<HTMLElement | null>(null);
+const onPayloadKeydown = makePayloadKeyHandler(isPortrait, payloadEl);
+
+/** Portrait j/k on tree rows: move focus like Down/Up. */
+function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
+  if (!isPortrait.value) return;
+  if (event.key === 'j') {
+    event.preventDefault();
+    moveFocus(row, 1);
+  } else if (event.key === 'k') {
+    event.preventDefault();
+    moveFocus(row, -1);
+  }
+}
 </script>
 
 <template>
-  <div class="explorer">
+  <div
+    ref="containerEl"
+    class="explorer"
+    :class="{ portrait: isPortrait }"
+    :style="isPortrait ? { '--explorer-top': `${(split.rowRatio.value * 100).toFixed(2)}%` } : undefined"
+  >
     <aside class="tree-col">
-      <div class="tree-toolbar" role="toolbar" aria-label="Explorer filters">
-        <button
-          class="tool-toggle mono"
-          data-testid="toggle-hidden"
-          :aria-pressed="showHidden"
-          title="Show dotfiles"
-          @click="explorer.setShowHidden(!showHidden)"
-        >
-          dotfiles
-        </button>
-        <button
-          class="tool-toggle mono"
-          data-testid="toggle-ignored"
-          :aria-pressed="showIgnored"
-          title="Show gitignored files"
-          @click="explorer.setShowIgnored(!showIgnored)"
-        >
-          ignored
-        </button>
-        <button
-          class="tool-toggle mono"
-          data-testid="toggle-changed"
-          :aria-pressed="changedOnly"
-          title="Show only files with changes"
-          @click="explorer.setChangedOnly(!changedOnly)"
-        >
-          changed
-        </button>
-        <button
-          class="tool-refresh mono"
-          data-testid="tree-refresh"
-          title="Reload the tree"
-          :disabled="rootLoading"
-          @click="explorer.refresh()"
-        >
-          ↻
-        </button>
-      </div>
+      <!-- Portrait lifts the toolbar into the tab band's slot; landscape
+           renders it inline (Teleport disabled), exactly as before. -->
+      <Teleport to="#view-toolbar-slot" :disabled="!isPortrait">
+        <div class="tree-toolbar" role="toolbar" aria-label="Explorer filters">
+          <button
+            class="tool-toggle mono"
+            data-testid="toggle-hidden"
+            :aria-pressed="showHidden"
+            title="Show dotfiles"
+            @click="explorer.setShowHidden(!showHidden)"
+          >
+            dotfiles
+          </button>
+          <button
+            class="tool-toggle mono"
+            data-testid="toggle-ignored"
+            :aria-pressed="showIgnored"
+            title="Show gitignored files"
+            @click="explorer.setShowIgnored(!showIgnored)"
+          >
+            ignored
+          </button>
+          <button
+            class="tool-toggle mono"
+            data-testid="toggle-changed"
+            :aria-pressed="changedOnly"
+            title="Show only files with changes"
+            @click="explorer.setChangedOnly(!changedOnly)"
+          >
+            changed
+          </button>
+          <button
+            class="tool-refresh mono"
+            data-testid="tree-refresh"
+            title="Reload the tree"
+            :disabled="rootLoading"
+            @click="explorer.refresh()"
+          >
+            ↻
+          </button>
+        </div>
+      </Teleport>
 
       <div class="tree-scroll">
         <p v-if="rootLoading && rows.length === 0" class="tree-note">Loading tree…</p>
@@ -263,6 +302,7 @@ function statusClass(row: ExplorerRow): string | null {
               @keydown.space.prevent="activate(row)"
               @keydown.home.prevent="focusRow(0)"
               @keydown.end.prevent="focusRow(rows.length - 1)"
+              @keydown="onTreeRowKeydown($event, row)"
             >
               <span v-for="n in row.depth" :key="n" class="guide" aria-hidden="true"></span>
               <span class="chevron" aria-hidden="true">{{
@@ -308,7 +348,31 @@ function statusClass(row: ExplorerRow): string | null {
       </div>
     </aside>
 
-    <section class="content-col">
+    <div
+      v-if="isPortrait"
+      class="row-resizer"
+      role="separator"
+      :aria-orientation="split.ariaOrientation.value"
+      aria-label="Resize file tree"
+      :aria-valuenow="split.ariaValueNow.value"
+      :aria-valuemin="split.ariaValueMin.value"
+      :aria-valuemax="split.ariaValueMax.value"
+      tabindex="0"
+      @pointerdown="split.onPointerDown"
+      @pointermove="split.onPointerMove"
+      @pointerup="split.onPointerUp"
+      @pointercancel="split.onPointerCancel"
+      @keydown="split.onKeydown"
+    ></div>
+
+    <section
+      ref="payloadEl"
+      class="content-col"
+      :tabindex="isPortrait ? 0 : undefined"
+      :role="isPortrait ? 'region' : undefined"
+      :aria-label="isPortrait ? 'File content' : undefined"
+      @keydown="onPayloadKeydown"
+    >
       <FileContentPane :path="selectedPath" :file="file" :loading="fileLoading" :error="fileError" />
     </section>
   </div>
@@ -545,6 +609,45 @@ function statusClass(row: ExplorerRow): string | null {
   .tree-col {
     border-right: none;
     border-bottom: 1px solid var(--border);
+  }
+}
+
+/* Portrait: rotate column → row. Full-width content below a bounded
+   tree band (taller default — a tree needs vertical room); the toolbar
+   lives in the tab band's slot (Teleport), freeing a row here. The
+   teleported toolbar keeps this component's scope, so the in-band
+   restyle below still applies to it. */
+@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+  .explorer {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(6rem, var(--explorer-top, 34vh)) 6px minmax(0, 1fr);
+  }
+
+  .tree-col {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tree-toolbar {
+    padding: 0;
+    border-bottom: none;
+  }
+
+  .tool-refresh {
+    margin-left: 0;
+  }
+
+  .row-resizer {
+    height: 6px;
+    cursor: row-resize;
+    background: transparent;
+    touch-action: none;
+  }
+
+  .row-resizer:hover,
+  .row-resizer:focus-visible {
+    background: var(--selection);
+    opacity: 0.5;
   }
 }
 </style>

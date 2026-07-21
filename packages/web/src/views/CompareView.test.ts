@@ -22,6 +22,8 @@ import { useRepoStore } from '../stores/repo';
 import { makeFakeFetch } from '../testing/fakes';
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareDiff, CompareFileDiff, DiffResult } from '@diffstalker/core/git/diff';
+import { loadPrefs } from '../prefs';
+import { stubMatchMedia, addToolbarSlot } from '../testing/portrait';
 
 function fileDiff(
   path: string,
@@ -467,5 +469,88 @@ describe('empty and edge states', () => {
     expect(wrapper.find('[data-testid="compare-error"]').exists()).toBe(false); // no full-pane takeover
     expect(wrapper.findAll('[data-testid="file-diff"]')).toHaveLength(3);
     expect(wrapper.find('[data-testid="compare-files"]').exists()).toBe(true);
+  });
+});
+
+describe('portrait layout', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    stubMatchMedia(true);
+    addToolbarSlot();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  test('lifts the base picker and commits toggle into the tab-band slot', () => {
+    const { wrapper } = mountView();
+    const slot = document.querySelector('#view-toolbar-slot')!;
+
+    expect(slot.querySelector('[data-testid="base-select"]')).not.toBeNull();
+    expect(slot.querySelector('[data-testid="commits-toggle"]')).not.toBeNull();
+    // ...and out of the view's own topbar/commits section.
+    expect(
+      wrapper.find('[data-testid="compare-topbar"] [data-testid="base-select"]').exists()
+    ).toBe(false);
+    expect(wrapper.find('.commits-section [data-testid="commits-toggle"]').exists()).toBe(false);
+    // The uncommitted toggle stays in the topbar.
+    expect(
+      wrapper.find('[data-testid="compare-topbar"] [data-testid="uncommitted-toggle"]').exists()
+    ).toBe(true);
+  });
+
+  test('the lifted commits toggle still opens the in-view commit list', async () => {
+    const { wrapper } = mountView();
+    const toggle = document.querySelector<HTMLButtonElement>(
+      '#view-toolbar-slot [data-testid="commits-toggle"]'
+    )!;
+    expect(wrapper.find('[data-testid="compare-commits"]').exists()).toBe(false);
+
+    toggle.click();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="compare-commits"]').exists()).toBe(true);
+    expect(wrapper.findAll('[data-testid="compare-commits"] .commit-row')).toHaveLength(2);
+  });
+
+  test('jump-index: clicking a file in the band scrolls its diff section into view', async () => {
+    const files = [fileDiff('notes.txt', 'modified', 1, 0), fileDiff('src/a.ts', 'modified', 2, 0)];
+    const { wrapper, repo } = mountView(makeCompareDiff(files, []));
+
+    const scrollTargets: string[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      const el = this as HTMLElement;
+      scrollTargets.push(`${el.dataset.testid}:${el.dataset.fileIndex}`);
+    };
+    try {
+      await wrapper.findAll('.file-row')[0].trigger('click'); // a.ts (files index 1)
+      await flushPromises();
+      // The stacked diffs scroll to a.ts's sticky header — nothing filters.
+      expect(scrollTargets).toEqual(['file-diff:1']);
+      expect(repo.compare.selection).toMatchObject({ type: 'file', index: 1 });
+      expect(wrapper.findAll('[data-testid="file-diff"]')).toHaveLength(2);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  test('the PR body gets a horizontal row resizer that persists compareTop', async () => {
+    const { wrapper } = mountView();
+    expect(wrapper.find('.compare').classes()).toContain('portrait');
+    expect(wrapper.find('.compare').attributes('style')).toContain('--compare-top: 22.00%');
+
+    const resizer = wrapper.find('.row-resizer');
+    expect(resizer.attributes('aria-orientation')).toBe('horizontal');
+    await resizer.trigger('keydown', { key: 'ArrowDown' });
+    expect(loadPrefs().compareTop).toBeCloseTo(0.24);
+    expect(wrapper.find('.compare').attributes('style')).toContain('--compare-top: 24.00%');
+  });
+
+  test('the diffs column is a focusable region in portrait', () => {
+    const { wrapper } = mountView();
+    const diffs = wrapper.find('[data-testid="compare-diffs"]');
+    expect(diffs.attributes('tabindex')).toBe('0');
+    expect(diffs.attributes('role')).toBe('region');
   });
 });

@@ -1,7 +1,7 @@
 /** prefs tests: typed localStorage with graceful degradation. */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { loadPrefs, savePrefs, PREFS_KEY, MAX_RECENT_REPOS } from './prefs';
+import { loadPrefs, savePrefs, PREFS_KEY, MAX_RECENT_REPOS, TOP_MIN, TOP_MAX } from './prefs';
 
 beforeEach(() => {
   localStorage.clear();
@@ -18,6 +18,10 @@ describe('loadPrefs', () => {
       activeView: 'changes',
       recentRepos: [],
       changesSplit: null,
+      changesTop: null,
+      historyTop: null,
+      compareTop: null,
+      explorerTop: null,
     });
   });
 
@@ -28,6 +32,10 @@ describe('loadPrefs', () => {
       activeView: 'changes',
       recentRepos: [],
       changesSplit: null,
+      changesTop: null,
+      historyTop: null,
+      compareTop: null,
+      explorerTop: null,
     });
   });
 
@@ -38,6 +46,10 @@ describe('loadPrefs', () => {
       activeView: 'changes',
       recentRepos: [],
       changesSplit: null,
+      changesTop: null,
+      historyTop: null,
+      compareTop: null,
+      explorerTop: null,
     });
   });
 
@@ -55,6 +67,10 @@ describe('loadPrefs', () => {
       activeView: 'history',
       recentRepos: ['/a', '/b'],
       changesSplit: null,
+      changesTop: null,
+      historyTop: null,
+      compareTop: null,
+      explorerTop: null,
     });
   });
 
@@ -90,6 +106,10 @@ describe('loadPrefs', () => {
       activeView: 'changes',
       recentRepos: [],
       changesSplit: null,
+      changesTop: null,
+      historyTop: null,
+      compareTop: null,
+      explorerTop: null,
     });
     // Writes are swallowed too — prefs just don't persist.
     expect(() => savePrefs({ activeView: 'history' })).not.toThrow();
@@ -105,11 +125,62 @@ describe('savePrefs', () => {
       activeView: 'explorer',
       recentRepos: [],
       changesSplit: null,
+      changesTop: null,
+      historyTop: null,
+      compareTop: null,
+      explorerTop: null,
     });
   });
 
   test('roundtrips recent repos', () => {
     savePrefs({ recentRepos: ['/x', '/y'] });
     expect(loadPrefs().recentRepos).toEqual(['/x', '/y']);
+  });
+});
+
+describe('portrait top fractions', () => {
+  const KEYS = ['changesTop', 'historyTop', 'compareTop', 'explorerTop'] as const;
+
+  test('keeps a sane fraction for every view field', () => {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ changesTop: 0.3, historyTop: TOP_MIN, compareTop: TOP_MAX, explorerTop: 0.34 })
+    );
+    const prefs = loadPrefs();
+    expect(prefs.changesTop).toBe(0.3);
+    expect(prefs.historyTop).toBe(TOP_MIN);
+    expect(prefs.compareTop).toBe(TOP_MAX);
+    expect(prefs.explorerTop).toBe(0.34);
+  });
+
+  test('drops out-of-band values (validated on read, per field)', () => {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ changesTop: 0.05, historyTop: 0.9, compareTop: -1, explorerTop: 0.25 })
+    );
+    const prefs = loadPrefs();
+    expect(prefs.changesTop).toBeNull();
+    expect(prefs.historyTop).toBeNull();
+    expect(prefs.compareTop).toBeNull();
+    expect(prefs.explorerTop).toBe(0.25);
+  });
+
+  test('drops non-numeric and non-finite values', () => {
+    // Raw JSON: 1e999 parses to Infinity — a non-finite number on read.
+    localStorage.setItem(
+      PREFS_KEY,
+      '{"changesTop":"tall","historyTop":null,"compareTop":{},"explorerTop":1e999}'
+    );
+    const prefs = loadPrefs();
+    for (const key of KEYS) expect(prefs[key]).toBeNull();
+  });
+
+  test('roundtrips through savePrefs', () => {
+    savePrefs({ historyTop: 0.4 });
+    savePrefs({ explorerTop: 0.5 });
+    const prefs = loadPrefs();
+    expect(prefs.historyTop).toBe(0.4);
+    expect(prefs.explorerTop).toBe(0.5);
+    expect(prefs.changesTop).toBeNull();
   });
 });

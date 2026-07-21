@@ -688,6 +688,24 @@ git operations.
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.
 
+### Portrait layout (vertical monitors)
+
+- One trigger — `(orientation: portrait), (max-aspect-ratio: 1/1)` — fires on
+  window SHAPE, not width; landscape renders the classic layout untouched.
+- The activity rail becomes a full-width horizontal tab band under the header;
+  its right edge hosts the active view's lifted toolbar (Explorer's filter
+  toggles + refresh, Compare's base picker + commits toggle) via Teleport.
+- Every view rotates column → row: the list/tree/commit band on top (bounded
+  height), the diff/content payload full-width below, split by a draggable +
+  keyboard-accessible row resizer. Per-view top-band heights persist in
+  localStorage (`changesTop` / `historyTop` / `compareTop` / `explorerTop`,
+  clamped 10–60%); Changes keeps its landscape column split (`changesSplit`)
+  separately.
+- Compare's top file band is a jump-index: clicking a file anchor-scrolls the
+  stacked diffs to that file's sticky header (never filters to one file).
+- Portrait keys: j/k move the band selection; Enter selects and focuses the
+  payload pane (Tab also reaches it); j/k scroll the focused payload.
+
 ### Notes
 
 - The web build ships inside the published `diffstalkerd` tarball (it is not a

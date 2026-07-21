@@ -26,6 +26,10 @@ import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareFileDiff } from '@diffstalker/core/git/diff';
 import { statusLetter } from '../utils/format';
+import { TOP_MIN, TOP_MAX } from '../prefs';
+import { usePortrait } from '../composables/useMediaQuery';
+import { useSplitDrag } from '../composables/useSplitDrag';
+import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
 import DiffView from '../components/DiffView.vue';
 
 const repo = useRepoStore();
@@ -158,28 +162,53 @@ function toggleFileCollapsed(path: string): void {
 function fileStats(file: CompareFileDiff): { add: number; del: number } {
   return { add: file.additions, del: file.deletions };
 }
+
+// --- Portrait: rotate the PR body (file band above, diffs below) ---
+//
+// The top file band acts as a JUMP-INDEX: clicking a file anchor-scrolls
+// the stacked diffs to its sticky header (selectFile above — same code
+// path as landscape; it never filters to one file).
+
+const isPortrait = usePortrait();
+const prBodyEl = ref<HTMLElement | null>(null);
+const split = useSplitDrag({
+  container: prBodyEl,
+  isRow: isPortrait,
+  row: { pref: 'compareTop', defaultRatio: 0.22, min: TOP_MIN, max: TOP_MAX },
+});
+
+const onRowBandKeydown = makeBandKeyHandler(isPortrait, moveFileSelection);
+// The diffs column is its own scroller — scroll it, not a nested DiffView.
+const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true });
 </script>
 
 <template>
-  <div class="compare">
+  <div
+    class="compare"
+    :class="{ portrait: isPortrait }"
+    :style="isPortrait ? { '--compare-top': `${(split.rowRatio.value * 100).toFixed(2)}%` } : undefined"
+  >
     <!-- Top bar: base selector + uncommitted toggle + stats. Persistent
-         so a bad/missing base can always be corrected here. -->
+         so a bad/missing base can always be corrected here. In portrait
+         the base picker lifts into the tab band's toolbar slot. -->
     <header class="topbar" data-testid="compare-topbar">
-      <label class="base-select">
-        <span class="label">base</span>
-        <select
-          class="mono"
-          data-testid="base-select"
-          aria-label="Base branch"
-          :value="compare.baseBranch ?? ''"
-          @change="onBaseChange"
-        >
-          <option v-if="compare.baseBranch === null" value="" disabled>pick a base…</option>
-          <option v-for="branch in baseOptions" :key="branch" :value="branch">
-            {{ branch }}
-          </option>
-        </select>
-      </label>
+      <Teleport to="#view-toolbar-slot" :disabled="!isPortrait">
+        <label class="base-select">
+          <span class="label">base</span>
+          <select
+            class="mono"
+            data-testid="base-select"
+            aria-label="Base branch"
+            :value="compare.baseBranch ?? ''"
+            @change="onBaseChange"
+          >
+            <option v-if="compare.baseBranch === null" value="" disabled>pick a base…</option>
+            <option v-for="branch in baseOptions" :key="branch" :value="branch">
+              {{ branch }}
+            </option>
+          </select>
+        </label>
+      </Teleport>
 
       <label class="uncommitted-toggle">
         <input
@@ -234,17 +263,21 @@ function fileStats(file: CompareFileDiff): { add: number; del: number } {
     </p>
 
     <template v-else-if="compareDiff">
-      <!-- Commits section: collapsible, collapsed by default. -->
+      <!-- Commits section: collapsible, collapsed by default. In
+           portrait the toggle lifts into the tab band's toolbar slot;
+           the list itself stays here when open. -->
       <section v-if="compareDiff.commits.length > 0" class="commits-section">
-        <button
-          class="commits-toggle mono"
-          data-testid="commits-toggle"
-          :aria-expanded="commitsOpen"
-          @click="commitsOpen = !commitsOpen"
-        >
-          <span class="chevron">{{ commitsOpen ? '▾' : '▸' }}</span>
-          Commits <span class="commits-count">{{ compareDiff.commits.length }}</span>
-        </button>
+        <Teleport to="#view-toolbar-slot" :disabled="!isPortrait">
+          <button
+            class="commits-toggle mono"
+            data-testid="commits-toggle"
+            :aria-expanded="commitsOpen"
+            @click="commitsOpen = !commitsOpen"
+          >
+            <span class="chevron">{{ commitsOpen ? '▾' : '▸' }}</span>
+            Commits <span class="commits-count">{{ compareDiff.commits.length }}</span>
+          </button>
+        </Teleport>
         <ul v-if="commitsOpen" class="commit-list mono" data-testid="compare-commits">
           <li v-for="commit in compareDiff.commits" :key="commit.hash" class="commit-row">
             <span class="hash">{{ commit.shortHash }}</span>
@@ -257,8 +290,9 @@ function fileStats(file: CompareFileDiff): { add: number; del: number } {
         </ul>
       </section>
 
-      <!-- PR body: file tree | stacked per-file diffs. -->
-      <div class="pr-body">
+      <!-- PR body: file tree | stacked per-file diffs (portrait: file
+           band above as a jump-index, full-width diffs below). -->
+      <div ref="prBodyEl" class="pr-body">
         <aside
           ref="filesEl"
           class="files-col"
@@ -294,6 +328,7 @@ function fileStats(file: CompareFileDiff): { add: number; del: number } {
               @keydown.up.prevent="moveFileSelection(-1)"
               @keydown.enter.prevent="selectFile(row.fileIndex!)"
               @keydown.space.prevent="selectFile(row.fileIndex!)"
+              @keydown="onRowBandKeydown"
             >
               <span class="letter" :data-status="files[row.fileIndex!].status">{{
                 statusLetter(files[row.fileIndex!].status)
@@ -317,7 +352,32 @@ function fileStats(file: CompareFileDiff): { add: number; del: number } {
           </template>
         </aside>
 
-        <section ref="diffsEl" class="diffs-col" data-testid="compare-diffs">
+        <div
+          v-if="isPortrait"
+          class="row-resizer"
+          role="separator"
+          :aria-orientation="split.ariaOrientation.value"
+          aria-label="Resize file list"
+          :aria-valuenow="split.ariaValueNow.value"
+          :aria-valuemin="split.ariaValueMin.value"
+          :aria-valuemax="split.ariaValueMax.value"
+          tabindex="0"
+          @pointerdown="split.onPointerDown"
+          @pointermove="split.onPointerMove"
+          @pointerup="split.onPointerUp"
+          @pointercancel="split.onPointerCancel"
+          @keydown="split.onKeydown"
+        ></div>
+
+        <section
+          ref="diffsEl"
+          class="diffs-col"
+          data-testid="compare-diffs"
+          :tabindex="isPortrait ? 0 : undefined"
+          :role="isPortrait ? 'region' : undefined"
+          :aria-label="isPortrait ? 'File diffs' : undefined"
+          @keydown="onPayloadKeydown"
+        >
           <section
             v-for="(file, index) in files"
             :key="file.path"
@@ -708,6 +768,55 @@ function fileStats(file: CompareFileDiff): { add: number; del: number } {
 
   .files-col {
     border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+/* Portrait: rotate ONLY the nested PR body — topbar and the (open)
+   commits list keep stacking above it. The file band on top is a
+   jump-index over the full-width stacked diffs; base picker + commits
+   toggle live in the tab band (Teleport — they keep this component's
+   scope, so the in-band restyles below reach them). */
+@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+  .pr-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(4rem, var(--compare-top, 22vh)) 6px minmax(0, 1fr);
+  }
+
+  .files-col {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .row-resizer {
+    height: 6px;
+    cursor: row-resize;
+    background: transparent;
+    touch-action: none;
+  }
+
+  .row-resizer:hover,
+  .row-resizer:focus-visible {
+    background: var(--selection);
+    opacity: 0.5;
+  }
+
+  /* In-band restyles for the lifted controls. */
+  .commits-toggle {
+    width: auto;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+
+  /* The toggle is out of the section: no empty strip when collapsed. */
+  .commits-section {
+    background: transparent;
+    border-bottom: none;
+  }
+
+  .commit-list {
+    background: var(--surface);
     border-bottom: 1px solid var(--border);
   }
 }
