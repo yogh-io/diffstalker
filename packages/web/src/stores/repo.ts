@@ -11,6 +11,16 @@
  * - selection (file + its diffs) is per-client and fetched on demand via
  *   GET /diff, with the 20ms leading+trailing debounce + identity
  *   stale-guard ported verbatim;
+ * - workingDiffs is the per-file working-diff cache behind the stacked
+ *   Changes surface (docs/web-diff-stream-architecture.md §2): activated
+ *   by refreshAllDiffs (two whole-tree pulls split client-side +
+ *   per-file pulls for untracked files), then kept warm on state-change
+ *   by refetching ONLY the changed files (mtimes/hunkCounts/status
+ *   diffing, whole-tree fallback past 15 files). Entries preserve
+ *   object identity when content is unchanged (raw compared by value)
+ *   so downstream render memos hit; stale responses are dropped by
+ *   per-key sequence tokens. Coexists with the selection path for now —
+ *   Phase 1 deletes the Changes branch of the selection fetch;
  * - history and compare are pulled on demand and re-pulled on state-change
  *   when previously loaded;
  * - the compare base is per-client too: selectedCompareBase rides along
@@ -39,12 +49,15 @@
  *   daemon's refcount stays truthful and daemon-side close stays possible.
  */
 
-import { computed, shallowRef } from 'vue';
+import { computed, markRaw, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import { DaemonError, isConnectionError } from '../api/errors';
+import { splitDiffByFile } from '../utils/splitDiffByFile';
+import { buildDiffModel } from '../utils/diffRows';
+import type { DiffModel } from '../utils/diffRows';
 import type { SseHandle } from '../api/transport';
-import type { RepoRef, WireSharedState } from '@diffstalker/client';
+import type { RepoRef, WireHunkCounts, WireSharedState } from '@diffstalker/client';
 import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
@@ -61,6 +74,61 @@ const DIFF_DEBOUNCE_MS = 20;
 
 /** Delay before a reconnect attempt after the SSE stream drops. */
 const RECONNECT_DELAY_MS = 1000;
+
+/** Max parallel per-file diff fetches for the working-diff cache. */
+const WORKING_DIFF_CONCURRENCY = 6;
+
+/**
+ * When a state-change touches more files than this (branch switch,
+ * big stash pop), one whole-tree re-pull beats N per-file fetches.
+ */
+const WHOLE_TREE_REPULL_THRESHOLD = 15;
+
+/** One cached per-file working diff. The DiffResult is markRaw'd. */
+export interface WorkingDiffEntry {
+  /** The diff's raw text — compared BY VALUE to preserve identity. */
+  raw: string;
+  diff: DiffResult;
+  /** When this entry's content was applied (epoch ms). */
+  fetchedAt: number;
+}
+
+/** The working-diff cache: entries keyed by file-list row key. */
+export interface WorkingDiffsState {
+  byKey: Map<string, WorkingDiffEntry>;
+  /** Bumped on every commit — the shallowRef's change signal. */
+  seq: number;
+}
+
+/**
+ * Cache key for a file-list row: `s:`/`u:` side prefix + path,
+ * mirroring the Changes list exactly (a partially staged file has two
+ * rows, two entries).
+ */
+export function workingDiffKey(file: FileEntry): string {
+  return `${file.staged ? 's' : 'u'}:${file.path}`;
+}
+
+/**
+ * Memoize buildDiffModel per DiffResult object: identity-preserved
+ * entries (unchanged raw -> same DiffResult) re-run nothing. Module
+ * scope on purpose — keyed by object identity, safe across stores.
+ * One map per side: every cached DiffResult today belongs to exactly
+ * one side (each entry's object comes from its own side's fetch or
+ * tree split), but keying by side too makes a both-sides call safe
+ * instead of silently returning the other side's model.
+ */
+const diffModelMemos = {
+  staged: new WeakMap<DiffResult, DiffModel>(),
+  unstaged: new WeakMap<DiffResult, DiffModel>(),
+};
+
+/** The last snapshot workingDiffs changed-set diffing compares against. */
+interface WorkingSnapshot {
+  files: Map<string, FileEntry>;
+  mtimes: Record<string, number> | null;
+  hunkCounts: WireHunkCounts | null;
+}
 
 /**
  * The single state a lost daemon connection collapses into. Set once
@@ -112,6 +180,13 @@ export const useRepoStore = defineStore('repo', () => {
   const repoId = shallowRef<string | null>(null);
   const repoPath = shallowRef<string | null>(null);
   const shared = shallowRef<RepoSharedState>(initialShared());
+  /**
+   * Per-file working-diff cache (§2 of the diff-stream design). Whole
+   * value replaced on every commit; the entries' DiffResults are
+   * markRaw'd (deep-proxying thousands of line objects would dominate
+   * reactivity cost) and identity-preserved when content is unchanged.
+   */
+  const workingDiffs = shallowRef<WorkingDiffsState>({ byKey: new Map(), seq: 0 });
   const selection = shallowRef<RepoSelectionState>(initialSelection());
   const history = shallowRef<RepoHistoryState>(initialHistory());
   const compare = shallowRef<RepoCompareState>(initialCompare());
@@ -150,6 +225,26 @@ export const useRepoStore = defineStore('repo', () => {
    * OFF) cannot overwrite the state the UI's controls reflect.
    */
   let compareRequestSeq = 0;
+  /**
+   * True once refreshAllDiffs has run for this repo: only then do
+   * state-changes cascade into per-file cache refetches (mirrors
+   * history/compare, which also re-pull only once loaded).
+   */
+  let workingDiffsActive = false;
+  /**
+   * Monotonic token shared by ALL working-diff fetches (whole-tree and
+   * per-file), captured at request start. appliedSeqByKey records the
+   * token whose response each entry currently holds; a response only
+   * applies when no later-started request already landed on that key —
+   * a stale response can never overwrite a newer entry.
+   */
+  let workingDiffFetchSeq = 0;
+  const appliedSeqByKey = new Map<string, number>();
+  /** Changed files coalescing in the 20ms refetch window, by row key. */
+  const pendingChangedFiles = new Map<string, FileEntry>();
+  let workingDiffsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The previous wire state's slice the changed-set diffing reads. */
+  let workingSnapshot: WorkingSnapshot | null = null;
 
   function clearTimers(): void {
     if (diffDebounceTimer) {
@@ -159,6 +254,10 @@ export const useRepoStore = defineStore('repo', () => {
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
+    }
+    if (workingDiffsDebounceTimer) {
+      clearTimeout(workingDiffsDebounceTimer);
+      workingDiffsDebounceTimer = null;
     }
   }
 
@@ -190,9 +289,15 @@ export const useRepoStore = defineStore('repo', () => {
     lastIncludeUncommitted = false;
     historyCount = 100;
 
+    workingDiffsActive = false;
+    workingSnapshot = null;
+    appliedSeqByKey.clear();
+    pendingChangedFiles.clear();
+
     repoId.value = null;
     repoPath.value = path;
     shared.value = initialShared();
+    workingDiffs.value = { byKey: new Map(), seq: 0 };
     selection.value = initialSelection();
     history.value = initialHistory();
     compare.value = initialCompare();
@@ -329,6 +434,8 @@ export const useRepoStore = defineStore('repo', () => {
    * re-pull history/compare when already loaded.
    */
   function applyWireState(wire: WireSharedState): void {
+    const prevSnapshot = workingSnapshot;
+    workingSnapshot = snapshotWorkingState(wire);
     shared.value = {
       status: wire.status,
       hunkCounts: wire.hunkCounts,
@@ -339,6 +446,9 @@ export const useRepoStore = defineStore('repo', () => {
       isLoading: false,
     };
     refreshSelectionAfterStatus();
+    if (workingDiffsActive) {
+      updateWorkingDiffsAfterState(prevSnapshot);
+    }
     if (history.value.commits.length > 0) {
       void reloadHistory();
     }
@@ -500,6 +610,269 @@ export const useRepoStore = defineStore('repo', () => {
 
     selection.value = { ...selection.value, file: match };
     scheduleDiffFetch();
+  }
+
+  // --- Working-diff cache (per-file, stacked Changes surface) ---
+
+  function snapshotWorkingState(wire: WireSharedState): WorkingSnapshot {
+    return {
+      files: new Map((wire.status?.files ?? []).map((f) => [workingDiffKey(f), f])),
+      mtimes: wire.mtimes,
+      hunkCounts: wire.hunkCounts,
+    };
+  }
+
+  /**
+   * Replace the cache map immutably; the shallowRef signals on every
+   * commit. mutate returns false to skip the commit entirely (no
+   * reactive churn when nothing changed).
+   */
+  function commitWorkingDiffs(mutate: (byKey: Map<string, WorkingDiffEntry>) => boolean): void {
+    const prev = workingDiffs.value;
+    const byKey = new Map(prev.byKey);
+    if (!mutate(byKey)) return;
+    workingDiffs.value = { byKey, seq: prev.seq + 1 };
+  }
+
+  /**
+   * Land one per-file response. Drops stale responses (a later-started
+   * request already applied to this key), drops keys that left the
+   * status set while the fetch was in flight, and preserves identity:
+   * an unchanged raw keeps the SAME entry — same DiffResult object, no
+   * commit, no reactive signal.
+   */
+  function applyWorkingDiff(key: string, token: number, diff: DiffResult): void {
+    if ((appliedSeqByKey.get(key) ?? 0) > token) return;
+    if (workingSnapshot !== null && !workingSnapshot.files.has(key)) return;
+    appliedSeqByKey.set(key, token);
+    const cached = workingDiffs.value.byKey.get(key);
+    if (cached && cached.raw === diff.raw) return;
+    commitWorkingDiffs((byKey) => {
+      byKey.set(key, { raw: diff.raw, diff: markRaw(diff), fetchedAt: Date.now() });
+      return true;
+    });
+  }
+
+  /**
+   * Fetch per-file diffs through a bounded queue (concurrency 6).
+   * Untracked files fetch without a staged flag — the daemon 400s
+   * staged=true for them. Never rejects; errors collapse like the
+   * selection fetch (connection loss -> reconnect, else shared.error).
+   */
+  async function fetchWorkingDiffsFor(files: FileEntry[]): Promise<void> {
+    const id = repoId.value;
+    if (id === null || files.length === 0) return;
+    const gen = generation;
+    const queue = [...files];
+    let lost = false;
+    // ONE setError per batch (like the whole-tree pull), not one per
+    // failed file — N failures would rewrite shared.error N times.
+    let firstFailure: string | null = null;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const file = queue.shift();
+        if (!file || lost || gen !== generation) return;
+        const key = workingDiffKey(file);
+        const token = ++workingDiffFetchSeq;
+        try {
+          const diff =
+            file.status === 'untracked'
+              ? await client.diff(id, { path: file.path })
+              : await client.diff(id, { path: file.path, staged: file.staged });
+          if (gen !== generation) return;
+          applyWorkingDiff(key, token, diff);
+        } catch (err) {
+          if (gen !== generation) return;
+          if (isConnectionError(err)) {
+            lost = true;
+            handleConnectionLoss();
+            return;
+          }
+          firstFailure ??= errorMessage(err);
+        }
+      }
+    };
+    const workers = Array.from(
+      { length: Math.min(WORKING_DIFF_CONCURRENCY, queue.length) },
+      () => worker() // catches internally; never rejects
+    );
+    await Promise.all(workers);
+    if (firstFailure !== null && !lost && gen === generation) {
+      setError(`Failed to load diffs: ${firstFailure}`);
+    }
+  }
+
+  /**
+   * Activate (or fully re-pull) the cache: two whole-tree pulls —
+   * GET /diff (unstaged) and GET /diff?staged=true — split client-side
+   * into per-file entries, then untracked files (absent from git diff)
+   * fetched per-file through the bounded queue. Applies in ONE commit;
+   * evicts entries whose file left the status set; value-equal raws
+   * keep their objects (stale-while-revalidate — nothing ever blanks).
+   */
+  async function refreshAllDiffs(): Promise<void> {
+    const id = repoId.value;
+    if (id === null) return;
+    const gen = generation;
+    const token = ++workingDiffFetchSeq;
+    let unstagedTree: DiffResult;
+    let stagedTree: DiffResult;
+    try {
+      [unstagedTree, stagedTree] = await Promise.all([
+        client.diff(id, {}),
+        client.diff(id, { staged: true }),
+      ]);
+    } catch (err) {
+      // Activation stays off on failure: an active-but-empty cache would
+      // only refetch CHANGED files on later state-changes, silently
+      // staying partial. Inactive, the next refreshAllDiffs re-pulls all.
+      if (gen !== generation) return;
+      if (isConnectionError(err)) {
+        handleConnectionLoss();
+        return;
+      }
+      setError(`Failed to load diffs: ${errorMessage(err)}`);
+      return;
+    }
+    if (gen !== generation) return;
+    workingDiffsActive = true;
+
+    const files = shared.value.status?.files ?? [];
+    const validKeys = new Set(files.map(workingDiffKey));
+    commitWorkingDiffs((byKey) => {
+      let dirty = applyTreeSide(byKey, 'u', splitDiffByFile(unstagedTree), validKeys, token);
+      dirty = applyTreeSide(byKey, 's', splitDiffByFile(stagedTree), validKeys, token) || dirty;
+      for (const key of [...byKey.keys()]) {
+        if (!validKeys.has(key)) {
+          byKey.delete(key);
+          appliedSeqByKey.delete(key);
+          dirty = true;
+        }
+      }
+      return dirty;
+    });
+
+    await fetchWorkingDiffsFor(files.filter((f) => f.status === 'untracked'));
+  }
+
+  /**
+   * Merge one side of a split whole-tree pull into the map: keys must
+   * still be in the status set, later-started per-file pulls win (seq),
+   * value-equal raws keep their objects. Returns whether anything moved.
+   */
+  function applyTreeSide(
+    byKey: Map<string, WorkingDiffEntry>,
+    side: 's' | 'u',
+    byPath: Map<string, DiffResult>,
+    validKeys: Set<string>,
+    token: number
+  ): boolean {
+    let dirty = false;
+    for (const [path, diff] of byPath) {
+      const key = `${side}:${path}`;
+      if (!validKeys.has(key)) continue;
+      if ((appliedSeqByKey.get(key) ?? 0) > token) continue; // a newer per-file pull landed
+      appliedSeqByKey.set(key, token);
+      const cached = byKey.get(key);
+      if (cached && cached.raw === diff.raw) continue; // identity preserved
+      byKey.set(key, { raw: diff.raw, diff: markRaw(diff), fetchedAt: Date.now() });
+      dirty = true;
+    }
+    return dirty;
+  }
+
+  /**
+   * The state-change cascade: evict entries whose file left the status
+   * set, then refetch ONLY the files the new wire state marks as
+   * changed (vs the previous snapshot). Past the threshold, one
+   * whole-tree re-pull replaces N per-file fetches (branch switch).
+   */
+  function updateWorkingDiffsAfterState(prev: WorkingSnapshot | null): void {
+    const next = workingSnapshot;
+    if (next === null) return;
+
+    const leaving = [...workingDiffs.value.byKey.keys()].filter((key) => !next.files.has(key));
+    if (leaving.length > 0) {
+      commitWorkingDiffs((byKey) => {
+        for (const key of leaving) {
+          byKey.delete(key);
+          appliedSeqByKey.delete(key);
+        }
+        return true;
+      });
+    }
+    for (const key of [...pendingChangedFiles.keys()]) {
+      if (!next.files.has(key)) pendingChangedFiles.delete(key);
+    }
+
+    const changed = computeChangedFiles(prev, next);
+    if (changed.length === 0) return;
+    if (changed.length > WHOLE_TREE_REPULL_THRESHOLD) {
+      pendingChangedFiles.clear();
+      void refreshAllDiffs(); // catches internally; never rejects
+      return;
+    }
+    scheduleWorkingDiffRefetch(changed);
+  }
+
+  /**
+   * The changed set: files entering the status set, plus files whose
+   * mtime, hunk count (their own side), or status letter moved since
+   * the previous snapshot.
+   */
+  function computeChangedFiles(prev: WorkingSnapshot | null, next: WorkingSnapshot): FileEntry[] {
+    const changed: FileEntry[] = [];
+    for (const [key, file] of next.files) {
+      const prevFile = prev?.files.get(key);
+      if (!prevFile) {
+        changed.push(file); // entering
+        continue;
+      }
+      const mtimeChanged = next.mtimes?.[file.path] !== prev?.mtimes?.[file.path];
+      const hunksChanged =
+        hunkCountOf(next.hunkCounts, file) !== hunkCountOf(prev?.hunkCounts ?? null, file);
+      if (mtimeChanged || hunksChanged || prevFile.status !== file.status) {
+        changed.push(file);
+      }
+    }
+    return changed;
+  }
+
+  function hunkCountOf(counts: WireHunkCounts | null, file: FileEntry): number {
+    if (!counts) return 0;
+    const side = file.staged ? counts.staged : counts.unstaged;
+    return side[file.path] ?? 0;
+  }
+
+  /** Coalesce changed files for 20ms, then refetch them per-file. */
+  function scheduleWorkingDiffRefetch(files: FileEntry[]): void {
+    for (const file of files) {
+      pendingChangedFiles.set(workingDiffKey(file), file);
+    }
+    if (workingDiffsDebounceTimer) return;
+    workingDiffsDebounceTimer = setTimeout(() => {
+      workingDiffsDebounceTimer = null;
+      const batch = [...pendingChangedFiles.values()];
+      pendingChangedFiles.clear();
+      void fetchWorkingDiffsFor(batch); // catches internally; never rejects
+    }, DIFF_DEBOUNCE_MS);
+  }
+
+  /**
+   * buildDiffModel through the WeakMap memo: an identity-preserved
+   * DiffResult returns the identical DiffModel — unchanged files
+   * re-run nothing and keep their vnodes. `staged` MUST match the
+   * entry's side (the cache key's `s:`/`u:` prefix): it feeds the
+   * model's section keys, so a wrong flag would collide a partially
+   * staged file's two sections.
+   */
+  function diffModelFor(diff: DiffResult, staged: boolean): DiffModel {
+    const memo = staged ? diffModelMemos.staged : diffModelMemos.unstaged;
+    const cached = memo.get(diff);
+    if (cached) return cached;
+    const model = buildDiffModel(diff, staged);
+    memo.set(diff, model);
+    return model;
   }
 
   // --- History ---
@@ -696,6 +1069,7 @@ export const useRepoStore = defineStore('repo', () => {
     repoPath,
     isRepo,
     shared,
+    workingDiffs,
     selection,
     history,
     compare,
@@ -707,6 +1081,9 @@ export const useRepoStore = defineStore('repo', () => {
     setError,
     // selection
     selectFile,
+    // working-diff cache
+    refreshAllDiffs,
+    diffModelFor,
     // history
     loadHistory,
     selectHistoryCommit,
