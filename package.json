@@ -13,6 +13,7 @@
     "prepare": "git config core.hooksPath .githooks",
     "dev": "cd packages/cli && bun run dev",
     "dev:web": "cd packages/web && bun run dev",
+    "serve": "bun scripts/serve.ts",
     "build": "cd packages/cli && bun run build && cd ../daemon && bun run build && cd ../client && bun run build && cd ../daemon && bun run build:web",
     "build:prod": "cd packages/cli && bun run build:prod",
     "start": "cd packages/cli && bun run start",

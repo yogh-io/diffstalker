@@ -57,8 +57,15 @@ Or from source (the repo is a bun workspace of several packages):
 git clone https://github.com/yogh-io/diffstalker.git
 cd diffstalker
 bun install && bun run build       # builds all packages
-cd packages/cli && npm link        # link the `diffstalker` bin
+cd packages/cli && bun link        # link the `diffstalker` bin
 # or run it directly: bun run start
+```
+
+For a local web UI in development:
+```bash
+bun run dev:web                    # Vite dev server (HMR) at http://localhost:5173
+# or serve it via the daemon from source, in debug mode, at http://localhost:7337:
+bun run serve                      # bun run serve /path/to/repo ... to pre-open repos
 ```
 
 ## Quick Start

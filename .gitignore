@@ -9,3 +9,10 @@ diffstalker-git/
 pkg/
 *.pkg.tar.zst
 *.pkg.tar.xz
+
+# Single lockfile: bun.lock is the source of truth. Guard against a stray
+# npm/pnpm install dropping a competing lockfile that would drift from bun.lock.
+package-lock.json
+npm-shrinkwrap.json
+pnpm-lock.yaml
+yarn.lock
