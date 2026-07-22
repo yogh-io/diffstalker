@@ -473,6 +473,7 @@ const rootStyle = computed(() => ({
       data-testid="changes-diffs"
       :files="stackFiles"
       :active-key="ui.activeStackKey"
+      :syntax="ui.diffSyntaxEnabled"
       :tabindex="isPortrait ? 0 : undefined"
       :role="isPortrait ? 'region' : undefined"
       :aria-label="isPortrait ? 'File diffs' : undefined"

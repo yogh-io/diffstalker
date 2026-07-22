@@ -95,6 +95,7 @@ import {
   type ComponentPublicInstance,
 } from 'vue';
 import { useRepoStore } from '../stores/repo';
+import { useUiStore } from '../stores/ui';
 import { formatRelativeTime, formatDateAbsolute } from '@diffstalker/core/view/formatDate';
 import type { JournalBoundaryEntry, JournalHunkEntry } from '@diffstalker/core/types/journal';
 import { foldEntries, type JournalHunkRow, type JournalRow } from '../utils/foldEntries';
@@ -105,6 +106,7 @@ import DiffView from '../components/DiffView.vue';
 const TOP_PIN_PX = 40;
 
 const repo = useRepoStore();
+const ui = useUiStore();
 
 const entries = computed<readonly JournalEntry[]>(() => repo.journalEntries);
 
@@ -722,7 +724,11 @@ onBeforeUnmount(() => {
                       {{ changedLines(member) }} lines changed — show
                     </button>
                     <div v-else class="entry-body" :style="bodyStyle(member)">
-                      <DiffView :diff="member.diff" :file-path="member.path" />
+                      <DiffView
+                        :diff="member.diff"
+                        :file-path="member.path"
+                        :syntax="ui.diffSyntaxEnabled"
+                      />
                     </div>
                   </div>
                 </template>
@@ -738,7 +744,11 @@ onBeforeUnmount(() => {
                   {{ changedLines(row.tip) }} lines changed — show
                 </button>
                 <div v-else class="entry-body" :style="bodyStyle(row.tip)" data-testid="entry-body">
-                  <DiffView :diff="row.tip.diff" :file-path="row.tip.path" />
+                  <DiffView
+                    :diff="row.tip.diff"
+                    :file-path="row.tip.path"
+                    :syntax="ui.diffSyntaxEnabled"
+                  />
                 </div>
               </div>
             </div>

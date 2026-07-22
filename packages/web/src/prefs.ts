@@ -28,6 +28,12 @@ export interface Prefs {
    */
   autoMode: boolean;
   /**
+   * Diff syntax highlighting: when on, every diff surface tokenizes its
+   * content lines (highlight.js) instead of rendering plain text. Global
+   * — a single app-wide toggle in the header.
+   */
+  diffSyntax: boolean;
+  /**
    * Changes view files/diff split as a fraction of the container width
    * (landscape column layout); null = the view's default. Clamped to a
    * sane band on read.
@@ -67,6 +73,7 @@ function defaults(): Prefs {
     activeView: 'changes',
     recentRepos: [],
     autoMode: false,
+    diffSyntax: false,
     changesSplit: null,
     changesTop: null,
     historyTop: null,
@@ -95,6 +102,7 @@ function sanitize(raw: unknown): Prefs {
       .slice(0, MAX_RECENT_REPOS);
   }
   if (typeof record.autoMode === 'boolean') prefs.autoMode = record.autoMode;
+  if (typeof record.diffSyntax === 'boolean') prefs.diffSyntax = record.diffSyntax;
   prefs.changesSplit = readFraction(record.changesSplit, CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX);
   for (const key of TOP_KEYS) {
     prefs[key] = readFraction(record[key], TOP_MIN, TOP_MAX);

@@ -69,6 +69,34 @@ describe('auto toggle', () => {
   });
 });
 
+describe('syntax toggle', () => {
+  test('honest off state by default; clicking flips diffSyntaxEnabled and persists', async () => {
+    const ui = useUiStore();
+    const wrapper = mountHeader();
+    const toggle = wrapper.find('[data-testid="syntax-toggle"]');
+
+    expect(toggle.text()).toBe('syntax off');
+    expect(toggle.attributes('aria-pressed')).toBe('false');
+
+    await toggle.trigger('click');
+    expect(ui.diffSyntaxEnabled).toBe(true);
+    expect(toggle.text()).toBe('syntax on');
+    expect(toggle.attributes('aria-pressed')).toBe('true');
+
+    await toggle.trigger('click');
+    expect(ui.diffSyntaxEnabled).toBe(false);
+    expect(toggle.text()).toBe('syntax off');
+  });
+
+  test('reflects a stored diff-syntax preference on mount', () => {
+    localStorage.setItem('diffstalker:prefs', JSON.stringify({ diffSyntax: true }));
+    const wrapper = mountHeader();
+    const toggle = wrapper.find('[data-testid="syntax-toggle"]');
+    expect(toggle.text()).toBe('syntax on');
+    expect(toggle.attributes('aria-pressed')).toBe('true');
+  });
+});
+
 describe('follow toggle', () => {
   test('hidden until the daemon follow state is loaded', () => {
     const wrapper = mountHeader();

@@ -42,6 +42,7 @@ function mountDiff(
   props: {
     showFileHeaders?: boolean;
     filePath?: string;
+    syntax?: boolean;
   } = {}
 ) {
   return mount(DiffView, { props: { diff, ...props } });
@@ -385,5 +386,46 @@ describe('viewer stance (read-only)', () => {
     // …and there is no staging affordance anywhere in the diff.
     expect(wrapper.findAll('[data-testid="hunk-action"]')).toHaveLength(0);
     expect(wrapper.findAll('button')).toHaveLength(0);
+  });
+});
+
+describe('syntax highlighting (the `syntax` prop)', () => {
+  // A .ts diff whose added line contains a keyword hljs will tokenize.
+  const tsDiff = makeDiff([
+    header('src/foo.ts'),
+    hunk('@@ -1,1 +1,1 @@'),
+    del('const x = 1;', 1),
+    add('const y = 2;', 1),
+  ]);
+
+  test('off by default: content is plain text, no hljs token spans', () => {
+    const wrapper = mountDiff(tsDiff, { filePath: 'src/foo.ts' });
+    expect(wrapper.find('[class*="hljs-"]').exists()).toBe(false);
+    expect(wrapper.find('.row.add .content').text()).toBe('const y = 2;');
+  });
+
+  test('on with a known language: hljs token spans render, text preserved', () => {
+    const wrapper = mountDiff(tsDiff, { filePath: 'src/foo.ts', syntax: true });
+    expect(wrapper.find('[class*="hljs-"]').exists()).toBe(true);
+    // The rendered text still reconstructs the exact source line.
+    expect(wrapper.find('.row.add .content').text()).toBe('const y = 2;');
+  });
+
+  test('on but unknown language: falls back to plain (no hljs spans)', () => {
+    const unknown = makeDiff([
+      header('notes.unknownext'),
+      hunk('@@ -1,1 +1,1 @@'),
+      add('const y = 2;', 1),
+    ]);
+    const wrapper = mountDiff(unknown, { filePath: 'notes.unknownext', syntax: true });
+    expect(wrapper.find('[class*="hljs-"]').exists()).toBe(false);
+    expect(wrapper.find('.row.add .content').text()).toBe('const y = 2;');
+  });
+
+  test('word-diff background survives with syntax on (both layers compose)', () => {
+    const wrapper = mountDiff(tsDiff, { filePath: 'src/foo.ts', syntax: true });
+    // The del/add pair is similar, so a changed word ("1"/"2") carries a
+    // word-hl span even while syntax tokenization is active.
+    expect(wrapper.find('.row.add .content .word-hl').exists()).toBe(true);
   });
 });

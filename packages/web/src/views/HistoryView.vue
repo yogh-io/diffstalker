@@ -16,6 +16,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRepoStore } from '../stores/repo';
+import { useUiStore } from '../stores/ui';
 import { formatRelativeTime, formatDateAbsolute } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import { TOP_MIN, TOP_MAX } from '../prefs';
@@ -27,6 +28,7 @@ import DiffView from '../components/DiffView.vue';
 const PAGE_SIZE = 100;
 
 const repo = useRepoStore();
+const ui = useUiStore();
 const { history } = storeToRefs(repo);
 
 const loadError = ref<string | null>(null);
@@ -279,7 +281,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
             {{ detailError }}
           </p>
           <p v-else-if="!history.commitDiff" class="col-empty">Loading diff…</p>
-          <DiffView v-else :diff="history.commitDiff" show-file-headers />
+          <DiffView v-else :diff="history.commitDiff" show-file-headers :syntax="ui.diffSyntaxEnabled" />
         </div>
       </template>
       <p v-else class="col-empty detail-prompt" data-testid="history-prompt">

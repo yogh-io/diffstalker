@@ -22,22 +22,30 @@
  * core/view/wordDiff (via buildDiffModel); changed segments render as
  * .word-hl spans on the add/del highlight background.
  *
- * Syntax highlighting is a later slice — the content cell (.content)
- * is the seam: swap its text interpolation for highlighted spans.
+ * Syntax highlighting (the `syntax` prop, a global toggle): when on, the
+ * content cell renders tokenized "pieces" (utils/diffHighlight) instead
+ * of plain text — each piece carries an hljs class (foreground color,
+ * mapped by the global theme/hljs.css) AND the word-hl background, so the
+ * two layers compose. Off, or for a language hljs doesn't know, the cell
+ * keeps its plain / word-hl-only render. Language is resolved per file
+ * section, so a multi-file diff highlights each file in its own language.
  */
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { DiffResult } from '@diffstalker/core/git/diff';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import { buildDiffModel } from '../utils/diffRows';
-import type { DiffContentRow, DiffHunkGroup } from '../utils/diffRows';
+import type { DiffContentRow, DiffFileSection, DiffHunkGroup } from '../utils/diffRows';
+import { diffLanguage, syntaxPieces } from '../utils/diffHighlight';
 
 const props = defineProps<{
   diff: DiffResult | null;
-  /** Selected file's path — the syntax-highlighting seam (later slice). */
+  /** Selected file's path — fallback language source for single-file diffs. */
   filePath?: string;
   /** Unified is the only mode this slice; side-by-side comes with Compare. */
   mode?: 'unified';
+  /** Syntax-highlight content lines (global toggle). Off by default. */
+  syntax?: boolean;
   /**
    * Force per-file section headers on (History's commit diffs). Left
    * off, headers still show automatically when the diff spans more
@@ -46,6 +54,27 @@ const props = defineProps<{
    */
   showFileHeaders?: boolean;
 }>();
+
+/**
+ * hljs language per file section (null = plain), memoized by section
+ * key so a multi-file diff resolves each file once. A headerless
+ * single-file diff falls back to the filePath prop (the pane names it).
+ */
+const sectionLang = computed(() => {
+  const map = new Map<string, string | null>();
+  for (const section of model.value.sections) {
+    map.set(section.key, diffLanguage(section.filePath ?? props.filePath));
+  }
+  return map;
+});
+
+/**
+ * Tokenized pieces for a content row, or null when the plain / word-hl
+ * path should render instead (syntax off, unknown language, huge line).
+ */
+function pieces(row: DiffContentRow, section: DiffFileSection): ReturnType<typeof syntaxPieces> {
+  return syntaxPieces(row, sectionLang.value.get(section.key) ?? null, props.syntax === true);
+}
 
 /** Hunks edited within this window get the flash background (CLI parity). */
 const HUNK_FLASH_MS = 1500;
@@ -177,7 +206,14 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
           ><span class="ln new">{{ row.newLineNum ?? '' }}</span
           ><span class="marker">{{ marker(row) }}</span
           ><span class="content"
-            ><template v-if="row.segments"
+            ><template v-if="pieces(row, s)"
+              ><span
+                v-for="(p, i) in pieces(row, s)"
+                :key="i"
+                :class="[p.cls, { 'word-hl': p.changed }]"
+                >{{ p.text }}</span
+              ></template
+            ><template v-else-if="row.segments"
               ><span
                 v-for="(seg, i) in row.segments"
                 :key="i"

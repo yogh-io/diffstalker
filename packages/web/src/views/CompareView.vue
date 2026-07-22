@@ -24,6 +24,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRepoStore } from '../stores/repo';
+import { useUiStore } from '../stores/ui';
 import { buildFileTree, flattenTree, type TreeRowItem } from '@diffstalker/core/view/fileTree';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
@@ -36,6 +37,7 @@ import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePor
 import DiffStack, { type StackFile } from '../components/DiffStack.vue';
 
 const repo = useRepoStore();
+const ui = useUiStore();
 const { compare } = storeToRefs(repo);
 
 // Seeded from the store so the choice survives a tab switch (the ref
@@ -470,6 +472,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
           data-testid="compare-diffs"
           :files="stackFiles"
           :active-key="activeStackKey"
+          :syntax="ui.diffSyntaxEnabled"
           :tabindex="isPortrait ? 0 : undefined"
           :role="isPortrait ? 'region' : undefined"
           :aria-label="isPortrait ? 'File diffs' : undefined"

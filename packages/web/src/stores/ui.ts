@@ -1,8 +1,9 @@
 /**
  * useUiStore: app-level UI state — theme, active view, recent repos,
- * the auto-mode toggle (+ its row flash), the Changes stack's active
- * section key, and the active overlay (fuzzy finder / hotkeys help).
- * Theme, view, recents and auto mode persist through prefs
+ * the auto-mode toggle (+ its row flash), the diff syntax-highlighting
+ * toggle, the Changes stack's active section key, and the active overlay
+ * (fuzzy finder / hotkeys help). Theme, view, recents, auto mode and diff
+ * syntax persist through prefs
  * (localStorage); the theme lands on <html data-theme="..."> so the
  * CSS custom-property sets select. Overlay, flash, and stack-key state
  * are session-only — never persisted.
@@ -52,6 +53,8 @@ export const useUiStore = defineStore('ui', () => {
   const activeOverlay = shallowRef<OverlayName | null>(null);
   /** Auto mode: pure viewing — auto-select/auto-switch, no mutations. */
   const autoModeEnabled = shallowRef<boolean>(stored.autoMode);
+  /** Diff syntax highlighting: app-wide, applied by every DiffView. */
+  const diffSyntaxEnabled = shallowRef<boolean>(stored.diffSyntax);
   /** Path of the file row currently flashed by auto mode, null when none. */
   const flashedFile = shallowRef<string | null>(null);
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -95,6 +98,11 @@ export const useUiStore = defineStore('ui', () => {
     savePrefs({ autoMode: autoModeEnabled.value });
   }
 
+  function toggleDiffSyntax(): void {
+    diffSyntaxEnabled.value = !diffSyntaxEnabled.value;
+    savePrefs({ diffSyntax: diffSyntaxEnabled.value });
+  }
+
   /** Briefly highlight a file row (auto-selected), then clear. */
   function flashFile(path: string): void {
     flashedFile.value = path;
@@ -130,6 +138,7 @@ export const useUiStore = defineStore('ui', () => {
     recentRepos,
     activeOverlay,
     autoModeEnabled,
+    diffSyntaxEnabled,
     flashedFile,
     activeStackKey,
     init,
@@ -137,6 +146,7 @@ export const useUiStore = defineStore('ui', () => {
     setActiveView,
     addRecentRepo,
     toggleAutoMode,
+    toggleDiffSyntax,
     flashFile,
     setActiveStackKey,
     openOverlay,

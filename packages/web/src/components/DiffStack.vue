@@ -234,6 +234,8 @@ const props = defineProps<{
   files: StackFile[];
   /** Key of the section styled as selected (nav highlight), if any. */
   activeKey?: string | null;
+  /** Forwarded to each file's DiffView: syntax-highlight content lines. */
+  syntax?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -987,7 +989,7 @@ defineExpose({
         class="file-diff-body"
         :style="{ containIntrinsicSize: bodyIntrinsicSize(item) }"
       >
-        <DiffView v-if="item.diff" :diff="item.diff" :file-path="item.path" />
+        <DiffView v-if="item.diff" :diff="item.diff" :file-path="item.path" :syntax="props.syntax" />
         <div
           v-else
           class="placeholder"

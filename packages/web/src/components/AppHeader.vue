@@ -2,8 +2,9 @@
 /**
  * Global header: wordmark, repo switcher, branch + tracking + ahead/behind
  * (mono, diff-colored counts — read-only text), one calm error line, the
- * auto-mode toggle, the follow toggle, the fuzzy finder trigger, theme
- * switcher. No git controls: the web UI is a viewer.
+ * auto-mode toggle, the diff syntax-highlighting toggle, the follow
+ * toggle, the fuzzy finder trigger, theme switcher. No git controls: the
+ * web UI is a viewer.
  *
  * Auto: flips the client-side auto-mode policy (useAutoMode acts on
  * state changes only while it is on) — pure viewing: auto-select the
@@ -70,6 +71,12 @@ const autoTitle = computed(() =>
     ? 'Auto mode is on: the newest change is selected and flashed, and the view follows changes appearing or drying up. Click to turn off (a)'
     : 'Turn on auto mode: auto-select the newest-changed file and auto-switch Changes/History (a)'
 );
+
+const syntaxTitle = computed(() =>
+  ui.diffSyntaxEnabled
+    ? 'Syntax highlighting is on for every diff. Click to show plain text'
+    : 'Turn on syntax highlighting for every diff'
+);
 </script>
 
 <template>
@@ -107,6 +114,17 @@ const autoTitle = computed(() =>
       @click="ui.toggleAutoMode()"
     >
       <span class="dot" aria-hidden="true"></span>{{ ui.autoModeEnabled ? 'auto on' : 'auto off' }}
+    </button>
+
+    <button
+      class="mode-toggle mono"
+      data-testid="syntax-toggle"
+      :class="{ on: ui.diffSyntaxEnabled }"
+      :aria-pressed="ui.diffSyntaxEnabled"
+      :title="syntaxTitle"
+      @click="ui.toggleDiffSyntax()"
+    >
+      <span class="dot" aria-hidden="true"></span>{{ ui.diffSyntaxEnabled ? 'syntax on' : 'syntax off' }}
     </button>
 
     <button

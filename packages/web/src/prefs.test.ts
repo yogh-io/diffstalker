@@ -18,6 +18,7 @@ describe('loadPrefs', () => {
       activeView: 'changes',
       recentRepos: [],
       autoMode: false,
+      diffSyntax: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -33,6 +34,7 @@ describe('loadPrefs', () => {
       activeView: 'changes',
       recentRepos: [],
       autoMode: false,
+      diffSyntax: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -48,6 +50,7 @@ describe('loadPrefs', () => {
       activeView: 'changes',
       recentRepos: [],
       autoMode: false,
+      diffSyntax: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -70,6 +73,7 @@ describe('loadPrefs', () => {
       activeView: 'history',
       recentRepos: ['/a', '/b'],
       autoMode: false,
+      diffSyntax: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -106,6 +110,14 @@ describe('loadPrefs', () => {
     expect(loadPrefs().autoMode).toBe(false);
   });
 
+  test('diffSyntax: persists a stored boolean, drops anything else', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ diffSyntax: true }));
+    expect(loadPrefs().diffSyntax).toBe(true);
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ diffSyntax: 'on' }));
+    expect(loadPrefs().diffSyntax).toBe(false);
+  });
+
   test('degrades to defaults when localStorage throws (private mode / quota)', () => {
     vi.stubGlobal('localStorage', {
       getItem(): string | null {
@@ -121,6 +133,7 @@ describe('loadPrefs', () => {
       activeView: 'changes',
       recentRepos: [],
       autoMode: false,
+      diffSyntax: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -141,6 +154,7 @@ describe('savePrefs', () => {
       activeView: 'explorer',
       recentRepos: [],
       autoMode: false,
+      diffSyntax: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,

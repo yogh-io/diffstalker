@@ -15,6 +15,7 @@ import { createPinia } from 'pinia';
 import App from './App.vue';
 import { installThemeStyles } from './theme/css';
 import './style.css';
+import './theme/hljs.css';
 
 async function bootstrap(): Promise<void> {
   installThemeStyles();

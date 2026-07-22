@@ -715,6 +715,15 @@ git operations.
   without a content change never causes a jump. Tracking runs even while the
   toggle is off, so turning it on never acts on a stale change, and the first
   snapshot of a repo only seeds.
+- **Diff syntax highlighting** (header toggle, persisted): one app-wide switch
+  between plain diff text (the default) and highlight.js-tokenized content,
+  applied by every diff surface (Changes, Journal, History, Compare) through
+  the single shared `DiffView`. Language is detected per file, so a multi-file
+  diff highlights each file in its own language; unknown languages and
+  over-long lines fall back to plain text. The token colors are theme
+  variables (the same mapping the Explorer file viewer uses), and stay
+  readable over the add/del row tints. Word-level highlighting composes on
+  top — a changed word keeps its background under the syntax colors.
 
 ### Portrait layout (vertical monitors)
 
