@@ -6,11 +6,13 @@
  * - onMounted: daemonStore.connect() (daemon-scope SSE);
  * - activation flows through useRepoOpen (switcher, open-by-path, and
  *   the auto-activation below) — repoStore.open() is the sole opener;
- * - one-shot auto-activation: when the FIRST daemon repo list arrives
- *   (page load) with open repos and nothing active, activate the
- *   followed repo, else the first open one. Latched after that first
- *   list — a later repo-opened (say, the CLI opening a repo) must never
- *   hijack a user sitting at the empty state;
+ * - one-shot auto-activation: when the first daemon repo list AND the
+ *   follow state have both arrived (page load) with open repos and
+ *   nothing active, activate the first open repo — unless follow mode
+ *   has a target, which useFollowMode navigates to instead. Latched
+ *   after that first decision — a later repo-opened (say, the CLI
+ *   opening a repo) must never hijack a user sitting at the empty
+ *   state;
  * - the global keyboard layer (useGlobalKeys), follow-mode policy
  *   (useFollowMode) and auto-mode policy (useAutoMode) mount here, and
  *   the two overlays (fuzzy finder, hotkeys help) render at the shell
@@ -97,20 +99,66 @@ onUnmounted(() => {
   window.removeEventListener('pagehide', releaseOnPageHide);
 });
 
-// Warm daemon on page load: activate the followed repo, else the first.
-// One-shot — the latch disarms on the FIRST repo list, even an empty one,
-// so nothing auto-activates later (repo-opened SSE, post-close arrivals).
+// Warm daemon on page load: fall back to the first open repo — unless a
+// follow target exists with the toggle on, where useFollowMode owns the
+// navigation (it acts on the lastFollowChange seeded by loadFollow).
+// The repo list and the follow state load in parallel, so the decision
+// WAITS for daemon.follow: deciding on the bare repo list would race
+// loadFollow and activate repos[0] while the real target is in flight.
+// One-shot — the latch disarms on the first decided list, even an empty
+// one, so nothing auto-activates later (repo-opened SSE, post-close
+// arrivals).
+//
+// Backstop: if /follow never loads (a permanently failing GET while the
+// SSE stream stays up — the store retries but can exhaust them), waiting
+// on daemon.follow forever would strand the user on the empty state with
+// no manual escape. A bounded fallback opens repos[0] once the wait
+// exceeds FOLLOW_FALLBACK_MS.
+const FOLLOW_FALLBACK_MS = 3000;
 let autoActivateArmed = true;
+let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+function disarmAutoActivate(): void {
+  autoActivateArmed = false;
+  if (fallbackTimer !== null) {
+    clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+  }
+}
+
+function activateFirst(repos: typeof daemon.repos): void {
+  if (daemon.activeRepoId !== null || repos.length === 0) return;
+  void activate(repos[0]);
+}
+
 watch(
-  () => daemon.repos,
-  (repos) => {
+  [() => daemon.repos, () => daemon.follow],
+  ([repos, follow]) => {
     if (!autoActivateArmed) return;
-    autoActivateArmed = false;
-    if (daemon.activeRepoId !== null || repos.length === 0) return;
-    const followed = repos.find((r) => r.id === daemon.follow?.followedRepoId);
-    void activate(followed ?? repos[0]);
+    if (follow === null) {
+      // Follow still loading — normally wait, but arm the bounded
+      // fallback so a stuck /follow cannot deadlock the empty state.
+      if (fallbackTimer === null && repos.length > 0) {
+        fallbackTimer = setTimeout(() => {
+          fallbackTimer = null;
+          if (!autoActivateArmed) return;
+          disarmAutoActivate();
+          activateFirst(daemon.repos);
+        }, FOLLOW_FALLBACK_MS);
+      }
+      return;
+    }
+    disarmAutoActivate();
+    if (daemon.followEnabled && follow.followedRepoId !== null && follow.followedPath !== null) {
+      return; // useFollowMode navigates to the followed repo
+    }
+    activateFirst(repos);
   }
 );
+
+onUnmounted(() => {
+  if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+});
 </script>
 
 <template>

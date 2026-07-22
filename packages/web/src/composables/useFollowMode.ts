@@ -25,7 +25,9 @@
  * without waiting for the next hook write. The daemon broadcasts
  * repo-opened before follow-change on the same stream, so the followed
  * repo is normally already in daemon.repos; a miss re-pulls the list
- * once.
+ * once, and a repo still missing after that (a cold-load seeded target
+ * for a repo no longer open) is opened by path — the daemon normalizes
+ * any path to its worktree root.
  */
 
 import { nextTick, watch } from 'vue';
@@ -46,7 +48,7 @@ export function useFollowMode(): void {
   const daemon = useDaemonStore();
   const explorer = useExplorerStore();
   const ui = useUiStore();
-  const { activate } = useRepoOpen();
+  const { activate, openByPath } = useRepoOpen();
 
   async function findRepo(id: string): Promise<RepoSummary | undefined> {
     const known = daemon.repos.find((repo) => repo.id === id);
@@ -58,10 +60,18 @@ export function useFollowMode(): void {
   }
 
   async function onFollowChange(event: FollowChangeEvent): Promise<void> {
-    const target = await findRepo(event.repoId);
-    if (!target) return;
+    let target = await findRepo(event.repoId);
+    if (!target) {
+      // Still missing after a refresh: the followed repo is not open at
+      // all (a cold-load seeded target the daemon released). Open it by
+      // path through the one-POST flow; the daemon normalizes the path
+      // to the worktree root and openByPath tracks the result active.
+      if (!(await openByPath(event.path))) return;
+      target = daemon.repos.find((repo) => repo.id === daemon.activeRepoId);
+      if (!target) return;
+    }
 
-    if (daemon.activeRepoId !== event.repoId) {
+    if (daemon.activeRepoId !== target.id) {
       await activate({ id: target.id, path: target.path });
       // Let the explorer store's repo-switch reset flush before revealing.
       await nextTick();

@@ -183,9 +183,11 @@ describe('files column', () => {
   test('shows the clean-tree state when there are no changes', () => {
     const { wrapper } = mountView([]);
     expect(wrapper.find('[data-testid="clean-tree"]').text()).toContain(
-      'No changes — working tree clean'
+      'No changes in the staging area or untracked changes'
     );
+    // The message replaces the whole two-column layout.
     expect(wrapper.find('[data-testid="file-list"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="changes-diffs"]').exists()).toBe(false);
   });
 });
 

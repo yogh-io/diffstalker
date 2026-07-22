@@ -25,8 +25,35 @@ import type { FollowChangeEvent, FollowState, RepoRef, RepoSummary } from '@diff
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
+/**
+ * loadFollow resilience: the daemon always answers GET /follow when up
+ * (even --no-follow returns a FOLLOW_DISABLED state), so a transient
+ * failure clears on a bounded retry. These bound the retry so a
+ * genuinely-dead daemon does not loop forever.
+ */
+export const FOLLOW_LOAD_ATTEMPTS = 3;
+export const FOLLOW_RETRY_DELAY_MS = 300;
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** The follow-change form of a follow target, or null when unset. */
+function followTarget(state: FollowState): FollowChangeEvent | null {
+  if (state.followedRepoId === null || state.followedPath === null) return null;
+  return {
+    repoId: state.followedRepoId,
+    path: state.followedPath,
+    rawContent: state.followedPath,
+  };
+}
+
+function sameTarget(a: FollowChangeEvent, b: FollowChangeEvent | null): boolean {
+  return b !== null && a.repoId === b.repoId && a.path === b.path;
 }
 
 export const useDaemonStore = defineStore('daemon', () => {
@@ -41,6 +68,12 @@ export const useDaemonStore = defineStore('daemon', () => {
   const error = shallowRef<string | null>(null);
 
   let subscription: SseHandle | null = null;
+  // loadFollow guards: `loadingFollow` keeps repeated snapshots from
+  // stacking overlapping retry loops; `followLoadedOnce` marks the
+  // cold-load done so later loads (reconnects) may re-seed a changed
+  // target instead of the strict null-only cold-load behaviour.
+  let loadingFollow = false;
+  let followLoadedOnce = false;
 
   /** Keep known branches when the snapshot only carries {id, path}. */
   function mergeSnapshot(refs: RepoRef[]): void {
@@ -106,12 +139,75 @@ export const useDaemonStore = defineStore('daemon', () => {
     }
   }
 
-  /** Pull the follow state (GET /follow). */
+  /**
+   * Apply a freshly-pulled follow state and seed lastFollowChange.
+   *
+   * A target the daemon acquired BEFORE this page loaded never arrives
+   * as a follow-change event — only here. useFollowMode acts on
+   * lastFollowChange, so it must be seeded for cold-load navigation and
+   * the toggle-flipped-ON path.
+   *
+   * FIRST load (cold-load race): seed only when lastFollowChange is
+   * null. A live follow-change event may legitimately have set a NEWER
+   * target while this GET was in flight; the null-only guard must never
+   * overwrite it.
+   *
+   * LATER loads (SSE reconnect): the cold-load race is over. A
+   * follow-change broadcast into the dead stream is never re-sent on
+   * reconnect, so if the daemon's target genuinely CHANGED while we were
+   * disconnected the header (follow.value) and navigation
+   * (lastFollowChange) would diverge. Re-seed when the loaded target
+   * differs from the one we last knew; an unchanged target leaves any
+   * newer live event intact.
+   */
+  function applyFollow(state: FollowState): void {
+    const prevTarget = follow.value ? followTarget(follow.value) : null;
+    follow.value = state;
+    const target = followTarget(state);
+
+    if (!followLoadedOnce) {
+      followLoadedOnce = true;
+      if (lastFollowChange.value === null && target !== null) {
+        lastFollowChange.value = target;
+      }
+      return;
+    }
+
+    if (target !== null && !sameTarget(target, prevTarget)) {
+      lastFollowChange.value = target;
+    }
+  }
+
+  /**
+   * Pull the follow state (GET /follow), resiliently. The daemon always
+   * answers /follow when up, so a transient failure while the SSE stream
+   * stays alive is retried a bounded number of times — otherwise a
+   * single failed GET would leave follow.value null forever (the SSE
+   * snapshot that drives loadFollow only re-fires on a stream reconnect,
+   * which is fine here), stranding the UI on the empty state. Overlapping
+   * calls (repeated snapshots) do NOT stack: an in-flight load owns the
+   * retry window and later calls return early.
+   */
   async function loadFollow(): Promise<void> {
+    if (loadingFollow) return;
+    loadingFollow = true;
     try {
-      follow.value = await client.getFollow();
-    } catch {
-      connection.value = 'disconnected';
+      for (let attempt = 1; attempt <= FOLLOW_LOAD_ATTEMPTS; attempt++) {
+        try {
+          applyFollow(await client.getFollow());
+          return;
+        } catch {
+          if (attempt < FOLLOW_LOAD_ATTEMPTS) {
+            await delay(FOLLOW_RETRY_DELAY_MS);
+            continue;
+          }
+          // Bounded retries exhausted: surface the status, leave follow
+          // as-is (the App-level fallback escapes the empty state).
+          connection.value = 'disconnected';
+        }
+      }
+    } finally {
+      loadingFollow = false;
     }
   }
 

@@ -4,8 +4,9 @@
  * dividers, seeded muting, the outdated one-line stub with click
  * re-expand, ×N chain expansion (the fold shown end to end; the fold's
  * own table tests live in utils/foldEntries.test.ts), keyed-by-seq
- * stability across a fold move, the "journal restarted" divider, and
- * the tail-pin follow-vs-pill behavior.
+ * stability across a fold move, the "journal restarted" divider, the
+ * newest-first display order, and the head-pin follow-vs-pill behavior
+ * (with the anchor-compensated prepend and the enter-reveal policy).
  *
  * The repo store runs for real; the journal slice is set directly on
  * it (repoId stays null, so store actions never fetch) — appends
@@ -187,6 +188,18 @@ describe('rendering', () => {
     expect(wrapper.get('[data-testid="journal-entry"]').text()).toContain('line 9');
   });
 
+  test('the newest entry renders FIRST — above older ones', async () => {
+    const { wrapper, repo } = mountView([hunk(1), hunk(2, { path: 'src/b.ts' })]);
+    const seqOrder = () =>
+      wrapper.findAll('[data-testid="journal-entry"]').map((e) => e.attributes('data-seq'));
+    expect(seqOrder()).toEqual(['2', '1']);
+
+    // A genuine append lands on top.
+    setEntries(repo, [...repo.journalEntries, hunk(3, { path: 'src/c.ts' })]);
+    await flushPromises();
+    expect(seqOrder()).toEqual(['3', '2', '1']);
+  });
+
   test('boundary entries render as dividers with label and resolve count', () => {
     const { wrapper } = mountView([hunk(1), hunk(2), boundary(3, { resolves: [1, 2] })]);
     expect(wrapper.get('[data-testid="journal-boundary"]').text()).toBe(
@@ -194,7 +207,7 @@ describe('rendering', () => {
     );
   });
 
-  test('a journal reset renders the restarted divider above the refetched log', async () => {
+  test('a journal reset renders the restarted divider at the old end of the log', async () => {
     const { wrapper, repo } = mountView([hunk(1)]);
     expect(wrapper.find('[data-testid="journal-restarted"]').exists()).toBe(false);
 
@@ -214,7 +227,8 @@ describe('rendering', () => {
 
   test('a superseded entry collapses to an outdated stub; click re-expands the stale snapshot', async () => {
     // Split children (siblings 2) supersede without folding — the parent
-    // stays its own visible row and flips to outdated.
+    // stays its own visible row and flips to outdated. Newest-first, so
+    // the stale parent (seq 1) renders LAST.
     const { wrapper } = mountView([
       hunk(1),
       hunk(2, { supersedes: [1], siblings: 2 }),
@@ -222,7 +236,7 @@ describe('rendering', () => {
     ]);
     const entries = wrapper.findAll('[data-testid="journal-entry"]');
     expect(entries).toHaveLength(3);
-    const stale = entries[0];
+    const stale = entries[2];
     expect(stale.classes()).toContain('outdated');
     expect(stale.get('[data-testid="outdated-badge"]').text()).toMatch(/^outdated \d{2}:\d{2}$/);
     expect(stale.find('.clamp').classes()).toContain('closed');
@@ -259,15 +273,16 @@ describe('rendering', () => {
   test('keys are the first member seq and survive a fold move (append-only, never reorder)', async () => {
     const { wrapper, repo } = mountView([hunk(1), hunk(2, { path: 'src/b.ts' })]);
     let seqs = wrapper.findAll('[data-testid="journal-entry"]').map((e) => e.attributes('data-seq'));
-    expect(seqs).toEqual(['1', '2']);
+    expect(seqs).toEqual(['2', '1']); // newest-first
 
     // Fold: seq 3 supersedes seq 1 — group 1 keeps its key but moves to
-    // the bottom (a group renders at its LATEST entry's position).
+    // the newest slot, the display top (a group renders at its LATEST
+    // entry's position).
     setEntries(repo, [...repo.journalEntries, hunk(3, { supersedes: [1] })]);
     await flushPromises();
     seqs = wrapper.findAll('[data-testid="journal-entry"]').map((e) => e.attributes('data-seq'));
-    expect(seqs).toEqual(['2', '1']);
-    const moved = wrapper.findAll('[data-testid="journal-entry"]')[1];
+    expect(seqs).toEqual(['1', '2']);
+    const moved = wrapper.findAll('[data-testid="journal-entry"]')[0];
     expect(moved.text()).toContain('edit-3');
   });
 
@@ -313,7 +328,8 @@ describe('epoch reset', () => {
       hunk(2, { supersedes: [1], siblings: 2 }),
       hunk(3, { supersedes: [1], siblings: 2 }),
     ]);
-    const stale = wrapper.findAll('[data-testid="journal-entry"]')[0];
+    // Newest-first: the stale parent (seq 1) renders last.
+    const stale = wrapper.findAll('[data-testid="journal-entry"]')[2];
     await stale.get('.entry-header').trigger('click');
     expect(stale.find('.clamp').classes()).not.toContain('closed');
 
@@ -322,7 +338,7 @@ describe('epoch reset', () => {
     repo.journalEpoch = 'epoch-2';
     await flushPromises();
     expect(
-      wrapper.findAll('[data-testid="journal-entry"]')[0].find('.clamp').classes()
+      wrapper.findAll('[data-testid="journal-entry"]')[2].find('.clamp').classes()
     ).toContain('closed');
   });
 
@@ -347,7 +363,7 @@ describe('epoch reset', () => {
       hunk(2, { supersedes: [1], siblings: 2 }),
       hunk(3, { supersedes: [1], siblings: 2 }),
     ]);
-    const stale = wrapper.findAll('[data-testid="journal-entry"]')[0];
+    const stale = wrapper.findAll('[data-testid="journal-entry"]')[2];
     await stale.get('.entry-header').trigger('click');
 
     repo.journalEpoch = 'epoch-1'; // the lazy load landing
@@ -356,7 +372,7 @@ describe('epoch reset', () => {
   });
 });
 
-describe('tail-pin', () => {
+describe('head-pin', () => {
   /** Give the happy-dom scroller real-looking scroll metrics. */
   function mockScroller(el: HTMLElement, over: { scrollTop: number }): void {
     Object.defineProperties(el, {
@@ -366,34 +382,83 @@ describe('tail-pin', () => {
     });
   }
 
-  test('pinned within 40px of the bottom: appends auto-follow, no pill', async () => {
+  test('pinned within 40px of the top: appends keep the view at the top, no pill', async () => {
     const { wrapper, repo } = mountView([hunk(1)]);
     const scroller = wrapper.get('[data-testid="journal-scroll"]').element as HTMLElement;
-    mockScroller(scroller, { scrollTop: 780 }); // 1000 - 780 - 200 = 20 <= 40
+    mockScroller(scroller, { scrollTop: 20 }); // 20 <= 40
     scroller.dispatchEvent(new Event('scroll'));
 
     setEntries(repo, [...repo.journalEntries, hunk(2, { path: 'src/b.ts' })]);
     await flushPromises();
     expect(wrapper.find('[data-testid="new-pill"]').exists()).toBe(false);
-    expect(scroller.scrollTop).toBe(1000); // followed to the end
+    expect(scroller.scrollTop).toBe(0); // followed back to the newest, on top
   });
 
-  test('scrolled up: appends count into the pill; clicking jumps to the end', async () => {
+  test('scrolled down: appends count into the pill; clicking jumps to the top', async () => {
     const { wrapper, repo } = mountView([hunk(1)]);
-    await flushPromises(); // let the mount-time scroll-to-end settle first
+    await flushPromises(); // let the mount-time scroll-to-top settle first
     const scroller = wrapper.get('[data-testid="journal-scroll"]').element as HTMLElement;
-    mockScroller(scroller, { scrollTop: 100 }); // 700px from the bottom
+    mockScroller(scroller, { scrollTop: 100 }); // reading older entries
     scroller.dispatchEvent(new Event('scroll'));
 
     setEntries(repo, [...repo.journalEntries, hunk(2, { path: 'src/b.ts' }), hunk(3)]);
     await flushPromises();
     const pill = wrapper.get('[data-testid="new-pill"]');
-    expect(pill.text()).toBe('2 new ↓');
+    expect(pill.text()).toBe('2 new ↑');
     expect(scroller.scrollTop).toBe(100); // nothing yanked the viewport
 
     await pill.trigger('click');
-    expect(scroller.scrollTop).toBe(1000);
+    expect(scroller.scrollTop).toBe(0);
     expect(wrapper.find('[data-testid="new-pill"]').exists()).toBe(false);
+  });
+
+  test('an append while scrolled down is compensated: the survivor keeps its viewport position', async () => {
+    const { wrapper, repo } = mountView([hunk(1)]);
+    await flushPromises();
+    const scroller = wrapper.get('[data-testid="journal-scroll"]').element as HTMLElement;
+    mockScroller(scroller, { scrollTop: 100 });
+    scroller.dispatchEvent(new Event('scroll'));
+
+    // Stub the survivor's geometry: 100px from the viewport top before
+    // the append, 160px after — the entering row prepended 60px above
+    // it. The stub keys off the DOM itself (entry count), so the
+    // pre-flush prepare sees 100 and the post-flush restore sees 160.
+    const survivor = wrapper.get('[data-testid="journal-entry"]').element as HTMLElement;
+    survivor.getBoundingClientRect = () => {
+      const top = document.querySelectorAll('[data-testid="journal-entry"]').length > 1 ? 160 : 100;
+      return { top, bottom: top + 40 } as DOMRect;
+    };
+
+    setEntries(repo, [...repo.journalEntries, hunk(2, { path: 'src/b.ts' })]);
+    await flushPromises();
+    // The sandwich moved scrollTop by exactly the entering height, so
+    // the survivor did not move on screen.
+    expect(scroller.scrollTop).toBe(160);
+  });
+
+  test('a pinned append animates open: the entering row carries the enter class', async () => {
+    const { wrapper, repo } = mountView([hunk(1)]);
+    await flushPromises(); // mounted at the top — pinned
+
+    setEntries(repo, [...repo.journalEntries, hunk(2, { path: 'src/b.ts' })]);
+    await flushPromises();
+    const reveals = wrapper.findAll('.reveal');
+    expect(reveals[0].classes()).toContain('enter'); // the newest, on top
+    expect(reveals[1].classes()).not.toContain('enter'); // pre-existing rows never replay
+  });
+
+  test('an append while scrolled down snaps in — no enter animation to fight the anchor', async () => {
+    const { wrapper, repo } = mountView([hunk(1)]);
+    await flushPromises();
+    const scroller = wrapper.get('[data-testid="journal-scroll"]').element as HTMLElement;
+    mockScroller(scroller, { scrollTop: 100 }); // unpinned
+    scroller.dispatchEvent(new Event('scroll'));
+
+    setEntries(repo, [...repo.journalEntries, hunk(2, { path: 'src/b.ts' })]);
+    await flushPromises();
+    for (const reveal of wrapper.findAll('.reveal')) {
+      expect(reveal.classes()).not.toContain('enter');
+    }
   });
 
   test('the pill counts displayed rows, not folded revisions', async () => {
@@ -413,18 +478,18 @@ describe('tail-pin', () => {
       hunk(5, { path: 'src/b.ts', supersedes: [4] }),
     ]);
     await flushPromises();
-    expect(wrapper.get('[data-testid="new-pill"]').text()).toBe('1 new ↓');
+    expect(wrapper.get('[data-testid="new-pill"]').text()).toBe('1 new ↑');
 
     // The group growing across a LATER batch still counts once — the
     // count is recomputed against the frozen marker, never accumulated.
     setEntries(repo, [...repo.journalEntries, hunk(6, { path: 'src/b.ts', supersedes: [5] })]);
     await flushPromises();
-    expect(wrapper.get('[data-testid="new-pill"]').text()).toBe('1 new ↓');
+    expect(wrapper.get('[data-testid="new-pill"]').text()).toBe('1 new ↑');
   });
 
-  test('a journal reset (seq regression) resyncs the tail marker instead of muting it', async () => {
+  test('a journal reset (seq regression) resyncs the seen marker instead of muting it', async () => {
     const { wrapper, repo } = mountView([hunk(5), hunk(6)]);
-    await flushPromises(); // let the mount-time scroll-to-end settle first
+    await flushPromises(); // let the mount-time scroll-to-top settle first
     const scroller = wrapper.get('[data-testid="journal-scroll"]').element as HTMLElement;
     mockScroller(scroller, { scrollTop: 100 }); // unpinned
     scroller.dispatchEvent(new Event('scroll'));
@@ -439,6 +504,6 @@ describe('tail-pin', () => {
     // a stale marker of 6 would have muted seq 2 forever).
     setEntries(repo, [...repo.journalEntries, hunk(2, { path: 'src/fresh.ts' })]);
     await flushPromises();
-    expect(wrapper.get('[data-testid="new-pill"]').text()).toBe('1 new ↓');
+    expect(wrapper.get('[data-testid="new-pill"]').text()).toBe('1 new ↑');
   });
 });

@@ -7,8 +7,10 @@
  * serialized so every superseded/previous ref is released and
  * repo.repoId stays in sync with daemon.activeRepoId; with
  * followEnabled OFF nothing moves, and flipping it ON acts on the
- * recorded latest event. Real stores against the Slice-3 fakes — no
- * daemon.
+ * recorded latest event. A target seeded by loadFollow (cold load, no
+ * live event yet) drives the same machinery, and a followed repo
+ * missing from the open list is opened by path. Real stores against
+ * the Slice-3 fakes — no daemon.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -231,6 +233,45 @@ describe('follow enabled', () => {
     expect(fake.callsTo('/repos').some((call) => call.method === 'GET')).toBe(true);
     expect(repo.repoId).toBe('r2');
   });
+
+  test('a followed repo missing from the open list entirely is opened by path', async () => {
+    const { daemon, repo } = await setup();
+    // r2 is not open anywhere: not client-side, not in the daemon list.
+    daemon.repos = [REPO_ONE];
+    onRequest = (call) => {
+      if (call.method === 'GET' && call.url === '/repos') return { body: [REPO_ONE] };
+      return undefined;
+    };
+
+    await emitFollowChange(daemon, '/other');
+
+    // One refresh missed it, then the open-by-path fallback POSTed it.
+    expect(fake.callsTo('/repos').some((call) => call.method === 'GET')).toBe(true);
+    expect(repoPosts()).toEqual(['/other']);
+    expect(repo.repoId).toBe('r2');
+    expect(daemon.activeRepoId).toBe('r2');
+  });
+
+  test('a target seeded by loadFollow (cold load) activates the followed repo', async () => {
+    const { daemon, repo } = await setup();
+    daemon.activeRepoId = null; // fresh page: nothing active yet
+    repo.repoId = null;
+    repo.repoPath = null;
+    onRequest = (call) =>
+      call.url === '/follow'
+        ? {
+            body: { targetFile: '/t', enabled: true, followedRepoId: 'r2', followedPath: '/other' },
+          }
+        : undefined;
+
+    // The daemon's target predates the page: no live event, only GET /follow.
+    await daemon.loadFollow();
+    await nextTick();
+    await flushPromises();
+
+    expect(repo.repoId).toBe('r2');
+    expect(daemon.activeRepoId).toBe('r2');
+  });
 });
 
 describe('follow disabled', () => {
@@ -253,6 +294,30 @@ describe('follow disabled', () => {
 
     await emitFollowChange(daemon, '/other');
     expect(repo.repoId).toBe('r1'); // recorded, not acted on
+
+    daemon.followEnabled = true;
+    await nextTick();
+    await flushPromises();
+
+    expect(repo.repoId).toBe('r2');
+    expect(daemon.activeRepoId).toBe('r2');
+  });
+
+  test('flipping the toggle ON acts on a target seeded by loadFollow', async () => {
+    const { daemon, repo } = await setup();
+    daemon.followEnabled = false;
+    onRequest = (call) =>
+      call.url === '/follow'
+        ? {
+            body: { targetFile: '/t', enabled: true, followedRepoId: 'r2', followedPath: '/other' },
+          }
+        : undefined;
+
+    // Cold load with the toggle off: the target is seeded, not acted on.
+    await daemon.loadFollow();
+    await nextTick();
+    await flushPromises();
+    expect(repo.repoId).toBe('r1');
 
     daemon.followEnabled = true;
     await nextTick();

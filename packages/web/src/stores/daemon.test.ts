@@ -6,7 +6,11 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
-import { useDaemonStore } from './daemon';
+import {
+  useDaemonStore,
+  FOLLOW_LOAD_ATTEMPTS,
+  FOLLOW_RETRY_DELAY_MS,
+} from './daemon';
 import { makeFakeFetch, FakeEventSource } from '../testing/fakes';
 import type { FakeFetch, FetchCall, FakeResponse } from '../testing/fakes';
 
@@ -67,6 +71,125 @@ describe('useDaemonStore', () => {
     // refreshRepos filled the branch; loadFollow landed.
     expect(store.repos).toEqual([{ id: 'r1', path: '/repo', branch: 'main' }]);
     expect(store.follow).toEqual(FOLLOW_STATE);
+    // No followed target yet — nothing to seed.
+    expect(store.lastFollowChange).toBeNull();
+  });
+
+  test('loadFollow seeds lastFollowChange from a pre-existing follow target', async () => {
+    onRequest = (call) =>
+      call.url === '/follow'
+        ? { body: { ...FOLLOW_STATE, followedRepoId: 'r2', followedPath: '/other' } }
+        : undefined;
+    const store = useDaemonStore();
+
+    await store.loadFollow();
+
+    // The target was set before this page loaded (no live event), so
+    // the synthesized event lets useFollowMode act on it.
+    expect(store.follow).toMatchObject({ followedRepoId: 'r2', followedPath: '/other' });
+    expect(store.lastFollowChange).toEqual({
+      repoId: 'r2',
+      path: '/other',
+      rawContent: '/other',
+    });
+  });
+
+  test('loadFollow never overwrites a real live follow-change event', async () => {
+    onRequest = (call) =>
+      call.url === '/follow'
+        ? { body: { ...FOLLOW_STATE, followedRepoId: 'r2', followedPath: '/other' } }
+        : undefined;
+    const store = useDaemonStore();
+    const live = { repoId: 'r9', path: '/live/src/a.ts', rawContent: '/live/src/a.ts' };
+    store.lastFollowChange = live;
+
+    await store.loadFollow();
+
+    expect(store.lastFollowChange).toEqual(live);
+  });
+
+  test('loadFollow retries a transient /follow failure and still populates follow', async () => {
+    vi.useFakeTimers();
+    let followCalls = 0;
+    onRequest = (call) => {
+      if (call.url !== '/follow') return undefined;
+      followCalls += 1;
+      // Fail the first two attempts, then answer.
+      return followCalls < FOLLOW_LOAD_ATTEMPTS
+        ? { status: 503, body: { error: 'flaky' } }
+        : { body: FOLLOW_STATE };
+    };
+    const store = useDaemonStore();
+
+    const load = store.loadFollow();
+    await vi.advanceTimersByTimeAsync(FOLLOW_RETRY_DELAY_MS * FOLLOW_LOAD_ATTEMPTS);
+    await load;
+
+    // Bounded retries closed the transient gap — no permanent null.
+    expect(followCalls).toBe(FOLLOW_LOAD_ATTEMPTS);
+    expect(store.follow).toEqual(FOLLOW_STATE);
+    vi.useRealTimers();
+  });
+
+  test('overlapping loadFollow calls do not stack — one in-flight load owns the retry', async () => {
+    vi.useFakeTimers();
+    let followCalls = 0;
+    onRequest = (call) => {
+      if (call.url !== '/follow') return undefined;
+      followCalls += 1;
+      return { status: 503, body: { error: 'follow down' } };
+    };
+    const store = useDaemonStore();
+
+    // Three overlapping snapshots would stack three retry loops without
+    // the guard; only the first runs.
+    const loads = Promise.all([store.loadFollow(), store.loadFollow(), store.loadFollow()]);
+    await vi.advanceTimersByTimeAsync(FOLLOW_RETRY_DELAY_MS * FOLLOW_LOAD_ATTEMPTS);
+    await loads;
+
+    // Exactly one retry loop ran: FOLLOW_LOAD_ATTEMPTS GETs, not 3× that.
+    expect(followCalls).toBe(FOLLOW_LOAD_ATTEMPTS);
+    vi.useRealTimers();
+  });
+
+  test('a reconnect re-seeds lastFollowChange when the follow target changed', async () => {
+    let target = { followedRepoId: 'r2', followedPath: '/other' };
+    onRequest = (call) =>
+      call.url === '/follow' ? { body: { ...FOLLOW_STATE, ...target } } : undefined;
+    const store = useDaemonStore();
+
+    // First (cold) load seeds the initial target.
+    await store.loadFollow();
+    expect(store.lastFollowChange).toEqual({ repoId: 'r2', path: '/other', rawContent: '/other' });
+
+    // The daemon moved to a new target while the stream was dead; the
+    // reconnect snapshot re-pulls /follow.
+    target = { followedRepoId: 'r3', followedPath: '/third' };
+    await store.loadFollow();
+
+    expect(store.follow).toMatchObject({ followedRepoId: 'r3', followedPath: '/third' });
+    expect(store.lastFollowChange).toEqual({ repoId: 'r3', path: '/third', rawContent: '/third' });
+  });
+
+  test('a reconnect with an unchanged target leaves a newer live event untouched', async () => {
+    onRequest = (call) =>
+      call.url === '/follow'
+        ? { body: { ...FOLLOW_STATE, followedRepoId: 'r2', followedPath: '/other' } }
+        : undefined;
+    const store = useDaemonStore();
+
+    // Cold load: follow.value and lastFollowChange both at r2/other.
+    await store.loadFollow();
+
+    // A newer live event advanced lastFollowChange past follow.value.
+    const live = { repoId: 'r9', path: '/live', rawContent: '/live/src/a.ts' };
+    store.lastFollowChange = live;
+
+    // Reconnect: /follow still reports the OLD r2/other (target unchanged
+    // since the cold load), so the newer live event must survive.
+    await store.loadFollow();
+
+    expect(store.lastFollowChange).toEqual(live);
   });
 
   test('connect is idempotent: one EventSource across repeated calls', () => {

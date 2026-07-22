@@ -28,8 +28,11 @@ export function buildSupersededAt(entries: readonly JournalEntry[]): Map<number,
 <script setup lang="ts">
 /**
  * Journal view: the chronological, append-only, per-hunk log of diff
- * blurbs — ONE scroller, oldest at the top, growing downward, keyed by
- * seq (append-only, so keys never reorder).
+ * blurbs — ONE scroller, NEWEST at the top, growing downward into the
+ * past, keyed by seq (append-only, so keys never reorder). The store,
+ * foldEntries, and every piece of seq bookkeeping stay oldest-first
+ * (tailSeq still means highest seq); displayRows reverses for render
+ * only, so the fold/supersede logic never learns about the flip.
  *
  * Rows come from foldEntries() over repo.journalEntries (the phase-4
  * store slice). Each hunk group renders a compact header (relative
@@ -56,16 +59,29 @@ export function buildSupersededAt(entries: readonly JournalEntry[]): Map<number,
  * RO -> scroll -> layout feedback loop (the historic freeze) is
  * unreachable by construction.
  *
- * Tail-pin: within ~40px of the bottom the view auto-follows appends;
- * further up, an "N new ↓" pill counts DISPLAYED rows (post-fold) whose
- * content the user has not seen — a burst of autosave supersessions
- * that folds into one row is "1 new", not N — and jumps to the end.
+ * Head-pin: within ~40px of the top the view follows appends — a fresh
+ * entry PREPENDS above and the view scrolls back to 0 so it is in view.
+ * Further down, an "N new ↑" pill counts DISPLAYED rows (post-fold)
+ * whose content the user has not seen — a burst of autosave
+ * supersessions that folds into one row is "1 new", not N — and jumps
+ * back to the top. An append while scrolled down inserts ABOVE the
+ * viewport; the same anchor sandwich that covers collapses compensates
+ * the insert (entering rows ride changedEls), so nothing the user is
+ * reading moves.
+ *
+ * Enter reveal: a genuine append entering while head-pinned animates
+ * open (grid-template-rows 0fr → 1fr, ~200ms, off under
+ * prefers-reduced-motion) — a pure-CSS keyframe on mount, no
+ * ResizeObserver, no JS height measurement. When the user is scrolled
+ * down the entering row SNAPS in at full height instead and the anchor
+ * compensates it in one shot — a continuously-growing row would outrun
+ * the one-shot pre/post measurement. The collapse policy, mirrored.
  *
  * Epoch reset: when the store's journalEpoch changes (daemon restart,
  * prune reset, repo switch), all session-local view state — expanded
  * stale stubs, opened chains, dismissed markers, huge-blurb expansions,
- * the tail-pin marker — is cleared; keys are seqs from the OLD log and
- * would otherwise leak onto unrelated new rows.
+ * enter-reveal keys, the head-pin marker — is cleared; keys are seqs
+ * from the OLD log and would otherwise leak onto unrelated new rows.
  */
 
 import {
@@ -85,8 +101,8 @@ import { foldEntries, type JournalHunkRow, type JournalRow } from '../utils/fold
 import { useScrollAnchor, type AnchorCandidate } from '../composables/useScrollAnchor';
 import DiffView from '../components/DiffView.vue';
 
-/** Pinned-to-tail band: this close to the bottom, appends auto-follow. */
-const TAIL_PIN_PX = 40;
+/** Pinned-to-head band: this close to the top, appends auto-follow. */
+const TOP_PIN_PX = 40;
 
 const repo = useRepoStore();
 
@@ -94,6 +110,13 @@ const entries = computed<readonly JournalEntry[]>(() => repo.journalEntries);
 
 const rows = computed(() => foldEntries(entries.value));
 const supersededAt = computed(() => buildSupersededAt(entries.value));
+
+/**
+ * The template renders newest-first; `rows` stays oldest-first (seq
+ * order — everything that reasons about "the tail = newest = last"
+ * keeps doing so). Only the VISUAL order flips here.
+ */
+const displayRows = computed(() => [...rows.value].reverse());
 
 // --- Outdated stubs and fold-chain expansion (session-local) ---
 
@@ -272,9 +295,21 @@ let committedRows: JournalRow[] = rows.value;
 /** Rows snapping (not animating) their collapse in the current commit. */
 const snapKeys = reactive(new Set<number>());
 
+/**
+ * Rows that entered while head-pinned — they animate open on mount
+ * (the .reveal enter keyframe). Never pruned: keys are append-only
+ * seqs and a finished one-shot animation does not replay; epoch reset
+ * clears the set (a new log restarts seqs, which would collide).
+ */
+const enterKeys = reactive(new Set<number>());
+
 function anchorCandidates(): AnchorCandidate[] {
   const out: AnchorCandidate[] = [];
-  for (const row of committedRows) {
+  // The anchor binary-searches candidates by rect top, so they must be
+  // in DOCUMENT order — the DOM renders newest-first, so walk the
+  // (oldest-first) committed rows in reverse.
+  for (let i = committedRows.length - 1; i >= 0; i--) {
+    const row = committedRows[i];
     const el = entryEls.get(row.key);
     if (el) {
       const key = String(row.key);
@@ -331,16 +366,20 @@ function rowChangeEls(nextRows: JournalRow[], prevRows: JournalRow[]): (HTMLElem
   const prevByKey = new Map(prevRows.map((row) => [row.key, row]));
   for (const row of nextRows) {
     const prev = prevByKey.get(row.key);
-    if (!prev) {
-      els.push(null); // entering — appends land at the bottom
-    } else if (
-      prev.type === 'hunk-group' &&
-      row.type === 'hunk-group' &&
-      prev.tip.seq !== row.tip.seq
-    ) {
-      // A fold absorbed the tip: the group moves to the bottom.
-      els.push(entryEls.get(row.key) ?? null);
-    }
+    // Two cases both PREPEND at the display top (newest-first) and both
+    // push null rather than an old element:
+    //   - entering: a fresh append, no old element to measure;
+    //   - fold-move: a fold absorbed the tip, so the group relocates to
+    //     the newest slot (the top).
+    // Null is deliberate over the old rect: the row reinserts ABOVE the
+    // viewport, so measuring its old rect would let allChangesBelow()
+    // skip compensation when the old position sat entirely below the
+    // viewport — an uncompensated downward jump. Null forces the anchor
+    // to compensate the net shift, correct in both directions (an
+    // above-viewport move nets ~0).
+    const foldMoved =
+      prev?.type === 'hunk-group' && row.type === 'hunk-group' && prev.tip.seq !== row.tip.seq;
+    if (!prev || foldMoved) els.push(null);
   }
   const nextKeys = new Set(nextRows.map((row) => row.key));
   for (const row of prevRows) {
@@ -349,12 +388,34 @@ function rowChangeEls(nextRows: JournalRow[], prevRows: JournalRow[]): (HTMLElem
   return els;
 }
 
+/**
+ * A genuine append (a new highest key) entering while head-pinned
+ * animates open; every other enter — initial load, an epoch refetch, an
+ * append while the user is scrolled down reading older entries — snaps
+ * in at full height so the anchor sandwich can compensate it in one
+ * shot. Animating an above-viewport insert would grow the row across
+ * many frames against a single pre/post measurement.
+ */
+function markEnteringRows(nextRows: JournalRow[], prevRows: JournalRow[]): void {
+  if (!pinned.value || prevRows.length === 0) return;
+  const prevKeys = new Set(prevRows.map((row) => row.key));
+  let prevMax = 0;
+  for (const key of prevKeys) if (key > prevMax) prevMax = key;
+  for (const row of nextRows) {
+    if (row.type === 'hunk-group' && !prevKeys.has(row.key) && row.key > prevMax) {
+      enterKeys.add(row.key);
+    }
+  }
+}
+
 // Pre-flush: DOM still old. Classify each NEW collapse (snap vs
-// animate), then pick and measure the anchor.
+// animate) and each entering row (animate vs snap, same policy), then
+// pick and measure the anchor.
 watch(
   [rows, collapsedKeys],
   ([nextRows, nextCollapsed], [prevRows, prevCollapsed]) => {
     snapKeys.clear();
+    markEnteringRows(nextRows, prevRows);
     const changedEls = [
       ...collapseChangeEls(nextCollapsed, prevCollapsed),
       ...rowChangeEls(nextRows, prevRows),
@@ -382,11 +443,11 @@ watch(
   { flush: 'post' }
 );
 
-// --- Tail-pin ---
+// --- Head-pin ---
 
 const pinned = ref(true);
 const newCount = ref(0);
-/** Highest seq the user has seen at the tail (frozen while scrolled up). */
+/** Highest seq the user has seen at the head (frozen while scrolled down). */
 let lastSeenSeq = tailSeq(entries.value);
 
 function tailSeq(list: readonly JournalEntry[]): number {
@@ -412,7 +473,7 @@ function countNewRows(list: readonly JournalRow[], seenSeq: number): number {
 function onScroll(): void {
   const el = scrollerEl.value;
   if (!el) return;
-  const near = el.scrollHeight - el.scrollTop - el.clientHeight <= TAIL_PIN_PX;
+  const near = el.scrollTop <= TOP_PIN_PX;
   pinned.value = near;
   if (near) {
     lastSeenSeq = tailSeq(entries.value);
@@ -420,10 +481,10 @@ function onScroll(): void {
   }
 }
 
-function scrollToEnd(): void {
+function scrollToStart(): void {
   const el = scrollerEl.value;
   if (!el) return;
-  el.scrollTop = el.scrollHeight;
+  el.scrollTop = 0;
   pinned.value = true;
   lastSeenSeq = tailSeq(entries.value);
   newCount.value = 0;
@@ -440,13 +501,15 @@ watch(
     if (tail < lastSeenSeq) {
       lastSeenSeq = tail;
       newCount.value = 0;
-      if (pinned.value) scrollToEnd();
+      if (pinned.value) scrollToStart();
       return;
     }
     if (pinned.value) {
-      // Follow genuine appends only; a wholesale replace at the same
-      // tail must not yank the viewport.
-      if (tail > lastSeenSeq) scrollToEnd();
+      // Follow genuine appends only (they prepend above; scroll back
+      // to 0 so the freshest entry is in view — this runs AFTER the
+      // anchor's restore in the same flush, so it wins). A wholesale
+      // replace at the same tail must not yank the viewport.
+      if (tail > lastSeenSeq) scrollToStart();
       else lastSeenSeq = tail;
       return;
     }
@@ -470,12 +533,13 @@ watch(
     expandedChains.clear();
     dismissedMarkers.clear();
     expandedHuge.clear();
+    enterKeys.clear();
     // A stale mount-time load error must not linger over a fresh log.
     loadError.value = null;
     lastSeenSeq = tailSeq(entries.value);
     newCount.value = 0;
     pinned.value = true;
-    void nextTick(scrollToEnd);
+    void nextTick(scrollToStart);
   }
 );
 
@@ -501,8 +565,8 @@ onMounted(() => {
   ticker = setInterval(() => {
     now.value = Date.now();
   }, 30_000);
-  // Start reading at the newest entries (the bottom).
-  void nextTick(scrollToEnd);
+  // Start reading at the newest entries (the top).
+  void nextTick(scrollToStart);
 });
 
 onBeforeUnmount(() => {
@@ -541,17 +605,7 @@ onBeforeUnmount(() => {
         journal started {{ clock(mountedAt) }} — your edits will show up here
       </p>
 
-      <!-- Epoch mismatch / pruned gap on reconnect: the log was refetched
-           from scratch — say so instead of leaving a silent hole. -->
-      <div
-        v-if="repo.journalRestarted && rows.length > 0"
-        class="boundary mono"
-        data-testid="journal-restarted"
-      >
-        <span class="boundary-label">journal restarted — earlier entries were lost</span>
-      </div>
-
-      <template v-for="row in rows" :key="row.key">
+      <template v-for="row in displayRows" :key="row.key">
         <div
           v-if="row.type === 'boundary'"
           :ref="(el) => setEntryEl(row.key, el)"
@@ -561,112 +615,126 @@ onBeforeUnmount(() => {
           <span class="boundary-label">{{ boundaryText(row.entry) }}</span>
         </div>
 
-        <article
-          v-else
-          :ref="(el) => setEntryEl(row.key, el)"
-          class="entry"
-          :class="{
-            outdated: isOutdated(row),
-            seeded: row.tip.seeded,
-            snap: snapKeys.has(row.key),
-          }"
-          :data-seq="row.key"
-          data-testid="journal-entry"
-        >
-          <header
-            class="entry-header mono"
-            :class="{ clickable: isCollapsible(row) }"
-            :title="headerTitle(row)"
-            @click="onHeaderClick(row)"
+        <!-- The reveal wrapper is an inert block until the row enters
+             while head-pinned; then it animates open once (see CSS). -->
+        <div v-else class="reveal" :class="{ enter: enterKeys.has(row.key) }">
+          <article
+            :ref="(el) => setEntryEl(row.key, el)"
+            class="entry"
+            :class="{
+              outdated: isOutdated(row),
+              seeded: row.tip.seeded,
+              snap: snapKeys.has(row.key),
+            }"
+            :data-seq="row.key"
+            data-testid="journal-entry"
           >
-            <span class="time" :title="absTime(row.tip.ts)">{{ relTime(row.tip.ts) }}</span>
-            <span class="path">{{ row.tip.path }}</span>
-            <span class="lines">{{ lineLabel(row.tip) }}</span>
-            <span class="kind" :data-kind="row.kind" data-testid="kind-badge">{{ row.kind }}</span>
-            <button
-              v-if="row.members.length > 1"
-              class="fold-count"
-              data-testid="fold-count"
-              :aria-expanded="expandedChains.has(row.key)"
-              :title="`${row.members.length} folded revisions`"
-              @click.stop="toggleChain(row.key)"
+            <header
+              class="entry-header mono"
+              :class="{ clickable: isCollapsible(row) }"
+              :title="headerTitle(row)"
+              @click="onHeaderClick(row)"
             >
-              ×{{ row.members.length }}
-            </button>
-            <span v-if="row.tip.seeded" class="seeded-note" data-testid="seeded-note"
-              >present when journal started</span
-            >
-            <span v-if="isOutdated(row)" class="outdated-badge" data-testid="outdated-badge"
-              >outdated {{ clock(outdatedAtOf(row)!) }}</span
-            >
-            <span class="stats">
-              <span v-if="row.tip.stats.insertions" class="count-add"
-                >+{{ row.tip.stats.insertions }}</span
-              >
-              <span v-if="row.tip.stats.deletions" class="count-del"
-                >&minus;{{ row.tip.stats.deletions }}</span
-              >
-            </span>
-          </header>
-
-          <div class="clamp" :class="{ closed: isCollapsed(row) }">
-            <div class="clamp-inner">
-              <!-- The ×N chain, oldest first, above the tip — stale
-                   revisions of the same hunk, muted. -->
-              <template v-if="expandedChains.has(row.key)">
-                <div
-                  v-for="member in row.members.slice(0, -1)"
-                  :key="member.seq"
-                  class="chain-member"
-                  data-testid="chain-member"
-                >
-                  <div class="chain-head mono">
-                    <span class="time" :title="absTime(member.ts)">{{ relTime(member.ts) }}</span>
-                    <span class="kind" :data-kind="member.kind">{{ member.kind }}</span>
-                    <span class="stats">
-                      <span v-if="member.stats.insertions" class="count-add"
-                        >+{{ member.stats.insertions }}</span
-                      >
-                      <span v-if="member.stats.deletions" class="count-del"
-                        >&minus;{{ member.stats.deletions }}</span
-                      >
-                    </span>
-                  </div>
-                  <button
-                    v-if="isHugeCollapsed(member)"
-                    class="huge-row mono"
-                    data-testid="huge-collapsed"
-                    @click="expandedHuge.add(member.seq)"
-                  >
-                    {{ changedLines(member) }} lines changed — show
-                  </button>
-                  <div v-else class="entry-body" :style="bodyStyle(member)">
-                    <DiffView :diff="member.diff" :file-path="member.path" />
-                  </div>
-                </div>
-              </template>
-
-              <!-- A post-formatter full-file snapshot is unreadable as a
-                   blurb: collapse it behind a file-level show row. -->
+              <span class="time" :title="absTime(row.tip.ts)">{{ relTime(row.tip.ts) }}</span>
+              <span class="path">{{ row.tip.path }}</span>
+              <span class="lines">{{ lineLabel(row.tip) }}</span>
+              <span class="kind" :data-kind="row.kind" data-testid="kind-badge">{{ row.kind }}</span>
               <button
-                v-if="isHugeCollapsed(row.tip)"
-                class="huge-row mono"
-                data-testid="huge-collapsed"
-                @click="expandedHuge.add(row.tip.seq)"
+                v-if="row.members.length > 1"
+                class="fold-count"
+                data-testid="fold-count"
+                :aria-expanded="expandedChains.has(row.key)"
+                :title="`${row.members.length} folded revisions`"
+                @click.stop="toggleChain(row.key)"
               >
-                {{ changedLines(row.tip) }} lines changed — show
+                ×{{ row.members.length }}
               </button>
-              <div v-else class="entry-body" :style="bodyStyle(row.tip)" data-testid="entry-body">
-                <DiffView :diff="row.tip.diff" :file-path="row.tip.path" />
+              <span v-if="row.tip.seeded" class="seeded-note" data-testid="seeded-note"
+                >present when journal started</span
+              >
+              <span v-if="isOutdated(row)" class="outdated-badge" data-testid="outdated-badge"
+                >outdated {{ clock(outdatedAtOf(row)!) }}</span
+              >
+              <span class="stats">
+                <span v-if="row.tip.stats.insertions" class="count-add"
+                  >+{{ row.tip.stats.insertions }}</span
+                >
+                <span v-if="row.tip.stats.deletions" class="count-del"
+                  >&minus;{{ row.tip.stats.deletions }}</span
+                >
+              </span>
+            </header>
+
+            <div class="clamp" :class="{ closed: isCollapsed(row) }">
+              <div class="clamp-inner">
+                <!-- The ×N chain, oldest first, above the tip — stale
+                     revisions of the same hunk, muted. -->
+                <template v-if="expandedChains.has(row.key)">
+                  <div
+                    v-for="member in row.members.slice(0, -1)"
+                    :key="member.seq"
+                    class="chain-member"
+                    data-testid="chain-member"
+                  >
+                    <div class="chain-head mono">
+                      <span class="time" :title="absTime(member.ts)">{{ relTime(member.ts) }}</span>
+                      <span class="kind" :data-kind="member.kind">{{ member.kind }}</span>
+                      <span class="stats">
+                        <span v-if="member.stats.insertions" class="count-add"
+                          >+{{ member.stats.insertions }}</span
+                        >
+                        <span v-if="member.stats.deletions" class="count-del"
+                          >&minus;{{ member.stats.deletions }}</span
+                        >
+                      </span>
+                    </div>
+                    <button
+                      v-if="isHugeCollapsed(member)"
+                      class="huge-row mono"
+                      data-testid="huge-collapsed"
+                      @click="expandedHuge.add(member.seq)"
+                    >
+                      {{ changedLines(member) }} lines changed — show
+                    </button>
+                    <div v-else class="entry-body" :style="bodyStyle(member)">
+                      <DiffView :diff="member.diff" :file-path="member.path" />
+                    </div>
+                  </div>
+                </template>
+
+                <!-- A post-formatter full-file snapshot is unreadable as a
+                     blurb: collapse it behind a file-level show row. -->
+                <button
+                  v-if="isHugeCollapsed(row.tip)"
+                  class="huge-row mono"
+                  data-testid="huge-collapsed"
+                  @click="expandedHuge.add(row.tip.seq)"
+                >
+                  {{ changedLines(row.tip) }} lines changed — show
+                </button>
+                <div v-else class="entry-body" :style="bodyStyle(row.tip)" data-testid="entry-body">
+                  <DiffView :diff="row.tip.diff" :file-path="row.tip.path" />
+                </div>
               </div>
             </div>
-          </div>
-        </article>
+          </article>
+        </div>
       </template>
+
+      <!-- Epoch mismatch / pruned gap on reconnect: the log was refetched
+           from scratch — say so instead of leaving a silent hole. Sits at
+           the OLD end (the bottom, past the oldest surviving entry). -->
+      <div
+        v-if="repo.journalRestarted && rows.length > 0"
+        class="boundary mono"
+        data-testid="journal-restarted"
+      >
+        <span class="boundary-label">journal restarted — earlier entries were lost</span>
+      </div>
     </div>
 
-    <button v-if="newCount > 0" class="new-pill mono" data-testid="new-pill" @click="scrollToEnd">
-      {{ newCount }} new ↓
+    <button v-if="newCount > 0" class="new-pill mono" data-testid="new-pill" @click="scrollToStart">
+      {{ newCount }} new ↑
     </button>
   </div>
 </template>
@@ -866,6 +934,43 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+/* --- Enter reveal (a fresh append opening at the top) --- */
+
+/* Without .enter the wrapper is a plain block: the entry's margins
+   collapse through it, so spacing is identical to an unwrapped row.
+   With .enter (a head-pinned append) it becomes a grid and plays a
+   one-shot 0fr -> 1fr open on mount — pure CSS, no measurement. The
+   wrapper takes over the entry's margin so the reveal grows from a
+   true zero (a grid container's own margins still collapse with its
+   siblings; its child's would not). */
+.reveal.enter {
+  display: grid;
+  overflow: hidden;
+  margin: 0.375rem 0;
+  animation: journal-enter 200ms ease;
+}
+
+.reveal.enter > .entry {
+  min-height: 0;
+  margin: 0;
+}
+
+@keyframes journal-enter {
+  from {
+    grid-template-rows: 0fr;
+  }
+
+  to {
+    grid-template-rows: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal.enter {
+    animation: none;
+  }
+}
+
 /* Skip layout+paint for far-away blurbs; the intrinsic size comes from
    the entry's line count, fixed at append (entries are immutable). */
 .entry-body {
@@ -917,7 +1022,7 @@ onBeforeUnmount(() => {
 
 .new-pill {
   position: absolute;
-  bottom: 0.875rem;
+  top: 0.875rem;
   left: 50%;
   transform: translateX(-50%);
   padding: 0.25rem 0.75rem;

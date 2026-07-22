@@ -48,6 +48,15 @@ const ui = useUiStore();
 
 const status = computed(() => repo.shared.status);
 
+/**
+ * Clean tree: status is in and holds no files. The whole two-column
+ * layout is replaced by one centered message — a clean tree has no
+ * list to navigate and no diffs to stack.
+ */
+const isClean = computed(
+  () => !repo.shared.isLoading && status.value !== null && status.value.files.length === 0
+);
+
 /** Auto mode just landed on this file: flash its row briefly. */
 function isFlashed(file: FileEntry): boolean {
   return ui.flashedFile === file.path;
@@ -371,7 +380,13 @@ const rootStyle = computed(() => ({
     :class="{ portrait: isPortrait }"
     :style="rootStyle"
   >
+    <div v-if="isClean" class="clean-state" data-testid="clean-tree" role="status">
+      <p class="clean-title">No changes in the staging area or untracked changes.</p>
+      <p class="clean-sub">The working tree is clean.</p>
+    </div>
+
     <aside
+      v-else
       ref="filesColEl"
       class="files-col"
       aria-label="Changed files"
@@ -380,9 +395,6 @@ const rootStyle = computed(() => ({
     >
       <p v-if="repo.shared.isLoading" class="col-empty">Loading status…</p>
       <p v-else-if="!status" class="col-empty">No status yet.</p>
-      <p v-else-if="status.files.length === 0" class="col-empty" data-testid="clean-tree">
-        No changes — working tree clean.
-      </p>
 
       <div
         v-else
@@ -435,6 +447,7 @@ const rootStyle = computed(() => ({
     </aside>
 
     <div
+      v-if="!isClean"
       class="resizer"
       role="separator"
       :aria-orientation="split.ariaOrientation.value"
@@ -453,6 +466,7 @@ const rootStyle = computed(() => ({
     <!-- Keyed by repo id: a repo switch remounts the stack, clearing
          its per-key state (loaded huge files, gate latch, offsets). -->
     <DiffStack
+      v-if="!isClean"
       ref="stackEl"
       :key="repo.repoId ?? ''"
       class="diff-col"
@@ -477,6 +491,34 @@ const rootStyle = computed(() => ({
   grid-template-columns: clamp(12rem, var(--files-col, 32%), 65%) auto minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   background: var(--bg);
+}
+
+/* --- Clean tree: one centered message across the whole grid --- */
+
+.clean-state {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.clean-title {
+  margin: 0;
+  font-size: var(--fs-display);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.clean-sub {
+  margin: 0;
+  font-size: var(--fs-content);
+  color: var(--text-dim);
 }
 
 /* --- Files column --- */

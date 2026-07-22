@@ -16,7 +16,7 @@ import { useDaemonStore } from './stores/daemon';
 import { useRepoStore } from './stores/repo';
 import { useUiStore } from './stores/ui';
 import { PREFS_KEY } from './prefs';
-import { makeFakeFetch, FakeEventSource } from './testing/fakes';
+import { makeFakeFetch, FakeEventSource, Deferred } from './testing/fakes';
 import type { FakeFetch, FetchCall, FakeResponse } from './testing/fakes';
 
 const REPO_ONE = { id: 'r1', path: '/repo', branch: 'main' };
@@ -238,6 +238,76 @@ describe('repo selection', () => {
     expect(repoPosts()).toEqual(['/repo']);
     expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(false);
     wrapper.unmount();
+  });
+
+  test('cold load with a follow target activates the FOLLOWED repo, not the first', async () => {
+    serverRepos = [REPO_ONE, REPO_TWO];
+    // The follow state resolves AFTER the repo list — the losing order
+    // for the old race, where repos[0] got activated instead.
+    const followLoad = new Deferred<FakeResponse>();
+    fake = makeFakeFetch((call) => {
+      if (call.url === '/follow') return followLoad.promise;
+      return routes(call);
+    });
+    vi.stubGlobal('fetch', fake.fn);
+
+    const wrapper = mountApp();
+    await flushPromises();
+    daemonSource().emit('snapshot', [
+      { id: 'r1', path: '/repo' },
+      { id: 'r2', path: '/other' },
+    ]);
+    await flushPromises();
+
+    // The repo list is in but follow is still in flight: no fallback yet.
+    expect(repoPosts()).toEqual([]);
+
+    followLoad.resolve({
+      body: { targetFile: '/t', enabled: true, followedRepoId: 'r2', followedPath: '/other' },
+    });
+    await flushPromises();
+    await flushPromises();
+
+    // Exactly ONE activation, and it is the followed repo — no
+    // double-open, no flicker through repos[0].
+    expect(repoPosts()).toEqual(['/other']);
+    expect(useRepoStore().repoPath).toBe('/other');
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  test('a stuck /follow does not deadlock the empty state — the fallback opens repos[0]', async () => {
+    vi.useFakeTimers();
+    serverRepos = [REPO_ONE];
+    // The SSE stream stays alive, but every GET /follow fails. The store
+    // exhausts its bounded retries and follow.value stays null; without
+    // the App fallback the one-shot would wait on daemon.follow forever.
+    fake = makeFakeFetch((call) => {
+      if (call.url === '/follow') return { status: 503, body: { error: 'follow down' } };
+      return routes(call);
+    });
+    vi.stubGlobal('fetch', fake.fn);
+
+    const wrapper = mountApp();
+    await flushPromises();
+    daemonSource().emit('snapshot', [{ id: 'r1', path: '/repo' }]);
+    await flushPromises();
+
+    // Follow never loads: nothing activated yet, still on the empty state.
+    expect(useDaemonStore().follow).toBeNull();
+    expect(repoPosts()).toEqual([]);
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
+
+    // Past the store's bounded retries AND the App fallback window.
+    await vi.advanceTimersByTimeAsync(5000);
+    await flushPromises();
+
+    // Escaped the deadlock: repos[0] activated exactly once.
+    expect(repoPosts()).toEqual(['/repo']);
+    expect(useRepoStore().repoPath).toBe('/repo');
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(false);
+    wrapper.unmount();
+    vi.useRealTimers();
   });
 
   test('a later repo-opened does NOT hijack the empty state once latched', async () => {
