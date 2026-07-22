@@ -5,7 +5,11 @@
  * compare base pick, the single-flight reconnect loop, and the
  * per-file working-diff cache (auto-activation on the first snapshot,
  * hybrid whole-tree/per-file fetch, changed-set refetch, identity
- * preservation, seq stale-guards). Driven entirely by a stubbed fetch
+ * preservation, seq stale-guards), the journal slice (lazy load,
+ * SSE append with seq dedupe + epoch guard, reconnect resync floored
+ * on the synced watermark, epoch/prunedBefore reset handling,
+ * repo-switch reset), and the pagehide unload release (keepalive
+ * DELETE). Driven entirely by a stubbed fetch
  * + FakeEventSource — no daemon, fake timers throughout. The store
  * has no git-mutating actions — the web UI is a viewer.
  */
@@ -17,6 +21,7 @@ import { makeFakeFetch, FakeEventSource, Deferred } from '../testing/fakes';
 import type { FakeFetch, FetchCall, FakeResponse } from '../testing/fakes';
 import type { WireSharedState } from '@diffstalker/client';
 import type { FileEntry, FileStatus } from '@diffstalker/core/git/status';
+import type { JournalHunkEntry } from '@diffstalker/core/types/journal';
 
 // --- Fixtures ---
 
@@ -51,6 +56,25 @@ function fileDiffRaw(path: string, marker: string): string {
     `+new ${marker}`,
     '',
   ].join('\n');
+}
+
+/** A wire journal hunk entry (JSON-native — survives the fake fetch). */
+function jhunk(seq: number, overrides: Partial<JournalHunkEntry> = {}): JournalHunkEntry {
+  return {
+    type: 'hunk',
+    seq,
+    ts: seq * 1000,
+    path: 'a.ts',
+    status: 'modified' as FileStatus,
+    kind: 'edited',
+    span: { start: 1, count: 1 },
+    stats: { insertions: 1, deletions: 0 },
+    diff: null,
+    supersedes: [],
+    siblings: 1,
+    seeded: false,
+    ...overrides,
+  };
 }
 
 function compareBody(): unknown {
@@ -468,9 +492,7 @@ describe('working-diff cache', () => {
   test('an EXPLICIT refreshAllDiffs surfaces its failure in shared.error', async () => {
     const { store } = await openStore([fileEntry('a.ts')]);
     onRequest = (call) =>
-      call.url.startsWith('/repos/r1/diff')
-        ? { status: 500, body: { error: 'boom' } }
-        : undefined;
+      call.url.startsWith('/repos/r1/diff') ? { status: 500, body: { error: 'boom' } } : undefined;
 
     await store.refreshAllDiffs();
     expect(store.shared.error).toBe('Failed to load diffs: boom');
@@ -759,6 +781,373 @@ describe('history', () => {
     slow.resolve({ body: { raw: 'stale commit diff', lines: [] } });
     await selectPromise;
     expect(store.history.commitDiff).toBeNull();
+  });
+});
+
+// --- Journal ---
+
+describe('journal', () => {
+  /** Seed a loaded journal slice: entries 1-2, epoch 'e7', no pruning. */
+  function journalRoutes(call: FetchCall): FakeResponse | undefined {
+    if (call.url === '/repos/r1/journal') {
+      return { body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(1), jhunk(2)] } };
+    }
+    return undefined;
+  }
+
+  function journalSeqs(store: ReturnType<typeof useRepoStore>): number[] {
+    return store.journalEntries.map((e) => e.seq);
+  }
+
+  test('loadJournal is lazy: one GET seeds the slice, a second call refetches nothing', async () => {
+    onRequest = journalRoutes;
+    const { store } = await openStore();
+    expect(store.journalLoaded).toBe(false);
+
+    await store.loadJournal();
+    expect(store.journalLoaded).toBe(true);
+    expect(store.journalEpoch).toBe('e7');
+    expect(store.journalPrunedBefore).toBe(0);
+    expect(journalSeqs(store)).toEqual([1, 2]);
+
+    await store.loadJournal();
+    expect(fake.callsTo('/journal')).toHaveLength(1);
+  });
+
+  test('journal-append SSE appends in seq order and dedupes by seq', async () => {
+    onRequest = journalRoutes;
+    const { store, source } = await openStore();
+    await store.loadJournal();
+
+    source.emit('journal-append', { epoch: 'e7', entries: [jhunk(3)] });
+    expect(journalSeqs(store)).toEqual([1, 2, 3]);
+
+    // A replayed batch is ignored; a mixed batch applies only the new tail.
+    source.emit('journal-append', { epoch: 'e7', entries: [jhunk(3)] });
+    expect(journalSeqs(store)).toEqual([1, 2, 3]);
+    source.emit('journal-append', { epoch: 'e7', entries: [jhunk(3), jhunk(4)] });
+    expect(journalSeqs(store)).toEqual([1, 2, 3, 4]);
+  });
+
+  test('an append racing the initial GET is merged, not lost', async () => {
+    const held = new Deferred<FakeResponse>();
+    onRequest = (call) => (call.url === '/repos/r1/journal' ? held.promise : undefined);
+    const { store, source } = await openStore();
+
+    const load = store.loadJournal();
+    await flush(); // the GET is in flight
+    source.emit('journal-append', { epoch: 'e7', entries: [jhunk(3)] });
+
+    // The snapshot predates the append: the load must union by seq.
+    held.resolve({ body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(1), jhunk(2)] } });
+    await load;
+    expect(store.journalLoaded).toBe(true);
+    expect(journalSeqs(store)).toEqual([1, 2, 3]);
+  });
+
+  test('a daemon error rejects to the caller; a later call may retry', async () => {
+    onRequest = (call) =>
+      call.url === '/repos/r1/journal' ? { status: 500, body: { error: 'boom' } } : undefined;
+    const { store } = await openStore();
+
+    await expect(store.loadJournal()).rejects.toThrow('boom');
+    expect(store.journalLoaded).toBe(false);
+
+    // The in-flight guard was released: the next visit retries.
+    onRequest = journalRoutes;
+    await store.loadJournal();
+    expect(store.journalLoaded).toBe(true);
+    expect(journalSeqs(store)).toEqual([1, 2]);
+  });
+
+  test('reconnect refetches ?since=<synced watermark> and applies the tail', async () => {
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/journal?since=2') {
+        return { body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(3)] } };
+      }
+      return journalRoutes(call);
+    };
+    const { store, source } = await openStore();
+    await store.loadJournal();
+
+    source.fail();
+    await advance(1000);
+    expect(fake.callsTo('/journal').map((c) => c.url)).toEqual([
+      '/repos/r1/journal',
+      '/repos/r1/journal?since=2',
+    ]);
+    expect(journalSeqs(store)).toEqual([1, 2, 3]);
+    expect(store.journalRestarted).toBe(false);
+  });
+
+  test('an append racing the post-reconnect resync is neither lost nor doubled', async () => {
+    const heldResync = new Deferred<FakeResponse>();
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/journal?since=2') return heldResync.promise;
+      return journalRoutes(call);
+    };
+    const { store, source } = await openStore();
+    await store.loadJournal();
+
+    // seq 3 was appended while the stream was down (the client never saw
+    // its event); seq 4 lands on the NEW stream right after resubscribe,
+    // BEFORE the resync fetch answers — advancing the tail past the gap.
+    source.fail();
+    await advance(1000); // recovery: re-POST, resubscribe, resync in flight
+    FakeEventSource.latest().emit('journal-append', { epoch: 'e7', entries: [jhunk(4)] });
+    expect(journalSeqs(store)).toEqual([1, 2, 4]); // the hole, pre-resync
+
+    // The resync floors on the watermark (2, the last successful fetch's
+    // tail), never the live tail (4): the missed seq 3 comes back and
+    // the racing seq 4 dedupes by seq — exactly once each.
+    heldResync.resolve({
+      body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(3), jhunk(4)] },
+    });
+    await flush();
+    expect(fake.callsTo('/journal').map((c) => c.url)).toEqual([
+      '/repos/r1/journal',
+      '/repos/r1/journal?since=2',
+    ]);
+    expect(journalSeqs(store)).toEqual([1, 2, 3, 4]);
+    expect(store.journalRestarted).toBe(false);
+  });
+
+  test('an epoch change on reconnect discards the cache and refetches from scratch', async () => {
+    let journalGets = 0;
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/journal?since=2') {
+        // A restarted daemon minted a new store: fresh epoch, fresh seq
+        // space — the since-slice is meaningless.
+        return { body: { epoch: 'e8', prunedBefore: 0, entries: [] } };
+      }
+      if (call.url === '/repos/r1/journal') {
+        journalGets += 1;
+        return journalGets === 1
+          ? { body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(1), jhunk(2)] } }
+          : { body: { epoch: 'e8', prunedBefore: 0, entries: [jhunk(1, { path: 'fresh.ts' })] } };
+      }
+      return undefined;
+    };
+    const { store, source } = await openStore();
+    await store.loadJournal();
+
+    source.fail();
+    await advance(1000);
+    expect(store.journalEpoch).toBe('e8');
+    expect(journalSeqs(store)).toEqual([1]);
+    expect(store.journalEntries[0]).toMatchObject({ path: 'fresh.ts' });
+    expect(store.journalRestarted).toBe(true); // the view shows a divider
+  });
+
+  test('a pruned gap on reconnect (prunedBefore past our tail) also refetches from scratch', async () => {
+    let journalGets = 0;
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/journal?since=2') {
+        return { body: { epoch: 'e7', prunedBefore: 6, entries: [jhunk(7)] } };
+      }
+      if (call.url === '/repos/r1/journal') {
+        journalGets += 1;
+        return journalGets === 1
+          ? { body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(1), jhunk(2)] } }
+          : { body: { epoch: 'e7', prunedBefore: 6, entries: [jhunk(6), jhunk(7)] } };
+      }
+      return undefined;
+    };
+    const { store, source } = await openStore();
+    await store.loadJournal();
+
+    source.fail();
+    await advance(1000);
+    // No silent hole between 2 and 6: the log was replaced wholesale.
+    expect(journalSeqs(store)).toEqual([6, 7]);
+    expect(store.journalPrunedBefore).toBe(6);
+    expect(store.journalRestarted).toBe(true);
+  });
+
+  test('never loaded: reconnect fetches nothing and drops the pre-load accumulation', async () => {
+    const { store, source } = await openStore();
+    // Appends land even before the first load (they may race a load)...
+    source.emit('journal-append', { epoch: 'e7', entries: [jhunk(5)] });
+    expect(journalSeqs(store)).toEqual([5]);
+
+    // ...but a reconnect discards them: they may predate a daemon
+    // restart, and the lazy load refetches everything anyway.
+    source.fail();
+    await advance(1000);
+    expect(fake.callsTo('/journal')).toHaveLength(0);
+    expect(journalSeqs(store)).toEqual([]);
+    expect(store.journalLoaded).toBe(false);
+  });
+
+  test('open() resets the slice like the other per-repo state', async () => {
+    onRequest = journalRoutes;
+    const { store } = await openStore();
+    await store.loadJournal();
+    expect(store.journalLoaded).toBe(true);
+
+    onRequest = null;
+    await store.open('/repo');
+    expect(store.journalLoaded).toBe(false);
+    expect(store.journalEpoch).toBeNull();
+    expect(journalSeqs(store)).toEqual([]);
+    expect(store.journalRestarted).toBe(false);
+  });
+
+  test('an interrupted resync keeps the watermark: the retry re-covers the gap', async () => {
+    // Disconnect with seqs 3..4 missed; recovery #1's resync is
+    // interrupted (connection drops again) AFTER live appends pushed
+    // the tail to 6. A tail-floored retry would resync since=6 and
+    // lose 3..4 forever; the watermark keeps the floor at 2.
+    const heldResync = new Deferred<FakeResponse>();
+    let sinceCalls = 0;
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/journal?since=2') {
+        sinceCalls += 1;
+        if (sinceCalls === 1) return heldResync.promise;
+        return { body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(3), jhunk(4), jhunk(5), jhunk(6)] } };
+      }
+      return journalRoutes(call);
+    };
+    const { store, source } = await openStore();
+    await store.loadJournal(); // watermark: 2
+
+    source.fail();
+    await advance(1000); // recovery #1: resubscribed, resync ?since=2 in flight
+    // Live appends on the fresh stream advance the tail past the gap.
+    FakeEventSource.latest().emit('journal-append', { epoch: 'e7', entries: [jhunk(5)] });
+    FakeEventSource.latest().emit('journal-append', { epoch: 'e7', entries: [jhunk(6)] });
+    expect(journalSeqs(store)).toEqual([1, 2, 5, 6]); // the hole, mid-recovery
+
+    // The resync fetch dies (second disconnect): the watermark must
+    // NOT move — only successful fetches advance it.
+    heldResync.reject(new TypeError('Failed to fetch'));
+    await flush();
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+
+    // Recovery #2 resyncs from the SAME floor and closes the gap.
+    await advance(1000);
+    expect(fake.callsTo('/journal').map((c) => c.url)).toEqual([
+      '/repos/r1/journal',
+      '/repos/r1/journal?since=2',
+      '/repos/r1/journal?since=2',
+    ]);
+    expect(journalSeqs(store)).toEqual([1, 2, 3, 4, 5, 6]); // contiguous, no hole
+    expect(store.journalRestarted).toBe(false);
+  });
+
+  test('a mismatched-epoch append is never spliced in: full refetch, parked batch merged', async () => {
+    let journalGets = 0;
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/journal') {
+        journalGets += 1;
+        return journalGets === 1
+          ? { body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(1), jhunk(2)] } }
+          : { body: { epoch: 'e8', prunedBefore: 0, entries: [jhunk(1, { path: 'fresh.ts' })] } };
+      }
+      return undefined;
+    };
+    const { store, source } = await openStore();
+    await store.loadJournal();
+    expect(store.journalEpoch).toBe('e7');
+
+    // The daemon store reset under a live stream: the batch belongs to
+    // e8's seq space. Synchronously NOTHING is appended (no e7/e8
+    // interleave); the batch is parked while the full refetch runs.
+    source.emit('journal-append', { epoch: 'e8', entries: [jhunk(2, { path: 'later.ts' })] });
+    expect(store.journalEntries.map((e) => (e as JournalHunkEntry).path)).toEqual(['a.ts', 'a.ts']);
+
+    await flush();
+    // Refetched wholesale from the new store, parked batch merged by seq.
+    expect(store.journalEpoch).toBe('e8');
+    expect(journalSeqs(store)).toEqual([1, 2]);
+    expect(store.journalEntries.map((e) => (e as JournalHunkEntry).path)).toEqual([
+      'fresh.ts',
+      'later.ts',
+    ]);
+    expect(store.journalRestarted).toBe(true);
+  });
+
+  test('a mismatched-epoch batch arriving during an in-flight resync is not stranded', async () => {
+    const heldResync = new Deferred<FakeResponse>();
+    let journalGets = 0;
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/journal?since=2') return heldResync.promise;
+      if (call.url === '/repos/r1/journal') {
+        journalGets += 1;
+        return journalGets === 1
+          ? { body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(1), jhunk(2)] } }
+          : { body: { epoch: 'e8', prunedBefore: 0, entries: [jhunk(1, { path: 'fresh.ts' })] } };
+      }
+      return undefined;
+    };
+    const { store, source } = await openStore();
+    await store.loadJournal();
+
+    source.fail();
+    await advance(1000); // recovery: resync ?since=2 in flight
+    // The daemon store resets under the fresh stream: a batch from the
+    // NEW epoch arrives while the resync holds the pull flag, so its own
+    // from-scratch refetch early-returns and the batch is parked.
+    FakeEventSource.latest().emit('journal-append', {
+      epoch: 'e8',
+      entries: [jhunk(2, { path: 'later.ts' })],
+    });
+    expect(store.journalEpoch).toBe('e7'); // nothing spliced across epochs
+
+    // The resync answers from the OLD store (built before the reset):
+    // same epoch, no wholesale path — without the post-release kick the
+    // parked e8 batch would be stranded forever.
+    heldResync.resolve({ body: { epoch: 'e7', prunedBefore: 0, entries: [] } });
+    await flush();
+    expect(store.journalEpoch).toBe('e8');
+    expect(journalSeqs(store)).toEqual([1, 2]);
+    expect(store.journalEntries.map((e) => (e as JournalHunkEntry).path)).toEqual([
+      'fresh.ts',
+      'later.ts',
+    ]);
+    expect(store.journalRestarted).toBe(true);
+  });
+
+  test('pre-load accumulation never interleaves epochs', async () => {
+    const { store, source } = await openStore();
+    // Batches from store eA accumulate...
+    source.emit('journal-append', { epoch: 'eA', entries: [jhunk(5)] });
+    expect(journalSeqs(store)).toEqual([5]);
+    // ...until a batch from a reset store eB replaces them outright.
+    source.emit('journal-append', { epoch: 'eB', entries: [jhunk(7)] });
+    expect(journalSeqs(store)).toEqual([7]);
+
+    // The lazy load answers from yet another store: the eB accumulation
+    // is discarded too — the snapshot alone is the truth.
+    onRequest = journalRoutes; // epoch e7, entries 1..2
+    await store.loadJournal();
+    expect(store.journalEpoch).toBe('e7');
+    expect(journalSeqs(store)).toEqual([1, 2]);
+  });
+});
+
+// --- Unload release ---
+
+describe('releaseOnUnload', () => {
+  test('fires one keepalive DELETE for the held ref; idempotent after that', async () => {
+    const { store } = await openStore();
+    const deletesBefore = fake.calls.filter((c) => c.method === 'DELETE').length;
+
+    store.releaseOnUnload();
+    const deletes = fake.calls.filter((c) => c.method === 'DELETE');
+    expect(deletes.length).toBe(deletesBefore + 1);
+    expect(deletes.at(-1)!.url).toBe('/repos/r1');
+
+    // The held ref is cleared: a second pagehide (bfcache round trip
+    // without a re-acquire) must not double-release.
+    store.releaseOnUnload();
+    expect(fake.calls.filter((c) => c.method === 'DELETE').length).toBe(deletesBefore + 1);
+  });
+
+  test('no repo held: a no-op', async () => {
+    const store = useRepoStore();
+    store.releaseOnUnload();
+    expect(fake.calls.filter((c) => c.method === 'DELETE')).toEqual([]);
   });
 });
 

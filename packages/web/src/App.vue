@@ -17,8 +17,9 @@
  *   level from ui.activeOverlay.
  */
 
-import { computed, onMounted, watch } from 'vue';
+import { computed, onMounted, onUnmounted, watch } from 'vue';
 import { useDaemonStore } from './stores/daemon';
+import { useRepoStore } from './stores/repo';
 import { useUiStore } from './stores/ui';
 import { useRepoOpen } from './composables/useRepoOpen';
 import { useGlobalKeys } from './composables/useGlobalKeys';
@@ -31,12 +32,14 @@ import RepoEmptyState from './components/RepoEmptyState.vue';
 import FinderOverlay from './components/FinderOverlay.vue';
 import HotkeysOverlay from './components/HotkeysOverlay.vue';
 import ChangesView from './views/ChangesView.vue';
+import JournalView from './views/JournalView.vue';
 import HistoryView from './views/HistoryView.vue';
 import CompareView from './views/CompareView.vue';
 import ExplorerView from './views/ExplorerView.vue';
 import type { ViewName } from './prefs';
 
 const daemon = useDaemonStore();
+const repo = useRepoStore();
 const ui = useUiStore();
 const { activate } = useRepoOpen();
 
@@ -49,6 +52,7 @@ useAutoMode();
 
 const VIEW_COMPONENTS: Record<ViewName, unknown> = {
   changes: ChangesView,
+  journal: JournalView,
   history: HistoryView,
   compare: CompareView,
   explorer: ExplorerView,
@@ -60,6 +64,37 @@ const hasActiveRepo = computed(() => daemon.activeRepoId !== null);
 
 onMounted(() => {
   daemon.connect();
+});
+
+/**
+ * Unload release: without it a reload (F5) / tab close / navigation
+ * leaks the daemon-side repo ref — the refcount only ever climbs, the
+ * daemon never closes a web-touched repo, and its watchers run forever.
+ * pagehide is the reliable end-of-page signal (it fires on reload,
+ * close, and navigation in every modern browser; unload does not), and
+ * the store's releaseOnUnload sends a keepalive DELETE that outlives
+ * the page (the beacon mechanism; navigator.sendBeacon itself is
+ * POST-only and the release endpoint is DELETE).
+ *
+ * Deliberately NOT wired to visibilitychange->hidden: that fires on
+ * every tab switch/minimize, not just unload. Releasing there would
+ * drop the last web ref while the user works in their editor with the
+ * tab hidden — the daemon would dispose the repo's watchers and the
+ * journal would miss exactly the edits it exists to record (and the
+ * store's SSE recovery loop would re-take the ref ~1s later anyway,
+ * making it pure dispose/reopen churn). On real unloads pagehide fires
+ * after visibilitychange, so nothing is lost by skipping it. If the
+ * page returns from bfcache the SSE stream is dead, so the store's
+ * recovery loop re-POSTs /repos and re-acquires the ref on its own.
+ */
+const releaseOnPageHide = (): void => {
+  repo.releaseOnUnload();
+};
+onMounted(() => {
+  window.addEventListener('pagehide', releaseOnPageHide);
+});
+onUnmounted(() => {
+  window.removeEventListener('pagehide', releaseOnPageHide);
 });
 
 // Warm daemon on page load: activate the followed repo, else the first.

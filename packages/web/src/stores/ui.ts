@@ -20,6 +20,7 @@ import type { ThemeName } from '../theme/themes';
 /** The rail's view entries, in order. */
 export const VIEWS: { name: ViewName; label: string }[] = [
   { name: 'changes', label: 'Changes' },
+  { name: 'journal', label: 'Journal' },
   { name: 'history', label: 'History' },
   { name: 'compare', label: 'Compare' },
   { name: 'explorer', label: 'Explorer' },

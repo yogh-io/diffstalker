@@ -155,6 +155,48 @@ describe('history / compare decoding', () => {
   });
 });
 
+describe('journal', () => {
+  test('journal without since sends no query; the JSON-native payload is untouched', async () => {
+    const body = {
+      epoch: 'mcw2a1b4-9f3ac2d1',
+      prunedBefore: 0,
+      entries: [
+        {
+          type: 'hunk',
+          seq: 7,
+          ts: 1750000000000,
+          path: 'file.txt',
+          status: 'modified',
+          kind: 'edited',
+          span: { start: 1, count: 2 },
+          stats: { insertions: 1, deletions: 0 },
+          diff: { raw: '@@ -1,2 +1,3 @@\n+added', lines: [] },
+          supersedes: [3],
+          siblings: 1,
+          seeded: false,
+        },
+      ],
+    };
+    respond = () => ({ body });
+    const result = await client.journal('r1');
+    expect(fake.calls[0]).toMatchObject({ method: 'GET', url: '/repos/r1/journal' });
+    // JSON-native: the entries (embedded DiffResult included) cross the
+    // wire as-is, like diff() — and epoch stays an opaque string.
+    expect(result).toEqual(body);
+    expect(typeof result.epoch).toBe('string');
+  });
+
+  test('journal forwards since when given — 0 included (a valid seq floor)', async () => {
+    respond = () => ({ body: { epoch: 'e1', prunedBefore: 0, entries: [] } });
+    await client.journal('r1', 42);
+    await client.journal('r1', 0);
+    expect(fake.calls.map((c) => c.url)).toEqual([
+      '/repos/r1/journal?since=42',
+      '/repos/r1/journal?since=0',
+    ]);
+  });
+});
+
 describe('explorer', () => {
   test('tree forwards dir/hidden/ignored', async () => {
     respond = () => ({ body: [] });
@@ -212,17 +254,32 @@ describe('read-only surface', () => {
 });
 
 describe('SSE subscriptions', () => {
-  test('subscribeRepo dispatches snapshot and state-change', () => {
+  test('subscribeRepo dispatches snapshot, state-change, and journal-append', () => {
     const onSnapshot = vi.fn();
     const onStateChange = vi.fn();
-    client.subscribeRepo('r1', { onSnapshot, onStateChange });
+    const onJournalAppend = vi.fn();
+    client.subscribeRepo('r1', { onSnapshot, onStateChange, onJournalAppend });
 
     const source = FakeEventSource.latest();
     expect(source.url).toBe('/repos/r1/events');
     source.emit('snapshot', { status: null, error: null });
     source.emit('state-change', { status: null, error: 'x' });
+    source.emit('journal-append', { entries: [{ type: 'boundary', seq: 1 }] });
     expect(onSnapshot).toHaveBeenCalledWith({ status: null, error: null });
     expect(onStateChange).toHaveBeenCalledWith({ status: null, error: 'x' });
+    // journal-append routes to its own handler, never into state-change.
+    expect(onJournalAppend).toHaveBeenCalledWith({ entries: [{ type: 'boundary', seq: 1 }] });
+    expect(onStateChange).toHaveBeenCalledTimes(1);
+  });
+
+  test('subscribeRepo without a journal handler ignores journal-append', () => {
+    const onSnapshot = vi.fn();
+    const onStateChange = vi.fn();
+    client.subscribeRepo('r1', { onSnapshot, onStateChange });
+
+    const source = FakeEventSource.latest();
+    source.emit('journal-append', { entries: [] });
+    expect(onStateChange).not.toHaveBeenCalled();
   });
 
   test('subscribeDaemon dispatches all four daemon-scope events', () => {

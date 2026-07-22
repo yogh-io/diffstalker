@@ -30,17 +30,23 @@ afterEach(() => {
 });
 
 describe('tabs', () => {
-  test('renders the four views; clicking one activates it', async () => {
+  test('renders the five views (Journal second); clicking one activates it', async () => {
     const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
     const ui = useUiStore();
 
     const tabs = wrapper.findAll('button.rail-item');
-    expect(tabs.map((t) => t.text())).toEqual(['Changes', 'History', 'Compare', 'Explorer']);
+    expect(tabs.map((t) => t.text())).toEqual([
+      'Changes',
+      'Journal',
+      'History',
+      'Compare',
+      'Explorer',
+    ]);
     expect(tabs[0].classes()).toContain('active');
 
-    await tabs[2].trigger('click');
+    await tabs[3].trigger('click');
     expect(ui.activeView).toBe('compare');
-    expect(wrapper.findAll('button.rail-item')[2].classes()).toContain('active');
+    expect(wrapper.findAll('button.rail-item')[3].classes()).toContain('active');
   });
 });
 
@@ -51,7 +57,7 @@ describe('portrait toolbar slot layout', () => {
 
     const children = Array.from(band.children);
     const tabs = children.filter((el) => el.classList.contains('rail-item'));
-    expect(tabs).toHaveLength(4);
+    expect(tabs).toHaveLength(5);
 
     // Same parent, same flow — the slot shares the band row with the tabs.
     const slot = children.find((el) => el.id === 'view-toolbar-slot');

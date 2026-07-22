@@ -16,6 +16,7 @@ import type {
   CommitInfo,
 } from '@diffstalker/core/git/status';
 import type { DiffResult, CompareDiff } from '@diffstalker/core/git/diff';
+import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type { WireHunkCounts } from '@diffstalker/client';
 
 /**
@@ -55,6 +56,47 @@ export interface RepoHistoryState {
   selectedCommit: CommitInfo | null;
   commitDiff: DiffResult | null;
   isLoading: boolean;
+}
+
+/**
+ * The journal slice the repo store exposes (flat members, one ref
+ * each): a per-client cache of the daemon's append-only, per-hunk
+ * edit chronology. Entries are kept in seq order and deduped by seq —
+ * seq is the only ordering axis; ts is a display label. SSE
+ * 'journal-append' batches carry the emitting store's epoch and only
+ * splice into a log from the SAME store: a mismatched batch means the
+ * daemon store reset, so it is never appended — the log is refetched
+ * from scratch instead (entries from two epochs never interleave).
+ * Batches land even before the first lazy load so an append racing
+ * the initial GET is never lost (the load merges by seq, same-epoch
+ * only). Reconnect resyncs floor on an internal journalSyncedTo
+ * watermark that only successful fetches advance — never the live
+ * tail, which racing appends may have pushed past an unfetched gap.
+ * Folding into display rows is a pure projection (utils/foldEntries),
+ * not state.
+ */
+export interface JournalStoreSlice {
+  journalEntries: JournalEntry[];
+  /**
+   * The daemon journal-store's epoch (an opaque string, compared by
+   * equality only), null until the first load. A different epoch on
+   * reconnect means a new store (daemon restart / eviction): the cached
+   * entries' seq space is meaningless and the log is refetched from
+   * scratch.
+   */
+  journalEpoch: string | null;
+  /** Entries below this seq were evicted daemon-side (ring buffer). */
+  journalPrunedBefore: number;
+  /** True once the lazy first load landed (Journal view activation). */
+  journalLoaded: boolean;
+  /**
+   * A journal reset (epoch change or pruned gap on reconnect) replaced
+   * the entries wholesale — the view renders a "journal restarted"
+   * divider above the refetched log instead of a silent hole.
+   */
+  journalRestarted: boolean;
+  /** Lazy first load, called on Journal view activation. */
+  loadJournal: () => Promise<void>;
 }
 
 export type CompareSelectionType = 'commit' | 'file';

@@ -10,7 +10,7 @@ import type { ThemeName } from './theme/themes';
 
 export const PREFS_KEY = 'diffstalker:prefs';
 
-export const VIEW_NAMES = ['changes', 'history', 'compare', 'explorer'] as const;
+export const VIEW_NAMES = ['changes', 'journal', 'history', 'compare', 'explorer'] as const;
 export type ViewName = (typeof VIEW_NAMES)[number];
 
 export function isViewName(value: unknown): value is ViewName {

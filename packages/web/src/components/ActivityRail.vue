@@ -1,13 +1,13 @@
 <script setup lang="ts">
 /**
- * Activity rail: switches the primary view. Four entries — Changes,
- * History, Compare, Explorer (Commit lives inside Changes). The active
+ * Activity rail: switches the primary view. Five entries — Changes,
+ * Journal, History, Compare, Explorer (Commit lives inside Changes). The active
  * entry carries the add-green indicator bar: the diff palette speaking
  * in the chrome. Collapses to icons on narrow screens.
  *
  * Portrait: the rail rotates into a full-width horizontal tab band
  * under the header (grid-area railband). The band is ONE flex row: the
- * four tabs LEFT-aligned (justify-content: flex-start), then the
+ * tabs LEFT-aligned (justify-content: flex-start), then the
  * #view-toolbar-slot Teleport target as a right-aligned flex sibling
  * (margin-left auto) — never absolutely positioned, so lifted controls
  * (Explorer's filters, Compare's base picker) share the row with the
@@ -64,6 +64,7 @@ onBeforeUnmount(() => {
 /** Minimal 16x16 stroke icons, one per view. */
 const ICON_PATHS: Record<ViewName, string> = {
   changes: 'M8 1.5v5M5.5 4h5M4.5 11.5h7',
+  journal: 'M2.5 3.5h11M2.5 7h5.5M2.5 10.5h4M13.5 11a2.75 2.75 0 1 1-5.5 0 2.75 2.75 0 0 1 5.5 0ZM10.75 9.6V11l1 .75',
   history: 'M8 4.5V8l2.4 1.5M14 8A6 6 0 1 1 8 2a6 6 0 0 1 6 6Z',
   compare: 'M5 13V3.5M2.8 5.7 5 3.5l2.2 2.2M11 3v9.5M8.8 10.3 11 12.5l2.2-2.2',
   explorer: 'M2 4h4l1.5 1.5H14V13H2Z',

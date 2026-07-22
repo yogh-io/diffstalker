@@ -10,6 +10,7 @@
 import type { GitStatus, StashEntry, InProgressOperation } from '@diffstalker/core/git/status';
 import type { FileHunkCounts } from '@diffstalker/core/git/diff';
 import type { GitState } from '@diffstalker/core/managers/WorkingTreeManager';
+import type { JournalEntry, JournalStore } from '@diffstalker/core/types/journal';
 
 export interface WireHunkCounts {
   staged: Record<string, number>;
@@ -67,6 +68,49 @@ export function serializeSharedState(state: GitState): WireSharedState {
     stashList: state.stashList,
     operationInProgress: state.operationInProgress,
     mtimes: state.mtimes ? mapToRecord(state.mtimes) : null,
+  };
+}
+
+/** GET /repos/:id/journal response. */
+export interface WireJournal {
+  /** Opaque store identity, minted per JournalStore; clients discard their cache on mismatch. */
+  epoch: string;
+  /**
+   * Highest pruned seq (0 when nothing is pruned): entries with
+   * seq <= prunedBefore are gone. A prunedBefore above a client's last
+   * seen seq means a gap it can never fill with ?since — full refetch.
+   */
+  prunedBefore: number;
+  entries: JournalEntry[];
+}
+
+/**
+ * Encode journal entries for the wire: a pass-through. Entries are
+ * JSON-native by design (ts is epoch ms, span/stats/supersedes are plain)
+ * and the embedded DiffResult ({raw, lines}) crosses the wire exactly as
+ * the existing /diff endpoints send it — plain JSON, no Dates or Maps.
+ */
+export function serializeJournalEntries(entries: JournalEntry[]): JournalEntry[] {
+  return entries;
+}
+
+/**
+ * Derive the highest pruned seq from the store: seqs start at 1, so any
+ * gap below the first retained entry is pruned history. An empty store
+ * that has assigned seqs (everything pruned) reports its last assigned
+ * seq; a fresh store reports 0.
+ */
+export function journalPrunedBefore(store: JournalStore): number {
+  return store.entries.length > 0 ? store.entries[0].seq - 1 : store.nextSeq - 1;
+}
+
+/** Encode a journal read: entries with seq > since (all when since is 0). */
+export function serializeJournal(store: JournalStore, since: number): WireJournal {
+  const entries = since > 0 ? store.entries.filter((e) => e.seq > since) : store.entries;
+  return {
+    epoch: store.epoch,
+    prunedBefore: journalPrunedBefore(store),
+    entries: serializeJournalEntries(entries),
   };
 }
 

@@ -11,9 +11,11 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { WorkingTreeManager, GitState } from './WorkingTreeManager.js';
 import { GitOperationQueue } from './GitOperationQueue.js';
-import { FileEntry, GitStatus } from '../git/status.js';
+import { JournalManager, createJournalStore } from './JournalManager.js';
+import { FileEntry, GitStatus, InProgressOperation } from '../git/status.js';
 import type { DiffResult } from '../git/diff.js';
-import type { JournalObservation } from '../types/journal.js';
+import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
+import type { JournalEntry, JournalHunkEntry, JournalObservation } from '../types/journal.js';
 import {
   createFixtureRepo,
   removeFixtureRepo,
@@ -130,23 +132,61 @@ describe('WorkingTreeManager', () => {
       resetRepo();
     });
 
+    interface GatheredInputs {
+      headDiff: DiffResult;
+      headOid: string;
+      stashCount: number;
+      operationInProgress: InProgressOperation | null;
+      mtimes: Map<string, number>;
+    }
+
     /**
-     * Reach the private journal gather with the oidBefore doRefresh now
-     * captures BEFORE the status read — the torn-window contract under test.
+     * Reach the private journal gather with the oidBefore and gatherStart
+     * doRefresh now captures BEFORE the status read — the torn-window
+     * contract under test.
      */
     function gatherWith(
       m: WorkingTreeManager,
       status: GitStatus,
-      oidBefore: string | null
-    ): Promise<{ headDiff: DiffResult; headOid: string } | null> {
+      oidBefore: string | null,
+      gatherStart: number = Date.now()
+    ): Promise<GatheredInputs | null> {
       return (
         m as unknown as {
           gatherJournalInputs(
             status: GitStatus,
-            oidBefore: string | null
-          ): Promise<{ headDiff: DiffResult; headOid: string } | null>;
+            oidBefore: string | null,
+            gatherStart: number
+          ): Promise<GatheredInputs | null>;
         }
-      ).gatherJournalInputs(status, oidBefore);
+      ).gatherJournalInputs(status, oidBefore, gatherStart);
+    }
+
+    interface GuardSnap {
+      operation: InProgressOperation | null;
+      stashCount: number;
+      mtimes: Map<string, number>;
+    }
+
+    /**
+     * Make the FIRST guard snapshot (taken before the diff reads) lie, so
+     * the re-read after the diffs disagrees — a deterministic stand-in
+     * for an external op/stash/write landing mid-window.
+     */
+    function tearFirstGuard(m: WorkingTreeManager, mutate: (snap: GuardSnap) => void): void {
+      const target = m as unknown as {
+        snapshotJournalGuard(status: GitStatus): Promise<GuardSnap>;
+      };
+      const real = target.snapshotJournalGuard.bind(m);
+      let first = true;
+      target.snapshotJournalGuard = async (status: GitStatus) => {
+        const snap = await real(status);
+        if (first) {
+          first = false;
+          mutate(snap);
+        }
+        return snap;
+      };
     }
 
     test('journal torn window: HEAD moving after the pre-status oid capture discards the observation', async () => {
@@ -177,6 +217,140 @@ describe('WorkingTreeManager', () => {
     test('journal inputs are skipped when the pre-status oid capture failed', async () => {
       await manager.refresh();
       expect(await gatherWith(manager, manager.state.status!, null)).toBeNull();
+    });
+
+    test('widened tear guard: an op, the stash count, or a changed-file mtime moving mid-window discards the observation', async () => {
+      writeFixtureFile(repoPath, 'tracked.txt', 'guard edit\n');
+      await manager.refresh();
+      const status = manager.state.status!;
+      const oid = gitExec(repoPath, 'rev-parse HEAD').trim();
+
+      const tears: ((snap: GuardSnap) => void)[] = [
+        (snap) => {
+          snap.operation = 'merge'; // an operation started/ended mid-window
+        },
+        (snap) => {
+          snap.stashCount += 1; // an external stash landed mid-window
+        },
+        (snap) => {
+          // a tracked file was rewritten mid-window (slow external checkout)
+          snap.mtimes.set('tracked.txt', (snap.mtimes.get('tracked.txt') ?? 0) - 1000);
+        },
+      ];
+      for (const mutate of tears) {
+        const torn = new WorkingTreeManager(repoPath, new GitOperationQueue());
+        tearFirstGuard(torn, mutate);
+        expect(await gatherWith(torn, status, oid)).toBeNull();
+      }
+
+      // A quiet window still observes, with guard-consistent extras.
+      const inputs = await gatherWith(manager, status, oid);
+      expect(inputs).not.toBeNull();
+      expect(inputs!.stashCount).toBe(0);
+      expect(inputs!.operationInProgress).toBeNull();
+      expect(inputs!.mtimes.has('tracked.txt')).toBe(true);
+
+      resetRepo();
+    });
+
+    test('a path written during the read window discards the observation (headDiff and untracked sections)', async () => {
+      writeFixtureFile(repoPath, 'tracked.txt', 'window edit\n');
+      writeFixtureFile(repoPath, 'new.txt', 'untracked before\n');
+      await manager.refresh();
+      const staleStatus = manager.state.status!;
+      expect(staleStatus.files.some((f) => f.path === 'other.txt')).toBe(false);
+      const oid = gitExec(repoPath, 'rev-parse HEAD').trim();
+
+      // A slow external checkout rewrites other.txt DURING the read
+      // window: it was clean at the status read, so the pre-window mtime
+      // snapshot cannot see it — only its section in the just-read
+      // headDiff knows it exists.
+      const gatherStart = Date.now();
+      writeFixtureFile(repoPath, 'other.txt', 'rewritten mid-window\n');
+      const otherPath = path.join(repoPath, 'other.txt');
+      const midWindow = new Date(gatherStart + 50);
+      fs.utimesSync(otherPath, midWindow, midWindow);
+      expect(await gatherWith(manager, staleStatus, oid, gatherStart)).toBeNull();
+
+      // Same for an untracked section path: a rewrite BEFORE the first
+      // guard snapshot leaves both snapshots agreeing, so only the
+      // gather-start floor catches it. Backdate other.txt first so the
+      // untracked path is the only mid-window write.
+      const past = new Date(gatherStart - 5000);
+      fs.utimesSync(otherPath, past, past);
+      const gatherStart2 = Date.now();
+      writeFixtureFile(repoPath, 'new.txt', 'rewritten mid-window\n');
+      const newPath = path.join(repoPath, 'new.txt');
+      const midWindow2 = new Date(gatherStart2 + 50);
+      fs.utimesSync(newPath, midWindow2, midWindow2);
+      expect(await gatherWith(manager, staleStatus, oid, gatherStart2)).toBeNull();
+
+      resetRepo();
+    });
+
+    test('a normal save predating gather-start is still observed (no over-discard)', async () => {
+      writeFixtureFile(repoPath, 'tracked.txt', 'normal save\n');
+      // The save that TRIGGERED the observation predates gather-start
+      // (the watcher debounces ~100ms before the refresh ever runs).
+      const beforeGather = new Date(Date.now() - 500);
+      fs.utimesSync(path.join(repoPath, 'tracked.txt'), beforeGather, beforeGather);
+      await manager.refresh();
+      const status = manager.state.status!;
+      const oid = gitExec(repoPath, 'rev-parse HEAD').trim();
+
+      const inputs = await gatherWith(manager, status, oid, Date.now());
+      expect(inputs).not.toBeNull();
+      expect(inputs!.headDiff.raw).toContain('+normal save');
+
+      resetRepo();
+    });
+
+    test('an untracked path already in the HEAD diff (external git add mid-window) gets no second section', async () => {
+      writeFixtureFile(repoPath, 'dup.txt', 'dup content\n');
+      await manager.refresh();
+      const staleStatus = manager.state.status!;
+      expect(staleStatus.files.find((f) => f.path === 'dup.txt')?.status).toBe('untracked');
+
+      // External `git add` between the status read and the diff read: the
+      // path now shows in `git diff HEAD` while status still says untracked.
+      // Without the skip, splitDiffByFile would merge the two sections for
+      // one path into a corrupt hunk (headers counted as insertions).
+      gitExec(repoPath, 'add dup.txt');
+      const oid = gitExec(repoPath, 'rev-parse HEAD').trim();
+
+      const inputs = await gatherWith(manager, staleStatus, oid);
+      expect(inputs).not.toBeNull();
+      const sections = inputs!.headDiff.raw.match(/^diff --git a\/dup\.txt /gm) ?? [];
+      expect(sections).toHaveLength(1);
+
+      resetRepo();
+    });
+
+    test('an oversize untracked file journals as a header-only marker section, never deferred forever', async () => {
+      writeFixtureFile(repoPath, 'big.txt', 'x'.repeat(300 * 1024) + '\n');
+
+      const observations: JournalObservation[] = [];
+      manager.on('journal-observation', (obs) => observations.push(obs));
+      await manager.refresh();
+
+      expect(observations).toHaveLength(1);
+      const raw = observations[0].headDiff.raw;
+      expect(raw).toContain('diff --git a/big.txt b/big.txt');
+      expect(raw).toContain(OVERSIZE_UNTRACKED_MARKER);
+      expect(raw.length).toBeLessThan(100 * 1024); // the content is NOT embedded
+
+      // End to end: the journal appends a created entry with a null body
+      // (the diff:null promise) instead of skipping the file.
+      const journal = new JournalManager(createJournalStore());
+      const batches: JournalEntry[][] = [];
+      journal.on('append', (batch) => batches.push(batch));
+      journal.observe(observations[0]);
+      const entry = batches[0]
+        .filter((e): e is JournalHunkEntry => e.type === 'hunk')
+        .find((e) => e.path === 'big.txt');
+      expect(entry).toMatchObject({ kind: 'created', status: 'untracked', diff: null });
+
+      resetRepo();
     });
 
     test('populates mtimes for changed files: stat-backed, one entry per path, deleted omitted', async () => {
@@ -219,6 +393,58 @@ describe('WorkingTreeManager', () => {
       } finally {
         fs.rmSync(nonRepoDir, { recursive: true, force: true });
       }
+    });
+  });
+
+  describe('refresh coalescing', () => {
+    test('a full refresh UPGRADES a pending status-only refresh instead of being swallowed', async () => {
+      writeFixtureFile(repoPath, 'tracked.txt', 'coalesce edit\n');
+      const observations: JournalObservation[] = [];
+      manager.on('journal-observation', (obs) => observations.push(obs));
+
+      // Hold the queue so both requests land while one slot is pending —
+      // the stage+commit-within-200ms shape that used to swallow the
+      // edit's full refresh into the pending status-only one.
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const blocked = queue.enqueue(() => gate);
+
+      manager.scheduleStatusRefresh();
+      manager.scheduleRefresh(); // must upgrade the pending slot, not be dropped
+
+      release();
+      await blocked;
+      await drainQueue();
+
+      // The slot ran as a FULL refresh: the journal observed the edit.
+      expect(observations).toHaveLength(1);
+      expect(manager.state.hunkCounts?.unstaged.get('tracked.txt')).toBe(1);
+
+      resetRepo();
+    });
+
+    test('a status-only request never downgrades a pending full refresh', async () => {
+      writeFixtureFile(repoPath, 'tracked.txt', 'still full\n');
+      const observations: JournalObservation[] = [];
+      manager.on('journal-observation', (obs) => observations.push(obs));
+
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const blocked = queue.enqueue(() => gate);
+
+      manager.scheduleRefresh();
+      manager.scheduleStatusRefresh(); // must not replace the pending full
+
+      release();
+      await blocked;
+      await drainQueue();
+
+      expect(observations).toHaveLength(1); // the full refresh still ran
+      resetRepo();
     });
   });
 

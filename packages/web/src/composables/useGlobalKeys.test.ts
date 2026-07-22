@@ -1,5 +1,5 @@
 /**
- * useGlobalKeys tests: 1–4 switch views and `a` toggles auto mode
+ * useGlobalKeys tests: 1–5 switch views (rail order) and `a` toggles auto mode
  * (never while typing or with a modifier held, never under an open
  * overlay), Ctrl/⌘+P toggles the finder (only with an active repo),
  * ? toggles the help overlay, Esc closes the open overlay. Driven through window keydown events on a
@@ -53,14 +53,16 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-describe('view switching (1-4)', () => {
-  test('digits switch to Changes/History/Compare/Explorer', () => {
+describe('view switching (1-5)', () => {
+  test('digits follow the rail order: Changes/Journal/History/Compare/Explorer', () => {
     const ui = useUiStore();
     press('2');
-    expect(ui.activeView).toBe('history');
+    expect(ui.activeView).toBe('journal');
     press('3');
-    expect(ui.activeView).toBe('compare');
+    expect(ui.activeView).toBe('history');
     press('4');
+    expect(ui.activeView).toBe('compare');
+    press('5');
     expect(ui.activeView).toBe('explorer');
     press('1');
     expect(ui.activeView).toBe('changes');

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Journal view (web UI).** A new second view — a chronological, downward-only
+  log of every change as it happens, tracked **per hunk** rather than per file:
+  two edits to two different files land as two entries at the bottom even if
+  those files also changed higher up. Each entry has a timestamp, path, kind
+  (created / edited / expanded / shrunk / reverted / renamed), line span, +/−
+  stats, and its own diff. When a hunk is edited/expanded/shrunk/reverted the
+  older entry higher up is marked outdated and collapses while the fresh one
+  appears at the bottom (lineage via a `supersedes` chain); rapid edits to one
+  hunk fold into a single entry. The log is daemon-owned (HEAD-axis observation,
+  in-memory, bounded/pruned), streamed over SSE with an epoch + `since`
+  reconnect protocol so a client never sees a torn or interleaved log. Huge and
+  binary files show a collapsed placeholder. Observation is guarded against
+  torn reads during external `git checkout`/rebase so those never storm the log.
+
 ## [0.6.0] - 2026-07-21
 
 ### Added

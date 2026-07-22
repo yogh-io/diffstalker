@@ -23,6 +23,10 @@
  *
  * Every guard is defer-don't-decide: a skipped tick is always safe because
  * the next observation re-derives everything; a wrong append is forever.
+ *
+ * The store is bounded (design decision 8): after every append the
+ * oldest OUTDATED bodies are nulled past a byte budget, then the oldest
+ * entries are evicted entirely past a count cap — see pruneStore.
  */
 
 import { EventEmitter } from 'node:events';
@@ -32,6 +36,7 @@ import { hashHunkBody } from '../git/hunkTimes.js';
 import { splitDiffByFile } from '../view/splitDiffByFile.js';
 import type { DiffLine, DiffResult } from '../git/diffParse.js';
 import type { FileStatus } from '../git/status.js';
+import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
 import type {
   JournalBoundaryEntry,
   JournalBoundaryKind,
@@ -47,6 +52,23 @@ import type {
 
 /** Entry diff snapshots above this raw size are stored as null. */
 export const MAX_SNAPSHOT_BYTES = 256 * 1024;
+
+/**
+ * Pruning (design decision 8): the store is a bounded ring, enforced
+ * after every append. Total-entry cap per store; past it the oldest
+ * evictable entries are evicted entirely (a contiguous prefix, so the
+ * daemon's derived prunedBefore — entries[0].seq - 1 — stays the highest
+ * evicted seq). A LIVE entry's identity is never evicted.
+ */
+export const MAX_JOURNAL_ENTRIES = 500;
+
+/**
+ * Snapshot-body byte budget per store (sum of retained diff.raw lengths).
+ * Past it, the OLDEST OUTDATED entries' bodies are nulled first — the
+ * cheapest info loss: diff: null is already legal ("pruned body") and the
+ * entry's identity, stats, and lineage pointers all survive.
+ */
+export const MAX_JOURNAL_SNAPSHOT_BYTES = 16 * 1024 * 1024;
 
 /**
  * Upper bound of the pseudo-run for binary/mode-only sections: the
@@ -197,6 +219,11 @@ export function extractFileHunks(fileDiff: DiffResult): FileHunks {
   }
 
   if (rawHunks.length === 0) {
+    // An OVERSIZE_UNTRACKED_MARKER section is a header-only stand-in for
+    // a file too large to snapshot: classify it (created/edited via the
+    // marker's size/mtime suffix in the raw hash) but never store its
+    // header lines as if they were the snapshot.
+    const oversize = headerLines.some((l) => l.content.startsWith(OVERSIZE_UNTRACKED_MARKER));
     return {
       hunks: [
         {
@@ -206,6 +233,7 @@ export function extractFileHunks(fileDiff: DiffResult): FileHunks {
           del: 0,
           span: { start: 0, count: 0 },
           diff: fileDiff,
+          oversize,
         },
       ],
       renamedFrom,
@@ -254,7 +282,22 @@ export interface ClassifiedHunk {
   siblings: number;
 }
 
-function deriveKind(size: number, predSize: number): JournalHunkKind {
+/**
+ * The body to store for an observed hunk: null for an oversize-untracked
+ * stand-in section (its headers are not a snapshot) and for snapshots
+ * past the raw-size cap.
+ */
+function snapshotFor(h: ObservedHunk): DiffResult | null {
+  if (h.oversize === true) return null;
+  return h.diff.raw.length > MAX_SNAPSHOT_BYTES ? null : h.diff;
+}
+
+function deriveKind(ins: number, del: number, predSize: number): JournalHunkKind {
+  // A pure deletion is never growth: removing HEAD lines only ever
+  // shrinks the change, whatever its gross churn (deleting 3 lines has
+  // more +/- lines than inserting 1, but must not badge 'expanded').
+  if (ins === 0 && del > 0) return 'shrunk';
+  const size = ins + del;
   if (size > predSize) return 'expanded';
   if (size < predSize) return 'shrunk';
   return 'edited';
@@ -405,10 +448,10 @@ export function classifyFileHunks(
       const h = next[i];
       const entry: ClassifiedHunk = {
         seq: seq++,
-        kind: P.length === 0 ? 'created' : deriveKind(h.ins + h.del, predSize),
+        kind: P.length === 0 ? 'created' : deriveKind(h.ins, h.del, predSize),
         span: h.span,
         stats: { insertions: h.ins, deletions: h.del },
-        diff: h.diff.raw.length > MAX_SNAPSHOT_BYTES ? null : h.diff,
+        diff: snapshotFor(h),
         supersedes: [...supersedes],
         siblings: N.length,
       };
@@ -538,8 +581,63 @@ export class JournalManager extends EventEmitter<JournalEventMap> {
 
     if (batch.length > 0) {
       this.store.entries.push(...batch);
+      // Emit BEFORE pruning: the SSE fan-out serializes the batch on
+      // emit, so subscribers get full bodies even when the prune pass
+      // immediately nulls the oldest outdated ones.
       this.emit('append', batch);
+      this.pruneStore();
     }
+  }
+
+  /**
+   * Enforce the store bounds (design decision 8) after an append: null
+   * the oldest OUTDATED bodies past the byte budget, then evict the
+   * oldest entries entirely past the count cap. Identity eviction is a
+   * contiguous prefix and never removes a LIVE entry, so seqs stay
+   * contiguous and the daemon's derived prunedBefore (entries[0].seq - 1)
+   * remains the highest evicted seq. Lineage pointers of retained
+   * entries may name evicted seqs — that is exactly the pruned-baseline
+   * gap prunedBefore exposes honestly to clients.
+   */
+  private pruneStore(): void {
+    const liveSeqs = new Set<number>();
+    for (const hunks of this.store.live.values()) {
+      for (const h of hunks) liveSeqs.add(h.seq);
+    }
+    this.pruneBodies(liveSeqs);
+    this.pruneEntries(liveSeqs);
+  }
+
+  /** Null the oldest outdated (non-live) bodies until under the byte budget. */
+  private pruneBodies(liveSeqs: Set<number>): void {
+    let bytes = 0;
+    for (const e of this.store.entries) {
+      if (e.type === 'hunk' && e.diff !== null) bytes += e.diff.raw.length;
+    }
+    for (const e of this.store.entries) {
+      if (bytes <= MAX_JOURNAL_SNAPSHOT_BYTES) return;
+      if (e.type !== 'hunk' || e.diff === null || liveSeqs.has(e.seq)) continue;
+      bytes -= e.diff.raw.length;
+      e.diff = null;
+    }
+  }
+
+  /**
+   * Evict a contiguous oldest prefix past the count cap. Eviction stops
+   * at the first live entry: a live identity is never evicted, even if
+   * that leaves the store above the cap (bounded in practice — live
+   * entries are at most the working tree's current hunks).
+   */
+  private pruneEntries(liveSeqs: Set<number>): void {
+    const entries = this.store.entries;
+    let drop = 0;
+    while (
+      entries.length - drop > MAX_JOURNAL_ENTRIES &&
+      (entries[drop].type === 'boundary' || !liveSeqs.has(entries[drop].seq))
+    ) {
+      drop++;
+    }
+    if (drop > 0) entries.splice(0, drop);
   }
 
   /**

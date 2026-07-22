@@ -3,7 +3,11 @@
  * CLI's RepoSession (packages/cli/src/daemon/RepoSession.ts), READ-ONLY:
  * the web UI is a viewer, so this store runs no git mutations. The only
  * non-GET requests it makes are POST /repos (attach) and DELETE /repos/:id
- * (release) — refcounting, not git operations.
+ * (release) — refcounting, not git operations. The release fires on a
+ * repo switch, on dispose(), and — via releaseOnUnload(), wired to
+ * pagehide in App.vue — when the page unloads: without that unload
+ * release a reload/close would leak the ref and the daemon would never
+ * close a web-touched repo.
  *
  * - shared state (status, hunk counts, stash list, in-progress op, error)
  *   is fed by the per-repo SSE stream through the single applyWireState
@@ -24,6 +28,15 @@
  *   responses are dropped by per-key sequence tokens;
  * - history and compare are pulled on demand and re-pulled on state-change
  *   when previously loaded;
+ * - the journal (the daemon's append-only per-hunk edit chronology) is
+ *   lazy-loaded on the Journal view's first activation and then fed by
+ *   'journal-append' SSE batches, deduped by seq and applied only when
+ *   the batch's epoch matches the cached one (a mismatch means the
+ *   daemon store reset — the batch is buffered, never spliced in, and
+ *   the log is refetched from scratch); reconnect refetches
+ *   ?since=<journalSyncedTo, the watermark only successful fetches
+ *   advance>, and an epoch change or pruned gap replaces the log
+ *   wholesale ("journal restarted") instead of leaving a silent hole;
  * - the compare base is per-client too: selectedCompareBase rides along
  *   as GET /compare?base=… — nothing is persisted daemon-side.
  *
@@ -58,10 +71,17 @@ import { splitDiffByFile } from '@diffstalker/core/view/splitDiffByFile';
 import { buildDiffModel } from '../utils/diffRows';
 import type { DiffModel } from '../utils/diffRows';
 import type { SseHandle } from '../api/transport';
-import type { RepoRef, WireHunkCounts, WireSharedState } from '@diffstalker/client';
+import type {
+  JournalAppendEvent,
+  JournalResponse,
+  RepoRef,
+  WireHunkCounts,
+  WireSharedState,
+} from '@diffstalker/client';
 import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
+import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type {
   RepoSharedState,
   RepoSelectionState,
@@ -190,6 +210,31 @@ export const useRepoStore = defineStore('repo', () => {
   const workingDiffs = shallowRef<WorkingDiffsState>({ byKey: new Map(), seq: 0 });
   const selection = shallowRef<RepoSelectionState>(initialSelection());
   const history = shallowRef<RepoHistoryState>(initialHistory());
+  /**
+   * The journal slice (stores/types.ts JournalStoreSlice): the daemon's
+   * append-only per-hunk edit chronology, entries in seq order deduped
+   * by seq — seq is the only ordering axis, ts a display label. Whole
+   * array replaced on every change (shallowRef); folding into display
+   * rows is a pure projection the view computes (utils/foldEntries).
+   */
+  const journalEntries = shallowRef<JournalEntry[]>([]);
+  /**
+   * The daemon journal-store's epoch (an opaque string, compared by
+   * equality only), null until the first load. A different epoch on
+   * reconnect means a new store (daemon restart / eviction) whose seq
+   * space is unrelated: refetch from scratch.
+   */
+  const journalEpoch = shallowRef<string | null>(null);
+  /** Ring-buffer eviction watermark: entries below it are gone. */
+  const journalPrunedBefore = shallowRef(0);
+  /** True once the lazy first load landed (Journal view activation). */
+  const journalLoaded = shallowRef(false);
+  /**
+   * A journal reset (epoch change or pruned gap on reconnect) replaced
+   * the entries wholesale — the view renders a "journal restarted"
+   * divider instead of a silent hole.
+   */
+  const journalRestarted = shallowRef(false);
   const compare = shallowRef<RepoCompareState>(initialCompare());
   /**
    * The base branch the compare view reads against, per-client. Null
@@ -216,6 +261,34 @@ export const useRepoStore = defineStore('repo', () => {
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let recovering = false;
   let historyPullInFlight = false;
+  /** Single-flight guard for the lazy loadJournal pull. */
+  let journalLoadInFlight = false;
+  /** Single-flight guard for the post-reconnect journal resync. */
+  let journalPullInFlight = false;
+  /**
+   * The resync watermark: the highest seq a SUCCESSFUL journal fetch
+   * (load, resync, wholesale refetch) proved contiguous. Live SSE
+   * appends never advance it — after a disconnect, appends on the new
+   * stream push the tail past the still-unfetched gap, and a second
+   * disconnect resyncing from that tail would skip the gap forever.
+   * The ?since= floor for every resync.
+   */
+  let journalSyncedTo = 0;
+  /**
+   * Epoch of the pre-load 'journal-append' accumulation (the batches
+   * applied before the first loadJournal). Tracked so accumulation
+   * never interleaves entries across a daemon store reset, and so
+   * loadJournal can discard an accumulation from a different epoch
+   * instead of merging two seq spaces.
+   */
+  let preloadAppendEpoch: string | null = null;
+  /**
+   * Batches whose epoch mismatched the cached one, parked while the
+   * from-scratch refetch runs; merged afterwards when their epoch
+   * matches the refetched store (they raced the reset — dropping them
+   * would reopen the very hole the epoch check exists to close).
+   */
+  let epochResetBuffer: JournalAppendEvent[] = [];
   let lastIncludeUncommitted = false;
   let historyCount = 100;
   /**
@@ -292,6 +365,11 @@ export const useRepoStore = defineStore('repo', () => {
     clearTimers();
     recovering = false;
     historyPullInFlight = false;
+    journalLoadInFlight = false;
+    journalPullInFlight = false;
+    journalSyncedTo = 0;
+    preloadAppendEpoch = null;
+    epochResetBuffer = [];
     lastIncludeUncommitted = false;
     historyCount = 100;
 
@@ -306,6 +384,11 @@ export const useRepoStore = defineStore('repo', () => {
     workingDiffs.value = { byKey: new Map(), seq: 0 };
     selection.value = initialSelection();
     history.value = initialHistory();
+    journalEntries.value = [];
+    journalEpoch.value = null;
+    journalPrunedBefore.value = 0;
+    journalLoaded.value = false;
+    journalRestarted.value = false;
     compare.value = initialCompare();
     selectedCompareBase.value = null;
 
@@ -347,6 +430,7 @@ export const useRepoStore = defineStore('repo', () => {
     subscription = client.subscribeRepo(repoId.value, {
       onSnapshot: (state) => applyWireState(state),
       onStateChange: (state) => applyWireState(state),
+      onJournalAppend: (event: JournalAppendEvent) => applyJournalAppend(event),
       // An EventSource error IS the connection-down signal; recovery is
       // managed here (close + retry loop), not by the browser's auto-retry,
       // because a restarted daemon needs the repo re-POSTed first.
@@ -371,6 +455,26 @@ export const useRepoStore = defineStore('repo', () => {
       if (gen !== generation) return;
       repoId.value = null;
     }
+  }
+
+  /**
+   * Best-effort ref release for page unload (App.vue's pagehide
+   * handler): a keepalive DELETE that outlives the page — a plain
+   * closeRepo() would be aborted mid-unload and leak the ref, leaving
+   * the daemon's watchers running forever for a tab that no longer
+   * exists. Synchronous and fire-and-forget by design. Clears the
+   * held-ref tracking so a bfcache resurrection re-acquires cleanly
+   * through the recovery loop (the dead SSE stream triggers it, and
+   * recover() re-POSTs /repos) instead of double-releasing later.
+   */
+  function releaseOnUnload(): void {
+    // heldRepoId alone: it is the truthful "we hold a daemon ref"
+    // tracking, and clearing it makes a repeat pagehide a no-op — a
+    // second DELETE would steal another client's ref.
+    const id = heldRepoId;
+    if (id === null) return;
+    heldRepoId = null;
+    client.releaseRepoOnUnload(id);
   }
 
   // --- Reconnect (single-flight, no daemon spawn) ---
@@ -423,6 +527,13 @@ export const useRepoStore = defineStore('repo', () => {
       const state = await client.status(ref.id);
       if (gen !== generation) return;
       applyWireState(state);
+      // The SSE stream was down: refetch the journal tail (or discard
+      // a pre-load accumulation) so the append-only log has no hole.
+      // The resync floors on journalSyncedTo — the watermark only
+      // successful fetches advance — never the live tail: appends on
+      // the fresh stream may already sit past a still-unfetched gap,
+      // and an INTERRUPTED earlier recovery must not move the floor.
+      void resyncJournal(); // catches internally; never rejects
     } catch {
       // Still down (or down again mid-recovery): keep the error, retry.
       recovering = false;
@@ -888,6 +999,249 @@ export const useRepoStore = defineStore('repo', () => {
     }
   }
 
+  // --- Journal ---
+
+  /**
+   * Union two seq-ordered entry lists by seq. Returns the existing
+   * array untouched (same identity, no reactive churn) when the
+   * incoming batch adds nothing new.
+   */
+  function mergeJournalEntries(existing: JournalEntry[], incoming: JournalEntry[]): JournalEntry[] {
+    const bySeq = new Map<number, JournalEntry>(existing.map((e) => [e.seq, e]));
+    let added = false;
+    for (const entry of incoming) {
+      if (!bySeq.has(entry.seq)) {
+        bySeq.set(entry.seq, entry);
+        added = true;
+      }
+    }
+    if (!added) return existing;
+    return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  }
+
+  /**
+   * The SSE 'journal-append' sink, epoch-aware: a batch only ever
+   * splices into a log from the SAME daemon store. Loaded + matching
+   * epoch: append, ignoring seqs at or below the current tail — events
+   * racing a refetch dedupe by seq. Loaded + DIFFERENT epoch: the
+   * daemon store reset (restart / prune-reset) under a live stream —
+   * the batch's seq space is unrelated, so it is parked in
+   * epochResetBuffer (never appended) and the log is refetched from
+   * scratch; the refetch merges the parked batch back when its epoch
+   * matches the new store. Before the first loadJournal, batches
+   * accumulate so an append racing the initial GET is never lost (the
+   * load merges by seq) — but never across epochs: a batch from a new
+   * store replaces the stale accumulation outright.
+   */
+  function applyJournalAppend(event: JournalAppendEvent): void {
+    if (!journalLoaded.value) {
+      if (preloadAppendEpoch !== null && preloadAppendEpoch !== event.epoch) {
+        // The daemon store reset before the first load: the accumulated
+        // batches belong to the old seq space — drop them, keep only
+        // the new store's batch. Never interleave entries across epochs.
+        journalEntries.value = [];
+      }
+      preloadAppendEpoch = event.epoch;
+      appendJournalTail(event.entries);
+      return;
+    }
+    if (event.epoch !== journalEpoch.value) {
+      epochResetBuffer.push(event);
+      void restartJournalFromScratch(); // catches internally; never rejects
+      return;
+    }
+    appendJournalTail(event.entries);
+  }
+
+  /** Append the batch's genuinely-new tail (seqs above the current one). */
+  function appendJournalTail(entries: JournalEntry[]): void {
+    const cur = journalEntries.value;
+    const last = cur.at(-1)?.seq ?? 0;
+    const fresh = entries.filter((e) => e.seq > last).sort((a, b) => a.seq - b.seq);
+    if (fresh.length === 0) return;
+    journalEntries.value = [...cur, ...fresh];
+  }
+
+  /**
+   * Replace the log wholesale from a full GET (epoch change / pruned
+   * gap): entries, epoch, watermark, and the "journal restarted"
+   * divider flag move together. The watermark lands on the fetched
+   * tail — a fully-pruned empty store is synced through prunedBefore.
+   */
+  function replaceJournalWholesale(full: JournalResponse): void {
+    journalEntries.value = full.entries;
+    journalEpoch.value = full.epoch;
+    journalPrunedBefore.value = full.prunedBefore;
+    journalSyncedTo = full.entries.at(-1)?.seq ?? full.prunedBefore;
+    journalRestarted.value = true;
+  }
+
+  /**
+   * Merge parked mismatched-epoch batches after a from-scratch refetch:
+   * batches whose epoch matches the refetched store raced the reset
+   * (emitted after the response was built) — the by-seq merge dedupes
+   * overlap. A batch matching NEITHER epoch (two resets racing) is
+   * dropped; the next live append re-detects the mismatch and refetches
+   * again.
+   */
+  function drainEpochResetBuffer(): void {
+    const parked = epochResetBuffer;
+    epochResetBuffer = [];
+    for (const event of parked) {
+      if (event.epoch !== journalEpoch.value) continue;
+      const merged = mergeJournalEntries(journalEntries.value, event.entries);
+      if (merged !== journalEntries.value) journalEntries.value = merged;
+    }
+  }
+
+  /**
+   * The epoch-mismatch refetch: the cached log belongs to a dead store,
+   * so ?since can't patch it — pull the full log and replace wholesale,
+   * then merge the parked batches. Single-flight via journalPullInFlight
+   * (shared with resyncJournal: both replace the same state, and a
+   * mismatched batch arriving mid-resync parks in the buffer the
+   * refetch drains). Failures keep the current entries visible;
+   * connection loss re-enters the reconnect loop. Never rejects.
+   */
+  async function restartJournalFromScratch(): Promise<void> {
+    const id = repoId.value;
+    if (id === null || journalPullInFlight) return;
+    journalPullInFlight = true;
+    const gen = generation;
+    try {
+      const full = await client.journal(id);
+      if (gen !== generation) return;
+      replaceJournalWholesale(full);
+      drainEpochResetBuffer();
+    } catch (err) {
+      if (gen === generation && isConnectionError(err)) handleConnectionLoss();
+      // Other failures: the next mismatched append (or reconnect
+      // resync) retries; the parked batches stay parked.
+    } finally {
+      journalPullInFlight = false;
+    }
+  }
+
+  /**
+   * The lazy first load (Journal view activation): pull the full log
+   * once — later changes arrive as 'journal-append' SSE batches, so
+   * state-changes trigger no re-pull. Merges with whatever the stream
+   * already appended. Mirrors loadHistory's error stance: connection
+   * loss collapses into the reconnect loop, a DaemonError rejects to
+   * the visiting view.
+   */
+  async function loadJournal(): Promise<void> {
+    const id = repoId.value;
+    if (id === null || journalLoaded.value || journalLoadInFlight) return;
+    journalLoadInFlight = true;
+    const gen = generation;
+    try {
+      const snap = await client.journal(id);
+      if (gen !== generation) return;
+      if (preloadAppendEpoch !== null && preloadAppendEpoch !== snap.epoch) {
+        // The pre-load SSE accumulation came from a different store
+        // than the one this GET answered from: merging would splice
+        // two seq spaces — the snapshot alone is the truth.
+        journalEntries.value = snap.entries;
+      } else {
+        journalEntries.value = mergeJournalEntries(journalEntries.value, snap.entries);
+      }
+      preloadAppendEpoch = null;
+      journalEpoch.value = snap.epoch;
+      journalPrunedBefore.value = snap.prunedBefore;
+      // The watermark covers what THIS fetch proved contiguous — the
+      // snapshot's tail, not the merged tail (merged entries beyond it
+      // came from the live stream, which a disconnect may have holed).
+      journalSyncedTo = snap.entries.at(-1)?.seq ?? snap.prunedBefore;
+      journalLoaded.value = true;
+    } catch (err) {
+      if (gen !== generation) return;
+      if (isConnectionError(err)) {
+        handleConnectionLoss();
+        return;
+      }
+      throw err;
+    } finally {
+      journalLoadInFlight = false;
+    }
+  }
+
+  /**
+   * Post-reconnect resync. Never loaded: drop any pre-load SSE
+   * accumulation — it may predate a daemon restart (a different
+   * epoch's seq space) and the lazy load refetches everything anyway.
+   * Loaded: refetch ?since=<journalSyncedTo> — the watermark only
+   * SUCCESSFUL fetches advance, never the live tail: appends on the
+   * fresh stream advance the tail past a still-unfetched gap, and an
+   * interrupted recovery (double-disconnect: gap 51..59 unfetched
+   * while live appends pushed the tail to 62) resyncing from the tail
+   * would lose the gap forever; from the watermark, the refetched
+   * slice and racing appends dedupe by seq instead of double-applying.
+   * A changed epoch OR a pruned gap (server's prunedBefore above the
+   * watermark) means the daemon's journal reset — refetch from scratch
+   * and flag journalRestarted so the view shows a divider instead of a
+   * silent hole. Failures keep the current entries visible (mirroring
+   * reloadHistory) AND the watermark unmoved, so the next attempt
+   * re-covers the same gap. Never rejects.
+   */
+  async function resyncJournal(): Promise<void> {
+    const id = repoId.value;
+    if (id === null || journalPullInFlight) return;
+    if (!journalLoaded.value) {
+      if (journalEntries.value.length > 0) journalEntries.value = [];
+      preloadAppendEpoch = null;
+      return;
+    }
+    journalPullInFlight = true;
+    const gen = generation;
+    const since = journalSyncedTo;
+    try {
+      const snap = await client.journal(id, since);
+      if (gen !== generation) return;
+      if (snap.epoch !== journalEpoch.value || snap.prunedBefore > since) {
+        // Journal reset/pruned past our watermark: the since-slice
+        // cannot patch the hole — replace the log wholesale, with a
+        // divider, and merge any batches parked by the epoch check.
+        const full = await client.journal(id);
+        if (gen !== generation) return;
+        replaceJournalWholesale(full);
+        drainEpochResetBuffer();
+        return;
+      }
+      const merged = mergeJournalEntries(journalEntries.value, snap.entries);
+      if (merged !== journalEntries.value) journalEntries.value = merged;
+      if (snap.prunedBefore !== journalPrunedBefore.value) {
+        journalPrunedBefore.value = snap.prunedBefore;
+      }
+      // Advance the watermark to what this fetch proved contiguous:
+      // its own tail (an empty slice proves nothing new — keep it).
+      const fetchedTail = snap.entries.at(-1)?.seq;
+      if (fetchedTail !== undefined && fetchedTail > journalSyncedTo) {
+        journalSyncedTo = fetchedTail;
+      }
+    } catch (err) {
+      if (gen === generation && isConnectionError(err)) handleConnectionLoss();
+      // Other failures: keep the current entries visible; the next
+      // reconnect re-syncs from the SAME watermark.
+    } finally {
+      journalPullInFlight = false;
+    }
+    kickParkedEpochBatches(gen);
+  }
+
+  /**
+   * After a resync releases the pull flag: a mismatched-epoch batch
+   * that arrived while the flag was held parked in epochResetBuffer,
+   * and its own restartJournalFromScratch early-returned. The
+   * same-epoch resync path never drains the buffer, so kick the
+   * from-scratch refetch here — otherwise the parked batch (for the
+   * NEW epoch) would be stranded forever.
+   */
+  function kickParkedEpochBatches(gen: number): void {
+    if (gen !== generation || epochResetBuffer.length === 0) return;
+    void restartJournalFromScratch(); // catches internally; never rejects
+  }
+
   // --- Compare ---
 
   /** The include-uncommitted flag of the most recent compare pull — lets
@@ -1036,11 +1390,17 @@ export const useRepoStore = defineStore('repo', () => {
     workingDiffs,
     selection,
     history,
+    journalEntries,
+    journalEpoch,
+    journalPrunedBefore,
+    journalLoaded,
+    journalRestarted,
     compare,
     selectedCompareBase,
     // lifecycle
     open,
     dispose,
+    releaseOnUnload,
     refresh,
     setError,
     // selection
@@ -1051,6 +1411,8 @@ export const useRepoStore = defineStore('repo', () => {
     // history
     loadHistory,
     selectHistoryCommit,
+    // journal
+    loadJournal,
     // compare
     refreshCompare,
     getLastIncludeUncommitted,

@@ -391,12 +391,16 @@ describe('global keyboard + overlays', () => {
     wrapper.unmount();
   });
 
-  test('view keys 1-4 switch views from anywhere outside a text field', async () => {
+  test('view keys 1-5 switch views (rail order) from anywhere outside a text field', async () => {
     const wrapper = await mountWithRepos([REPO_ONE]);
 
-    press('4');
+    press('5');
     await flushPromises();
     expect(wrapper.find('button[aria-current="page"]').attributes('title')).toBe('Explorer');
+
+    press('2');
+    await flushPromises();
+    expect(wrapper.find('button[aria-current="page"]').attributes('title')).toBe('Journal');
 
     press('1');
     await flushPromises();

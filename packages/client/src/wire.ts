@@ -15,6 +15,7 @@ import type {
   CommitInfo,
 } from '@diffstalker/core/git/status';
 import type { CompareDiff } from '@diffstalker/core/git/diff';
+import type { JournalEntry } from '@diffstalker/core/types/journal';
 
 // Core DTOs re-exported for consumers (type-only, erased at build).
 export type {
@@ -37,6 +38,13 @@ export type {
 export type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
 export type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 export type { RemoteOperationState, RemoteOperation } from '@diffstalker/core/types/remote';
+export type {
+  JournalEntry,
+  JournalHunkEntry,
+  JournalBoundaryEntry,
+  JournalHunkKind,
+  JournalBoundaryKind,
+} from '@diffstalker/core/types/journal';
 
 /** Hunk counts as JSON: core's two Maps become plain objects. */
 export interface WireHunkCounts {
@@ -130,3 +138,33 @@ export type WireCommitInfo = Omit<CommitInfo, 'date'> & { date: string };
 
 /** CompareDiff as JSON: commit dates are ISO strings. */
 export type WireCompareDiff = Omit<CompareDiff, 'commits'> & { commits: WireCommitInfo[] };
+
+/**
+ * GET /repos/:id/journal?since=<seq>: entries with seq > since (all when
+ * omitted). Entries are JSON-native (ts is epoch ms; span/stats/supersedes
+ * are plain; the embedded DiffResult crosses the wire as-is, like GET
+ * /diff), so no revival is needed. An epoch mismatch, or prunedBefore
+ * above the client's last seq, means the journal was reset/pruned: discard
+ * the cache and refetch from scratch.
+ */
+export interface JournalResponse {
+  /** Opaque store identity, minted per JournalStore; compare with equality only. */
+  epoch: string;
+  /** Ring-buffer eviction watermark: entries below it are gone. */
+  prunedBefore: number;
+  entries: JournalEntry[];
+}
+
+/**
+ * Payload of the per-repo `journal-append` SSE event: all entries from one
+ * observation in one event, so clients apply them atomically. The epoch is
+ * the emitting store's identity (an opaque string, compared with ===/!==
+ * only): a batch whose epoch differs from the client's cached one belongs
+ * to a reset store's unrelated seq space — never append it; refetch the
+ * log from scratch instead.
+ */
+export interface JournalAppendEvent {
+  /** Opaque store identity; compare with equality only. */
+  epoch: string;
+  entries: JournalEntry[];
+}

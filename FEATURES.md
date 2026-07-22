@@ -669,6 +669,18 @@ git operations.
   Untracked / Staged) with status letters, +/− stats, and hunk-count
   indicators, beside the selected file's diff. Word-level highlighting,
   per-hunk edit times, line-number gutters. No staging or commit controls.
+- **Journal** — a chronological, downward-only log of every change as it
+  happens, tracked **per hunk** (not per file): two edits to two different
+  files land as two entries at the bottom even if those files also changed
+  higher up. Each entry carries a timestamp, path, a kind
+  (created / edited / expanded / shrunk / reverted / renamed), a line span,
+  +/− stats, and its own diff. When a hunk is edited/expanded/shrunk/reverted
+  the **older entry higher up is marked outdated and collapses** while the new
+  one appears at the bottom (lineage via a `supersedes` chain). Rapid edits to
+  the same hunk fold into one entry (a short client-side fold window). The log
+  is daemon-owned (HEAD-axis observation, in-memory), streamed over SSE with an
+  epoch/`since` reconnect protocol, and pruned to a bounded size. Huge / binary
+  files show a collapsed placeholder (open explicitly to render). Read-only.
 - **History** — commit list (hash, message, author, relative date, ref chips)
   beside a commit detail: metadata + a multi-file diff with per-file section
   headers.

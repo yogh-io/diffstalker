@@ -5,7 +5,8 @@
  *   browser's print dialog only when it acts; Ctrl+Shift+P is not ours);
  * - Esc — close the open overlay (finder/help);
  * - ? — toggle the hotkeys help;
- * - 1/2/3/4 — switch to Changes/History/Compare/Explorer;
+ * - 1..N — switch view, derived from VIEWS so the digits always match
+ *   the rail order (1=Changes, 2=Journal, 3=History, ...);
  * - a — toggle auto mode (auto-select/auto-switch on changes).
  *
  * Bare keys (digits, ?) never fire while the user is typing in an
@@ -17,15 +18,13 @@
 
 import { onBeforeUnmount, onMounted } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
-import { useUiStore } from '../stores/ui';
+import { useUiStore, VIEWS } from '../stores/ui';
 import type { ViewName } from '../prefs';
 
-const VIEW_KEYS: Record<string, ViewName> = {
-  '1': 'changes',
-  '2': 'history',
-  '3': 'compare',
-  '4': 'explorer',
-};
+/** Digit -> view, derived from the rail order — never hardcoded. */
+const VIEW_KEYS: Record<string, ViewName> = Object.fromEntries(
+  VIEWS.map((view, index) => [String(index + 1), view.name])
+);
 
 function isEditable(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

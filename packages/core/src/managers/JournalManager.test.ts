@@ -12,11 +12,13 @@ import { parseDiffWithLineNumbers } from '../git/diffParse.js';
 import type { DiffLine, DiffResult } from '../git/diffParse.js';
 import { hashHunkBody } from '../git/hunkTimes.js';
 import type { FileStatus, GitStatus } from '../git/status.js';
+import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
 import type {
   JournalBoundaryEntry,
   JournalEntry,
   JournalHunkEntry,
   JournalObservation,
+  JournalStore,
   ObservedHunk,
 } from '../types/journal.js';
 import {
@@ -27,6 +29,8 @@ import {
   extractRuns,
   rebaselineFile,
   spanOfRuns,
+  MAX_JOURNAL_ENTRIES,
+  MAX_JOURNAL_SNAPSHOT_BYTES,
   PSEUDO_RUN_HI,
 } from './JournalManager.js';
 
@@ -319,6 +323,25 @@ describe('classifyFileHunks', () => {
     const { nextLive: prev3 } = classifyFileHunks([], three, 1); // size 3
     const smaller = observedHunks(fileSection('f.txt', [H('@@ -5,1 +5,1 @@', ['-x', '+a'])]));
     expect(classifyFileHunks(prev3, smaller, 2).entries[0].kind).toBe('shrunk');
+  });
+
+  test('a pure deletion never badges expanded: bigger gross churn still reads shrunk', () => {
+    // Predecessor: a one-line insertion after HEAD line 4 (size 1).
+    const ins = observedHunks(fileSection('f.txt', [H('@@ -4,0 +5,1 @@', ['+X'])]));
+    const r1 = classifyFileHunks([], ins, 1);
+    expect(r1.entries[0].kind).toBe('created');
+
+    // The insertion goes away and HEAD lines 4-6 are deleted: ins 0,
+    // del 3 — gross churn 3 > 1, but it is a pure deletion and must
+    // read 'shrunk', never 'expanded'.
+    const pureDel = observedHunks(
+      fileSection('f.txt', [H('@@ -4,3 +4,0 @@', ['-l4', '-l5', '-l6'])])
+    );
+    const r2 = classifyFileHunks(r1.nextLive, pureDel, 2);
+    expect(r2.entries).toHaveLength(1);
+    expect(r2.entries[0].kind).toBe('shrunk');
+    expect(r2.entries[0].supersedes).toEqual([1]);
+    expect(r2.entries[0].stats).toEqual({ insertions: 0, deletions: 3 });
   });
 
   test('1 -> N split: each child supersedes the parent, siblings N', () => {
@@ -934,5 +957,156 @@ describe('JournalManager', () => {
     );
     expect(batches).toHaveLength(2);
     expect(hunkEntries(batches[1])[0].kind).toBe('edited');
+  });
+
+  test('oversize untracked marker section: created with diff null, silent when unchanged, edited (still null) when it moves', () => {
+    const oversizeSection = (size: number, mtime: number): string =>
+      [
+        'diff --git a/big.bin b/big.bin',
+        'new file mode 100644',
+        `${OVERSIZE_UNTRACKED_MARKER} size=${size} mtime=${mtime}`,
+      ].join('\n') + '\n';
+    const files: { path: string; status: FileStatus }[] = [
+      { path: 'big.bin', status: 'untracked' },
+    ];
+    const { manager, batches } = mkManager();
+
+    manager.observe(mkObs({ diff: oversizeSection(300_000, 111), files }));
+    const created = hunkEntries(batches[0]);
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      path: 'big.bin',
+      kind: 'created',
+      status: 'untracked',
+      diff: null,
+    });
+
+    // Unchanged marker (same size/mtime suffix) -> silent, not re-appended.
+    manager.observe(mkObs({ diff: oversizeSection(300_000, 111), files }));
+    expect(batches).toHaveLength(1);
+
+    // The file changed (suffix moved) -> an edited entry, still bodyless.
+    manager.observe(mkObs({ diff: oversizeSection(300_500, 222), files }));
+    expect(batches).toHaveLength(2);
+    expect(hunkEntries(batches[1])[0]).toMatchObject({ kind: 'edited', diff: null });
+  });
+});
+
+// --- Pruning (design decision 8) --------------------------------------------
+
+/** Push synthetic non-live hunk entries straight into the store. */
+function pushOutdated(store: JournalStore, count: number, rawSize = 1): number[] {
+  const seqs: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const seq = store.nextSeq++;
+    seqs.push(seq);
+    store.entries.push({
+      type: 'hunk',
+      seq,
+      ts: 0,
+      path: `noise-${seq}.ts`,
+      status: 'modified',
+      kind: 'edited',
+      span: { start: 1, count: 1 },
+      stats: { insertions: 1, deletions: 0 },
+      diff: { raw: 'x'.repeat(rawSize), lines: [] },
+      supersedes: [],
+      siblings: 1,
+      seeded: false,
+    });
+  }
+  return seqs;
+}
+
+describe('JournalManager pruning', () => {
+  const EDITED_A = fileSection('a.ts', [H('@@ -2,1 +2,1 @@', ['-old a', '+edited a'])]);
+
+  test('count cap: a contiguous oldest prefix is evicted, the derived prunedBefore advances, the live tail survives', () => {
+    const { manager } = mkManager();
+    manager.observe(mkObs({ diff: A_SECTION, files: [{ path: 'a.ts', status: 'modified' }] }));
+    const store = manager.journalStore;
+    pushOutdated(store, 600);
+
+    // The edit supersedes the seeded a.ts entry; the append triggers pruning.
+    manager.observe(mkObs({ diff: EDITED_A, files: [{ path: 'a.ts', status: 'modified' }] }));
+
+    expect(store.entries).toHaveLength(MAX_JOURNAL_ENTRIES);
+    const last = store.entries[store.entries.length - 1] as JournalHunkEntry;
+    expect(last.path).toBe('a.ts');
+    expect(last.kind).toBe('edited');
+    // Contiguous prefix eviction keeps entries[0].seq - 1 (the daemon's
+    // derived prunedBefore) equal to the highest evicted seq.
+    expect(store.entries[0].seq).toBe(last.seq - MAX_JOURNAL_ENTRIES + 1);
+    // The live map still points at a retained entry.
+    expect(store.live.get('a.ts')![0].seq).toBe(last.seq);
+  });
+
+  test('a live identity is never evicted: eviction stops at the oldest live entry', () => {
+    const { manager } = mkManager();
+    manager.observe(mkObs({ diff: A_SECTION, files: [{ path: 'a.ts', status: 'modified' }] }));
+    const store = manager.journalStore;
+    const liveSeq = store.live.get('a.ts')![0].seq; // sits right behind the journal-start boundary
+    pushOutdated(store, 600);
+
+    // An unrelated new file appends; a.ts stays live and unchanged.
+    manager.observe(
+      mkObs({
+        diff: A_SECTION + B_SECTION,
+        files: [
+          { path: 'a.ts', status: 'modified' },
+          { path: 'b.ts', status: 'modified' },
+        ],
+      })
+    );
+
+    // Only the boundary ahead of the live entry could go; the store stays
+    // over the cap rather than losing a live identity.
+    expect(store.entries[0].seq).toBe(liveSeq);
+    expect(store.entries.length).toBeGreaterThan(MAX_JOURNAL_ENTRIES);
+    expect(store.live.get('a.ts')![0].seq).toBe(liveSeq);
+  });
+
+  test('byte budget: the oldest OUTDATED bodies are nulled first; live bodies and the newest outdated survive', () => {
+    const { manager } = mkManager();
+    manager.observe(mkObs({ diff: A_SECTION, files: [{ path: 'a.ts', status: 'modified' }] }));
+    const store = manager.journalStore;
+    const MB = 1024 * 1024;
+    const fatSeqs = pushOutdated(store, 19, MB); // 19MB of outdated snapshot bodies
+
+    // Pin the OLDEST fat entry live; its path defers (status lists it,
+    // no diff section), so the observe leaves its live hunks untouched.
+    store.live.set('fat.bin', [
+      { seq: fatSeqs[0], runs: [[0, 2]], bodyHash: 'fat', ins: 1, del: 0 },
+    ]);
+
+    manager.observe(
+      mkObs({
+        diff: EDITED_A,
+        files: [
+          { path: 'a.ts', status: 'modified' },
+          { path: 'fat.bin', status: 'untracked' },
+        ],
+      })
+    );
+
+    const bodyOf = new Map(
+      store.entries
+        .filter((e): e is JournalHunkEntry => e.type === 'hunk')
+        .map((e) => [e.seq, e.diff])
+    );
+    expect(bodyOf.get(fatSeqs[0])).not.toBeNull(); // live: skipped by the byte pass
+    expect(bodyOf.get(fatSeqs[1])).toBeNull(); // oldest outdated: nulled first
+    expect(bodyOf.get(fatSeqs[2])).toBeNull();
+    expect(bodyOf.get(fatSeqs[fatSeqs.length - 1])).not.toBeNull(); // newest outdated retained
+
+    // The budget holds for everything the pass was allowed to touch
+    // (the one pinned live body is the only possible excess).
+    let retained = 0;
+    for (const e of store.entries) {
+      if (e.type === 'hunk' && e.diff !== null) retained += e.diff.raw.length;
+    }
+    expect(retained).toBeLessThanOrEqual(MAX_JOURNAL_SNAPSHOT_BYTES + MB);
+    // No identity was evicted: well under the count cap.
+    expect(store.entries[0].seq).toBe(1);
   });
 });

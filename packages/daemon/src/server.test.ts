@@ -8,7 +8,6 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { getManagerForRepo } from '@diffstalker/core/managers/GitStateManager';
 import { createDaemon, Daemon } from './server.js';
 import {
   createFixtureRepo,
@@ -296,7 +295,10 @@ describe('daemon over unix socket', () => {
       expect(open.status).toBe(201);
       const opened = (await open.json()) as { id: string; path: string };
 
-      const manager = getManagerForRepo(opened.path);
+      // The daemon constructs its managers itself (journal store
+      // injection), so reach the live one through the daemon, never
+      // core's path-keyed registry (which would mint a fresh manager).
+      const manager = daemon.getRepo(opened.id)!.manager;
       const baseline = manager.workingTree.listenerCount('state-change');
 
       const controller = new AbortController();

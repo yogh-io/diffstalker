@@ -3,9 +3,12 @@
  *
  * SseHub is the per-repo hub: each repo id gets one channel that subscribes
  * to the core manager's workingTree 'state-change' event and fans serialized
- * SHARED state out to every connected response. The channel is created
- * lazily on the first subscriber and torn down (listener removed, keep-alive
- * cleared) when the last subscriber disconnects.
+ * SHARED state out to every connected response, plus the journal's 'append'
+ * event fanned out as `journal-append {epoch, entries}` on the same channel
+ * (the epoch lets clients drop a batch that raced a store reset instead of
+ * splicing entries from two seq spaces together). The channel is
+ * created lazily on the first subscriber and torn down (listeners removed,
+ * keep-alive cleared) when the last subscriber disconnects.
  *
  * DaemonEventHub is the single daemon-scope channel (GET /events): named
  * events about the daemon itself — repo-opened, repo-closed, follow-change —
@@ -16,7 +19,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
 import type { GitState } from '@diffstalker/core/managers/WorkingTreeManager';
-import { serializeSharedState } from './serialize.js';
+import type { JournalEntry } from '@diffstalker/core/types/journal';
+import { serializeSharedState, serializeJournalEntries } from './serialize.js';
 
 const KEEP_ALIVE_MS = 25_000;
 
@@ -24,6 +28,8 @@ interface Channel {
   manager: GitStateManager;
   subscribers: Set<ServerResponse>;
   listener: (state: GitState) => void;
+  /** Fans one observation's appended journal entries out as journal-append. */
+  journalListener: (entries: JournalEntry[]) => void;
   keepAlive: ReturnType<typeof setInterval>;
   /** Last state-change payload fanned out; identical payloads are skipped. */
   lastData: string | null;
@@ -70,6 +76,20 @@ export class SseHub {
             writeEvent(subscriber, 'state-change', data);
           }
         },
+        journalListener: (entries: JournalEntry[]): void => {
+          // No lastData-style dedup: appends are inherently new. One event
+          // per observation so clients apply the batch atomically. The
+          // store's epoch rides along so a client can tell a batch from a
+          // reset store apart from its own cached seq space (an epoch-less
+          // append racing a reset would splice into the wrong log).
+          const data = JSON.stringify({
+            epoch: manager.journal.journalStore.epoch,
+            entries: serializeJournalEntries(entries),
+          });
+          for (const subscriber of subscribers) {
+            writeEvent(subscriber, 'journal-append', data);
+          }
+        },
         keepAlive: setInterval(() => {
           for (const subscriber of subscribers) {
             subscriber.write(': ping\n\n');
@@ -78,6 +98,7 @@ export class SseHub {
         lastData: null,
       };
       manager.workingTree.on('state-change', newChannel.listener);
+      manager.journal.on('append', newChannel.journalListener);
       newChannel.keepAlive.unref();
 
       channel = newChannel;
@@ -106,6 +127,7 @@ export class SseHub {
 
   private teardown(repoId: string, channel: Channel): void {
     channel.manager.workingTree.off('state-change', channel.listener);
+    channel.manager.journal.off('append', channel.journalListener);
     clearInterval(channel.keepAlive);
     for (const subscriber of channel.subscribers) {
       subscriber.end();

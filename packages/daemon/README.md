@@ -116,7 +116,8 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | GET    | `/repos/:id/tree?dir=&hidden=&ignored=` | One directory level (`name`, `path`, `type`), gitignored/hidden filtered by default (`hidden=true` / `ignored=true` include them, mirroring the TUI toggles), files annotated with `gitStatus` + `staged`, changed dirs with `hasChanges` (400 outside the repo root or on a file, 404 unknown dir) |
 | GET    | `/repos/:id/file?path=`    | File content for display with flags: `{content, binary, truncated, tooLarge, size, totalLines}` — binary/oversized come back with empty content and the flag set, never prose; 400 for anything that is not a regular file (directory, FIFO, device) or resolves outside the repo root |
 | GET    | `/repos/:id/files`         | All tracked + untracked (not ignored) paths: the fuzzy-finder source |
-| GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher |
+| GET    | `/repos/:id/journal?since=` | Append-only edit journal: `{epoch, prunedBefore, entries}`; `since=<seq>` returns only entries with a higher seq (all when omitted) |
+| GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher and `journal-append {entries}` per journal observation |
 | GET    | `/events`                  | Daemon-scope SSE: `snapshot` (open repos) on connect, then `repo-opened` / `repo-closed` / `follow-change` |
 | GET    | `/follow`                  | Follow state: `{targetFile, enabled, followedRepoId, followedPath}` |
 
@@ -161,6 +162,32 @@ two: a >100KB file used to be flagged truncated regardless).
 
 Repo ids are stable hashes of the worktree root, so a cached id still
 addresses the same repo after a daemon restart.
+
+### Journal
+
+`GET /repos/:id/journal` serves the repo's append-only edit journal: an
+immutable, seq-ordered log of per-hunk diff blurbs plus boundary dividers
+(commits, checkouts, stashes, operation transitions). Entries are
+JSON-native; the embedded `diff` is a `DiffResult` in the same wire shape
+as `/diff` responses.
+
+- `entries` — those with `seq > since` (all when `since` is omitted);
+  `seq` is the only ordering axis, `ts` (epoch ms) is a display label.
+- `epoch` — opaque string minted per journal store. A mismatch with a
+  client's cached epoch means the store was reset (daemon restart, LRU
+  eviction): discard the cache and refetch from scratch.
+- `prunedBefore` — highest pruned seq, 0 when nothing is pruned. A value
+  above a client's last seen seq is a gap `?since` can never fill: full
+  refetch.
+
+New entries stream as `journal-append {entries}` on the per-repo
+`GET /repos/:id/events` channel, one event per observation (possibly
+several hunks), batched so clients apply them atomically.
+
+The journal store lives above the repo's manager lifecycle: closing a
+repo's last client (a browser F5) disposes the manager but keeps the
+store, so a reopen resumes the same chronology under the same epoch.
+Stores are LRU-capped daemon-wide; an open repo's store is never evicted.
 
 ## Follow mode
 

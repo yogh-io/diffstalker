@@ -22,6 +22,8 @@ import type {
   FollowChangeEvent,
   FollowState,
   HealthState,
+  JournalAppendEvent,
+  JournalResponse,
   RepoClosedEvent,
   RepoOpenedEvent,
   RepoRef,
@@ -54,6 +56,13 @@ function toQuery(params: Record<string, string | number | boolean | undefined>):
 export interface RepoStreamHandlers {
   onSnapshot: (state: WireSharedState) => void;
   onStateChange: (state: WireSharedState) => void;
+  /**
+   * One observation's appended journal entries, applied atomically.
+   * The event carries the emitting store's epoch (an opaque string,
+   * compared with equality only) so the store can drop a batch from a
+   * reset daemon store instead of splicing two seq spaces together.
+   */
+  onJournalAppend?: (event: JournalAppendEvent) => void;
   onOpen?: () => void;
   onError?: () => void;
 }
@@ -91,6 +100,17 @@ export class DiffstalkerClient {
 
   async closeRepo(id: string): Promise<void> {
     await request('DELETE', this.repoPath(id, ''));
+  }
+
+  /**
+   * Best-effort ref release during page unload (pagehide). The release
+   * endpoint is DELETE /repos/:id and navigator.sendBeacon can only issue
+   * POSTs, so this uses fetch keepalive — the same outlive-the-page
+   * mechanism a beacon rides on. Fire-and-forget by design: the page is
+   * going away, nobody can act on the response.
+   */
+  releaseRepoOnUnload(id: string): void {
+    fetch(this.repoPath(id, ''), { method: 'DELETE', keepalive: true }).catch(() => {});
   }
 
   worktrees(id: string): Promise<WorktreeInfo[]> {
@@ -147,6 +167,19 @@ export class DiffstalkerClient {
     return { ...diff, commits: diff.commits.map(reviveCommit) };
   }
 
+  // --- Journal ---
+
+  /**
+   * The append-only journal: entries with seq > since (all when omitted),
+   * plus the store's epoch (an opaque string, compared by equality only)
+   * and the pruning watermark. The payload is JSON-native — the embedded
+   * DiffResult crosses the wire as-is, like diff() — so nothing is
+   * revived here.
+   */
+  journal(id: string, since?: number): Promise<JournalResponse> {
+    return request('GET', this.repoPath(id, '/journal') + toQuery({ since }));
+  }
+
   // --- Explorer ---
 
   tree(
@@ -172,13 +205,16 @@ export class DiffstalkerClient {
 
   /**
    * Subscribe to one repo's shared-state stream: `snapshot` on connect,
-   * then `state-change` — the daemon's own event names.
+   * then `state-change` and `journal-append` — the daemon's own event
+   * names.
    */
   subscribeRepo(id: string, handlers: RepoStreamHandlers): SseHandle {
-    return subscribe(this.repoPath(id, '/events'), ['snapshot', 'state-change'], {
+    return subscribe(this.repoPath(id, '/events'), ['snapshot', 'state-change', 'journal-append'], {
       onEvent: (event, payload) => {
         if (event === 'snapshot') handlers.onSnapshot(payload as WireSharedState);
-        else handlers.onStateChange(payload as WireSharedState);
+        else if (event === 'journal-append') {
+          handlers.onJournalAppend?.(payload as JournalAppendEvent);
+        } else handlers.onStateChange(payload as WireSharedState);
       },
       onOpen: handlers.onOpen,
       onError: handlers.onError,

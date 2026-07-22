@@ -17,7 +17,7 @@ import * as net from 'node:net';
 import type { AddressInfo, Socket } from 'node:net';
 import { Router } from './router.js';
 import { createStaticHandler } from './staticFiles.js';
-import { RepoRegistry } from './repoRegistry.js';
+import { RepoRegistry, type RepoHandle } from './repoRegistry.js';
 import { SseHub, DaemonEventHub } from './sse.js';
 import { FollowController } from './follow.js';
 import type { RouteDeps } from './routes/shared.js';
@@ -25,6 +25,7 @@ import { registerHealthRoutes } from './routes/health.js';
 import { registerRepoRoutes } from './routes/repos.js';
 import { registerWorkingTreeRoutes } from './routes/workingTree.js';
 import { registerHistoryCompareRoutes } from './routes/historyCompare.js';
+import { registerJournalRoutes } from './routes/journal.js';
 import { registerRemoteRoutes } from './routes/remote.js';
 import { registerExplorerRoutes } from './routes/explorer.js';
 import { registerDaemonRoutes } from './routes/daemon.js';
@@ -43,6 +44,12 @@ export interface Daemon {
   close(): Promise<void>;
   /** Bound address after listen(): AddressInfo for TCP, the path for a unix socket. */
   address(): AddressInfo | string | null;
+  /**
+   * The live handle of an open repo (tests reach a repo's manager this
+   * way — the daemon constructs managers itself, injecting the surviving
+   * journal store, so core's path-keyed registry no longer knows them).
+   */
+  getRepo(id: string): RepoHandle | undefined;
 }
 
 export interface DaemonOptions {
@@ -110,6 +117,7 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
   registerRepoRoutes(router, deps);
   registerWorkingTreeRoutes(router, deps);
   registerHistoryCompareRoutes(router, deps);
+  registerJournalRoutes(router, deps);
   registerRemoteRoutes(router, deps);
   registerExplorerRoutes(router, deps);
   registerDaemonRoutes(router, deps);
@@ -136,6 +144,10 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
   return {
     address(): AddressInfo | string | null {
       return server.address();
+    },
+
+    getRepo(id: string): RepoHandle | undefined {
+      return registry.getRepo(id);
     },
 
     async listen(options: ListenOptions): Promise<void> {

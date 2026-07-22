@@ -36,6 +36,8 @@ import {
   FileHunkCounts,
 } from '../git/diff.js';
 import { HunkTimeTracker } from '../git/hunkTimes.js';
+import { splitDiffByFile } from '../view/splitDiffByFile.js';
+import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
 import type { JournalObservation } from '../types/journal.js';
 
 export type { FileHunkCounts } from '../git/diff.js';
@@ -69,8 +71,31 @@ type WorkingTreeEventMap = {
   error: [string];
 };
 
-/** Untracked files above this size are not read for the journal (deferred). */
+/** Untracked files above this size are not read for the journal; they get a header-only marker section instead. */
 const MAX_UNTRACKED_JOURNAL_BYTES = 256 * 1024;
+
+/**
+ * The journal's widened tear guard: repo facts snapshotted BEFORE the
+ * diff reads and re-read AFTER. If any moved, the observation window was
+ * torn by an external operation (checkout/stash/merge writing the
+ * worktree over seconds) and the whole observation is discarded —
+ * defer-don't-decide.
+ */
+interface JournalGuardSnapshot {
+  operation: InProgressOperation | null;
+  stashCount: number;
+  /** Working mtimes of the status snapshot's changed files. */
+  mtimes: Map<string, number>;
+}
+
+/** What gatherJournalInputs hands doRefresh for the journal-observation emit. */
+interface JournalInputs {
+  headDiff: DiffResult;
+  headOid: string;
+  stashCount: number;
+  operationInProgress: InProgressOperation | null;
+  mtimes: Map<string, number>;
+}
 
 /**
  * Manages the working tree: file watching, status, whole-tree diffs (for hunk
@@ -281,38 +306,71 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
   // --- Refresh ---
 
+  /**
+   * The KIND of the refresh currently coalesced into the queue's pending
+   * slot. Full and status-only refreshes must not share one anonymous
+   * flag: a stage+commit within the debounce window used to swallow an
+   * edit's full refresh into a pending status-only one, silently folding
+   * the edit into the journal's commit boundary. A full request UPGRADES
+   * a pending status-only slot; a status request never downgrades a full.
+   */
+  private pendingRefreshKind: 'full' | 'status' | null = null;
+
   scheduleRefresh(): void {
-    this.queue.scheduleRefresh(async () => {
-      await this.doRefresh();
-    });
+    this.requestRefresh('full');
   }
 
   scheduleStatusRefresh(): void {
+    this.requestRefresh('status');
+  }
+
+  private requestRefresh(kind: 'full' | 'status'): void {
+    if (this.pendingRefreshKind !== null) {
+      // One slot is already queued: upgrade it if this request is
+      // stronger. (Never enqueue a second slot — the coalescing the
+      // queue's own flag used to provide, minus the kind blindness.)
+      if (kind === 'full') this.pendingRefreshKind = 'full';
+      return;
+    }
+    // Mirrors the queue's own guard: while mutations are pending, the
+    // last mutation triggers its own refresh.
+    if (this.queue.hasPendingMutations()) return;
+
+    this.pendingRefreshKind = kind;
     this.queue.scheduleRefresh(async () => {
-      try {
-        const newStatus = await getStatus(this.repoPath);
-        if (!newStatus.isRepo) {
-          this.updateState({
-            status: newStatus,
-            isLoading: false,
-            error: 'Not a git repository',
-          });
-          return;
-        }
+      // Read the slot at execution time: it may have been upgraded to
+      // 'full' while this callback sat in the queue.
+      const pending = this.pendingRefreshKind ?? 'full';
+      this.pendingRefreshKind = null;
+      if (pending === 'full') await this.doRefresh();
+      else await this.doStatusRefresh();
+    });
+  }
+
+  private async doStatusRefresh(): Promise<void> {
+    try {
+      const newStatus = await getStatus(this.repoPath);
+      if (!newStatus.isRepo) {
         this.updateState({
           status: newStatus,
-          mtimes: this.statMtimes(newStatus),
           isLoading: false,
+          error: 'Not a git repository',
         });
-      } catch (err) {
-        // Transient failure (e.g. index.lock contention): keep the previous
-        // status and surface the error instead of wiping the file list
-        this.updateState({
-          isLoading: false,
-          error: err instanceof Error ? err.message : 'Unknown error',
-        });
+        return;
       }
-    });
+      this.updateState({
+        status: newStatus,
+        mtimes: this.statMtimes(newStatus),
+        isLoading: false,
+      });
+    } catch (err) {
+      // Transient failure (e.g. index.lock contention): keep the previous
+      // status and surface the error instead of wiping the file list
+      this.updateState({
+        isLoading: false,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    }
   }
 
   async refresh(): Promise<void> {
@@ -321,6 +379,14 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
   private async doRefresh(): Promise<void> {
     this.updateState({ isLoading: true, error: null });
+
+    // Gather-start for the journal's write-during-window guard: any
+    // observation section path whose mtime lands AFTER this instant was
+    // written DURING the read window (a slow external checkout burst)
+    // and tears the observation. Captured before the status read so the
+    // whole window is covered. Wall clock on purpose — it is compared
+    // against file mtimes, which are wall clock too.
+    const gatherStart = Date.now();
 
     // The journal's torn-window guard: capture HEAD's oid BEFORE the
     // status read so the status snapshot sits inside the double-oid
@@ -353,7 +419,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
           getDiff(this.repoPath, undefined, true),
           gitGetStashList(this.repoPath),
           getInProgressOperation(this.repoPath),
-          this.gatherJournalInputs(newStatus, oidBefore),
+          this.gatherJournalInputs(newStatus, oidBefore, gatherStart),
         ]);
 
       const hunkCounts: FileHunkCounts = {
@@ -379,13 +445,16 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       });
 
       if (journalInputs !== null) {
+        // stashCount/operationInProgress/mtimes come from the gather's
+        // own guarded window (not the parallel state reads above), so
+        // the observation is internally consistent.
         this.emit('journal-observation', {
           status: newStatus,
           headDiff: journalInputs.headDiff,
           headOid: journalInputs.headOid,
-          stashCount: stashList.length,
-          operationInProgress,
-          mtimes,
+          stashCount: journalInputs.stashCount,
+          operationInProgress: journalInputs.operationInProgress,
+          mtimes: journalInputs.mtimes,
           at: Date.now(),
         });
       }
@@ -398,17 +467,86 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   }
 
   /**
+   * Snapshot the tear-guard facts: in-progress operation, stash count,
+   * and the working mtimes of the status snapshot's changed files. Taken
+   * once BEFORE the diff reads and once AFTER by gatherJournalInputs.
+   */
+  private async snapshotJournalGuard(status: GitStatus): Promise<JournalGuardSnapshot> {
+    const [operation, stashes] = await Promise.all([
+      getInProgressOperation(this.repoPath),
+      gitGetStashList(this.repoPath),
+    ]);
+    return { operation, stashCount: stashes.length, mtimes: this.statMtimes(status) };
+  }
+
+  private static journalGuardMoved(a: JournalGuardSnapshot, b: JournalGuardSnapshot): boolean {
+    if (a.operation !== b.operation || a.stashCount !== b.stashCount) return true;
+    if (a.mtimes.size !== b.mtimes.size) return true;
+    for (const [p, t] of a.mtimes) {
+      if (b.mtimes.get(p) !== t) return true;
+    }
+    return false;
+  }
+
+  /**
+   * The tear guard's write-during-window leg. The pre/post mtime
+   * snapshots cover only the STATUS snapshot's changed files — a slow
+   * external checkout rewrites exactly the files that were still clean
+   * at the status read, so their sections surface in the just-read
+   * headDiff with no snapshot to compare against. Stat every section
+   * path of the observation (the headDiff's section keys plus the
+   * untracked paths): an mtime STRICTLY newer than gatherStart means
+   * the file was written during the read window — torn. Strictly newer
+   * than gatherStart, never the pre-window snapshot: a legit save that
+   * TRIGGERED this refresh happened before gatherStart (the watcher
+   * debounces ~100ms), so it passes — only a write inside the few-ms
+   * read window (checkout/burst) discards, no starvation under normal
+   * editing. Stat failures are deletion sections — nothing on disk to
+   * have been written.
+   */
+  private sectionWrittenDuringGather(
+    status: GitStatus,
+    present: Set<string>,
+    gatherStart: number
+  ): boolean {
+    const sectionPaths = new Set(present);
+    for (const file of status.files) {
+      if (file.status === 'untracked') sectionPaths.add(file.path);
+    }
+    for (const sectionPath of sectionPaths) {
+      try {
+        const stat = fs.statSync(path.join(this.repoPath, sectionPath));
+        // Compare at whole-ms precision: Date.now() has ms resolution
+        // while mtimeMs can carry fractional ms — a write in the SAME
+        // millisecond as the capture must not read as "newer".
+        if (Math.floor(stat.mtimeMs) > gatherStart) return true;
+      } catch {
+        // deleted/renamed — nothing on disk to have been written
+      }
+    }
+    return false;
+  }
+
+  /**
    * Gather the journal's observation inputs, inside the same queue slot as
    * the refresh. Returns null — no observation this tick — on ANY failure
-   * or when HEAD moved between the two oid reads (a torn window from an
-   * external commit/rebase mid-flight). A skipped tick is always safe: the
-   * next observation re-derives everything from scratch. Note the diff
-   * read (getDiffAgainstHead) THROWS on failure by design — a swallowed
-   * empty diff would read as a phantom mass revert.
+   * or when the window was TORN: HEAD moved between the two oid reads, or
+   * an operation started/ended, the stash count changed, or a changed
+   * file's mtime moved between the two guard snapshots, or any section
+   * path of the just-read diff was WRITTEN during the read window. The
+   * oid double-read alone is not enough — a slow external `git checkout`/
+   * `stash`/`merge` rewrites the worktree over seconds while HEAD moves
+   * last, and would otherwise classify a half-updated tree as hundreds of
+   * phantom entries. A skipped tick is always safe: the next observation
+   * re-derives everything from scratch. Note the diff read
+   * (getDiffAgainstHead) THROWS on failure by design — a swallowed empty
+   * diff would read as a phantom mass revert.
    *
    * oidBefore is captured by doRefresh at the TOP of the refresh, BEFORE
    * the status read, so the status snapshot itself sits inside the guarded
    * window; null means that capture failed and this tick is skipped.
+   * gatherStart is captured there too — the write-during-window guard's
+   * floor (see sectionWrittenDuringGather).
    *
    * Untracked files are invisible to `git diff HEAD`, so their synthetic
    * sections (getDiffForUntracked) are appended here. That read catches to
@@ -417,49 +555,99 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
    */
   private async gatherJournalInputs(
     status: GitStatus,
-    oidBefore: string | null
-  ): Promise<{ headDiff: DiffResult; headOid: string } | null> {
+    oidBefore: string | null,
+    gatherStart: number
+  ): Promise<JournalInputs | null> {
     if (oidBefore === null) return null;
     try {
-      const headDiff = await getDiffAgainstHead(this.repoPath);
+      const guardBefore = await this.snapshotJournalGuard(status);
 
+      const headDiff = await getDiffAgainstHead(this.repoPath);
+      const present = new Set(splitDiffByFile(headDiff).keys());
       const raws: string[] = [];
       if (headDiff.raw) {
         raws.push(headDiff.raw.endsWith('\n') ? headDiff.raw : headDiff.raw + '\n');
       }
       const lines = [...headDiff.lines];
-      await this.appendUntrackedSections(status, raws, lines);
+      await this.appendUntrackedSections(status, present, raws, lines);
 
       const oidAfter = await getHeadOid(this.repoPath);
-      if (oidBefore !== oidAfter) return null; // torn window
+      if (oidBefore !== oidAfter) return null; // torn window: HEAD moved
+      const guardAfter = await this.snapshotJournalGuard(status);
+      if (WorkingTreeManager.journalGuardMoved(guardBefore, guardAfter)) return null; // torn window
+      if (this.sectionWrittenDuringGather(status, present, gatherStart)) return null; // torn window
 
-      return { headDiff: { raw: raws.join(''), lines }, headOid: oidAfter };
+      return {
+        headDiff: { raw: raws.join(''), lines },
+        headOid: oidAfter,
+        stashCount: guardAfter.stashCount,
+        operationInProgress: guardAfter.operation,
+        mtimes: guardAfter.mtimes,
+      };
     } catch {
       return null;
     }
   }
 
-  /** Append each readable, size-capped untracked file as a synthetic diff section. */
+  /**
+   * Append each untracked file as a synthetic diff section: read and
+   * size-capped when small enough, a header-only OVERSIZE_UNTRACKED_MARKER
+   * section when too large (so the journal appends a created entry with
+   * diff: null instead of deferring the file forever).
+   *
+   * Paths already present in the HEAD diff are skipped: an external
+   * `git add` between the status read and the diff read makes an
+   * untracked path appear in `git diff HEAD`, and a second synthetic
+   * section for the same path would merge with it in splitDiffByFile
+   * into one corrupt hunk (headers counted as insertions).
+   */
   private async appendUntrackedSections(
     status: GitStatus,
+    present: Set<string>,
     raws: string[],
     lines: DiffLine[]
   ): Promise<void> {
     const seen = new Set<string>();
     for (const file of status.files) {
-      if (file.status !== 'untracked' || seen.has(file.path)) continue;
+      if (file.status !== 'untracked' || seen.has(file.path) || present.has(file.path)) continue;
       seen.add(file.path);
+      let stat: fs.Stats;
       try {
-        const stat = fs.statSync(path.join(this.repoPath, file.path));
-        if (!stat.isFile() || stat.size > MAX_UNTRACKED_JOURNAL_BYTES) continue;
+        stat = fs.statSync(path.join(this.repoPath, file.path));
       } catch {
         continue; // vanished mid-tick — defer
+      }
+      if (!stat.isFile()) continue;
+      if (stat.size > MAX_UNTRACKED_JOURNAL_BYTES) {
+        this.appendOversizeSection(file.path, stat, raws, lines);
+        continue;
       }
       const untrackedDiff = await getDiffForUntracked(this.repoPath, file.path);
       if (!untrackedDiff.raw) continue; // caught-to-empty — defer
       raws.push(untrackedDiff.raw.endsWith('\n') ? untrackedDiff.raw : untrackedDiff.raw + '\n');
       lines.push(...untrackedDiff.lines);
     }
+  }
+
+  /**
+   * A header-only stand-in section for an oversize untracked file. The
+   * size/mtime suffix makes the section's raw (and so the journal's
+   * silence hash) change when the file changes: created once, then an
+   * edited entry per later save — always with diff: null.
+   */
+  private appendOversizeSection(
+    filePath: string,
+    stat: fs.Stats,
+    raws: string[],
+    lines: DiffLine[]
+  ): void {
+    const header = [
+      `diff --git a/${filePath} b/${filePath}`,
+      'new file mode 100644',
+      `${OVERSIZE_UNTRACKED_MARKER} size=${stat.size} mtime=${Math.round(stat.mtimeMs)}`,
+    ];
+    raws.push(header.join('\n') + '\n');
+    lines.push(...header.map((content): DiffLine => ({ type: 'header', content })));
   }
 
   // --- Staging operations ---

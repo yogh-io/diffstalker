@@ -8,7 +8,7 @@
  */
 
 import { ref } from 'vue';
-import { useUiStore } from '../stores/ui';
+import { useUiStore, VIEWS } from '../stores/ui';
 import { useFocusTrap } from '../composables/useFocusTrap';
 
 const ui = useUiStore();
@@ -26,10 +26,11 @@ const GROUPS: HotkeyGroup[] = [
     title: 'Global',
     entries: [
       { keys: 'Ctrl P / ⌘ P', description: 'Find file' },
-      { keys: '1', description: 'Changes view' },
-      { keys: '2', description: 'History view' },
-      { keys: '3', description: 'Compare view' },
-      { keys: '4', description: 'Explorer view' },
+      // Digit rows derived from the rail order, like useGlobalKeys.
+      ...VIEWS.map((view, index) => ({
+        keys: String(index + 1),
+        description: `${view.label} view`,
+      })),
       { keys: 'a', description: 'Toggle auto mode (follow the newest change)' },
       { keys: '?', description: 'This help' },
       { keys: 'Esc', description: 'Close dialog' },

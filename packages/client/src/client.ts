@@ -24,6 +24,8 @@ import type {
   FollowChangeEvent,
   FollowState,
   HealthState,
+  JournalAppendEvent,
+  JournalResponse,
   LocalBranch,
   MutationEnvelope,
   RepoClosedEvent,
@@ -63,6 +65,7 @@ interface CommonSubscriptionEvents {
 export type RepoSubscriptionEvents = CommonSubscriptionEvents & {
   snapshot: [WireSharedState];
   'state-change': [WireSharedState];
+  'journal-append': [JournalAppendEvent];
 };
 
 /** Daemon-scope stream (GET /events). */
@@ -279,6 +282,18 @@ export class DiffstalkerClient {
     return { ...diff, commits: diff.commits.map(reviveCommit) };
   }
 
+  // --- Journal ---
+
+  /**
+   * The append-only journal: entries with seq > since (all when omitted),
+   * plus the store's epoch and the pruning watermark. The payload is
+   * JSON-native — the embedded DiffResult crosses the wire as-is, like
+   * diff() — so nothing is revived here.
+   */
+  journal(id: string, since?: number): Promise<JournalResponse> {
+    return this.transport.request('GET', this.repoPath(id, '/journal') + toQuery({ since }));
+  }
+
   // --- Explorer ---
 
   tree(
@@ -354,8 +369,8 @@ export class DiffstalkerClient {
 
   /**
    * Subscribe to one repo's shared-state stream: `snapshot` on connect,
-   * then `state-change` — the same names the daemon (and the core
-   * WorkingTreeManager) uses.
+   * then `state-change` and `journal-append` — the same names the daemon
+   * (and the core managers) use.
    */
   subscribeRepo(id: string): RepoSubscription {
     return new SseSubscription<RepoSubscriptionEvents>(

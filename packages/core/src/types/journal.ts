@@ -13,6 +13,16 @@
 import type { DiffResult } from '../git/diffParse.js';
 import type { FileStatus, GitStatus, InProgressOperation } from '../git/status.js';
 
+/**
+ * Header line marking a synthetic section for an untracked file too large
+ * to snapshot. WorkingTreeManager emits it (with a size/mtime suffix, so a
+ * later save re-hashes into an 'edited' entry) instead of deferring the
+ * file forever; JournalManager stores the entry with diff: null — the
+ * documented oversize case of the diff:null promise. Never produced by
+ * git itself.
+ */
+export const OVERSIZE_UNTRACKED_MARKER = 'diffstalker-journal: oversize untracked snapshot omitted';
+
 export type JournalHunkKind = 'created' | 'edited' | 'expanded' | 'shrunk' | 'reverted' | 'renamed';
 
 export type JournalBoundaryKind =
@@ -86,6 +96,12 @@ export interface ObservedHunk {
   span: { start: number; count: number };
   /** File header lines + this one @@ section. */
   diff: DiffResult;
+  /**
+   * True for the pseudo-hunk of an OVERSIZE_UNTRACKED_MARKER section: the
+   * classifier stores its entries with diff: null (the section is a
+   * header-only stand-in, not a snapshot).
+   */
+  oversize?: boolean;
 }
 
 /**
