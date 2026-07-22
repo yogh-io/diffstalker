@@ -1,24 +1,26 @@
 #!/usr/bin/env bun
 /**
- * Dev serve — run diffstalkerd straight from source with `bun --watch`, so it is
- * always up to date with the daemon code (auto-restarts on change), in debug mode
- * (Bun inspector on 127.0.0.1:17337), serving the web UI same-origin at
- * http://localhost:7337/.
+ * Dev serve — the LOCAL, always-current diffstalkerd, on http://localhost:17337/.
+ *
+ * Runs the daemon straight from source with `bun --watch`, so it is always up to date
+ * with the daemon code (auto-restarts on change), with the Bun inspector attached
+ * (debug URL printed on startup). Serves the freshly-built web UI same-origin.
+ *
+ * This is the DEV counterpart to :7337, which runs the RELEASED diffstalkerd from npm
+ * (the stable, published build — a separate systemd service, left untouched). Run both
+ * side by side: :7337 = release, :17337 = dev.
  *
  *   bun run serve                    # serve; follow the hook file
  *   bun run serve ~/proj-a ~/proj-b  # ...and pre-open these repos
  *
- * The web bundle is rebuilt once at startup so the served assets match current
- * source. For LIVE web HMR while iterating on the UI, run `bun run dev:web`
- * instead (Vite at http://localhost:5173, which proxies the API to :7337).
- *
- * Binds :7337 like the `diffstalkerd-web` systemd service — stop that first so the
- * port is free:  systemctl --user stop diffstalkerd-web
+ * The web bundle is rebuilt once at startup so the served assets match current source.
+ * For LIVE web HMR while iterating on the UI, run `bun run dev:web` instead
+ * (Vite at http://localhost:5173, which proxies the API to :17337 — set its target
+ * with DIFFSTALKER_DAEMON_URL=http://127.0.0.1:17337).
  *
  * (A source run resolves its web-root to src/web, which doesn't exist, so we pass
- * --web-root explicitly at dist/web. Core is imported via its dist, so a change to
- * @diffstalker/core needs `bun run build` to take effect; daemon-only changes are
- * picked up live by --watch.)
+ * --web-root explicitly at dist/web. @diffstalker/core is imported via its dist, so a
+ * change there needs `bun run build`; daemon-only changes are picked up live.)
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -26,21 +28,17 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 7337;
-const INSPECT = '127.0.0.1:17337';
+const PORT = 17337;
 const WEB_ROOT = join(ROOT, 'packages/daemon/dist/web');
 const FOLLOW = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'diffstalker', 'target');
 const repos = process.argv.slice(2).map((p) => resolve(p));
 
-// Fail fast if the port is already serving (usually the systemd service).
+// Fail fast if the dev port is already serving (a leftover dev server).
 const portBusy = await fetch(`http://127.0.0.1:${PORT}/health`)
   .then(() => true)
   .catch(() => false);
 if (portBusy) {
-  console.error(
-    `port ${PORT} is already serving (the systemd service?). Stop it first:\n` +
-      `  systemctl --user stop diffstalkerd-web`
-  );
+  console.error(`port ${PORT} is already serving — an old dev server? Stop it (Ctrl-C / kill) first.`);
   process.exit(1);
 }
 
@@ -53,11 +51,11 @@ const build = spawnSync('bun', ['run', 'build:web'], {
 if (build.status !== 0) process.exit(build.status ?? 1);
 
 // 2. run the daemon from source: watched (auto-restart) + inspectable.
-console.log(`serve: http://localhost:${PORT}/   ·   Bun inspector on ${INSPECT}`);
+console.log(`serve: dev daemon on http://localhost:${PORT}/   (Bun inspector below)`);
 const daemon = spawn(
   'bun',
   [
-    `--inspect=${INSPECT}`,
+    '--inspect',
     '--watch',
     'packages/daemon/src/index.ts',
     '--port',

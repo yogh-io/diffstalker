@@ -64,8 +64,11 @@ cd packages/cli && bun link        # link the `diffstalker` bin
 For a local web UI in development:
 ```bash
 bun run dev:web                    # Vite dev server (HMR) at http://localhost:5173
-# or serve it via the daemon from source, in debug mode, at http://localhost:7337:
-bun run serve                      # bun run serve /path/to/repo ... to pre-open repos
+bun run serve                      # dev daemon from source (always current, Bun
+                                   # inspector) serving the web UI at :17337.
+                                   # bun run serve /path/to/repo ... pre-opens repos.
+# (:7337 is reserved for the RELEASED diffstalkerd installed from npm — the stable
+#  build. :17337 is your local, always-up-to-date dev server.)
 ```
 
 ## Quick Start
