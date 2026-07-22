@@ -4,7 +4,7 @@
  */
 
 import type { DiffLine } from '../git/diff.js';
-import { computeWordDiff, areSimilarEnough, WordDiffSegment } from './wordDiff.js';
+import { computeWordDiff, WordDiffSegment } from './wordDiff.js';
 
 /** Parsed "@@ -a,b +c,d @@ ctx" hunk header. Counts default to 1 when omitted. */
 export interface ParsedHunkHeader {
@@ -58,10 +58,47 @@ export interface ChangeRunSegments {
 }
 
 /**
+ * Above this many characters on either side, a pair is not word-diffed at
+ * all: fast-diff is ~quadratic, and a single minified/sourcemap line can
+ * run to tens of KB — one such pair used to freeze the UI for seconds.
+ * The pair renders as whole-line changes instead (no segments), exactly
+ * like a pair that fails the similarity gate.
+ */
+export const WORD_DIFF_CHAR_CAP = 1000;
+
+/**
+ * Similarity gate on an already-computed word diff: the shared ('same')
+ * portion must make up at least 50% of the combined content, otherwise
+ * word-level highlighting is noise. Same formula areSimilarEnough uses,
+ * derived from segments so the pair is fast-diffed only once.
+ */
+function segmentsSimilarEnough(
+  oldSegments: WordDiffSegment[],
+  newSegments: WordDiffSegment[]
+): boolean {
+  let commonLength = 0;
+  let oldLength = 0;
+  let newLength = 0;
+  for (const segment of oldSegments) {
+    oldLength += segment.text.length;
+    if (segment.type === 'same') commonLength += segment.text.length;
+  }
+  for (const segment of newSegments) {
+    newLength += segment.text.length;
+  }
+  // Equal text appears on both sides but is one run in the diff.
+  const totalLength = oldLength + newLength - commonLength;
+  if (totalLength === 0) return false;
+  return commonLength / totalLength >= 0.5;
+}
+
+/**
  * Pair a run of consecutive deletions with the additions that follow it,
- * by position. Each pair whose contents pass areSimilarEnough gets
- * word-level segments from computeWordDiff. getContent supplies each
- * line's display content (callers clean control characters differently).
+ * by position. Each pair whose contents pass the similarity gate gets
+ * word-level segments from computeWordDiff; pairs where either side
+ * exceeds WORD_DIFF_CHAR_CAP are never diffed and stay whole-line
+ * changes. getContent supplies each line's display content (callers
+ * clean control characters differently).
  */
 export function pairChangeRuns(
   deletions: DiffLine[],
@@ -76,8 +113,15 @@ export function pairChangeRuns(
     const delContent = getContent(deletions[j]);
     const addContent = getContent(additions[j]);
 
-    if (areSimilarEnough(delContent, addContent)) {
-      const { oldSegments, newSegments } = computeWordDiff(delContent, addContent);
+    if (!delContent || !addContent) continue;
+    if (delContent.length > WORD_DIFF_CHAR_CAP || addContent.length > WORD_DIFF_CHAR_CAP) {
+      continue;
+    }
+
+    // One fast-diff per pair: the similarity decision and the segments
+    // both come from this single result.
+    const { oldSegments, newSegments } = computeWordDiff(delContent, addContent);
+    if (segmentsSimilarEnough(oldSegments, newSegments)) {
       delSegments.set(j, oldSegments);
       addSegments.set(j, newSegments);
     }

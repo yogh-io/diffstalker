@@ -4,6 +4,7 @@ import {
   extractDiffFilePath,
   getLineNumColumnWidth,
   pairChangeRuns,
+  WORD_DIFF_CHAR_CAP,
 } from './diffPrimitives.js';
 import { getLineContent } from './diffRowCalculations.js';
 import type { DiffLine } from '../git/diff.js';
@@ -96,5 +97,58 @@ describe('pairChangeRuns', () => {
     // index 1 has no counterpart in the shorter additions run
     expect(delSegments.has(1)).toBe(false);
     expect(addSegments.has(1)).toBe(false);
+  });
+
+  it('skips word-diffing when either side exceeds the char cap', () => {
+    // A minified-asset-sized single line: nearly identical on both sides,
+    // so the similarity gate alone would have let fast-diff run.
+    const huge = 'var a=1;'.repeat(9000); // 72KB
+    const start = performance.now();
+    const { delSegments, addSegments } = pairChangeRuns(
+      [del('-' + huge + 'x')],
+      [add('+' + huge + 'y')],
+      getLineContent
+    );
+    const elapsed = performance.now() - start;
+
+    // No per-token segments: the pair stays a whole-line change.
+    expect(delSegments.size).toBe(0);
+    expect(addSegments.size).toBe(0);
+    // Uncapped, this pair took seconds (~quadratic). Capped it is instant;
+    // the generous bound keeps the test stable on slow CI.
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  it('skips when only one side exceeds the cap', () => {
+    const huge = 'x'.repeat(WORD_DIFF_CHAR_CAP + 1);
+    const { delSegments, addSegments } = pairChangeRuns(
+      [del('-' + huge)],
+      [add('+short')],
+      getLineContent
+    );
+    expect(delSegments.size).toBe(0);
+    expect(addSegments.size).toBe(0);
+  });
+
+  it('still word-diffs lines at exactly the cap', () => {
+    const base = 'a'.repeat(WORD_DIFF_CHAR_CAP - 1);
+    const { delSegments, addSegments } = pairChangeRuns(
+      [del('-' + base + 'b')],
+      [add('+' + base + 'c')],
+      getLineContent
+    );
+    expect(delSegments.has(0)).toBe(true);
+    expect(addSegments.has(0)).toBe(true);
+    expect(addSegments.get(0)!.some((s) => s.type === 'changed')).toBe(true);
+  });
+
+  it('leaves empty-content pairs without segments', () => {
+    const { delSegments, addSegments } = pairChangeRuns(
+      [del('-')],
+      [add('+something')],
+      getLineContent
+    );
+    expect(delSegments.size).toBe(0);
+    expect(addSegments.size).toBe(0);
   });
 });
