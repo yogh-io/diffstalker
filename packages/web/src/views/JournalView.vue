@@ -181,10 +181,32 @@ function headerTitle(row: JournalHunkRow): string | undefined {
 /** When the view mounted — the empty state's "journal started" label. */
 const mountedAt = Date.now();
 
-// Relative time labels tick once per 30s while mounted (append churn
-// re-renders anyway; this keeps a quiet journal's labels honest).
+// Relative-time labels ("42 seconds ago") must count up live from the
+// moment an entry arrives, not jump on a coarse fixed tick. While the
+// newest entry is under a minute old we tick every second so its
+// seconds-granularity label stays honest; past a minute the label only
+// changes on the minute/hour, so we drop to a quiet 30s cadence. A fresh
+// append reschedules the tick immediately (see the newest-entry watch)
+// so its counter starts the instant the entry lands.
 const now = ref(Date.now());
-let ticker: ReturnType<typeof setInterval> | null = null;
+let ticker: ReturnType<typeof setTimeout> | null = null;
+
+/** Timestamp of the youngest entry (the tail), or 0 when empty. */
+function newestTs(): number {
+  const list = entries.value;
+  return list.length > 0 ? list[list.length - 1].ts : 0;
+}
+
+function tick(): void {
+  now.value = Date.now();
+  const interval = now.value - newestTs() < 60_000 ? 1_000 : 30_000;
+  ticker = setTimeout(tick, interval);
+}
+
+function restartTicker(): void {
+  if (ticker !== null) clearTimeout(ticker);
+  tick();
+}
 
 function relTime(ts: number): string {
   return formatRelativeTime(ts, now.value);
@@ -560,18 +582,21 @@ async function loadNow(): Promise<void> {
   }
 }
 
+// A fresh (or wholesale-replaced) youngest entry restarts the cadence
+// now, so a just-arrived entry's seconds counter starts ticking at once
+// instead of waiting out a pending 30s timer.
+watch(() => newestTs(), restartTicker);
+
 onMounted(() => {
   void loadNow();
-  ticker = setInterval(() => {
-    now.value = Date.now();
-  }, 30_000);
+  tick();
   // Start reading at the newest entries (the top).
   void nextTick(scrollToStart);
 });
 
 onBeforeUnmount(() => {
   if (ticker !== null) {
-    clearInterval(ticker);
+    clearTimeout(ticker);
     ticker = null;
   }
 });
