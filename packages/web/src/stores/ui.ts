@@ -1,9 +1,10 @@
 /**
  * useUiStore: app-level UI state — theme, active view, recent repos,
  * the auto-mode toggle (+ its row flash), the diff syntax-highlighting
- * toggle, the Changes stack's active section key, and the active overlay
- * (fuzzy finder / hotkeys help). Theme, view, recents, auto mode and diff
- * syntax persist through prefs
+ * toggle, the diff layout mode (unified/split), the Changes stack's
+ * active section key, and the active overlay (fuzzy finder / hotkeys
+ * help). Theme, view, recents, auto mode, diff syntax and diff mode
+ * persist through prefs
  * (localStorage); the theme lands on <html data-theme="..."> so the
  * CSS custom-property sets select. Overlay, flash, and stack-key state
  * are session-only — never persisted.
@@ -15,7 +16,7 @@
 import { shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import { loadPrefs, savePrefs, MAX_RECENT_REPOS } from '../prefs';
-import type { ViewName } from '../prefs';
+import type { ViewName, DiffMode } from '../prefs';
 import type { ThemeName } from '../theme/themes';
 
 /** The rail's view entries, in order. */
@@ -55,6 +56,8 @@ export const useUiStore = defineStore('ui', () => {
   const autoModeEnabled = shallowRef<boolean>(stored.autoMode);
   /** Diff syntax highlighting: app-wide, applied by every DiffView. */
   const diffSyntaxEnabled = shallowRef<boolean>(stored.diffSyntax);
+  /** Diff layout: 'unified' or 'split' — app-wide, every DiffView. */
+  const diffMode = shallowRef<DiffMode>(stored.diffMode);
   /** Path of the file row currently flashed by auto mode, null when none. */
   const flashedFile = shallowRef<string | null>(null);
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -103,6 +106,11 @@ export const useUiStore = defineStore('ui', () => {
     savePrefs({ diffSyntax: diffSyntaxEnabled.value });
   }
 
+  function toggleDiffMode(): void {
+    diffMode.value = diffMode.value === 'split' ? 'unified' : 'split';
+    savePrefs({ diffMode: diffMode.value });
+  }
+
   /** Briefly highlight a file row (auto-selected), then clear. */
   function flashFile(path: string): void {
     flashedFile.value = path;
@@ -139,6 +147,7 @@ export const useUiStore = defineStore('ui', () => {
     activeOverlay,
     autoModeEnabled,
     diffSyntaxEnabled,
+    diffMode,
     flashedFile,
     activeStackKey,
     init,
@@ -147,6 +156,7 @@ export const useUiStore = defineStore('ui', () => {
     addRecentRepo,
     toggleAutoMode,
     toggleDiffSyntax,
+    toggleDiffMode,
     flashFile,
     setActiveStackKey,
     openOverlay,

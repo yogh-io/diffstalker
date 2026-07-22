@@ -281,7 +281,13 @@ function selectAndFocusPayload(commit: CommitInfo): void {
             {{ detailError }}
           </p>
           <p v-else-if="!history.commitDiff" class="col-empty">Loading diff…</p>
-          <DiffView v-else :diff="history.commitDiff" show-file-headers :syntax="ui.diffSyntaxEnabled" />
+          <DiffView
+            v-else
+            :diff="history.commitDiff"
+            show-file-headers
+            :syntax="ui.diffSyntaxEnabled"
+            :mode="ui.diffMode"
+          />
         </div>
       </template>
       <p v-else class="col-empty detail-prompt" data-testid="history-prompt">

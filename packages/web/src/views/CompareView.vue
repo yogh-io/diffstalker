@@ -473,6 +473,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
           :files="stackFiles"
           :active-key="activeStackKey"
           :syntax="ui.diffSyntaxEnabled"
+          :mode="ui.diffMode"
           :tabindex="isPortrait ? 0 : undefined"
           :role="isPortrait ? 'region' : undefined"
           :aria-label="isPortrait ? 'File diffs' : undefined"

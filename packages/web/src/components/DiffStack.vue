@@ -2,6 +2,7 @@
 import type { DiffLine, DiffResult } from '@diffstalker/core/git/diff';
 import type { FileStatus } from '@diffstalker/core/git/status';
 import { buildDiffModel, type DiffModel } from '../utils/diffRows';
+import { splitRowCount } from '../utils/diffSplit';
 
 /**
  * One file section in the stack. Compare keys sections by path; Changes
@@ -236,6 +237,8 @@ const props = defineProps<{
   activeKey?: string | null;
   /** Forwarded to each file's DiffView: syntax-highlight content lines. */
   syntax?: boolean;
+  /** Forwarded to each file's DiffView: unified or side-by-side split. */
+  mode?: 'unified' | 'split';
 }>();
 
 const emit = defineEmits<{
@@ -431,7 +434,12 @@ function exactBodyHeight(item: StackFile): number | null {
     if (withHeaders && section.filePath !== null) height += sizes.fileHeaderH;
     height += section.notes.length * sizes.noteH;
     section.hunks.forEach((hunk, j) => {
-      height += sizes.hunkHeaderH + hunk.rows.length * sizes.rowH;
+      // Split view collapses each del/add run to max(dels, adds) rows, so
+      // the visual row count differs from the unified length — count the
+      // rows the chosen mode actually renders (a split line is one text
+      // line tall, the same probed rowH).
+      const rowCount = props.mode === 'split' ? splitRowCount(hunk.rows) : hunk.rows.length;
+      height += sizes.hunkHeaderH + rowCount * sizes.rowH;
       if (j < section.hunks.length - 1) height += sizes.hunkBorderB;
     });
   });
@@ -716,6 +724,36 @@ watch(
   { flush: 'post' }
 );
 
+// Flipping the global unified<->split mode re-renders every body at a new
+// height (split collapses each run to max(dels, adds) rows, vs
+// dels + adds unified), so content above the viewport would shift under
+// the reader. Sandwich the flip in the same anchor prepare/restore the
+// files and probe-resize paths use — nothing the user is looking at moves.
+// changedEls: [null] means "a height change happened somewhere; keep the
+// anchored line put" (the probe-resize path, where every body also moves).
+watch(
+  () => props.mode,
+  () => {
+    anchor.prepare({ survivingKeys: survivingKeys(committedFiles), changedEls: [null] });
+  },
+  { flush: 'pre' }
+);
+
+watch(
+  () => props.mode,
+  () => {
+    anchor.restore();
+    // Every body's height changed: the spy/tween offsets are stale, and
+    // the RO net must read delta 0 for the shifts the sandwich absorbed.
+    stackScroll.invalidateOffsets();
+    for (const body of bodyEls.values()) {
+      bodyHeights.set(body, body.getBoundingClientRect().height);
+    }
+    if (import.meta.env.DEV) assertBodyHeights();
+  },
+  { flush: 'post' }
+);
+
 // --- ResizeObserver safety net ---
 
 const bodyEls = new Map<string, HTMLElement>();
@@ -989,7 +1027,13 @@ defineExpose({
         class="file-diff-body"
         :style="{ containIntrinsicSize: bodyIntrinsicSize(item) }"
       >
-        <DiffView v-if="item.diff" :diff="item.diff" :file-path="item.path" :syntax="props.syntax" />
+        <DiffView
+          v-if="item.diff"
+          :diff="item.diff"
+          :file-path="item.path"
+          :syntax="props.syntax"
+          :mode="props.mode"
+        />
         <div
           v-else
           class="placeholder"

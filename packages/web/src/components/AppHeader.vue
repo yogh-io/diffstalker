@@ -2,9 +2,9 @@
 /**
  * Global header: wordmark, repo switcher, branch + tracking + ahead/behind
  * (mono, diff-colored counts — read-only text), one calm error line, the
- * auto-mode toggle, the diff syntax-highlighting toggle, the follow
- * toggle, the fuzzy finder trigger, theme switcher. No git controls: the
- * web UI is a viewer.
+ * auto-mode toggle, the diff syntax-highlighting toggle, the diff
+ * unified/split toggle, the follow toggle, the fuzzy finder trigger,
+ * theme switcher. No git controls: the web UI is a viewer.
  *
  * Auto: flips the client-side auto-mode policy (useAutoMode acts on
  * state changes only while it is on) — pure viewing: auto-select the
@@ -77,6 +77,13 @@ const syntaxTitle = computed(() =>
     ? 'Syntax highlighting is on for every diff. Click to show plain text'
     : 'Turn on syntax highlighting for every diff'
 );
+
+const splitOn = computed(() => ui.diffMode === 'split');
+const modeTitle = computed(() =>
+  splitOn.value
+    ? 'Diffs are side by side (old | new). Click for the unified view'
+    : 'Show diffs side by side (old | new) instead of unified'
+);
 </script>
 
 <template>
@@ -125,6 +132,17 @@ const syntaxTitle = computed(() =>
       @click="ui.toggleDiffSyntax()"
     >
       <span class="dot" aria-hidden="true"></span>{{ ui.diffSyntaxEnabled ? 'syntax on' : 'syntax off' }}
+    </button>
+
+    <button
+      class="mode-toggle mono"
+      data-testid="split-toggle"
+      :class="{ on: splitOn }"
+      :aria-pressed="splitOn"
+      :title="modeTitle"
+      @click="ui.toggleDiffMode()"
+    >
+      <span class="dot" aria-hidden="true"></span>{{ splitOn ? 'split' : 'unified' }}
     </button>
 
     <button

@@ -724,6 +724,17 @@ git operations.
   variables (the same mapping the Explorer file viewer uses), and stay
   readable over the add/del row tints. Word-level highlighting composes on
   top — a changed word keeps its background under the syntax colors.
+- **Diff layout — unified / split** (header toggle, persisted): one app-wide
+  switch between the unified (stacked) diff and a GitHub-style split — old on
+  the left, new on the right — again through the single shared `DiffView`, so
+  every diff surface flips together. Each hunk pairs deletions with additions
+  position-for-position (one visual row per pair, the shorter side padded), so
+  a similar del/add pair faces its counterpart with word-diff highlighting
+  intact; context lines occupy both sides. The two columns are independent
+  horizontal scrollers rendering equal-height rows, so they stay aligned and
+  share the vertical scroll. Syntax highlighting composes with split. In the
+  stacked-diff views (Changes, Compare) the exact-height virtualization counts
+  split rows, so scrolling stays precise in either mode.
 
 ### Portrait layout (vertical monitors)
 

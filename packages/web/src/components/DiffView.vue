@@ -11,6 +11,14 @@
  * sticky per-file section header; single-file diffs show none unless
  * `showFileHeaders` forces them.
  *
+ * Mode (the `mode` prop, a global toggle): 'unified' stacks the rows as
+ * above; 'split' lays each hunk out side by side — old on the left, new
+ * on the right — one visual row per del/add pair (utils/diffSplit), the
+ * short side padded. The two columns are independent horizontal
+ * scrollers rendering the same split rows at equal heights, so they stay
+ * aligned and share the vertical scroll. splitRowCount is the single
+ * source of truth for the row count, shared with DiffStack's height model.
+ *
  * Virtualization: rows get `content-visibility: auto` with a
  * `contain-intrinsic-size` estimate, so off-screen rows skip layout and
  * paint. That keeps multi-thousand-line diffs responsive without a
@@ -37,13 +45,15 @@ import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import { buildDiffModel } from '../utils/diffRows';
 import type { DiffContentRow, DiffFileSection, DiffHunkGroup } from '../utils/diffRows';
 import { diffLanguage, syntaxPieces } from '../utils/diffHighlight';
+import { splitRows } from '../utils/diffSplit';
+import DiffLineContent from './DiffLineContent.vue';
 
 const props = defineProps<{
   diff: DiffResult | null;
   /** Selected file's path — fallback language source for single-file diffs. */
   filePath?: string;
-  /** Unified is the only mode this slice; side-by-side comes with Compare. */
-  mode?: 'unified';
+  /** Unified (stacked) or split (old | new, side by side). Global toggle. */
+  mode?: 'unified' | 'split';
   /** Syntax-highlight content lines (global toggle). Off by default. */
   syntax?: boolean;
   /**
@@ -75,6 +85,16 @@ const sectionLang = computed(() => {
 function pieces(row: DiffContentRow, section: DiffFileSection): ReturnType<typeof syntaxPieces> {
   return syntaxPieces(row, sectionLang.value.get(section.key) ?? null, props.syntax === true);
 }
+
+/** Pieces for one side of a split row (null cell = empty padding). */
+function sidePieces(
+  row: DiffContentRow | null,
+  section: DiffFileSection
+): ReturnType<typeof syntaxPieces> {
+  return row ? pieces(row, section) : null;
+}
+
+const isSplit = computed(() => props.mode === 'split');
 
 /** Hunks edited within this window get the flash background (CLI parity). */
 const HUNK_FLASH_MS = 1500;
@@ -201,27 +221,57 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
           </span>
         </div>
 
-        <div v-for="row in h.rows" :key="row.key" class="row" :class="row.kind">
-          <span class="ln old">{{ row.oldLineNum ?? '' }}</span
-          ><span class="ln new">{{ row.newLineNum ?? '' }}</span
-          ><span class="marker">{{ marker(row) }}</span
-          ><span class="content"
-            ><template v-if="pieces(row, s)"
-              ><span
-                v-for="(p, i) in pieces(row, s)"
-                :key="i"
-                :class="[p.cls, { 'word-hl': p.changed }]"
-                >{{ p.text }}</span
-              ></template
-            ><template v-else-if="row.segments"
-              ><span
-                v-for="(seg, i) in row.segments"
-                :key="i"
-                :class="{ 'word-hl': seg.type === 'changed' }"
-                >{{ seg.text }}</span
-              ></template
-            ><template v-else>{{ row.content }}</template></span
-          >
+        <!-- Unified: one stacked stream of rows. -->
+        <template v-if="!isSplit">
+          <div v-for="row in h.rows" :key="row.key" class="row" :class="row.kind">
+            <span class="ln old">{{ row.oldLineNum ?? '' }}</span
+            ><span class="ln new">{{ row.newLineNum ?? '' }}</span
+            ><span class="marker">{{ marker(row) }}</span
+            ><span class="content"
+              ><DiffLineContent :row="row" :pieces="pieces(row, s)"
+            /></span>
+          </div>
+        </template>
+
+        <!-- Split: old on the left, new on the right, one visual row per
+             pair (unbalanced runs pad the short side). Each side is its
+             own horizontal scroller; the rows keep equal heights, so the
+             two columns stay aligned and share the vertical scroll. -->
+        <div v-else class="split-body">
+          <div class="split-side left">
+            <div
+              v-for="sr in splitRows(h.rows)"
+              :key="sr.key"
+              class="split-line"
+              :class="[sr.left ? sr.left.kind : 'empty']"
+            >
+              <span class="ln">{{ sr.left?.oldLineNum ?? '' }}</span
+              ><span class="marker">{{ sr.left && sr.left.kind === 'del' ? '-' : '' }}</span
+              ><span class="content"
+                ><DiffLineContent
+                  v-if="sr.left"
+                  :row="sr.left"
+                  :pieces="sidePieces(sr.left, s)"
+              /></span>
+            </div>
+          </div>
+          <div class="split-side right">
+            <div
+              v-for="sr in splitRows(h.rows)"
+              :key="sr.key"
+              class="split-line"
+              :class="[sr.right ? sr.right.kind : 'empty']"
+            >
+              <span class="ln">{{ sr.right?.newLineNum ?? '' }}</span
+              ><span class="marker">{{ sr.right && sr.right.kind === 'add' ? '+' : '' }}</span
+              ><span class="content"
+                ><DiffLineContent
+                  v-if="sr.right"
+                  :row="sr.right"
+                  :pieces="sidePieces(sr.right, s)"
+              /></span>
+            </div>
+          </div>
         </div>
       </section>
     </section>
@@ -479,6 +529,108 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
 }
 
 .row.del .word-hl {
+  background: var(--diff-del-highlight);
+  border-radius: 2px;
+}
+
+/* --- Split view (old | new, side by side) --- */
+
+/* Two independent horizontal scrollers. Both render the SAME split rows
+   in the same order at equal heights, so their lines stay aligned and
+   share the pane's vertical scroll; each side scrolls its own long
+   lines. A single grid can't do this — one side's wide line would push
+   the divider on every row. */
+.split-body {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+}
+
+.split-side {
+  flex: 1 1 50%;
+  min-width: 0;
+  overflow-x: auto;
+  /* Hide the horizontal scrollbar so it reserves NO layout height: a
+     per-side track would add height DiffStack's exact-body-height model
+     (which counts split rows × --row-h) doesn't know about, drifting its
+     scroll offsets. Long lines still scroll via trackpad / shift-wheel. */
+  scrollbar-width: none;
+}
+
+.split-side::-webkit-scrollbar {
+  display: none;
+}
+
+.split-side.left {
+  border-right: 1px solid var(--border);
+}
+
+.split-line {
+  display: grid;
+  grid-template-columns: var(--ln-w, 3ch) 2ch 1fr;
+  column-gap: 0.75ch;
+  width: max-content;
+  min-width: 100%;
+  /* Floor empty (padding) rows to a full row so both sides line up; a
+     realized content row is naturally this tall (the probed --row-h),
+     so this never resizes a non-empty line. */
+  min-height: var(--row-h, 1.26rem);
+  background: var(--bg);
+  /* Same virtualization contract as unified .row — the height model
+     counts split rows at this same --row-h. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--row-h, 1.26rem);
+}
+
+.split-line .ln {
+  text-align: right;
+  padding-left: 0.75ch;
+  color: var(--diff-context-line-num);
+  user-select: none;
+}
+
+.split-line .marker {
+  text-align: center;
+  user-select: none;
+}
+
+.split-line.add {
+  background: var(--diff-add-bg);
+}
+
+.split-line.add .ln {
+  color: var(--diff-add-line-num);
+}
+
+.split-line.add .marker {
+  color: var(--diff-add-symbol);
+  font-weight: 700;
+}
+
+.split-line.del {
+  background: var(--diff-del-bg);
+}
+
+.split-line.del .ln {
+  color: var(--diff-del-line-num);
+}
+
+.split-line.del .marker {
+  color: var(--diff-del-symbol);
+  font-weight: 700;
+}
+
+/* Padding cell opposite a lone add/del — a muted "nothing here" filler. */
+.split-line.empty {
+  background: var(--surface);
+}
+
+.split-line.add .word-hl {
+  background: var(--diff-add-highlight);
+  border-radius: 2px;
+}
+
+.split-line.del .word-hl {
   background: var(--diff-del-highlight);
   border-radius: 2px;
 }

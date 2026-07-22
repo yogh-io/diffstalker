@@ -19,6 +19,7 @@ describe('loadPrefs', () => {
       recentRepos: [],
       autoMode: false,
       diffSyntax: false,
+      diffMode: 'unified',
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -35,6 +36,7 @@ describe('loadPrefs', () => {
       recentRepos: [],
       autoMode: false,
       diffSyntax: false,
+      diffMode: 'unified',
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -51,6 +53,7 @@ describe('loadPrefs', () => {
       recentRepos: [],
       autoMode: false,
       diffSyntax: false,
+      diffMode: 'unified',
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -74,6 +77,7 @@ describe('loadPrefs', () => {
       recentRepos: ['/a', '/b'],
       autoMode: false,
       diffSyntax: false,
+      diffMode: 'unified',
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -118,6 +122,17 @@ describe('loadPrefs', () => {
     expect(loadPrefs().diffSyntax).toBe(false);
   });
 
+  test('diffMode: keeps a known mode, drops anything else', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ diffMode: 'split' }));
+    expect(loadPrefs().diffMode).toBe('split');
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ diffMode: 'sideways' }));
+    expect(loadPrefs().diffMode).toBe('unified');
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ diffMode: 2 }));
+    expect(loadPrefs().diffMode).toBe('unified');
+  });
+
   test('degrades to defaults when localStorage throws (private mode / quota)', () => {
     vi.stubGlobal('localStorage', {
       getItem(): string | null {
@@ -134,6 +149,7 @@ describe('loadPrefs', () => {
       recentRepos: [],
       autoMode: false,
       diffSyntax: false,
+      diffMode: 'unified',
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -155,6 +171,7 @@ describe('savePrefs', () => {
       recentRepos: [],
       autoMode: false,
       diffSyntax: false,
+      diffMode: 'unified',
       changesSplit: null,
       changesTop: null,
       historyTop: null,

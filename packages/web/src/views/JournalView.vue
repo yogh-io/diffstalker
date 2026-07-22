@@ -728,6 +728,7 @@ onBeforeUnmount(() => {
                         :diff="member.diff"
                         :file-path="member.path"
                         :syntax="ui.diffSyntaxEnabled"
+                        :mode="ui.diffMode"
                       />
                     </div>
                   </div>
@@ -748,6 +749,7 @@ onBeforeUnmount(() => {
                     :diff="row.tip.diff"
                     :file-path="row.tip.path"
                     :syntax="ui.diffSyntaxEnabled"
+                    :mode="ui.diffMode"
                   />
                 </div>
               </div>

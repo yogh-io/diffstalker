@@ -43,6 +43,7 @@ function mountDiff(
     showFileHeaders?: boolean;
     filePath?: string;
     syntax?: boolean;
+    mode?: 'unified' | 'split';
   } = {}
 ) {
   return mount(DiffView, { props: { diff, ...props } });
@@ -427,5 +428,59 @@ describe('syntax highlighting (the `syntax` prop)', () => {
     // The del/add pair is similar, so a changed word ("1"/"2") carries a
     // word-hl span even while syntax tokenization is active.
     expect(wrapper.find('.row.add .content .word-hl').exists()).toBe(true);
+  });
+});
+
+describe('split mode (the `mode` prop)', () => {
+  // A hunk with an unbalanced run: 2 deletions, 1 addition, plus context.
+  const diff = makeDiff([
+    header('src/foo.ts'),
+    hunk('@@ -1,3 +1,2 @@'),
+    ctx('keep', 1, 1),
+    del('old a', 2),
+    del('old b', 3),
+    add('new a', 2),
+  ]);
+
+  test('unified by default: a stacked row stream, no split body', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts' });
+    expect(wrapper.find('.split-body').exists()).toBe(false);
+    expect(wrapper.findAll('.row').length).toBeGreaterThan(0);
+  });
+
+  test('split renders two aligned sides with equal row counts', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', mode: 'split' });
+    expect(wrapper.find('.split-body').exists()).toBe(true);
+    // No unified rows in split mode.
+    expect(wrapper.findAll('.row')).toHaveLength(0);
+    const left = wrapper.findAll('.split-side.left .split-line');
+    const right = wrapper.findAll('.split-side.right .split-line');
+    // context (1) + max(2 dels, 1 add) = 3 visual rows on each side.
+    expect(left).toHaveLength(3);
+    expect(right).toHaveLength(3);
+  });
+
+  test('the short side pads with an empty cell', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', mode: 'split' });
+    const right = wrapper.findAll('.split-side.right .split-line');
+    // Rows: [context, add "new a", empty] — the 2nd deletion has no pair.
+    expect(right[1].classes()).toContain('add');
+    expect(right[1].find('.content').text()).toBe('new a');
+    expect(right[2].classes()).toContain('empty');
+    expect(right[2].find('.content').text()).toBe('');
+  });
+
+  test('left side carries the deletions with old line numbers', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', mode: 'split' });
+    const left = wrapper.findAll('.split-side.left .split-line');
+    expect(left[1].classes()).toContain('del');
+    expect(left[1].find('.content').text()).toBe('old a');
+    expect(left[1].find('.ln').text()).toBe('2');
+    expect(left[2].find('.content').text()).toBe('old b');
+  });
+
+  test('syntax highlighting composes with split mode', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', mode: 'split', syntax: true });
+    expect(wrapper.find('.split-body [class*="hljs-"]').exists()).toBe(true);
   });
 });

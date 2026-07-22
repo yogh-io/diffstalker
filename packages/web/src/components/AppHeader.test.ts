@@ -97,6 +97,34 @@ describe('syntax toggle', () => {
   });
 });
 
+describe('split toggle', () => {
+  test('unified by default; clicking flips diffMode to split and persists', async () => {
+    const ui = useUiStore();
+    const wrapper = mountHeader();
+    const toggle = wrapper.find('[data-testid="split-toggle"]');
+
+    expect(toggle.text()).toBe('unified');
+    expect(toggle.attributes('aria-pressed')).toBe('false');
+
+    await toggle.trigger('click');
+    expect(ui.diffMode).toBe('split');
+    expect(toggle.text()).toBe('split');
+    expect(toggle.attributes('aria-pressed')).toBe('true');
+
+    await toggle.trigger('click');
+    expect(ui.diffMode).toBe('unified');
+    expect(toggle.text()).toBe('unified');
+  });
+
+  test('reflects a stored split preference on mount', () => {
+    localStorage.setItem('diffstalker:prefs', JSON.stringify({ diffMode: 'split' }));
+    const wrapper = mountHeader();
+    const toggle = wrapper.find('[data-testid="split-toggle"]');
+    expect(toggle.text()).toBe('split');
+    expect(toggle.attributes('aria-pressed')).toBe('true');
+  });
+});
+
 describe('follow toggle', () => {
   test('hidden until the daemon follow state is loaded', () => {
     const wrapper = mountHeader();

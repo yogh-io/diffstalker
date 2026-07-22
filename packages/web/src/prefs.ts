@@ -17,6 +17,13 @@ export function isViewName(value: unknown): value is ViewName {
   return typeof value === 'string' && (VIEW_NAMES as readonly string[]).includes(value);
 }
 
+export const DIFF_MODES = ['unified', 'split'] as const;
+export type DiffMode = (typeof DIFF_MODES)[number];
+
+export function isDiffMode(value: unknown): value is DiffMode {
+  return typeof value === 'string' && (DIFF_MODES as readonly string[]).includes(value);
+}
+
 export interface Prefs {
   /** null = no explicit choice yet; derive from prefers-color-scheme. */
   theme: ThemeName | null;
@@ -33,6 +40,11 @@ export interface Prefs {
    * — a single app-wide toggle in the header.
    */
   diffSyntax: boolean;
+  /**
+   * Diff layout: 'unified' (stacked) or 'split' (old | new, side by
+   * side). Global — a single app-wide toggle in the header.
+   */
+  diffMode: DiffMode;
   /**
    * Changes view files/diff split as a fraction of the container width
    * (landscape column layout); null = the view's default. Clamped to a
@@ -74,6 +86,7 @@ function defaults(): Prefs {
     recentRepos: [],
     autoMode: false,
     diffSyntax: false,
+    diffMode: 'unified',
     changesSplit: null,
     changesTop: null,
     historyTop: null,
@@ -103,6 +116,7 @@ function sanitize(raw: unknown): Prefs {
   }
   if (typeof record.autoMode === 'boolean') prefs.autoMode = record.autoMode;
   if (typeof record.diffSyntax === 'boolean') prefs.diffSyntax = record.diffSyntax;
+  if (isDiffMode(record.diffMode)) prefs.diffMode = record.diffMode;
   prefs.changesSplit = readFraction(record.changesSplit, CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX);
   for (const key of TOP_KEYS) {
     prefs[key] = readFraction(record[key], TOP_MIN, TOP_MAX);
