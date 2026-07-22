@@ -83,6 +83,62 @@ export async function getDiff(
   }
 }
 
+/** The well-known oid of git's empty tree — the diff base for an unborn HEAD. */
+export const EMPTY_TREE_OID = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/** Sentinel returned by getHeadOid when HEAD has no commit yet (unborn branch). */
+export const UNBORN_HEAD_OID = '(unborn)';
+
+/**
+ * `git rev-parse HEAD` failure signatures that mean an unborn HEAD (fresh
+ * repo, no commits) rather than a real error. Anything else — spawn
+ * failure, non-repo, broken/unreadable HEAD — must propagate: silently
+ * mapping it to the sentinel would make the journal diff against the
+ * empty tree and record a phantom mass-create.
+ */
+const UNBORN_HEAD_SIGNATURE =
+  /unknown revision|ambiguous argument 'HEAD'|needed a single revision/i;
+
+/**
+ * The commit oid HEAD points at, or UNBORN_HEAD_OID when HEAD is unborn
+ * (fresh repo, no commits). Any failure that is NOT the unborn signature
+ * THROWS so the journal's observation defers. The journal reads this
+ * twice around its diff read: two differing reads mean the tree moved
+ * under the observation.
+ */
+export async function getHeadOid(repoPath: string): Promise<string> {
+  const git = createGit(repoPath);
+  try {
+    return (await git.raw(['rev-parse', 'HEAD'])).trim();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (UNBORN_HEAD_SIGNATURE.test(message)) return UNBORN_HEAD_OID;
+    throw err;
+  }
+}
+
+/**
+ * Whole-tree worktree-vs-HEAD diff for the journal: `git diff -U3 HEAD --`.
+ * Unborn HEAD diffs against the empty tree instead.
+ *
+ * -U3 is pinned explicitly: a user's diff.context config would otherwise
+ * change hunk merge/split geometry between machines.
+ *
+ * DELIBERATE CONVENTION BREAK — THIS FUNCTION PROPAGATES ERRORS. Every
+ * sibling in this file catches failure into an empty DiffResult, which is
+ * indistinguishable from "clean". For the journal that swallow would weld
+ * a phantom mass-revert into an append-only log the first time an
+ * index.lock race hit. Do NOT "normalize" this to catch-to-empty; the
+ * requirement is enforced by test (diff.test.ts).
+ */
+export async function getDiffAgainstHead(repoPath: string): Promise<DiffResult> {
+  const git = createGit(repoPath);
+  const head = await getHeadOid(repoPath);
+  const base = head === UNBORN_HEAD_OID ? EMPTY_TREE_OID : 'HEAD';
+  const raw = await git.raw(['diff', '-U3', base, '--']);
+  return { raw, lines: parseDiffWithLineNumbers(raw) };
+}
+
 export async function getDiffForUntracked(repoPath: string, file: string): Promise<DiffResult> {
   try {
     // Defense-in-depth: this branch reads the filesystem directly (git is
@@ -92,7 +148,10 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
     if (resolved !== root && !resolved.startsWith(root + path.sep)) {
       return { raw: '', lines: [] };
     }
-    // For untracked files, show the entire file as additions
+    // For untracked files, show the entire file as additions, shaped like
+    // git's own new-file diff: the trailing newline produces no phantom
+    // extra "+" line, a file NOT ending in one gets the "\ No newline"
+    // marker, and an empty file has no hunk at all.
     const content = fs.readFileSync(resolved, 'utf-8');
     const lines: DiffLine[] = [
       { type: 'header', content: `diff --git a/${file} b/${file}` },
@@ -101,12 +160,19 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
       { type: 'header', content: `+++ b/${file}` },
     ];
 
+    const endsWithNewline = content.endsWith('\n');
     const contentLines = content.split('\n');
-    lines.push({ type: 'hunk', content: `@@ -0,0 +1,${contentLines.length} @@` });
+    if (endsWithNewline) contentLines.pop(); // split's trailing '' is not a line
 
-    let lineNum = 1;
-    for (const line of contentLines) {
-      lines.push({ type: 'addition', content: '+' + line, newLineNum: lineNum++ });
+    if (content.length > 0) {
+      lines.push({ type: 'hunk', content: `@@ -0,0 +1,${contentLines.length} @@` });
+      let lineNum = 1;
+      for (const line of contentLines) {
+        lines.push({ type: 'addition', content: '+' + line, newLineNum: lineNum++ });
+      }
+      if (!endsWithNewline) {
+        lines.push({ type: 'context', content: '\\ No newline at end of file' });
+      }
     }
 
     const raw = lines.map((l) => l.content).join('\n');

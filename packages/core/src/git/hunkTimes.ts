@@ -7,9 +7,10 @@ const FILE_HEADER = /^diff --git a\/.+ b\/(.+)$/;
 /**
  * Hash a hunk's added/removed lines. Context lines and the @@ header are
  * excluded so the identity survives line-number shifts caused by edits
- * elsewhere in the file.
+ * elsewhere in the file. Exported: the journal's silence test uses the
+ * same convention (djb2 over +/- lines only).
  */
-function hashHunkBody(parts: string[]): string {
+export function hashHunkBody(parts: string[]): string {
   let h = 5381;
   for (const part of parts) {
     for (let i = 0; i < part.length; i++) {

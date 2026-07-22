@@ -51,17 +51,18 @@ module.exports = {
     {
       name: "view-no-node-runtime",
       comment:
-        "view/ must stay browser-safe: it may import git/ and utils/ TYPES only (erased at build). A RUNTIME import of git/ or utils/ drags in node-only code (git/status pulls simple-git + node:child_process; utils/xdg pulls node:os). Dep-cruiser tracks runtime edges only by default, so type-only imports never trip this; a real runtime import does. This is the guard the layer exists for — it catches dropping `type` from an import, which build+deps+tests otherwise miss until the browser bundle breaks.",
+        "view/ must stay browser-safe: it may import git/ and utils/ TYPES only (erased at build). A RUNTIME import of git/ or utils/ drags in node-only code (git/status pulls simple-git + node:child_process; utils/xdg pulls node:os). Dep-cruiser tracks runtime edges only by default, so type-only imports never trip this; a real runtime import does. This is the guard the layer exists for — it catches dropping `type` from an import, which build+deps+tests otherwise miss until the browser bundle breaks. Test files are exempt: they never enter a browser bundle (splitDiffByFile.test.ts parses fixtures with git/diffParse).",
       severity: "error",
-      from: { path: "^src/view/" },
+      from: { path: "^src/view/", pathNot: "\\.test\\.ts$" },
       to: { path: "^src/(git|utils)/", dependencyTypesNot: ["type-only"] },
     },
     {
       name: "managers-no-view",
-      comment: "managers/ must not import view/ — presentation logic is client-side only",
+      comment:
+        "managers/ must not import view/ — presentation logic is client-side only. Single exception: splitDiffByFile, a pure per-file diff splitter that lives in view/ so web clients import the same copy; the JournalManager splits each observation's HEAD diff with it.",
       severity: "error",
       from: { path: "^src/managers/" },
-      to: { path: "^src/view/" },
+      to: { path: "^src/view/", pathNot: "^src/view/splitDiffByFile\\.ts$" },
     },
 
     // --- No circular dependencies ---

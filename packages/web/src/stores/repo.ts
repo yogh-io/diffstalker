@@ -54,7 +54,7 @@ import { computed, markRaw, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import { DaemonError, isConnectionError } from '../api/errors';
-import { splitDiffByFile } from '../utils/splitDiffByFile';
+import { splitDiffByFile } from '@diffstalker/core/view/splitDiffByFile';
 import { buildDiffModel } from '../utils/diffRows';
 import type { DiffModel } from '../utils/diffRows';
 import type { SseHandle } from '../api/transport';

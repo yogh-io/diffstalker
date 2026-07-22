@@ -11,7 +11,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { WorkingTreeManager, GitState } from './WorkingTreeManager.js';
 import { GitOperationQueue } from './GitOperationQueue.js';
-import { FileEntry } from '../git/status.js';
+import { FileEntry, GitStatus } from '../git/status.js';
+import type { DiffResult } from '../git/diff.js';
+import type { JournalObservation } from '../types/journal.js';
 import {
   createFixtureRepo,
   removeFixtureRepo,
@@ -99,6 +101,82 @@ describe('WorkingTreeManager', () => {
       expect(events[events.length - 1].isLoading).toBe(false);
 
       resetRepo();
+    });
+
+    test('emits one journal-observation with HEAD oid, HEAD diff, and untracked sections', async () => {
+      writeFixtureFile(repoPath, 'tracked.txt', 'staged change\n');
+      gitExec(repoPath, 'add tracked.txt');
+      writeFixtureFile(repoPath, 'new.txt', 'brand new\n');
+
+      const observations: JournalObservation[] = [];
+      manager.on('journal-observation', (obs) => observations.push(obs));
+
+      await manager.refresh();
+
+      expect(observations.length).toBe(1);
+      const obs = observations[0];
+      expect(obs.headOid).toMatch(/^[0-9a-f]{40}$/);
+      expect(obs.headOid).toBe(gitExec(repoPath, 'rev-parse HEAD').trim());
+      // Staged changes are visible on the HEAD axis...
+      expect(obs.headDiff.raw).toContain('diff --git a/tracked.txt b/tracked.txt');
+      expect(obs.headDiff.raw).toContain('+staged change');
+      // ...and the untracked file rides along as a synthetic section.
+      expect(obs.headDiff.raw).toContain('diff --git a/new.txt b/new.txt');
+      expect(obs.headDiff.raw).toContain('+brand new');
+      expect(obs.stashCount).toBe(0);
+      expect(obs.operationInProgress).toBeNull();
+      expect(obs.mtimes?.has('tracked.txt')).toBe(true);
+
+      resetRepo();
+    });
+
+    /**
+     * Reach the private journal gather with the oidBefore doRefresh now
+     * captures BEFORE the status read — the torn-window contract under test.
+     */
+    function gatherWith(
+      m: WorkingTreeManager,
+      status: GitStatus,
+      oidBefore: string | null
+    ): Promise<{ headDiff: DiffResult; headOid: string } | null> {
+      return (
+        m as unknown as {
+          gatherJournalInputs(
+            status: GitStatus,
+            oidBefore: string | null
+          ): Promise<{ headDiff: DiffResult; headOid: string } | null>;
+        }
+      ).gatherJournalInputs(status, oidBefore);
+    }
+
+    test('journal torn window: HEAD moving after the pre-status oid capture discards the observation', async () => {
+      writeFixtureFile(repoPath, 'tracked.txt', 'torn window edit\n');
+      await manager.refresh();
+      const status = manager.state.status!;
+
+      // The oid doRefresh would have captured at the top, before status.
+      const staleOid = gitExec(repoPath, 'rev-parse HEAD').trim();
+
+      // An external commit lands inside the guarded window.
+      gitExec(repoPath, 'add tracked.txt');
+      gitExec(repoPath, 'commit -m "external commit"');
+
+      expect(await gatherWith(manager, status, staleOid)).toBeNull();
+
+      // A capture matching the settled HEAD observes normally.
+      const freshOid = gitExec(repoPath, 'rev-parse HEAD').trim();
+      writeFixtureFile(repoPath, 'tracked.txt', 'post-commit edit\n');
+      await manager.refresh();
+      const inputs = await gatherWith(manager, manager.state.status!, freshOid);
+      expect(inputs).not.toBeNull();
+      expect(inputs!.headOid).toBe(freshOid);
+
+      resetRepo();
+    });
+
+    test('journal inputs are skipped when the pre-status oid capture failed', async () => {
+      await manager.refresh();
+      expect(await gatherWith(manager, manager.state.status!, null)).toBeNull();
     });
 
     test('populates mtimes for changed files: stat-backed, one entry per path, deleted omitted', async () => {

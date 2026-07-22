@@ -2,7 +2,7 @@
  * splitDiffByFile: split a whole-tree DiffResult into per-file
  * DiffResults, grouped by "diff --git a/… b/…" section headers — the
  * same boundary buildDiffModel's section grouping keys on
- * (extractDiffFilePath, shared from core).
+ * (extractDiffFilePath).
  *
  * Both halves of the DiffResult are split in one shape:
  * - `raw` is regrouped from the raw text, each per-file raw ending in
@@ -16,10 +16,14 @@
  * Content before the first "diff --git" header (not valid git-diff
  * output) is dropped. A path appearing in two sections (git never
  * emits this) merges into one entry in first-seen order.
+ *
+ * Lives in view/ (browser-safe, no node deps): the web client splits
+ * whole-tree pulls with it and the daemon-side JournalManager splits
+ * each observation's HEAD diff with it — one copy for both.
  */
 
-import type { DiffLine, DiffResult } from '@diffstalker/core/git/diff';
-import { extractDiffFilePath } from '@diffstalker/core/view/diffPrimitives';
+import type { DiffLine, DiffResult } from '../git/diffParse.js';
+import { extractDiffFilePath } from './diffPrimitives.js';
 
 interface FileGroup {
   rawLines: string[];

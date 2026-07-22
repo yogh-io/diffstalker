@@ -27,11 +27,16 @@ import {
 } from '../git/status.js';
 import {
   getDiff,
+  getDiffAgainstHead,
+  getDiffForUntracked,
+  getHeadOid,
   countHunksPerFile,
+  DiffLine,
   DiffResult,
   FileHunkCounts,
 } from '../git/diff.js';
 import { HunkTimeTracker } from '../git/hunkTimes.js';
+import type { JournalObservation } from '../types/journal.js';
 
 export type { FileHunkCounts } from '../git/diff.js';
 export type { StashEntry, InProgressOperation } from '../git/status.js';
@@ -60,8 +65,12 @@ export interface GitState {
 
 type WorkingTreeEventMap = {
   'state-change': [GitState];
+  'journal-observation': [JournalObservation];
   error: [string];
 };
+
+/** Untracked files above this size are not read for the journal (deferred). */
+const MAX_UNTRACKED_JOURNAL_BYTES = 256 * 1024;
 
 /**
  * Manages the working tree: file watching, status, whole-tree diffs (for hunk
@@ -313,6 +322,13 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   private async doRefresh(): Promise<void> {
     this.updateState({ isLoading: true, error: null });
 
+    // The journal's torn-window guard: capture HEAD's oid BEFORE the
+    // status read so the status snapshot sits inside the double-oid
+    // window (gatherJournalInputs re-reads it after the diff reads).
+    // A failed read only skips this tick's observation, never the
+    // refresh itself.
+    const oidBefore = await getHeadOid(this.repoPath).catch(() => null);
+
     try {
       const newStatus = await getStatus(this.repoPath);
 
@@ -329,12 +345,16 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       // cross the daemon wire), so a full refresh recomputes them too.
       // Plain git functions, not loadStashList: this already runs inside
       // the queue, so re-enqueueing would deadlock.
-      const [allUnstagedDiff, allStagedDiff, stashList, operationInProgress] = await Promise.all([
-        getDiff(this.repoPath, undefined, false),
-        getDiff(this.repoPath, undefined, true),
-        gitGetStashList(this.repoPath),
-        getInProgressOperation(this.repoPath),
-      ]);
+      // The journal inputs ride along in the same queue slot; their
+      // gather never throws (null = skip this tick's observation).
+      const [allUnstagedDiff, allStagedDiff, stashList, operationInProgress, journalInputs] =
+        await Promise.all([
+          getDiff(this.repoPath, undefined, false),
+          getDiff(this.repoPath, undefined, true),
+          gitGetStashList(this.repoPath),
+          getInProgressOperation(this.repoPath),
+          this.gatherJournalInputs(newStatus, oidBefore),
+        ]);
 
       const hunkCounts: FileHunkCounts = {
         unstaged: countHunksPerFile(allUnstagedDiff.raw),
@@ -347,19 +367,98 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       this.hunkTimes.stamp(allStagedDiff);
       this.hunkTimes.prune(new Set(newStatus.files.map((f) => f.path)));
 
+      const mtimes = this.statMtimes(newStatus);
+
       this.updateState({
         status: newStatus,
         hunkCounts,
         stashList,
         operationInProgress,
-        mtimes: this.statMtimes(newStatus),
+        mtimes,
         isLoading: false,
       });
+
+      if (journalInputs !== null) {
+        this.emit('journal-observation', {
+          status: newStatus,
+          headDiff: journalInputs.headDiff,
+          headOid: journalInputs.headOid,
+          stashCount: stashList.length,
+          operationInProgress,
+          mtimes,
+          at: Date.now(),
+        });
+      }
     } catch (err) {
       this.updateState({
         isLoading: false,
         error: err instanceof Error ? err.message : 'Unknown error',
       });
+    }
+  }
+
+  /**
+   * Gather the journal's observation inputs, inside the same queue slot as
+   * the refresh. Returns null — no observation this tick — on ANY failure
+   * or when HEAD moved between the two oid reads (a torn window from an
+   * external commit/rebase mid-flight). A skipped tick is always safe: the
+   * next observation re-derives everything from scratch. Note the diff
+   * read (getDiffAgainstHead) THROWS on failure by design — a swallowed
+   * empty diff would read as a phantom mass revert.
+   *
+   * oidBefore is captured by doRefresh at the TOP of the refresh, BEFORE
+   * the status read, so the status snapshot itself sits inside the guarded
+   * window; null means that capture failed and this tick is skipped.
+   *
+   * Untracked files are invisible to `git diff HEAD`, so their synthetic
+   * sections (getDiffForUntracked) are appended here. That read catches to
+   * empty; a missing section for a status-listed untracked path is the
+   * journal's cue to defer that path, never to classify it.
+   */
+  private async gatherJournalInputs(
+    status: GitStatus,
+    oidBefore: string | null
+  ): Promise<{ headDiff: DiffResult; headOid: string } | null> {
+    if (oidBefore === null) return null;
+    try {
+      const headDiff = await getDiffAgainstHead(this.repoPath);
+
+      const raws: string[] = [];
+      if (headDiff.raw) {
+        raws.push(headDiff.raw.endsWith('\n') ? headDiff.raw : headDiff.raw + '\n');
+      }
+      const lines = [...headDiff.lines];
+      await this.appendUntrackedSections(status, raws, lines);
+
+      const oidAfter = await getHeadOid(this.repoPath);
+      if (oidBefore !== oidAfter) return null; // torn window
+
+      return { headDiff: { raw: raws.join(''), lines }, headOid: oidAfter };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Append each readable, size-capped untracked file as a synthetic diff section. */
+  private async appendUntrackedSections(
+    status: GitStatus,
+    raws: string[],
+    lines: DiffLine[]
+  ): Promise<void> {
+    const seen = new Set<string>();
+    for (const file of status.files) {
+      if (file.status !== 'untracked' || seen.has(file.path)) continue;
+      seen.add(file.path);
+      try {
+        const stat = fs.statSync(path.join(this.repoPath, file.path));
+        if (!stat.isFile() || stat.size > MAX_UNTRACKED_JOURNAL_BYTES) continue;
+      } catch {
+        continue; // vanished mid-tick — defer
+      }
+      const untrackedDiff = await getDiffForUntracked(this.repoPath, file.path);
+      if (!untrackedDiff.raw) continue; // caught-to-empty — defer
+      raws.push(untrackedDiff.raw.endsWith('\n') ? untrackedDiff.raw : untrackedDiff.raw + '\n');
+      lines.push(...untrackedDiff.lines);
     }
   }
 

@@ -6,7 +6,10 @@ import {
   countHunks,
   extractHunkPatch,
   getDiff,
+  getDiffAgainstHead,
   getDiffForUntracked,
+  getHeadOid,
+  UNBORN_HEAD_OID,
   getCommitDiff,
   getCandidateBaseBranches,
   getDefaultBaseBranch,
@@ -68,6 +71,35 @@ describe('getDiff / getDiffForUntracked (fixture)', () => {
     expect(diff.lines.some((l) => l.type === 'hunk')).toBe(true);
     const additions = diff.lines.filter((l) => l.type === 'addition');
     expect(additions.length).toBeGreaterThanOrEqual(2);
+    resetRepo();
+  });
+
+  it('getDiffForUntracked: a trailing newline yields no phantom extra addition', async () => {
+    writeFixtureFile(repoPath, 'nl.txt', 'a\nb\n');
+    const diff = await getDiffForUntracked(repoPath, 'nl.txt');
+    const additions = diff.lines.filter((l) => l.type === 'addition');
+    expect(additions.map((l) => l.content)).toEqual(['+a', '+b']);
+    expect(diff.raw).toContain('@@ -0,0 +1,2 @@');
+    expect(diff.raw).not.toContain('No newline at end of file');
+    resetRepo();
+  });
+
+  it('getDiffForUntracked: no trailing newline emits the "\\ No newline" marker', async () => {
+    writeFixtureFile(repoPath, 'nonl.txt', 'a\nb');
+    const diff = await getDiffForUntracked(repoPath, 'nonl.txt');
+    const additions = diff.lines.filter((l) => l.type === 'addition');
+    expect(additions.map((l) => l.content)).toEqual(['+a', '+b']);
+    expect(diff.raw).toContain('@@ -0,0 +1,2 @@');
+    expect(diff.raw).toContain('\\ No newline at end of file');
+    resetRepo();
+  });
+
+  it('getDiffForUntracked: an empty file has headers but no hunk, like git', async () => {
+    writeFixtureFile(repoPath, 'empty.txt', '');
+    const diff = await getDiffForUntracked(repoPath, 'empty.txt');
+    expect(diff.lines.some((l) => l.type === 'header')).toBe(true);
+    expect(diff.lines.some((l) => l.type === 'hunk')).toBe(false);
+    expect(diff.lines.filter((l) => l.type === 'addition')).toEqual([]);
     resetRepo();
   });
 });
@@ -302,5 +334,111 @@ describe('extractHunkPatch round-trip (fixture)', () => {
     expect(content).toContain('line3 modified');
     expect(content).toContain('line25 modified');
     resetRepo();
+  });
+});
+
+describe('getDiffAgainstHead / getHeadOid (fixture)', () => {
+  const REPO_NAME = 'head-diff-ops-test';
+  let repoPath: string;
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    writeFixtureFile(repoPath, 'seven.txt', 'l1\nl2\nl3\nl4\nl5\nl6\nl7\n');
+    writeFixtureFile(repoPath, 'other.txt', 'one\ntwo\n');
+    gitExec(repoPath, 'add seven.txt other.txt');
+    gitExec(repoPath, 'commit -m "initial"');
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  function resetRepo(): void {
+    gitExec(repoPath, 'reset --hard HEAD');
+    gitExec(repoPath, 'clean -fd');
+  }
+
+  it('getHeadOid returns the commit oid', async () => {
+    const oid = await getHeadOid(repoPath);
+    expect(oid).toMatch(/^[0-9a-f]{40}$/);
+    expect(oid).toBe(gitExec(repoPath, 'rev-parse HEAD').trim());
+  });
+
+  it('getHeadOid returns the unborn sentinel on a fresh repo', async () => {
+    const freshPath = createFixtureRepo('head-oid-unborn-test');
+    try {
+      expect(await getHeadOid(freshPath)).toBe(UNBORN_HEAD_OID);
+    } finally {
+      removeFixtureRepo('head-oid-unborn-test');
+    }
+  });
+
+  it('getHeadOid rejects on a non-repo instead of conflating it with an unborn HEAD', async () => {
+    // Only the unborn signature maps to the sentinel; any other failure
+    // must throw, or the journal would diff against the empty tree and
+    // record a phantom mass-create.
+    const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-oid-'));
+    try {
+      await expect(getHeadOid(nonRepo)).rejects.toThrow();
+    } finally {
+      fs.rmSync(nonRepo, { recursive: true, force: true });
+    }
+  });
+
+  it('combines staged and unstaged changes against HEAD', async () => {
+    writeFixtureFile(repoPath, 'seven.txt', 'l1\nl2\nl3\nCHANGED\nl5\nl6\nl7\n');
+    gitExec(repoPath, 'add seven.txt');
+    writeFixtureFile(repoPath, 'other.txt', 'one\nCHANGED\n');
+
+    const diff = await getDiffAgainstHead(repoPath);
+    expect(diff.raw).toContain('diff --git a/seven.txt b/seven.txt');
+    expect(diff.raw).toContain('diff --git a/other.txt b/other.txt');
+    expect(diff.raw).toContain('+CHANGED');
+    resetRepo();
+  });
+
+  it('diffs against the empty tree when HEAD is unborn', async () => {
+    const freshPath = createFixtureRepo('head-diff-unborn-test');
+    try {
+      writeFixtureFile(freshPath, 'new.txt', 'hello\n');
+      gitExec(freshPath, 'add new.txt');
+      const diff = await getDiffAgainstHead(freshPath);
+      expect(diff.raw).toContain('diff --git a/new.txt b/new.txt');
+      expect(diff.raw).toContain('new file mode');
+      expect(diff.raw).toContain('+hello');
+    } finally {
+      removeFixtureRepo('head-diff-unborn-test');
+    }
+  });
+
+  it('pins -U3: a diff.context=0 repo config does not change hunk geometry', async () => {
+    gitExec(repoPath, 'config diff.context 0');
+    try {
+      writeFixtureFile(repoPath, 'seven.txt', 'l1\nl2\nl3\nCHANGED\nl5\nl6\nl7\n');
+      const diff = await getDiffAgainstHead(repoPath);
+      // With -U3 honored the single mid-file change carries 3 context
+      // lines on each side; with diff.context=0 winning there would be none.
+      const contextLines = diff.lines.filter((l) => l.type === 'context');
+      expect(contextLines.length).toBe(6);
+      expect(diff.raw).toContain('@@ -1,7 +1,7 @@');
+    } finally {
+      gitExec(repoPath, 'config --unset diff.context');
+      resetRepo();
+    }
+  });
+
+  it('PROPAGATES errors instead of swallowing them to an empty diff', async () => {
+    // The one deliberate convention break in this file: a transient git
+    // failure must never read as "clean" (phantom mass revert in the
+    // journal). A non-repo directory makes the diff read fail loudly.
+    const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
+    try {
+      await expect(getDiffAgainstHead(nonRepo)).rejects.toThrow();
+      // Contrast: the sibling swallows the same failure.
+      const swallowed = await getDiff(nonRepo);
+      expect(swallowed).toEqual({ raw: '', lines: [] });
+    } finally {
+      fs.rmSync(nonRepo, { recursive: true, force: true });
+    }
   });
 });

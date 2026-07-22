@@ -6,9 +6,9 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { splitDiffByFile } from './splitDiffByFile';
-import { parseDiffWithLineNumbers } from '@diffstalker/core/git/diffParse';
-import type { DiffResult } from '@diffstalker/core/git/diff';
+import { splitDiffByFile } from './splitDiffByFile.js';
+import { parseDiffWithLineNumbers } from '../git/diffParse.js';
+import type { DiffResult } from '../git/diffParse.js';
 
 function fileDiffRaw(path: string, marker: string): string {
   return [
