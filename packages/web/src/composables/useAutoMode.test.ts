@@ -1,14 +1,18 @@
 /**
  * useAutoMode tests: the CLI auto-mode policy ported to the web —
  * the first snapshot seeds without jumping; a later mtime increase
- * (or a new file) selects the newest-changed file and flashes it
- * (auto on, Changes view only); tracking continues while auto is OFF
- * so toggling on never acts on a stale change; the view switches on
- * file-count transitions (files dry up on Changes -> History with the
- * newest commit selected; files appear on History -> Changes); a repo
- * switch starts a fresh seeding cycle. Driven by assigning the repo
- * store's shared state directly (repoId stays null, so no fetches),
- * fake timers for the flash window.
+ * (or a new file) selects the newest-changed file, flashes it, and
+ * smooth-scrolls the registered Changes stack to it (auto on, Changes
+ * view only — the AUTO-SCROLL-ONLY-IN-AUTO-MODE decision: with auto
+ * OFF the stack is never scrolled); the jump defers while the user
+ * scrolled the stack within the last USER_SCROLL_DEFER_MS and retries
+ * while the view is still mounting; tracking continues while auto is
+ * OFF so toggling on never acts on a stale change; the view switches
+ * on file-count transitions (files dry up on Changes -> History with
+ * the newest commit selected; files appear on History -> Changes); a
+ * repo switch starts a fresh seeding cycle. Driven by assigning the
+ * repo store's shared state directly (repoId stays null, so no
+ * fetches), fake timers for the flash and deferral windows.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -16,7 +20,7 @@ import { defineComponent, h, nextTick } from 'vue';
 import { mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
-import { useAutoMode } from './useAutoMode';
+import { useAutoMode, registerStackAutoJump, USER_SCROLL_DEFER_MS } from './useAutoMode';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore, FLASH_MS } from '../stores/ui';
 import type { FileEntry, FileStatus, CommitInfo } from '@diffstalker/core/git/status';
@@ -62,11 +66,19 @@ function commit(hash: string): CommitInfo {
 let wrapper: VueWrapper;
 let repo: ReturnType<typeof useRepoStore>;
 let ui: ReturnType<typeof useUiStore>;
+let unregister: (() => void) | null;
 
 /** Apply a shared state and let the composable's watcher run. */
 async function apply(files: FileEntry[], mtimes: Record<string, number> | null): Promise<void> {
   repo.shared = sharedState(files, mtimes);
   await nextTick();
+}
+
+/** Register a fake stack jump target (unregistered in afterEach). */
+function registerTarget(lastUserScrollAt: () => number = () => 0): ReturnType<typeof vi.fn> {
+  const jump = vi.fn();
+  unregister = registerStackAutoJump({ jump, lastUserScrollAt });
+  return jump;
 }
 
 beforeEach(() => {
@@ -75,10 +87,12 @@ beforeEach(() => {
   setActivePinia(createPinia());
   repo = useRepoStore();
   ui = useUiStore();
+  unregister = null;
   wrapper = mount(Harness);
 });
 
 afterEach(() => {
+  unregister?.();
   wrapper.unmount();
   vi.useRealTimers();
 });
@@ -243,5 +257,106 @@ describe('repo switch', () => {
     await apply([fileEntry('a.ts')], { 'a.ts': 999 });
 
     expect(ui.flashedFile).toBeNull();
+  });
+});
+
+describe('stack auto-jump (auto-scroll ONLY in auto mode)', () => {
+  test('auto ON: a fresh change jumps the registered stack to that path', async () => {
+    const jump = registerTarget();
+    ui.toggleAutoMode();
+    await apply([fileEntry('a.ts'), fileEntry('b.ts')], { 'a.ts': 100, 'b.ts': 100 });
+
+    await apply([fileEntry('a.ts'), fileEntry('b.ts')], { 'a.ts': 100, 'b.ts': 500 });
+
+    expect(jump).toHaveBeenCalledTimes(1);
+    expect(jump).toHaveBeenCalledWith('b.ts');
+  });
+
+  test('auto OFF: a live edit NEVER scrolls — the stack updates in place', async () => {
+    const jump = registerTarget();
+    await apply([fileEntry('a.ts')], { 'a.ts': 100 });
+    await apply([fileEntry('a.ts')], { 'a.ts': 900 });
+
+    expect(jump).not.toHaveBeenCalled();
+    // No selection churn either — only the editedAt flash marks it.
+    expect(repo.selection.file).toBeNull();
+  });
+
+  test('a recent manual scroll defers the jump until the window closes', async () => {
+    const scrolledAt = Date.now();
+    const jump = registerTarget(() => scrolledAt);
+    ui.toggleAutoMode();
+    await apply([fileEntry('a.ts')], { 'a.ts': 100 });
+
+    vi.advanceTimersByTime(500); // user scrolled 500ms ago
+    await apply([fileEntry('a.ts')], { 'a.ts': 200 });
+    expect(jump).not.toHaveBeenCalled(); // deferred, not dropped
+
+    await vi.advanceTimersByTimeAsync(USER_SCROLL_DEFER_MS - 500);
+    expect(jump).toHaveBeenCalledTimes(1);
+    expect(jump).toHaveBeenCalledWith('a.ts');
+  });
+
+  test('a newer change replaces a deferred jump: one jump, freshest path', async () => {
+    const scrolledAt = Date.now();
+    const jump = registerTarget(() => scrolledAt);
+    ui.toggleAutoMode();
+    await apply([fileEntry('a.ts'), fileEntry('b.ts')], { 'a.ts': 100, 'b.ts': 100 });
+
+    await apply([fileEntry('a.ts'), fileEntry('b.ts')], { 'a.ts': 200, 'b.ts': 100 });
+    await apply([fileEntry('a.ts'), fileEntry('b.ts')], { 'a.ts': 200, 'b.ts': 300 });
+    expect(jump).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(USER_SCROLL_DEFER_MS);
+    expect(jump).toHaveBeenCalledTimes(1);
+    expect(jump).toHaveBeenCalledWith('b.ts');
+  });
+
+  test('no target yet (view still mounting): the jump retries and lands after registration', async () => {
+    ui.toggleAutoMode();
+    await apply([fileEntry('a.ts')], { 'a.ts': 100 });
+
+    await apply([fileEntry('a.ts')], { 'a.ts': 200 }); // no target registered
+
+    const jump = registerTarget();
+    await vi.advanceTimersByTimeAsync(200); // past the retry cadence
+    expect(jump).toHaveBeenCalledWith('a.ts');
+  });
+
+  test('leaving the Changes view drops a deferred jump', async () => {
+    const scrolledAt = Date.now();
+    const jump = registerTarget(() => scrolledAt);
+    ui.toggleAutoMode();
+    await apply([fileEntry('a.ts')], { 'a.ts': 100 });
+
+    await apply([fileEntry('a.ts')], { 'a.ts': 200 }); // deferred (recent scroll)
+    ui.setActiveView('explorer');
+    await vi.advanceTimersByTimeAsync(USER_SCROLL_DEFER_MS + 100);
+
+    expect(jump).not.toHaveBeenCalled();
+  });
+
+  test('toggling auto mode off drops a deferred jump', async () => {
+    const scrolledAt = Date.now();
+    const jump = registerTarget(() => scrolledAt);
+    ui.toggleAutoMode();
+    await apply([fileEntry('a.ts')], { 'a.ts': 100 });
+
+    await apply([fileEntry('a.ts')], { 'a.ts': 200 }); // deferred (recent scroll)
+    ui.toggleAutoMode(); // off
+    await vi.advanceTimersByTimeAsync(USER_SCROLL_DEFER_MS + 100);
+
+    expect(jump).not.toHaveBeenCalled();
+  });
+
+  test('unregistering drops the target (no jump into an unmounted view)', async () => {
+    const jump = registerTarget();
+    unregister?.();
+    unregister = null;
+    ui.toggleAutoMode();
+    await apply([fileEntry('a.ts')], { 'a.ts': 100 });
+
+    await apply([fileEntry('a.ts')], { 'a.ts': 200 });
+    expect(jump).not.toHaveBeenCalled();
   });
 });

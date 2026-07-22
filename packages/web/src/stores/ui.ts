@@ -1,10 +1,11 @@
 /**
  * useUiStore: app-level UI state — theme, active view, recent repos,
- * the auto-mode toggle (+ its row flash), and the active overlay
- * (fuzzy finder / hotkeys help). Theme, view, recents and auto mode
- * persist through prefs (localStorage); the theme lands on
- * <html data-theme="..."> so the CSS custom-property sets select.
- * Overlay and flash state are session-only — never persisted.
+ * the auto-mode toggle (+ its row flash), the Changes stack's active
+ * section key, and the active overlay (fuzzy finder / hotkeys help).
+ * Theme, view, recents and auto mode persist through prefs
+ * (localStorage); the theme lands on <html data-theme="..."> so the
+ * CSS custom-property sets select. Overlay, flash, and stack-key state
+ * are session-only — never persisted.
  *
  * The initial theme honors prefers-color-scheme when no explicit choice
  * is stored (dark unless the browser asks for light).
@@ -53,6 +54,12 @@ export const useUiStore = defineStore('ui', () => {
   /** Path of the file row currently flashed by auto mode, null when none. */
   const flashedFile = shallowRef<string | null>(null);
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The Changes stack's active section key (`s:`/`u:` + path): written
+   * optimistically by list clicks/auto jumps and confirmed by the
+   * stack's scroll-spy; the file list styles its active row from it.
+   */
+  const activeStackKey = shallowRef<string | null>(null);
 
   /** Stamp the current theme onto <html>. Called once at app setup. */
   function init(): void {
@@ -97,6 +104,10 @@ export const useUiStore = defineStore('ui', () => {
     }, FLASH_MS);
   }
 
+  function setActiveStackKey(key: string | null): void {
+    activeStackKey.value = key;
+  }
+
   // --- Overlays (finder / help) ---
 
   function openOverlay(name: OverlayName): void {
@@ -119,12 +130,14 @@ export const useUiStore = defineStore('ui', () => {
     activeOverlay,
     autoModeEnabled,
     flashedFile,
+    activeStackKey,
     init,
     setTheme,
     setActiveView,
     addRecentRepo,
     toggleAutoMode,
     flashFile,
+    setActiveStackKey,
     openOverlay,
     toggleOverlay,
     closeOverlay,

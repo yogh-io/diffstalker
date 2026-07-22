@@ -54,6 +54,24 @@ function modelFor(diff: DiffResult, staged: boolean): DiffModel {
   return entry[slot];
 }
 
+/**
+ * isBinary per DiffResult identity: a cheap header-line scan (the same
+ * marker buildDiffModel keys on), memoized so the gate checks never
+ * have to build a full model for a diff they will not render.
+ */
+const binaryCache = new WeakMap<DiffResult, boolean>();
+
+function isBinaryDiff(diff: DiffResult): boolean {
+  let cached = binaryCache.get(diff);
+  if (cached === undefined) {
+    cached = diff.lines.some(
+      (line) => line.type === 'header' && line.content.startsWith('Binary files')
+    );
+    binaryCache.set(diff, cached);
+  }
+  return cached;
+}
+
 /** The heights every body computes its exact intrinsic size from. */
 interface ProbeSizes {
   /** One content row (line box; fractional CSS px). */
@@ -94,6 +112,13 @@ const PROBE_DIFF: DiffResult = { raw: '', lines: PROBE_LINES };
 
 /** Rows in the probe's FIRST hunk (its height check derives the border). */
 const PROBE_FIRST_HUNK_ROWS = 2;
+
+/**
+ * Files with more changed lines than this start collapsed behind a
+ * "Load diff" affordance (GitHub's escape hatch) — the worst-case DOM
+ * cap: their DiffView is not even mounted until the user asks for it.
+ */
+export const HUGE_FILE_CHANGED_LINES = 1500;
 </script>
 
 <script setup lang="ts">
@@ -131,16 +156,43 @@ const PROBE_FIRST_HUNK_ROWS = 2;
  * static diffs) all of this is inert: no changed sections → no anchor,
  * no size deltas → a silent observer.
  *
- * Scrolling: scrollToFile/scrollToHunk are exposed and INSTANT for now
- * (the smooth tween is phase 1). Both use scroller.scrollTo with the
- * section's scroller-relative offsetTop — never scrollIntoView, which
- * scrolls every ancestor and ignores sticky headers. 'active-file' is
- * emitted on programmatic jumps; the real scroll-spy is phase 1.
+ * Scrolling (phase 1): scrollToFile/scrollToHunk route through
+ * useStackScroll's retargeting rAF tween (smooth by default; instant on
+ * smooth:false / prefers-reduced-motion). Targets are re-read every
+ * frame, so a churn commit landing mid-glide self-corrects — and the
+ * anchor sandwich yields to the tween (isTweening) instead of writing
+ * scrollTop against it. Positions are scroller-relative — never
+ * scrollIntoView, which scrolls every ancestor and ignores sticky
+ * headers. 'active-file' is emitted whenever the active key changes:
+ * optimistically on programmatic jumps, and from the composable's
+ * binary-search scroll-spy as the user scrolls.
+ *
+ * Huge files: a StackFile that FIRST APPEARS past
+ * HUGE_FILE_CHANGED_LINES changed lines starts collapsed behind a
+ * "Load diff" affordance; its DiffView mounts only after that explicit
+ * click — the ONLY path that mounts a huge body. The gate latches: a
+ * file already rendered small whose stats later grow past the cap
+ * keeps its body (never unmounted mid-view). Manual (parent-owned)
+ * collapse is unchanged.
+ *
+ * Binary files render as a placeholder ONLY (sticky header + a "Binary
+ * file" note) — never bytes, never a diff body, and never the huge
+ * gate. Auto-mode jumps land on the section top of gated/binary files
+ * without expanding anything.
  */
 
-import { onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue';
+import {
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+  type ComponentPublicInstance,
+} from 'vue';
 import { statusLetter } from '../utils/format';
 import { useScrollAnchor, type AnchorCandidate } from '../composables/useScrollAnchor';
+import { useStackScroll, type StackSection } from '../composables/useStackScroll';
 import DiffView from './DiffView.vue';
 
 const props = defineProps<{
@@ -162,6 +214,73 @@ const sectionEls = new Map<string, HTMLElement>();
 function setSectionEl(key: string, el: Element | ComponentPublicInstance | null): void {
   if (el instanceof HTMLElement) sectionEls.set(key, el);
   else sectionEls.delete(key);
+}
+
+// --- Binary files: placeholder-only ---
+
+/**
+ * A binary file's section is ALWAYS the placeholder note: its sticky
+ * header plus a plain "Binary file" line — never bytes, never a diff
+ * body, and never the huge-file gate (there is no "Load diff" that
+ * reveals binary content, explicit or auto). Real binary rendering
+ * (image preview, size delta) is deliberately deferred — a future
+ * feature; until then the note is all a binary section ever shows.
+ */
+function isBinaryFile(item: StackFile): boolean {
+  return item.diff !== null && isBinaryDiff(item.diff);
+}
+
+// --- Huge files: "Load diff" gate ---
+
+/** Huge files the user explicitly loaded (per-key, view lifetime). */
+const loadedHugeKeys = reactive(new Set<string>());
+
+/**
+ * Keys that have appeared BELOW the threshold (the latch): a file
+ * already rendered whose stats later grow past the cap keeps its body
+ * — unmounting content mid-view would yank it from under the reader.
+ * Only files that FIRST APPEAR past the threshold are gated. A plain
+ * Set: it only grows alongside props.files changes (latched in the
+ * pre-flush watcher, before the re-render that reads it).
+ */
+const renderedSmallKeys = new Set<string>();
+
+function latchSmallKeys(files: StackFile[]): void {
+  for (const item of files) {
+    if (item.stats.insertions + item.stats.deletions <= HUGE_FILE_CHANGED_LINES) {
+      renderedSmallKeys.add(item.key);
+    }
+  }
+}
+latchSmallKeys(props.files);
+
+function isHuge(item: StackFile): boolean {
+  return item.stats.insertions + item.stats.deletions > HUGE_FILE_CHANGED_LINES;
+}
+
+/** True while a huge file's body is gated behind "Load diff". */
+function isUnloaded(item: StackFile): boolean {
+  return (
+    isHuge(item) &&
+    !isBinaryFile(item) &&
+    !loadedHugeKeys.has(item.key) &&
+    !renderedSmallKeys.has(item.key)
+  );
+}
+
+/**
+ * The EFFECTIVE collapse: the parent's manual collapse OR the unloaded
+ * huge-file gate. Everything geometric (anchors, surviving keys, the
+ * height assert) reads this, never item.collapsed directly.
+ */
+function isCollapsed(item: StackFile): boolean {
+  return !!item.collapsed || isUnloaded(item);
+}
+
+function loadHugeDiff(key: string): void {
+  loadedHugeKeys.add(key);
+  // The body mounts below the click point; offsets below it moved.
+  void nextTick(() => stackScroll.invalidateOffsets());
 }
 
 // --- Exact intrinsic sizes (probe) ---
@@ -206,6 +325,9 @@ function measureProbe(): void {
     sectionGap:
       sections[1].getBoundingClientRect().top - sections[0].getBoundingClientRect().bottom,
   };
+  // Fresh constants resize every computed body: the spy/tween offset
+  // cache is stale the moment they land.
+  stackScroll.invalidateOffsets();
 }
 
 /**
@@ -264,9 +386,6 @@ function bodyIntrinsicSize(item: StackFile): string {
  */
 let committedFiles: StackFile[] = props.files;
 
-/** True while phase 1's smooth tween animates; it absorbs shifts itself. */
-const tweenActive = ref(false);
-
 function hunkAnchorKey(fileKey: string, hunkKey: string): string {
   return `${fileKey}${ANCHOR_SEP}${hunkKey}`;
 }
@@ -284,7 +403,7 @@ function anchorCandidates(): AnchorCandidate[] {
     const sectionEl = sectionEls.get(item.key);
     if (!sectionEl) continue;
     out.push({ key: item.key, kind: 'file', fileKey: item.key, el: sectionEl });
-    if (item.collapsed || !item.diff) continue;
+    if (isCollapsed(item) || !item.diff) continue;
     const model = modelFor(item.diff, item.staged ?? false);
     const hunkEls = sectionEl.querySelectorAll<HTMLElement>('.hunk');
     let i = 0;
@@ -312,7 +431,7 @@ function resolveAnchorEl(key: string): HTMLElement | null {
   const hunkKey = key.slice(sep + 1);
   const sectionEl = sectionEls.get(fileKey);
   const item = props.files.find((f) => f.key === fileKey);
-  if (!sectionEl || !item?.diff || item.collapsed) return null;
+  if (!sectionEl || !item?.diff || isCollapsed(item)) return null;
   const model = modelFor(item.diff, item.staged ?? false);
   let i = 0;
   for (const section of model.sections) {
@@ -327,7 +446,9 @@ function resolveAnchorEl(key: string): HTMLElement | null {
 const anchor = useScrollAnchor(scrollerEl, {
   candidates: anchorCandidates,
   resolve: resolveAnchorEl,
-  isTweenActive: () => tweenActive.value,
+  // The sandwich yields to the tween: the tween re-reads its target per
+  // frame and absorbs content shifts itself (burst-during-glide case).
+  isTweenActive: () => stackScroll.isTweening(),
 });
 
 /** Every anchor key (file + hunk) the NEXT file set will render. */
@@ -335,7 +456,7 @@ function survivingKeys(next: StackFile[]): Set<string> {
   const keys = new Set<string>();
   for (const item of next) {
     keys.add(item.key);
-    if (!item.diff || item.collapsed) continue; // collapsed hunks are unmeasurable
+    if (!item.diff || isCollapsed(item)) continue; // collapsed hunks are unmeasurable
     const model = modelFor(item.diff, item.staged ?? false);
     for (const section of model.sections) {
       for (const hunk of section.hunks) keys.add(hunkAnchorKey(item.key, hunk.key));
@@ -367,7 +488,9 @@ function diffChanges(next: StackFile[]): {
     if (!prev) {
       els.push(null);
       changedKeys.push(item.key);
-    } else if (prev.diff !== item.diff || !!prev.collapsed !== !!item.collapsed) {
+    } else if (prev.diff !== item.diff || isCollapsed(prev) !== isCollapsed(item)) {
+      // Effective collapse: also catches a stats change flipping a file
+      // across the huge-file gate (its body mounts/unmounts).
       els.push(sectionEls.get(item.key) ?? null);
       changedKeys.push(item.key);
     }
@@ -386,13 +509,17 @@ function diffChanges(next: StackFile[]): {
 /** Changed keys of the in-flight commit, for the post-flush recache. */
 let pendingChangedKeys: string[] = [];
 
-// Pre-flush: DOM still old — pick and measure the anchor.
+// Pre-flush: DOM still old — pick and measure the anchor, then latch
+// the gate for the coming render. Latching LAST keeps the effective
+// collapse honest inside diffChanges: a gated file whose stats drop
+// below the cap must still read as a collapse flip (its body mounts).
 watch(
   () => props.files,
   (next) => {
     const changes = diffChanges(next);
     pendingChangedKeys = changes.changedKeys;
     anchor.prepare({ survivingKeys: survivingKeys(next), changedEls: changes.els });
+    latchSmallKeys(next);
   },
   { flush: 'pre' }
 );
@@ -403,6 +530,9 @@ watch(
   (next) => {
     anchor.restore();
     committedFiles = next;
+    // Section offsets moved with the content: the spy and any in-flight
+    // tween must re-read fresh geometry.
+    stackScroll.invalidateOffsets();
     // Re-cache the just-committed heights of the changed bodies so the
     // RO safety net reads delta 0 for changes the sandwich absorbed.
     for (const key of pendingChangedKeys) {
@@ -438,6 +568,10 @@ const bodyRo =
           const previous = bodyHeights.get(el);
           bodyHeights.set(el, height);
           if (previous === undefined || previous === height || !scroller) continue;
+          // Any out-of-flush height change moved every section below
+          // it: the spy/tween offset cache is stale regardless of
+          // where the body sits in the viewport.
+          stackScroll.invalidateOffsets();
           // Only a body ENTIRELY above the viewport can silently move
           // the content the user is looking at. Below or intersecting:
           // nothing to compensate.
@@ -478,7 +612,7 @@ function assertBodyHeights(): void {
   const scrollerTop = scroller.getBoundingClientRect().top;
   const viewBottom = scrollerTop + scroller.clientHeight;
   for (const item of committedFiles) {
-    if (item.collapsed) continue;
+    if (isCollapsed(item)) continue;
     const exact = exactBodyHeight(item);
     if (exact === null) continue;
     const body = bodyEls.get(item.key);
@@ -513,50 +647,97 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', measureProbe);
 });
 
-// --- Programmatic scrolling ---
+// --- Programmatic scrolling + scroll-spy (useStackScroll) ---
 
 /**
  * Sticky chrome above the sections inside the scroller. The target
  * section's own header is its first child (it sticks AT the landing
- * position, not above it), so this is 0 today; phase 1 revisits it if
- * the stack gains pinned chrome.
+ * position, not above it), so this is 0 today; revisit if the stack
+ * gains pinned chrome.
  */
 const STICKY_OFFSET = 0;
 
-function scrollToFile(key: string, _opts?: { smooth?: boolean }): void {
-  const scroller = scrollerEl.value;
-  const section = sectionEls.get(key);
-  if (!scroller || !section) return;
-  // offsetTop is scroller-relative: .stack-scroller is position:relative,
-  // making it the sections' offsetParent.
-  scroller.scrollTo({ top: section.offsetTop - STICKY_OFFSET });
-  emit('active-file', key);
+/**
+ * Sections in document order for the offset cache / spy. offsetTop is
+ * scroller-relative: .stack-scroller is position:relative, making it
+ * the sections' offsetParent.
+ */
+function scrollSections(): StackSection[] {
+  const out: StackSection[] = [];
+  for (const item of props.files) {
+    const el = sectionEls.get(item.key);
+    if (el) out.push({ key: item.key, el });
+  }
+  return out;
 }
 
-function scrollToHunk(key: string, hunkIndex: number): void {
-  const scroller = scrollerEl.value;
-  const section = sectionEls.get(key);
-  if (!scroller || !section) return;
-  const hunk = section.querySelectorAll<HTMLElement>('[data-testid="hunk-header"]')[hunkIndex];
-  if (!hunk) return;
-  // A collapsed section's body is v-show-hidden: the hunk's rect is
-  // zeroed and the scroll would land wrong. offsetParent is null inside
-  // display:none — bail out (collapse is parent-owned, not toggled here).
-  if (hunk.offsetParent === null) return;
-  // The section's sticky file header overlays the top of the scrollport,
-  // so the hunk lands just below it.
-  const headerH = section.querySelector<HTMLElement>('.file-diff-header')?.offsetHeight ?? 0;
-  const top =
-    hunk.getBoundingClientRect().top -
-    scroller.getBoundingClientRect().top +
-    scroller.scrollTop -
-    STICKY_OFFSET -
-    headerH;
-  scroller.scrollTo({ top });
-  emit('active-file', key);
+const stackScroll = useStackScroll(scrollerEl, {
+  sections: scrollSections,
+  stickyOffset: STICKY_OFFSET,
+  onActiveKey: (key) => emit('active-file', key),
+});
+
+function scrollToFile(key: string, opts?: { smooth?: boolean }): void {
+  stackScroll.scrollToKey(key, opts);
 }
 
-defineExpose({ scrollToFile, scrollToHunk, scrollerEl });
+/**
+ * Glide to a hunk resolved BY KEY, re-read every tween frame: getHunkKey
+ * may re-derive its target (the freshest hunk) from live data, and the
+ * content-stable key is looked up in the CURRENT model via
+ * resolveAnchorEl — so a refetched diff landing mid-glide re-resolves to
+ * the right element instead of a DOM ordinal captured up front. An
+ * unresolvable key (null, diff not landed, collapsed, a gated huge
+ * file, binary) lands on the file section top — auto jumps must never
+ * mount a gated body just to reach a hunk.
+ */
+function scrollToHunk(
+  key: string,
+  getHunkKey: () => string | null,
+  opts?: { smooth?: boolean }
+): void {
+  stackScroll.scrollToTarget(
+    () => {
+      const scroller = scrollerEl.value;
+      const section = sectionEls.get(key);
+      if (!scroller || !section) return null;
+      const hunkKey = getHunkKey();
+      // resolveAnchorEl returns the NON-STICKY .hunk wrapper, never the
+      // sticky hunk header: a header already stuck recedes with every
+      // frame the tween approaches, landing the jump short. A
+      // collapsed/unloaded body resolves to null — land on the file
+      // header instead (offsetParent is also null inside display:none).
+      const hunk = hunkKey === null ? null : resolveAnchorEl(hunkAnchorKey(key, hunkKey));
+      if (!hunk || hunk.offsetParent === null) return section.offsetTop - STICKY_OFFSET;
+      // The section's sticky file header overlays the top of the
+      // scrollport, so the hunk lands just below it. Re-measured every
+      // tween frame — content shifting above self-corrects.
+      const headerH = section.querySelector<HTMLElement>('.file-diff-header')?.offsetHeight ?? 0;
+      return (
+        hunk.getBoundingClientRect().top -
+        scroller.getBoundingClientRect().top +
+        scroller.scrollTop -
+        STICKY_OFFSET -
+        headerH
+      );
+    },
+    { ...opts, activeKey: key }
+  );
+}
+
+/** Focus a section (Enter in the jump navigator; tabindex="-1"). */
+function focusFile(key: string): void {
+  sectionEls.get(key)?.focus({ preventScroll: true });
+}
+
+defineExpose({
+  scrollToFile,
+  scrollToHunk,
+  focusFile,
+  scrollerEl,
+  isTweening: stackScroll.isTweening,
+  lastUserScrollAt: stackScroll.lastUserScrollAt,
+});
 </script>
 
 <template>
@@ -576,15 +757,18 @@ defineExpose({ scrollToFile, scrollToHunk, scrollerEl });
       :class="{ selected: item.key === activeKey }"
       :data-key="item.key"
       data-testid="file-diff"
+      tabindex="-1"
     >
       <header class="file-diff-header" :class="{ uncommitted: item.uncommitted }">
+        <!-- Unloaded huge file: the chevron becomes the load trigger
+             (same slot, so the header never jumps when it flips). -->
         <button
           class="collapse-btn mono"
-          :aria-expanded="!item.collapsed"
-          :aria-label="`${item.collapsed ? 'Expand' : 'Collapse'} ${item.path}`"
-          @click="emit('toggle-collapse', item.key)"
+          :aria-expanded="!isCollapsed(item)"
+          :aria-label="`${isCollapsed(item) ? 'Expand' : 'Collapse'} ${item.path}`"
+          @click="isUnloaded(item) ? loadHugeDiff(item.key) : emit('toggle-collapse', item.key)"
         >
-          {{ item.collapsed ? '▸' : '▾' }}
+          {{ isCollapsed(item) ? '▸' : '▾' }}
         </button>
         <span class="letter mono" :data-status="item.status">{{ statusLetter(item.status) }}</span>
         <span class="path mono">{{ item.path }}</span>
@@ -596,12 +780,35 @@ defineExpose({ scrollToFile, scrollToHunk, scrollerEl });
           >
         </span>
       </header>
+      <!-- Binary file: placeholder-only, always — never bytes, never a
+           diff body, no "Load diff" (explicit or auto). Real binary
+           rendering is a deferred future feature (see isBinaryFile). -->
+      <div
+        v-if="isBinaryFile(item)"
+        v-show="!item.collapsed"
+        class="binary-note"
+        data-testid="binary-note"
+      >
+        Binary file — no text diff to show.
+      </div>
+      <!-- Unloaded huge file: the worst-case DOM cap — nothing below
+           the header mounts until the user asks. A distinct affordance
+           from the collapse chevron on purpose. -->
+      <div v-else-if="isUnloaded(item)" v-show="!item.collapsed" class="load-diff">
+        <button class="load-diff-btn mono" data-testid="load-diff" @click="loadHugeDiff(item.key)">
+          Load diff
+          <span class="load-diff-size"
+            >({{ item.stats.insertions + item.stats.deletions }} changed lines)</span
+          >
+        </button>
+      </div>
       <!-- Exact computed height, never `auto <px>`: the browser's
            remembered size goes stale when a skipped subtree is patched
            (§3 of the diff-stream doc). Falls back to the stats estimate
            only where no exact height exists (placeholder, empty diff,
            probe not measured). -->
       <div
+        v-else
         v-show="!item.collapsed"
         :ref="(el) => setBodyEl(item.key, el)"
         class="file-diff-body"
@@ -653,6 +860,12 @@ defineExpose({ scrollToFile, scrollToHunk, scrollerEl });
 
 .file-diff + .file-diff {
   margin-top: 0.75rem;
+}
+
+/* Programmatically focusable (Enter in the jump navigator). */
+.file-diff:focus-visible {
+  outline: 1px solid var(--selection);
+  outline-offset: -1px;
 }
 
 /* Sticky per-file header inside the stack scroller; each .file-diff
@@ -750,5 +963,37 @@ defineExpose({ scrollToFile, scrollToHunk, scrollerEl });
    from its stats so the stack doesn't jump when the diff arrives. */
 .placeholder {
   background: var(--surface);
+}
+
+/* Binary file: the whole body is this note — no bytes, no "Load diff". */
+.binary-note {
+  padding: 0.75rem;
+  color: var(--text-dim);
+  font-size: var(--fs-small);
+  background: var(--bg);
+}
+
+/* Huge-file gate: a quiet strip where the body would be. */
+.load-diff {
+  padding: 0.75rem;
+  background: var(--bg);
+}
+
+.load-diff-btn {
+  padding: 0.25rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.load-diff-btn:hover {
+  border-color: var(--selection);
+}
+
+.load-diff-size {
+  color: var(--text-dim);
 }
 </style>

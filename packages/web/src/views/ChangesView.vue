@@ -1,22 +1,35 @@
 <script setup lang="ts">
 /**
- * Changes view: the working-tree viewer — files | diff, with a
+ * Changes view: the working-tree viewer as a GitHub-style stacked diff
+ * surface — files | ONE DiffStack rendering every file's diff, with a
  * draggable split between them. READ-ONLY: no staging, no discard, no
  * commit — the web UI only watches.
  *
- * Files column: shared.status.files grouped by core's fileCategories
- * into Modified / Untracked / Staged, each row a status letter, the
- * (shortened) path, +/− stats, and the hunk-count indicator from
- * shared.hunkCounts. Clicking (or arrow-keying) a row hands the EXACT
- * FileEntry object to repo.selectFile — the store's stale-guard is
- * identity-based, so rows never clone entries.
+ * Files column — a JUMP NAVIGATOR, not a detail switcher:
+ * shared.status.files grouped by core's fileCategories into Modified /
+ * Untracked / Staged. Clicking (or arrow-keying) a row smooth-scrolls
+ * the stack to that file's section and OPTIMISTICALLY sets
+ * ui.activeStackKey; the stack's scroll-spy writes the same key back as
+ * the user scrolls, so the highlighted row always tracks what is on
+ * screen. Enter focuses the target section. repo.selectFile still
+ * records the active FileEntry (identity-based — rows never clone
+ * entries) but fetches nothing.
  *
- * Diff column: the shared read-only DiffView over repo.selection.diff.
- * All state reads are synchronous store state; nothing here awaits for
- * rendering.
+ * Diff column: the shared DiffStack over stackFiles — the ordered file
+ * list mapped onto the store's workingDiffs cache (key `s:`/`u:` +
+ * path, mirroring the list rows; a file both staged and modified gets
+ * two sections). Entries whose diff hasn't landed render a stats-sized
+ * placeholder. Manual per-file collapse is view-local; huge files
+ * start collapsed behind DiffStack's "Load diff" gate.
+ *
+ * Auto mode (the AUTO-SCROLL-ONLY-IN-AUTO-MODE decision): this view
+ * registers a jump target with useAutoMode. ONLY auto mode may scroll
+ * the stack on live edits — with it off, churn updates in place (the
+ * anchor sandwich keeps it shift-free) and the fresh hunk just flashes.
+ * The jump lands on the freshest-edited hunk when one is stamped.
  */
 
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import { categorizeFiles } from '@diffstalker/core/view/fileCategories';
@@ -27,14 +40,15 @@ import { CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX, TOP_MIN, TOP_MAX } from '../prefs
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
-import DiffView from '../components/DiffView.vue';
+import { registerStackAutoJump } from '../composables/useAutoMode';
+import DiffStack, { HUGE_FILE_CHANGED_LINES, type StackFile } from '../components/DiffStack.vue';
 
 const repo = useRepoStore();
 const ui = useUiStore();
 
 const status = computed(() => repo.shared.status);
 
-/** Auto mode just selected this file: flash its row briefly. */
+/** Auto mode just landed on this file: flash its row briefly. */
 function isFlashed(file: FileEntry): boolean {
   return ui.flashedFile === file.path;
 }
@@ -51,14 +65,13 @@ const sections = computed(() =>
   ).filter((section) => section.files.length > 0)
 );
 
-const selectedFile = computed(() => repo.selection.file);
-
-function isSelected(file: FileEntry): boolean {
-  return repo.selection.file === file;
-}
-
+/** Row/section key: side prefix + path — the workingDiffs cache key. */
 function rowKey(file: FileEntry): string {
   return `${file.staged ? 's' : 'u'}:${file.path}`;
+}
+
+function isActive(file: FileEntry): boolean {
+  return ui.activeStackKey === rowKey(file);
 }
 
 /** Shortened path split into a dimmed dir prefix and emphasized basename. */
@@ -84,38 +97,125 @@ function hunkIndicator(file: FileEntry): string {
   return thisCount === total ? `●${total}` : `●${thisCount}/${total}`;
 }
 
+// --- The stack (right pane) ---
+
+const stackEl = ref<InstanceType<typeof DiffStack> | null>(null);
+/** The stack's scroll container — the portrait j/k payload target. */
+const diffsEl = computed(() => stackEl.value?.scrollerEl ?? null);
+
+/** View-local manual collapse, by row key (huge-file gate is the stack's). */
+const collapsedFiles = reactive(new Set<string>());
+
+function toggleFileCollapsed(key: string): void {
+  if (collapsedFiles.has(key)) collapsedFiles.delete(key);
+  else collapsedFiles.add(key);
+}
+
+// Per-repo UI state: a repo switch must not leak the previous repo's
+// active/collapsed state onto a same-path file in the new repo. The
+// DiffStack subtree is additionally keyed by repoId in the template,
+// so its own per-key state (loaded huge files, the gate latch)
+// remounts clean.
+watch(
+  () => repo.repoId,
+  () => {
+    ui.setActiveStackKey(null);
+    collapsedFiles.clear();
+  }
+);
+
+/**
+ * The ordered file list mapped onto the stack's shape, diffs from the
+ * store's workingDiffs cache (null until a fetch lands -> placeholder).
+ * Unchanged files keep their DiffResult identity (the store preserves
+ * it), so the stack patches only what actually changed.
+ */
+const stackFiles = computed<StackFile[]>(() => {
+  const { byKey } = repo.workingDiffs;
+  return categories.value.ordered.map((file) => {
+    const key = rowKey(file);
+    return {
+      key,
+      path: file.path,
+      status: file.status,
+      staged: file.staged,
+      stats: { insertions: file.insertions ?? 0, deletions: file.deletions ?? 0 },
+      diff: byKey.get(key)?.diff ?? null,
+      collapsed: collapsedFiles.has(key),
+    };
+  });
+});
+
+// --- Jump navigation ---
+
+/**
+ * Epoch ms of the last explicit list-click jump. Auto mode's
+ * manual-input deferral reads the max of this and the stack's own
+ * lastUserScrollAt, so an auto jump can't cancel a click's glide
+ * mid-flight — the click is user intent just like a wheel turn.
+ */
+let lastListJumpAt = 0;
+
+/**
+ * The one selection path: record the active file (identity handed to
+ * the store), set the key optimistically, and glide the stack there —
+ * the spy confirms (or corrects) the key when the scroll settles.
+ */
+function jumpToFile(file: FileEntry): void {
+  lastListJumpAt = Date.now();
+  repo.selectFile(file);
+  ui.setActiveStackKey(rowKey(file));
+  stackEl.value?.scrollToFile(rowKey(file), { smooth: true });
+}
+
+/** Enter on a row: jump AND move focus into the target section. */
+function jumpAndFocusSection(file: FileEntry): void {
+  jumpToFile(file);
+  void nextTick(() => stackEl.value?.focusFile(rowKey(file)));
+}
+
 // --- Keyboard selection (roving tabindex over the flat ordered list) ---
 
 const listEl = ref<HTMLElement | null>(null);
 
-/** The row that holds tabindex 0: the selected one, else the first. */
+/** Index of the active row: ui.activeStackKey first, selection fallback. */
+function activeIndex(): number {
+  const ordered = categories.value.ordered;
+  const key = ui.activeStackKey;
+  if (key !== null) {
+    const idx = ordered.findIndex((file) => rowKey(file) === key);
+    if (idx !== -1) return idx;
+  }
+  const selected = repo.selection.file;
+  return selected ? ordered.indexOf(selected) : -1;
+}
+
+/** The row that holds tabindex 0: the active one, else the first. */
 function isTabStop(file: FileEntry): boolean {
   const ordered = categories.value.ordered;
-  const selected = repo.selection.file;
-  if (selected && ordered.includes(selected)) return file === selected;
-  return file === ordered[0];
+  const idx = activeIndex();
+  return file === (idx >= 0 ? ordered[idx] : ordered[0]);
 }
 
 function moveSelection(delta: number): void {
   const ordered = categories.value.ordered;
   if (ordered.length === 0) return;
-  const current = selectedFile.value ? ordered.indexOf(selectedFile.value) : -1;
+  const current = activeIndex();
   let next: number;
   if (current === -1) {
     next = delta > 0 ? 0 : ordered.length - 1;
   } else {
     next = Math.min(ordered.length - 1, Math.max(0, current + delta));
   }
-  const file = ordered[next];
-  repo.selectFile(file);
+  jumpToFile(ordered[next]);
   void nextTick(() => {
     listEl.value?.querySelectorAll<HTMLElement>('.file-row')[next]?.focus();
   });
 }
 
-// Focus recovery: if a state-change removes the row that held focus
-// (re-anchor dropped its file), focus would fall to <body>. Move it to
-// the selected row instead so keyboard navigation keeps working.
+// Focus recovery: if a state-change removes the row that held focus,
+// focus would fall to <body>. Move it to the active row instead so
+// keyboard navigation keeps working.
 watch(
   () => categories.value.ordered,
   () => {
@@ -124,14 +224,114 @@ watch(
     void nextTick(() => {
       const list = listEl.value;
       if (!hadFocus || !list || list.contains(document.activeElement)) return;
-      const ordered = categories.value.ordered;
-      const selected = repo.selection.file;
-      const idx = selected ? ordered.indexOf(selected) : -1;
+      const idx = activeIndex();
       const rows = list.querySelectorAll<HTMLElement>('.file-row');
       (idx >= 0 ? rows[idx] : rows[0])?.focus();
     });
   }
 );
+
+// --- Keep the active row visible (spy-driven) ---
+
+const filesColEl = ref<HTMLElement | null>(null);
+/** Suppress list auto-scroll while the pointer is inside it. */
+const pointerInList = ref(false);
+
+/**
+ * Nearest-edge scroll of the active row inside the files column. Manual
+ * math on the column's scrollTop — never scrollIntoView, which would
+ * also scroll every ancestor.
+ */
+function scrollActiveRowIntoView(): void {
+  const scroller = filesColEl.value;
+  const list = listEl.value;
+  if (!scroller || !list) return;
+  const idx = activeIndex();
+  if (idx < 0) return;
+  const row = list.querySelectorAll<HTMLElement>('.file-row')[idx];
+  if (!row) return;
+  const outer = scroller.getBoundingClientRect();
+  const inner = row.getBoundingClientRect();
+  if (inner.top < outer.top) scroller.scrollTop += inner.top - outer.top;
+  else if (inner.bottom > outer.bottom) scroller.scrollTop += inner.bottom - outer.bottom;
+}
+
+watch(
+  () => ui.activeStackKey,
+  () => {
+    if (pointerInList.value) return;
+    void nextTick(scrollActiveRowIntoView);
+  }
+);
+
+// --- Auto mode: the registered jump target ---
+
+/**
+ * Content-stable KEY of the freshest-edited hunk in this row's cached
+ * diff (max editedAt), null when nothing carries a stamp. Read LIVE
+ * inside the tween's per-frame closure: a refetched diff landing
+ * mid-glide re-derives the freshest hunk from the fresh model instead
+ * of chasing a stale ordinal.
+ */
+function freshestHunkKey(key: string, staged: boolean): string | null {
+  const entry = repo.workingDiffs.byKey.get(key);
+  if (!entry) return null;
+  const model = repo.diffModelFor(entry.diff, staged);
+  let best: string | null = null;
+  let bestAt = -Infinity;
+  for (const section of model.sections) {
+    for (const hunk of section.hunks) {
+      if (hunk.editedAt !== undefined && hunk.editedAt > bestAt) {
+        bestAt = hunk.editedAt;
+        best = hunk.key;
+      }
+    }
+  }
+  return best;
+}
+
+/** Auto mode's jump: the freshest-changed file, ideally its fresh hunk. */
+function autoJumpToPath(path: string): void {
+  const entry = categories.value.ordered.find((file) => file.path === path);
+  if (!entry) return;
+  const key = rowKey(entry);
+  ui.setActiveStackKey(key);
+  // Defer the scroll one tick: a file that JUST entered the status set
+  // has no mounted section yet when this fires (the jump rides the same
+  // state that created the section). The optimistic key above stays
+  // synchronous.
+  void nextTick(() => {
+    const stack = stackEl.value;
+    if (!stack) return;
+    // NEVER open or render a huge or binary file from an auto jump:
+    // past the gate threshold the section top is the whole target (the
+    // per-frame resolver would fall back there anyway — this guard also
+    // skips building a huge model just to find a hunk). Binary models
+    // are hunk-free, so they fall back to the section top naturally.
+    if ((entry.insertions ?? 0) + (entry.deletions ?? 0) > HUGE_FILE_CHANGED_LINES) {
+      stack.scrollToFile(key, { smooth: true });
+      return;
+    }
+    stack.scrollToHunk(key, () => freshestHunkKey(key, entry.staged), { smooth: true });
+  });
+}
+
+let unregisterAutoJump: (() => void) | null = null;
+
+onMounted(() => {
+  unregisterAutoJump = registerStackAutoJump({
+    jump: autoJumpToPath,
+    // Manual input on the stack OR an explicit list-click jump: both
+    // defer an auto jump (never yank a glide the user asked for).
+    lastUserScrollAt: () =>
+      Math.max(stackEl.value?.lastUserScrollAt() ?? 0, lastListJumpAt),
+  });
+});
+
+onBeforeUnmount(() => {
+  unregisterAutoJump?.();
+  unregisterAutoJump = null;
+});
 
 // --- Resizable split (column fraction in landscape, row in portrait) ---
 
@@ -149,18 +349,11 @@ const split = useSplitDrag({
   row: { pref: 'changesTop', defaultRatio: 0.3, min: TOP_MIN, max: TOP_MAX },
 });
 
-// --- Portrait keyboard: j/k in the band, j/k scroll in the payload ---
+// --- Portrait keyboard: j/k in the band, j/k scroll in the stack ---
 
-const payloadEl = ref<HTMLElement | null>(null);
 const onRowBandKeydown = makeBandKeyHandler(isPortrait, moveSelection);
-const onPayloadKeydown = makePayloadKeyHandler(isPortrait, payloadEl);
-
-/** Enter on a row: select; in portrait also hand focus to the payload. */
-function selectAndFocusPayload(file: FileEntry): void {
-  repo.selectFile(file);
-  if (!isPortrait.value) return;
-  void nextTick(() => payloadEl.value?.focus());
-}
+// The stack's root is the diffs scroller — scroll it, not a nested pane.
+const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true });
 
 /** Landscape emits exactly the pre-portrait style (only --files-col). */
 const rootStyle = computed(() => ({
@@ -178,7 +371,13 @@ const rootStyle = computed(() => ({
     :class="{ portrait: isPortrait }"
     :style="rootStyle"
   >
-    <aside class="files-col" aria-label="Changed files">
+    <aside
+      ref="filesColEl"
+      class="files-col"
+      aria-label="Changed files"
+      @pointerenter="pointerInList = true"
+      @pointerleave="pointerInList = false"
+    >
       <p v-if="repo.shared.isLoading" class="col-empty">Loading status…</p>
       <p v-else-if="!status" class="col-empty">No status yet.</p>
       <p v-else-if="status.files.length === 0" class="col-empty" data-testid="clean-tree">
@@ -208,16 +407,16 @@ const rootStyle = computed(() => ({
             v-for="file in section.files"
             :key="rowKey(file)"
             class="file-row mono"
-            :class="{ selected: isSelected(file), flash: isFlashed(file) }"
+            :class="{ selected: isActive(file), flash: isFlashed(file) }"
             role="option"
-            :aria-selected="isSelected(file)"
+            :aria-selected="isActive(file)"
             :tabindex="isTabStop(file) ? 0 : -1"
             :title="file.path"
-            @click="repo.selectFile(file)"
+            @click="jumpToFile(file)"
             @keydown.down.prevent="moveSelection(1)"
             @keydown.up.prevent="moveSelection(-1)"
-            @keydown.enter.prevent="selectAndFocusPayload(file)"
-            @keydown.space.prevent="repo.selectFile(file)"
+            @keydown.enter.prevent="jumpAndFocusSection(file)"
+            @keydown.space.prevent="jumpToFile(file)"
             @keydown="onRowBandKeydown"
           >
             <span class="letter" :data-status="file.status">{{ statusLetter(file.status) }}</span>
@@ -251,39 +450,22 @@ const rootStyle = computed(() => ({
       @keydown="split.onKeydown"
     ></div>
 
-    <section class="diff-col" data-testid="diff-col">
-      <template v-if="selectedFile">
-        <header class="diff-file-header">
-          <span class="letter mono" :data-status="selectedFile.status">{{
-            statusLetter(selectedFile.status)
-          }}</span>
-          <span class="diff-path mono">{{ selectedFile.path }}</span>
-          <span v-if="selectedFile.staged" class="staged-tag">staged</span>
-          <span class="stats mono">
-            <span v-if="selectedFile.insertions" class="count-add"
-              >+{{ selectedFile.insertions }}</span
-            >
-            <span v-if="selectedFile.deletions" class="count-del"
-              >&minus;{{ selectedFile.deletions }}</span
-            >
-          </span>
-        </header>
-        <div
-          ref="payloadEl"
-          class="diff-body"
-          :tabindex="isPortrait ? 0 : undefined"
-          :role="isPortrait ? 'region' : undefined"
-          :aria-label="isPortrait ? 'Diff content' : undefined"
-          @keydown="onPayloadKeydown"
-        >
-          <p v-if="!repo.selection.diff" class="col-empty">Loading diff…</p>
-          <DiffView v-else :diff="repo.selection.diff" :file-path="selectedFile.path" />
-        </div>
-      </template>
-      <p v-else class="col-empty diff-prompt" data-testid="diff-prompt">
-        Select a file to view its diff
-      </p>
-    </section>
+    <!-- Keyed by repo id: a repo switch remounts the stack, clearing
+         its per-key state (loaded huge files, gate latch, offsets). -->
+    <DiffStack
+      ref="stackEl"
+      :key="repo.repoId ?? ''"
+      class="diff-col"
+      data-testid="changes-diffs"
+      :files="stackFiles"
+      :active-key="ui.activeStackKey"
+      :tabindex="isPortrait ? 0 : undefined"
+      :role="isPortrait ? 'region' : undefined"
+      :aria-label="isPortrait ? 'File diffs' : undefined"
+      @active-file="ui.setActiveStackKey"
+      @toggle-collapse="toggleFileCollapsed"
+      @keydown="onPayloadKeydown"
+    />
   </div>
 </template>
 
@@ -291,7 +473,7 @@ const rootStyle = computed(() => ({
 .changes {
   height: 100%;
   display: grid;
-  /* files | resizer | diff */
+  /* files | resizer | diffs */
   grid-template-columns: clamp(12rem, var(--files-col, 32%), 65%) auto minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   background: var(--bg);
@@ -471,58 +653,17 @@ const rootStyle = computed(() => ({
   opacity: 0.5;
 }
 
-/* --- Diff column --- */
+/* --- Stacked diffs (right) --- */
 
+/* Grid placement only — the stack itself (scroller, sticky headers,
+   collapse, "Load diff") lives in DiffStack; this scoped rule reaches
+   its root via the parent-scope attribute Vue puts on a child
+   component's root. */
 .diff-col {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
-.diff-file-header {
-  flex: none;
-  display: flex;
-  align-items: baseline;
-  gap: 0.625rem;
-  padding: 0.375rem 0.75rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  font-size: var(--fs-base);
-}
-
-.diff-path {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-
-.diff-file-header .stats {
-  margin-left: auto;
-}
-
-.staged-tag {
-  flex: none;
-  font-size: var(--fs-micro);
-  color: var(--add);
-  border: 1px solid var(--add);
-  border-radius: 3px;
-  padding: 0 0.25rem;
-}
-
-.diff-body {
-  flex: 1;
-  min-height: 0;
-}
-
-.diff-prompt {
-  align-self: center;
-  margin: auto;
-}
-
-/* Narrow widths: stack — files above, diff below. */
+/* Narrow widths: stack — files above, diffs below. */
 @media (max-width: 44rem) {
   .changes {
     grid-template-columns: 1fr;
@@ -539,7 +680,7 @@ const rootStyle = computed(() => ({
   }
 }
 
-/* Portrait: rotate column → row. Full-width diff below a bounded file
+/* Portrait: rotate column → row. Full-width diffs below a bounded file
    band; the same resizer drags the row split (after the 44rem block so
    a narrow portrait window gets this layout, resizer included). */
 @media (orientation: portrait), (max-aspect-ratio: 1/1) {

@@ -18,12 +18,6 @@ import type {
 import type { DiffResult, CompareDiff } from '@diffstalker/core/git/diff';
 import type { WireHunkCounts } from '@diffstalker/client';
 
-/** The unstaged/staged diff pair backing a combined diff view. */
-export interface CombinedFileDiffs {
-  unstaged: DiffResult;
-  staged: DiffResult;
-}
-
 /**
  * Shared repo state: what the daemon broadcasts on the per-repo SSE
  * stream. isLoading is client-only — true until the first snapshot
@@ -46,11 +40,13 @@ export interface RepoSharedState {
   isLoading: boolean;
 }
 
-/** Per-client file selection and its fetched diffs. */
+/**
+ * The active file (auto mode's anchor and the list's re-anchoring
+ * target). Selection fetches nothing — the stacked Changes surface
+ * reads per-file diffs from the store's workingDiffs cache.
+ */
 export interface RepoSelectionState {
   file: FileEntry | null;
-  diff: DiffResult | null;
-  combined: CombinedFileDiffs | null;
 }
 
 /** Commit history state (per-client; pulled on demand). */

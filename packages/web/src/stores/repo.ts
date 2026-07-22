@@ -8,19 +8,20 @@
  * - shared state (status, hunk counts, stash list, in-progress op, error)
  *   is fed by the per-repo SSE stream through the single applyWireState
  *   sink;
- * - selection (file + its diffs) is per-client and fetched on demand via
- *   GET /diff, with the 20ms leading+trailing debounce + identity
- *   stale-guard ported verbatim;
+ * - selection tracks the ACTIVE file only (auto mode's anchor and the
+ *   list's re-anchoring). It fetches NOTHING — the stacked Changes
+ *   surface reads per-file diffs from workingDiffs; the old per-selection
+ *   GET /diff path is gone;
  * - workingDiffs is the per-file working-diff cache behind the stacked
  *   Changes surface (docs/web-diff-stream-architecture.md §2): activated
  *   by refreshAllDiffs (two whole-tree pulls split client-side +
- *   per-file pulls for untracked files), then kept warm on state-change
- *   by refetching ONLY the changed files (mtimes/hunkCounts/status
- *   diffing, whole-tree fallback past 15 files). Entries preserve
- *   object identity when content is unchanged (raw compared by value)
- *   so downstream render memos hit; stale responses are dropped by
- *   per-key sequence tokens. Coexists with the selection path for now —
- *   Phase 1 deletes the Changes branch of the selection fetch;
+ *   per-file pulls for untracked files) — fired automatically on the
+ *   repo's first snapshot, retried on later snapshots until it lands —
+ *   then kept warm on state-change by refetching ONLY the changed files
+ *   (mtimes/hunkCounts/status diffing, whole-tree fallback past 15
+ *   files). Entries preserve object identity when content is unchanged
+ *   (raw compared by value) so downstream render memos hit; stale
+ *   responses are dropped by per-key sequence tokens;
  * - history and compare are pulled on demand and re-pulled on state-change
  *   when previously loaded;
  * - the compare base is per-client too: selectedCompareBase rides along
@@ -69,7 +70,7 @@ import type {
   CompareSelectionState,
 } from './types';
 
-/** How long two selectFile calls coalesce into one diff fetch. */
+/** How long changed-file refetches coalesce into one per-file batch. */
 const DIFF_DEBOUNCE_MS = 20;
 
 /** Delay before a reconnect attempt after the SSE stream drops. */
@@ -150,7 +151,7 @@ function initialShared(): RepoSharedState {
 }
 
 function initialSelection(): RepoSelectionState {
-  return { file: null, diff: null, combined: null };
+  return { file: null };
 }
 
 function initialHistory(): RepoHistoryState {
@@ -212,7 +213,6 @@ export const useRepoStore = defineStore('repo', () => {
    */
   let heldRepoId: string | null = null;
   let subscription: SseHandle | null = null;
-  let diffDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let recovering = false;
   let historyPullInFlight = false;
@@ -231,6 +231,16 @@ export const useRepoStore = defineStore('repo', () => {
    * history/compare, which also re-pull only once loaded).
    */
   let workingDiffsActive = false;
+  /** Single-flight guard for the snapshot-triggered activation pull. */
+  let workingDiffsPullInFlight = false;
+  /**
+   * Monotonic count of applied wire states. The activation pull
+   * captures it before its whole-tree fetch: a state-change applied
+   * WHILE the pull was in flight missed the changed-set cascade (the
+   * cache was still inactive), so an advanced counter afterwards means
+   * that window must be re-diffed.
+   */
+  let appliedStateCount = 0;
   /**
    * Monotonic token shared by ALL working-diff fetches (whole-tree and
    * per-file), captured at request start. appliedSeqByKey records the
@@ -247,10 +257,6 @@ export const useRepoStore = defineStore('repo', () => {
   let workingSnapshot: WorkingSnapshot | null = null;
 
   function clearTimers(): void {
-    if (diffDebounceTimer) {
-      clearTimeout(diffDebounceTimer);
-      diffDebounceTimer = null;
-    }
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -430,10 +436,12 @@ export const useRepoStore = defineStore('repo', () => {
 
   /**
    * THE single sink: applies a wire state (SSE snapshot/state-change),
-   * then cascades — re-anchor the selection and re-fetch its diff,
-   * re-pull history/compare when already loaded.
+   * then cascades — re-anchor the selection, keep the working-diff
+   * cache warm (activating it on the first snapshot), re-pull
+   * history/compare when already loaded.
    */
   function applyWireState(wire: WireSharedState): void {
+    appliedStateCount += 1;
     const prevSnapshot = workingSnapshot;
     workingSnapshot = snapshotWorkingState(wire);
     shared.value = {
@@ -448,6 +456,10 @@ export const useRepoStore = defineStore('repo', () => {
     refreshSelectionAfterStatus();
     if (workingDiffsActive) {
       updateWorkingDiffsAfterState(prevSnapshot);
+    } else {
+      // First snapshot (or an earlier activation failed): pull the whole
+      // tree so the stacked Changes surface has diffs from the start.
+      void activateWorkingDiffs(); // catches internally; never rejects
     }
     if (history.value.commits.length > 0) {
       void reloadHistory();
@@ -504,96 +516,21 @@ export const useRepoStore = defineStore('repo', () => {
     }
   }
 
-  // --- File selection (ported 20ms debounce + identity stale-guard) ---
+  // --- File selection (active file only) ---
 
   /**
-   * Select a file and fetch its diff(s). Rapid successive calls coalesce:
-   * the first fetch fires immediately (leading), further calls within the
-   * window replace the trailing fetch.
+   * Record the active file — auto mode's anchor and the list's
+   * re-anchoring target. Fetches NOTHING: the stacked Changes surface
+   * reads per-file diffs from workingDiffs.
    */
   function selectFile(file: FileEntry | null): void {
-    selection.value = { ...selection.value, file };
-    if (repoId.value === null) return;
-    scheduleDiffFetch();
-  }
-
-  function scheduleDiffFetch(): void {
-    if (diffDebounceTimer) {
-      clearTimeout(diffDebounceTimer);
-      diffDebounceTimer = setTimeout(() => {
-        diffDebounceTimer = null;
-        void fetchDiffForSelection(); // catches internally; never rejects
-      }, DIFF_DEBOUNCE_MS);
-    } else {
-      void fetchDiffForSelection(); // catches internally; never rejects
-      diffDebounceTimer = setTimeout(() => {
-        diffDebounceTimer = null;
-      }, DIFF_DEBOUNCE_MS);
-    }
-  }
-
-  async function fetchDiffForSelection(): Promise<void> {
-    const gen = generation;
-    const file = selection.value.file;
-    try {
-      await doFetchDiffForFile(file);
-    } catch (err) {
-      // Repo switched mid-fetch: drop, so a stale diff failure can't set an
-      // error banner or trigger a reconnect against the newly-opened repo.
-      if (gen !== generation) return;
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return;
-      }
-      setError(`Failed to load diff: ${errorMessage(err)}`);
-    }
-  }
-
-  async function doFetchDiffForFile(file: FileEntry | null): Promise<void> {
-    const id = repoId.value;
-    if (id === null) return;
-    const gen = generation;
-
-    if (!file) {
-      // No selection: show the whole-tree staged diff.
-      const diff = await client.diff(id, { staged: true });
-      if (gen === generation && selection.value.file === null) {
-        selection.value = { ...selection.value, diff, combined: null };
-      }
-      return;
-    }
-
-    if (file.status === 'untracked') {
-      // Single fetch, and never staged=true — the daemon 400s a staged
-      // diff request for an untracked file.
-      const diff = await client.diff(id, { path: file.path });
-      if (gen === generation && file === selection.value.file) {
-        selection.value = {
-          ...selection.value,
-          diff,
-          combined: { unstaged: diff, staged: { raw: '', lines: [] } },
-        };
-      }
-      return;
-    }
-
-    const [unstaged, staged] = await Promise.all([
-      client.diff(id, { path: file.path, staged: false }),
-      client.diff(id, { path: file.path, staged: true }),
-    ]);
-    if (gen === generation && file === selection.value.file) {
-      selection.value = {
-        ...selection.value,
-        diff: file.staged ? staged : unstaged,
-        combined: { unstaged, staged },
-      };
-    }
+    selection.value = { file };
   }
 
   /**
    * After fresh status arrives, re-anchor the selection to the matching
-   * entry in the new file list (preferring the same staged side) and
-   * re-fetch its diff. A vanished file clears the selection.
+   * entry in the new file list (preferring the same staged side). A
+   * vanished file clears the selection.
    */
   function refreshSelectionAfterStatus(): void {
     const selected = selection.value.file;
@@ -603,13 +540,7 @@ export const useRepoStore = defineStore('repo', () => {
     const match =
       status.files.find((f) => f.path === selected.path && f.staged === selected.staged) ??
       status.files.find((f) => f.path === selected.path);
-    if (!match) {
-      selection.value = initialSelection();
-      return;
-    }
-
-    selection.value = { ...selection.value, file: match };
-    scheduleDiffFetch();
+    selection.value = match ? { file: match } : initialSelection();
   }
 
   // --- Working-diff cache (per-file, stacked Changes surface) ---
@@ -703,14 +634,47 @@ export const useRepoStore = defineStore('repo', () => {
   }
 
   /**
+   * The snapshot-triggered activation: one refreshAllDiffs at a time.
+   * Runs on every applied wire state while the cache is inactive, so a
+   * failed activation (daemon hiccup) retries on the next snapshot /
+   * state-change instead of silently staying empty. QUIET on daemon
+   * errors: this passive warm-up must not overwrite a fresher wire
+   * error on every retry — the stack just keeps its placeholders until
+   * a pull lands. (Connection errors still enter the reconnect loop.)
+   */
+  async function activateWorkingDiffs(): Promise<void> {
+    if (workingDiffsPullInFlight || repoId.value === null) return;
+    workingDiffsPullInFlight = true;
+    const gen = generation;
+    const snapshotBefore = workingSnapshot;
+    const countBefore = appliedStateCount;
+    try {
+      await refreshAllDiffs({ quiet: true }); // catches internally; never rejects
+    } finally {
+      workingDiffsPullInFlight = false;
+    }
+    // A state-change applied while the whole-tree pull was in flight
+    // missed the changed-set cascade (the cache was still inactive):
+    // re-run it across that window so the fresh edit isn't served from
+    // the stale tree. Quiet like the pull; skipped when the activation
+    // failed (the next state retries the whole pull anyway).
+    if (gen !== generation || !workingDiffsActive) return;
+    if (appliedStateCount !== countBefore) {
+      updateWorkingDiffsAfterState(snapshotBefore);
+    }
+  }
+
+  /**
    * Activate (or fully re-pull) the cache: two whole-tree pulls —
    * GET /diff (unstaged) and GET /diff?staged=true — split client-side
    * into per-file entries, then untracked files (absent from git diff)
    * fetched per-file through the bounded queue. Applies in ONE commit;
    * evicts entries whose file left the status set; value-equal raws
    * keep their objects (stale-while-revalidate — nothing ever blanks).
+   * `quiet` keeps a daemon error out of shared.error (the activation
+   * retry path); explicit calls surface it.
    */
-  async function refreshAllDiffs(): Promise<void> {
+  async function refreshAllDiffs(opts: { quiet?: boolean } = {}): Promise<void> {
     const id = repoId.value;
     if (id === null) return;
     const gen = generation;
@@ -731,7 +695,7 @@ export const useRepoStore = defineStore('repo', () => {
         handleConnectionLoss();
         return;
       }
-      setError(`Failed to load diffs: ${errorMessage(err)}`);
+      if (!opts.quiet) setError(`Failed to load diffs: ${errorMessage(err)}`);
       return;
     }
     if (gen !== generation) return;

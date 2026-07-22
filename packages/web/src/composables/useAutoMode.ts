@@ -1,15 +1,26 @@
 /**
  * useAutoMode: the web port of the CLI's auto-mode POLICY (App.ts
  * applyAutoTab + applyAutoScrollToLatestChange), mounted once at the
- * shell. Pure viewing — it only selects files and switches views, no
- * mutations. Two behaviors, driven by every applied shared state:
+ * shell. Pure viewing — it only selects files, switches views, and
+ * scrolls the Changes stack; no mutations. Three behaviors, driven by
+ * every applied shared state:
  *
  * - view switching on file-COUNT transitions: files disappear (>0 -> 0,
  *   on the Changes view) -> switch to History and select the newest
  *   commit; files appear (0 -> >0, on History) -> switch to Changes;
  * - auto-select the newest-CHANGED file: when a file's mtime increased
- *   (or the file is new), select it — the store re-fetches its diff —
- *   and briefly flash its row.
+ *   (or the file is new), select it and briefly flash its row;
+ * - AUTO-SCROLL ONLY IN AUTO MODE: with auto mode ON, smooth-scroll the
+ *   Changes stack to the freshest-changed file (ideally its freshest
+ *   hunk) via the jump target the view registers below. With auto mode
+ *   OFF, a live edit NEVER moves the user's scroll — the stack updates
+ *   in place (the anchor sandwich keeps it shift-free) and the fresh
+ *   hunk's editedAt flash marks the change where it sits.
+ *
+ * The jump defers while the user scrolled the stack manually within the
+ * last USER_SCROLL_DEFER_MS — never yank a reading user — and retries
+ * briefly when the Changes view is still mounting (the auto view-switch
+ * lands one render before its stack registers).
  *
  * Change detection is by the daemon-sent mtimes (shared.mtimes): the
  * browser cannot stat files, and mtimes mean SSE churn without a
@@ -21,11 +32,42 @@
  * jump.
  */
 
-import { watch } from 'vue';
+import { onBeforeUnmount, watch } from 'vue';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import type { FileEntry } from '@diffstalker/core/git/status';
 import type { RepoSharedState } from '../stores/types';
+
+/** Defer an auto jump while the user scrolled within this window. */
+export const USER_SCROLL_DEFER_MS = 1500;
+
+/** Retry cadence while the Changes view (the target) is still mounting. */
+const TARGET_RETRY_MS = 100;
+
+/**
+ * The Changes view's stacked-diff jump surface. Registered while the
+ * view is mounted; auto mode drives it ONLY when enabled.
+ */
+export interface StackAutoJumpTarget {
+  /** Smooth-scroll the stack to this path's section / freshest hunk. */
+  jump(path: string): void;
+  /** Epoch ms of the user's last manual input on the stack (0 = never). */
+  lastUserScrollAt(): number;
+}
+
+let stackJumpTarget: StackAutoJumpTarget | null = null;
+
+/**
+ * Register the mounted Changes view's stack as the auto-jump target.
+ * Returns the unregister; a later registration simply replaces an
+ * earlier one (at most one Changes view exists).
+ */
+export function registerStackAutoJump(target: StackAutoJumpTarget): () => void {
+  stackJumpTarget = target;
+  return () => {
+    if (stackJumpTarget === target) stackJumpTarget = null;
+  };
+}
 
 interface NewestChange {
   path: string;
@@ -42,6 +84,51 @@ export function useAutoMode(): void {
   let prevFileCount = 0;
   /** False until the first status of the current repo seeded the maps. */
   let seeded = false;
+  /** The freshest changed path still waiting to be jumped to. */
+  let pendingJumpPath: string | null = null;
+  let jumpTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function clearPendingJump(): void {
+    pendingJumpPath = null;
+    if (jumpTimer !== null) {
+      clearTimeout(jumpTimer);
+      jumpTimer = null;
+    }
+  }
+
+  function scheduleJumpRetry(ms: number): void {
+    if (jumpTimer !== null) clearTimeout(jumpTimer);
+    jumpTimer = setTimeout(() => {
+      jumpTimer = null;
+      attemptPendingJump();
+    }, ms);
+  }
+
+  /**
+   * Run (or re-schedule) the pending stack jump. Drops it when auto
+   * mode turned off or the user left Changes; waits for the target to
+   * register (view mounting) and for the manual-scroll window to close.
+   */
+  function attemptPendingJump(): void {
+    if (pendingJumpPath === null) return;
+    if (!ui.autoModeEnabled || ui.activeView !== 'changes') {
+      clearPendingJump();
+      return;
+    }
+    const target = stackJumpTarget;
+    if (target === null) {
+      scheduleJumpRetry(TARGET_RETRY_MS);
+      return;
+    }
+    const sinceScroll = Date.now() - target.lastUserScrollAt();
+    if (sinceScroll < USER_SCROLL_DEFER_MS) {
+      scheduleJumpRetry(USER_SCROLL_DEFER_MS - sinceScroll);
+      return;
+    }
+    const path = pendingJumpPath;
+    clearPendingJump();
+    target.jump(path);
+  }
 
   // The singleton store is reused across open() calls: a repo switch
   // starts a fresh seeding cycle so the new repo's first snapshot never
@@ -52,8 +139,11 @@ export function useAutoMode(): void {
       lastMtimes = new Map();
       prevFileCount = 0;
       seeded = false;
+      clearPendingJump();
     }
   );
+
+  onBeforeUnmount(clearPendingJump);
 
   /**
    * Roll the mtime map forward and return the freshest changed file
@@ -110,16 +200,21 @@ export function useAutoMode(): void {
     return false;
   }
 
-  /** Select + flash the newest-changed file (Changes view only). */
+  /**
+   * Select + flash the newest-changed file and glide the stack to it
+   * (Changes view only). The ONLY scroll trigger for live edits — auto
+   * mode off never reaches here.
+   */
   function selectNewestFile(files: FileEntry[], newest: NewestChange): void {
     if (ui.activeView !== 'changes') return;
-    // Hand the store the EXACT entry from the current status (its
-    // stale-guard is identity-based). First match wins; the diff view
-    // shows the combined pair either way.
+    // Hand the store the EXACT entry from the current status (rows and
+    // re-anchoring are identity-based). First match wins.
     const entry = files.find((f) => f.path === newest.path);
     if (!entry) return;
     repo.selectFile(entry);
     ui.flashFile(newest.path);
+    pendingJumpPath = newest.path;
+    attemptPendingJump();
   }
 
   function onSharedState(shared: RepoSharedState): void {
