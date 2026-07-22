@@ -232,8 +232,11 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
   >
     <aside class="tree-col">
       <!-- Portrait lifts the toolbar into the tab band's slot; landscape
-           renders it inline (Teleport disabled), exactly as before. -->
-      <Teleport to="#view-toolbar-slot" :disabled="!isPortrait">
+           renders it inline (Teleport disabled), exactly as before.
+           defer: resolve the target after the render tick, so a mount
+           that races the slot cannot strand the children (crash-class:
+           later patches would run against null els). -->
+      <Teleport defer to="#view-toolbar-slot" :disabled="!isPortrait">
         <div class="tree-toolbar" role="toolbar" aria-label="Explorer filters">
           <button
             class="tool-toggle mono"

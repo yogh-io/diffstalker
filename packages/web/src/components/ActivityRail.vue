@@ -16,12 +16,50 @@
  * every view, toolbar or not. The slot is display:none in landscape —
  * views keep their toolbars inline (Teleport disabled), so the landscape
  * layout is untouched.
+ *
+ * The slot element itself lives OUT of the Vue tree (a static div in
+ * index.html): a Vue-rendered Teleport target can be missing from the
+ * document at the moment a teleporting view mounts (HMR remounts,
+ * first-patch mounts) — the children then mount nowhere and every
+ * later patch crashes on null els. The rail ADOPTS the element into
+ * the band on mount and parks it back on <body> on unmount; moving a
+ * DOM node keeps any teleported children alive, so views never notice.
  */
 
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { useUiStore, VIEWS } from '../stores/ui';
 import type { ViewName } from '../prefs';
 
 const ui = useUiStore();
+
+const railEl = ref<HTMLElement | null>(null);
+
+/** The adopted #view-toolbar-slot element (see the header comment). */
+let slotEl: HTMLElement | null = null;
+
+onMounted(() => {
+  const rail = railEl.value;
+  if (!rail) return;
+  let slot = document.getElementById('view-toolbar-slot');
+  if (!slot) {
+    // No index.html in this document (tests mounting the rail alone).
+    slot = document.createElement('div');
+    slot.id = 'view-toolbar-slot';
+  }
+  slot.classList.add('toolbar-slot');
+  rail.appendChild(slot);
+  slotEl = slot;
+});
+
+onBeforeUnmount(() => {
+  // Park the slot back on <body> so it stays in the document for the
+  // next rail instance (and for teleports that outlive this one). Only
+  // when actually in the document — detached test mounts just drop it.
+  if (slotEl?.isConnected && railEl.value?.contains(slotEl)) {
+    document.body.appendChild(slotEl);
+  }
+  slotEl = null;
+});
 
 /** Minimal 16x16 stroke icons, one per view. */
 const ICON_PATHS: Record<ViewName, string> = {
@@ -33,7 +71,7 @@ const ICON_PATHS: Record<ViewName, string> = {
 </script>
 
 <template>
-  <nav class="rail" aria-label="Views">
+  <nav ref="railEl" class="rail" aria-label="Views">
     <button
       v-for="view in VIEWS"
       :key="view.name"
@@ -57,8 +95,9 @@ const ICON_PATHS: Record<ViewName, string> = {
     </button>
 
     <!-- Portrait toolbar slot: the active view Teleports its toolbar
-         controls here. Hidden (and empty) in landscape. -->
-    <div id="view-toolbar-slot" class="toolbar-slot"></div>
+         controls into #view-toolbar-slot, which onMounted adopts from
+         index.html as the last band child (right here). Hidden (and
+         empty) in landscape. -->
   </nav>
 </template>
 
@@ -112,11 +151,6 @@ const ICON_PATHS: Record<ViewName, string> = {
   white-space: nowrap;
 }
 
-/* Landscape: the slot is inert — views render their toolbars inline. */
-.toolbar-slot {
-  display: none;
-}
-
 @media (max-width: 56rem) {
   .rail {
     width: 3rem;
@@ -162,13 +196,31 @@ const ICON_PATHS: Record<ViewName, string> = {
     height: 2px;
   }
 
+}
+</style>
+
+<!-- The slot element is adopted from index.html (see the script), so it
+     never carries this component's scope attribute — its rules must be
+     UNSCOPED. The .toolbar-slot class is only ever on that one element. -->
+<style>
+/* Landscape: the slot is inert — views render their toolbars inline. */
+.toolbar-slot {
+  display: none;
+}
+
+/* Parked on <body> (rail not mounted, e.g. mid-HMR): never render. */
+body > .toolbar-slot {
+  display: none;
+}
+
+@media (orientation: portrait), (max-aspect-ratio: 1/1) {
   /* Toolbar region for the active view's lifted controls: a flex
      SIBLING of the tabs in the same row (never absolutely positioned,
      so it cannot overlap them). margin-left:auto pushes it to the
      right edge; when the band runs out of width the row wraps and the
      controls drop to their own line. The controls themselves may wrap
      too. */
-  .toolbar-slot {
+  .rail > .toolbar-slot {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
@@ -181,7 +233,7 @@ const ICON_PATHS: Record<ViewName, string> = {
   /* Nothing teleported (Changes/History): drop the empty slot from flow.
      The tabs are left-aligned (justify-content: flex-start) on every view,
      so all four tabs line up on the left whether or not a toolbar lifts in. */
-  .toolbar-slot:empty {
+  .rail > .toolbar-slot:empty {
     display: none;
   }
 }

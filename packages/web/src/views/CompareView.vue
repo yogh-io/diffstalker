@@ -267,9 +267,12 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   >
     <!-- Top bar: base selector + uncommitted toggle + stats. Persistent
          so a bad/missing base can always be corrected here. In portrait
-         the base picker lifts into the tab band's toolbar slot. -->
+         the base picker lifts into the tab band's toolbar slot. defer:
+         resolve the target after the render tick, so a mount that races
+         the slot cannot strand the children (crash-class: later patches
+         would run against null els). -->
     <header class="topbar" data-testid="compare-topbar">
-      <Teleport to="#view-toolbar-slot" :disabled="!isPortrait">
+      <Teleport defer to="#view-toolbar-slot" :disabled="!isPortrait">
         <label class="base-select">
           <span class="label">base</span>
           <select
@@ -344,7 +347,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
            portrait the toggle lifts into the tab band's toolbar slot;
            the list itself stays here when open. -->
       <section v-if="compareDiff.commits.length > 0" class="commits-section">
-        <Teleport to="#view-toolbar-slot" :disabled="!isPortrait">
+        <Teleport defer to="#view-toolbar-slot" :disabled="!isPortrait">
           <button
             class="commits-toggle mono"
             data-testid="commits-toggle"

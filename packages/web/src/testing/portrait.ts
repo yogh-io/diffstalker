@@ -20,8 +20,16 @@ export function stubMatchMedia(matches: boolean): void {
   );
 }
 
-/** Append the ActivityRail's Teleport target (portrait toolbar slot). */
+/**
+ * Ensure the portrait toolbar Teleport target exists (idempotent).
+ * In the app the slot is a static element in index.html (adopted into
+ * the tab band by ActivityRail); tests that mount a view without the
+ * rail create it here. Test afterEach hooks clear document.body, so
+ * each test starts without one.
+ */
 export function addToolbarSlot(): HTMLElement {
+  const existing = document.getElementById('view-toolbar-slot');
+  if (existing) return existing;
   const slot = document.createElement('div');
   slot.id = 'view-toolbar-slot';
   document.body.appendChild(slot);

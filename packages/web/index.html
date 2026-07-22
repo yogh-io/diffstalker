@@ -8,6 +8,14 @@
   </head>
   <body>
     <div id="app"></div>
+    <!-- Portrait toolbar Teleport target. It lives OUTSIDE the Vue tree
+         so it exists whenever a view's <Teleport> mounts — a target
+         rendered inside the tree can be missing at that moment (HMR
+         remounts, first-patch mounts), which mounts the children
+         nowhere and crashes every later patch. ActivityRail adopts this
+         element into the portrait tab band on mount and parks it back
+         here on unmount; it is display:none while parked. -->
+    <div id="view-toolbar-slot" class="toolbar-slot"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
