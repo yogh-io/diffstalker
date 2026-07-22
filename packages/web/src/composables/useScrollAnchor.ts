@@ -27,10 +27,17 @@
  * prepare() records no anchor — below-fold size changes never move the
  * viewport, so there is nothing to compensate (and no layout to force).
  *
- * Tween handoff: while `isTweenActive()` reports true, neither restore()
- * nor nudge() writes scrollTop — the smooth tween (phase 1's
- * useStackScroll) re-reads its target offset every frame and absorbs the
- * shift itself; a compensation write here would fight it.
+ * Tween handoff: while `isTweenActive()` reports true, restore() does
+ * not write scrollTop — the smooth tween (phase 1's useStackScroll)
+ * re-reads its target offset every frame and absorbs the shift itself;
+ * a compensation write here would fight it.
+ *
+ * The sandwich is the ONLY scrollTop writer here — deliberately. There
+ * is no out-of-band "nudge" API: a scrollTop write from a
+ * ResizeObserver callback feeds back through content-visibility
+ * realization into an infinite RO -> scroll -> layout loop (the
+ * historic tall-stack freeze). Observers may invalidate caches; they
+ * must never scroll.
  */
 
 import type { Ref } from 'vue';
@@ -88,11 +95,6 @@ export interface ScrollAnchor {
    * is withheld while a tween is in flight.
    */
   restore(): number;
-  /**
-   * Out-of-band scrollTop-only compensation (the ResizeObserver safety
-   * net): applies `delta` unless a tween is in flight.
-   */
-  nudge(delta: number): void;
 }
 
 /** Sub-pixel slack when deciding "at the viewport top". */
@@ -210,12 +212,5 @@ export function useScrollAnchor(
     return delta;
   }
 
-  function nudge(delta: number): void {
-    const scrollerEl = scroller.value;
-    if (!scrollerEl || delta === 0) return;
-    if (opts.isTweenActive?.()) return;
-    scrollerEl.scrollTop += delta;
-  }
-
-  return { prepare, restore, nudge };
+  return { prepare, restore };
 }

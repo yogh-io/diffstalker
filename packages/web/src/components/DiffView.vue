@@ -217,7 +217,15 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
      stick exactly underneath it in multi-file mode. */
   --fh-h: 1.75rem;
   height: 100%;
-  overflow: auto;
+  overflow-y: auto;
+  /* Deterministic horizontal scrollbar: always show the track, so a
+     wide line realizing under content-visibility can never ADD a
+     scrollbar (and ~15px of height) that the exact-height model didn't
+     count — DiffStack probes the track height once (scrollbarH) and
+     bakes it into every computed body height. `scrollbar-gutter` is no
+     help here: it only reserves inline-axis space for the VERTICAL
+     scrollbar. */
+  overflow-x: scroll;
   background: var(--bg);
   font-size: var(--fs-base);
   line-height: 1.55;
@@ -367,9 +375,15 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
   min-width: 100%;
   background: var(--bg);
   /* Virtualization: skip layout+paint for off-screen rows. The
-     intrinsic-size estimate only matters until a row is rendered once. */
+     intrinsic size uses the PROBED row height (--row-h, published by
+     DiffStack's measureProbe) so a skipped row occupies exactly the
+     height the exact-body-height model computed — a hardcoded second
+     constant here would drift from the probe and make realization
+     shift offsets (the freeze fuel). The rem value is only the
+     fallback until the probe lands; the `auto` keyword lets the
+     browser's remembered size win once a row has been realized. */
   content-visibility: auto;
-  contain-intrinsic-size: auto 1.26rem;
+  contain-intrinsic-size: auto var(--row-h, 1.26rem);
 }
 
 .ln {

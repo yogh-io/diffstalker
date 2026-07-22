@@ -202,9 +202,12 @@ const isEmptyFile = computed(
   column-gap: 1.25ch;
   width: max-content;
   min-width: 100%;
-  /* Virtualization: off-screen rows skip layout + paint (see DiffView). */
+  /* Virtualization: off-screen rows skip layout + paint (see DiffView).
+     Same probed row height (--row-h, published by DiffStack's
+     measureProbe on the document root) so skipped rows never drift
+     from realized ones; the rem value is only the pre-probe fallback. */
   content-visibility: auto;
-  contain-intrinsic-size: auto 1.26rem;
+  contain-intrinsic-size: auto var(--row-h, 1.26rem);
 }
 
 .ln {

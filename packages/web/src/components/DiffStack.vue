@@ -86,6 +86,33 @@ interface ProbeSizes {
   noteH: number;
   /** Margin between two file sections inside one DiffView. */
   sectionGap: number;
+  /**
+   * The horizontal scrollbar track of .diff-scroll (0 on overlay-
+   * scrollbar platforms). overflow-x: scroll makes the track
+   * unconditional, so it is part of EVERY rendered body's height —
+   * deterministic, instead of appearing only when a wide line realizes.
+   */
+  scrollbarH: number;
+}
+
+/**
+ * Probed values within this tolerance are "the same": a re-delivered
+ * ResizeObserver tick or a resize that didn't change the metrics must
+ * not republish probeSizes — that would re-render every body style and
+ * drop the offset cache for nothing.
+ */
+const PROBE_EPSILON = 0.1;
+
+function sameProbeSizes(a: ProbeSizes, b: ProbeSizes): boolean {
+  return (
+    Math.abs(a.rowH - b.rowH) < PROBE_EPSILON &&
+    Math.abs(a.hunkHeaderH - b.hunkHeaderH) < PROBE_EPSILON &&
+    Math.abs(a.hunkBorderB - b.hunkBorderB) < PROBE_EPSILON &&
+    Math.abs(a.fileHeaderH - b.fileHeaderH) < PROBE_EPSILON &&
+    Math.abs(a.noteH - b.noteH) < PROBE_EPSILON &&
+    Math.abs(a.sectionGap - b.sectionGap) < PROBE_EPSILON &&
+    Math.abs(a.scrollbarH - b.scrollbarH) < PROBE_EPSILON
+  );
 }
 
 /**
@@ -139,22 +166,26 @@ export const HUGE_FILE_CHANGED_LINES = 1500;
  * Exact intrinsic sizes (phase 2): each body's contain-intrinsic-size
  * is COMPUTED from its model's row/hunk/note counts times constants
  * probed once from a hidden sample DiffView (re-probed on resize/zoom).
- * Deliberately no `auto` keyword — the browser's remembered size goes
- * stale when a skipped subtree is patched; the computed value updates
- * in the same Vue patch as the content, so the anchor sandwich
- * compensates it and later c-v realization is a ~0px no-op. Bodies
- * without a computable height (placeholders, empty/binary diffs) keep
- * the stats-based estimate.
+ * The probed row height is also published as the `--row-h` CSS var, so
+ * the ROW-level contain-intrinsic-size inside DiffView uses the same
+ * constant — one source of truth; a second hardcoded row constant
+ * would make skipped and realized heights disagree, and every c-v
+ * realization would shift offsets (the freeze fuel). With drift gone,
+ * the body-level value carries the `auto` keyword: once a body has
+ * been realized, the browser's remembered size (identical to ours)
+ * wins on re-skip. Bodies without a computable height (placeholders,
+ * empty/binary diffs) keep the stats-based estimate.
  *
  * Scroll anchoring (phase 2): overflow-anchor is off and useScrollAnchor
  * runs its pre-flush/post-flush sandwich around every change to the
  * rendered file set, so churn above the viewport never moves what the
  * user is looking at. A ResizeObserver over the bodies is the safety
  * net for any OUT-of-flush height change (it would mean the exact-size
- * assumption drifted): it compensates scrollTop for bodies entirely
- * above the viewport and warns in dev. When nothing churns (Compare's
- * static diffs) all of this is inert: no changed sections → no anchor,
- * no size deltas → a silent observer.
+ * assumption drifted): it re-caches the height, invalidates the offset
+ * cache, and NOTHING more — observers never write scrollTop (see the
+ * callback). When nothing churns (Compare's static diffs) all of this
+ * is inert: no changed sections → no anchor, no size deltas → a silent
+ * observer.
  *
  * Scrolling (phase 1): scrollToFile/scrollToHunk route through
  * useStackScroll's retargeting rAF tween (smooth by default; instant on
@@ -192,7 +223,11 @@ import {
 } from 'vue';
 import { statusLetter } from '../utils/format';
 import { useScrollAnchor, type AnchorCandidate } from '../composables/useScrollAnchor';
-import { useStackScroll, type StackSection } from '../composables/useStackScroll';
+import {
+  useStackScroll,
+  type SectionHeightModel,
+  type StackSection,
+} from '../composables/useStackScroll';
 import DiffView from './DiffView.vue';
 
 const props = defineProps<{
@@ -300,13 +335,15 @@ let probeRo: ResizeObserver | null = null;
 function measureProbe(): void {
   const root = probeEl.value;
   if (!root) return;
+  const scroll = root.querySelector<HTMLElement>('.diff-scroll');
   const row = root.querySelector<HTMLElement>('.row');
   const hunk = root.querySelector<HTMLElement>('.hunk');
   const hunkHeader = root.querySelector<HTMLElement>('.hunk-header');
   const fileHeader = root.querySelector<HTMLElement>('.file-header');
   const note = root.querySelector<HTMLElement>('.file-note');
   const sections = root.querySelectorAll<HTMLElement>('.file-section');
-  if (!row || !hunk || !hunkHeader || !fileHeader || !note || sections.length < 2) return;
+  if (!scroll || !row || !hunk || !hunkHeader || !fileHeader || !note || sections.length < 2)
+    return;
 
   const rowH = row.getBoundingClientRect().height;
   if (rowH <= 0) return; // no layout engine (tests) or hidden — keep estimates
@@ -316,7 +353,7 @@ function measureProbe(): void {
     0,
     hunk.getBoundingClientRect().height - hunkHeaderH - PROBE_FIRST_HUNK_ROWS * rowH
   );
-  probeSizes.value = {
+  const next: ProbeSizes = {
     rowH,
     hunkHeaderH,
     hunkBorderB,
@@ -324,10 +361,36 @@ function measureProbe(): void {
     noteH: note.getBoundingClientRect().height,
     sectionGap:
       sections[1].getBoundingClientRect().top - sections[0].getBoundingClientRect().bottom,
+    // The always-on horizontal track (overflow-x: scroll): offsetHeight
+    // includes it, clientHeight doesn't. The probe viewport gives
+    // .diff-scroll a definite height so the subtraction is real.
+    scrollbarH: Math.max(0, scroll.offsetHeight - scroll.clientHeight),
   };
+
+  // Epsilon bail: unchanged constants must not republish — a fresh
+  // probeSizes object re-renders every body style and drops the offset
+  // cache, and this runs from a ResizeObserver and window resize.
+  const prev = probeSizes.value;
+  if (prev !== null && sameProbeSizes(prev, next)) return;
+
+  // A GENUINE change (zoom, font swap) resizes every computed body:
+  // hold the viewport through the re-render exactly like a files
+  // commit — prepare against the old DOM now, restore after Vue
+  // patches the new sizes in (nextTick runs post-render, pre-paint).
+  anchor.prepare({ survivingKeys: survivingKeys(committedFiles), changedEls: [null] });
+  probeSizes.value = next;
+  // Publish the probed row height as the ONE row constant: the
+  // row-level contain-intrinsic-size in DiffView (and FileContentPane)
+  // reads var(--row-h), so skipped rows occupy exactly the height this
+  // model computes — no drift, no offset shift on realization.
+  document.documentElement.style.setProperty('--row-h', `${rowH}px`);
+  // Stack chrome (header height, section gap) shares the font metrics
+  // that just changed: drop that cache too.
+  stackChrome = {};
   // Fresh constants resize every computed body: the spy/tween offset
   // cache is stale the moment they land.
   stackScroll.invalidateOffsets();
+  void nextTick(() => anchor.restore());
 }
 
 /**
@@ -358,7 +421,9 @@ function exactBodyHeight(item: StackFile): number | null {
   const model = modelFor(item.diff, item.staged ?? false);
   if (model.rowCount === 0) return null;
   const withHeaders = model.sections.filter((s) => s.filePath !== null).length > 1;
-  let height = 0;
+  // Every rendered body carries .diff-scroll's always-on horizontal
+  // track (overflow-x: scroll — deterministic, see ProbeSizes).
+  let height = sizes.scrollbarH;
   model.sections.forEach((section, i) => {
     if (i > 0) height += sizes.sectionGap;
     if (withHeaders && section.filePath !== null) height += sizes.fileHeaderH;
@@ -371,9 +436,113 @@ function exactBodyHeight(item: StackFile): number | null {
   return height;
 }
 
-/** Inline contain-intrinsic-size value: exact when possible, else estimate. */
+/**
+ * Inline contain-intrinsic-size value: exact when possible, else
+ * estimate. The `auto` keyword makes the browser's last REMEMBERED
+ * realized size win on re-skip — with drift eliminated it equals the
+ * computed value, and remembering means a realize/re-skip cycle can
+ * never change the body's occupied height (no offset shift, no RO
+ * churn).
+ */
 function bodyIntrinsicSize(item: StackFile): string {
-  return `${exactBodyHeight(item) ?? estimateBodyHeight(item)}px`;
+  return `auto ${exactBodyHeight(item) ?? estimateBodyHeight(item)}px`;
+}
+
+// --- Arithmetic section offsets (useStackScroll's height model) ---
+
+/**
+ * Stack chrome heights, measured lazily ONCE and cached: the sticky
+ * section header (identical for every section — one nowrap line), the
+ * inter-section margin, and the two fixed strips (binary note /
+ * "Load diff"). Each first measurement is a DOM read; every later
+ * offset rebuild is pure arithmetic. That is the point: the rebuild
+ * runs under per-frame invalidation churn (bodyRo, files commits,
+ * resize), and reading the DOM there forces a full-stack synchronous
+ * layout per scroll frame — the historic freeze. Reset by measureProbe
+ * when the font metrics genuinely change.
+ */
+let stackChrome: {
+  headerH?: number;
+  gap?: number;
+  binaryNoteH?: number;
+  loadDiffH?: number;
+} = {};
+
+function chromeHeaderH(): number | null {
+  if (stackChrome.headerH === undefined) {
+    for (const el of sectionEls.values()) {
+      const header = el.querySelector<HTMLElement>('.file-diff-header');
+      if (header) {
+        stackChrome.headerH = header.getBoundingClientRect().height;
+        break;
+      }
+    }
+  }
+  return stackChrome.headerH ?? null;
+}
+
+/** The `.file-diff + .file-diff` margin; 0 when there is one section. */
+function chromeGap(): number | null {
+  if (props.files.length <= 1) return 0;
+  if (stackChrome.gap === undefined) {
+    const second = sectionEls.get(props.files[1].key);
+    if (!second) return null;
+    // Computed style, not layout: a resolved margin is a plain length.
+    stackChrome.gap = parseFloat(getComputedStyle(second).marginTop) || 0;
+  }
+  return stackChrome.gap;
+}
+
+function stripHeight(
+  slot: 'binaryNoteH' | 'loadDiffH',
+  key: string,
+  selector: string
+): number | null {
+  if (stackChrome[slot] === undefined) {
+    const strip = sectionEls.get(key)?.querySelector<HTMLElement>(selector);
+    if (!strip) return null;
+    stackChrome[slot] = strip.getBoundingClientRect().height;
+  }
+  return stackChrome[slot] ?? null;
+}
+
+/** Outer section height (header + visible body); null = unknowable. */
+function sectionOuterHeight(item: StackFile, headerH: number): number | null {
+  if (item.collapsed) return headerH; // v-show hides every body variant
+  if (isBinaryFile(item)) {
+    const h = stripHeight('binaryNoteH', item.key, '.binary-note');
+    return h === null ? null : headerH + h;
+  }
+  if (isUnloaded(item)) {
+    const h = stripHeight('loadDiffH', item.key, '.load-diff');
+    return h === null ? null : headerH + h;
+  }
+  // Exact model height; the estimate branches (placeholder, empty
+  // diff) match the inline sizing the body renders with, so the
+  // arithmetic top stays honest within the spy's hysteresis.
+  return headerH + (exactBodyHeight(item) ?? estimateBodyHeight(item));
+}
+
+/**
+ * The height model handed to useStackScroll: lets it rebuild the
+ * spy/tween offset cache with ZERO per-section DOM reads. Null (full
+ * DOM fallback) only when no probe has landed (tests, first paint) or
+ * a chrome piece cannot be measured yet.
+ */
+function sectionHeightModel(): SectionHeightModel | null {
+  if (probeSizes.value === null) return null;
+  const headerH = chromeHeaderH();
+  const gap = chromeGap();
+  if (headerH === null || gap === null) return null;
+  const byKey = new Map(props.files.map((f) => [f.key, f]));
+  return {
+    start: 0, // the first section sits at the scroller's top
+    gap,
+    heightFor: (key) => {
+      const item = byKey.get(key);
+      return item === undefined ? null : sectionOuterHeight(item, headerH);
+    },
+  };
 }
 
 // --- Scroll anchoring (the sandwich) ---
@@ -560,29 +729,25 @@ const bodyHeights = new WeakMap<Element, number>();
 const bodyRo =
   typeof ResizeObserver !== 'undefined'
     ? new ResizeObserver((entries) => {
-        const scroller = scrollerEl.value;
         for (const entry of entries) {
           const el = entry.target as HTMLElement;
           const height =
             entry.borderBoxSize?.[0]?.blockSize ?? el.getBoundingClientRect().height;
           const previous = bodyHeights.get(el);
           bodyHeights.set(el, height);
-          if (previous === undefined || previous === height || !scroller) continue;
-          // Any out-of-flush height change moved every section below
-          // it: the spy/tween offset cache is stale regardless of
-          // where the body sits in the viewport.
+          if (previous === undefined || previous === height) continue;
+          // An out-of-flush body height change moved the sections below it,
+          // so the spy/tween offset cache is stale — mark it dirty.
           stackScroll.invalidateOffsets();
-          // Only a body ENTIRELY above the viewport can silently move
-          // the content the user is looking at. Below or intersecting:
-          // nothing to compensate.
-          if (el.getBoundingClientRect().bottom > scroller.getBoundingClientRect().top) continue;
-          const delta = height - previous;
-          anchor.nudge(delta);
-          if (import.meta.env.DEV) {
-            console.warn(
-              `[DiffStack] out-of-flush body height delta ${delta}px compensated — exact intrinsic size drifted`
-            );
-          }
+          // ResizeObserver callbacks must never write scrollTop / scroll — it
+          // feeds back through content-visibility realization into an infinite
+          // loop. The write shifts the realization boundary, which toggles
+          // bodies between their intrinsic-size estimate and their real height,
+          // which fires this observer again with a fresh delta — an RO ->
+          // scroll -> layout livelock that hangs the tab. In-flush changes are
+          // already compensated by the anchor sandwich (useScrollAnchor); a
+          // rare out-of-flush drift above the viewport is left as a small
+          // one-time shift rather than risk the loop.
         }
       })
     : null;
@@ -673,6 +838,9 @@ function scrollSections(): StackSection[] {
 
 const stackScroll = useStackScroll(scrollerEl, {
   sections: scrollSections,
+  // Arithmetic offsets from the exact height model: the offset cache
+  // rebuilds with zero DOM reads no matter how often it is invalidated.
+  sectionHeights: sectionHeightModel,
   stickyOffset: STICKY_OFFSET,
   onActiveKey: (key) => emit('active-file', key),
 });
@@ -745,9 +913,13 @@ defineExpose({
     <!-- Hidden size probe: a real DiffView (so DiffView's scoped styles
          apply) whose row/header/note/gap heights feed the exact
          contain-intrinsic-size computation. Zero-height wrapper: it
-         never affects layout or scrollHeight. -->
+         never affects layout or scrollHeight. The inner viewport gives
+         .diff-scroll a definite height, so its always-on horizontal
+         scrollbar track is measurable (scrollbarH). -->
     <div ref="probeEl" class="size-probe" aria-hidden="true">
-      <DiffView :diff="probeDiff" show-file-headers />
+      <div class="probe-viewport">
+        <DiffView :diff="probeDiff" show-file-headers />
+      </div>
     </div>
     <section
       v-for="item in files"
@@ -802,11 +974,12 @@ defineExpose({
           >
         </button>
       </div>
-      <!-- Exact computed height, never `auto <px>`: the browser's
-           remembered size goes stale when a skipped subtree is patched
-           (§3 of the diff-stream doc). Falls back to the stats estimate
-           only where no exact height exists (placeholder, empty diff,
-           probe not measured). -->
+      <!-- `auto <exact px>`: the computed height sizes the body until
+           it has been realized once; after that the browser's
+           remembered size (equal to ours — drift is designed out) wins
+           on re-skip, so realize/skip cycles can't move offsets. Falls
+           back to the stats estimate only where no exact height exists
+           (placeholder, empty diff, probe not measured). -->
       <div
         v-else
         v-show="!item.collapsed"
@@ -850,6 +1023,13 @@ defineExpose({
   visibility: hidden;
   pointer-events: none;
   z-index: -1;
+}
+
+/* A definite height for the probe's .diff-scroll (height: 100%), so
+   offsetHeight − clientHeight yields the real horizontal scrollbar
+   track height. Clipped by the zero-height .size-probe above. */
+.probe-viewport {
+  height: 100px;
 }
 
 /* Probe rows must never be c-v-skipped: the measurements (and the

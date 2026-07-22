@@ -4,11 +4,20 @@
  * that keeps the active section key honest (sections 4 + 5 of
  * docs/web-diff-stream-architecture.md).
  *
- * Offset cache: each section key's scroller-relative offsetTop, built
- * lazily and invalidated by a ResizeObserver on the scroller, window
- * resize, and the owner's explicit invalidateOffsets() after content
- * commits. The spy binary-searches it — exact, O(log n), ~free per
- * scroll event.
+ * Offset cache: each section key's scroller-relative top, built lazily
+ * and invalidated by a ResizeObserver on the scroller, window resize,
+ * and the owner's explicit invalidateOffsets() after content commits.
+ * The spy binary-searches it — exact, O(log n), ~free per scroll event.
+ *
+ * The rebuild is ARITHMETIC when the owner supplies a section height
+ * model (`sectionHeights`): cumulative tops derived from the exact
+ * per-section heights, ZERO DOM reads. That matters because the
+ * invalidators fire on every content commit and body resize — if the
+ * rebuild read `offsetTop` per section, each scroll frame under churn
+ * would force a full-stack synchronous layout (seconds on a tall,
+ * un-contained stack: the historic scroll freeze). Only when the model
+ * is unavailable (no probe yet, an unmeasurable section) does the
+ * rebuild fall back to one DOM pass over the sections' offsetTops.
  *
  * Scroll-spy: a passive, rAF-throttled scroll listener finds the
  * section spanning `scrollTop + stickyOffset + 1px`. Hysteresis: the
@@ -43,9 +52,33 @@ export interface StackSection {
   el: HTMLElement;
 }
 
+/**
+ * The owner's exact height model: enough to derive every section's
+ * scroller-relative top arithmetically (see the offset-cache doc above).
+ */
+export interface SectionHeightModel {
+  /** Scroller-relative top of the FIRST section, px. */
+  start: number;
+  /** Vertical gap between adjacent sections, px. */
+  gap: number;
+  /**
+   * Outer height (header + visible body) of the section with this key;
+   * null = not computable for this section, which makes the whole
+   * rebuild fall back to the DOM pass (a partial model would put every
+   * later section at the wrong top).
+   */
+  heightFor(key: string): number | null;
+}
+
 export interface UseStackScrollOptions {
   /** The stack's sections in document order (offsetTops non-decreasing). */
   sections: () => StackSection[];
+  /**
+   * Exact height model for the arithmetic offset rebuild; return null
+   * when unavailable (probe not measured yet). Optional — without it
+   * every rebuild reads the DOM.
+   */
+  sectionHeights?: () => SectionHeightModel | null;
   /** Sticky chrome above the landing position, in px. Default 0. */
   stickyOffset?: number;
   /** Called whenever the active key changes (spy or programmatic). */
@@ -153,12 +186,36 @@ export function useStackScroll(
     offsets = null;
   }
 
+  /**
+   * Arithmetic rebuild: cumulative tops from the owner's exact height
+   * model — zero DOM reads, so it stays cheap no matter how often the
+   * invalidators fire. Null when the model can't cover every section.
+   */
+  function buildModelOffsets(sections: StackSection[]): CachedOffset[] | null {
+    const model = opts.sectionHeights?.() ?? null;
+    if (model === null) return null;
+    const out: CachedOffset[] = [];
+    let top = model.start;
+    for (const { key } of sections) {
+      const height = model.heightFor(key);
+      if (height === null) return null;
+      out.push({ key, top });
+      top += height + model.gap;
+    }
+    return out; // cumulative construction: already in top order
+  }
+
   function ensureOffsets(): CachedOffset[] {
     if (offsets === null) {
-      offsets = opts.sections().map(({ key, el }) => ({ key, top: el.offsetTop }));
-      // Document order should already be top order; sorting is cheap
-      // insurance against a transiently mid-patch DOM.
-      offsets.sort((a, b) => a.top - b.top);
+      const sections = opts.sections();
+      offsets = buildModelOffsets(sections);
+      if (offsets === null) {
+        // Model unavailable: ONE forced-layout pass over the DOM.
+        offsets = sections.map(({ key, el }) => ({ key, top: el.offsetTop }));
+        // Document order should already be top order; sorting is cheap
+        // insurance against a transiently mid-patch DOM.
+        offsets.sort((a, b) => a.top - b.top);
+      }
     }
     return offsets;
   }

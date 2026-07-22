@@ -8,7 +8,7 @@
  * newTop − oldTop to scrollTop (both signs); commits that only change
  * sections below the viewport are skipped entirely; and an in-flight
  * tween suppresses the scrollTop write (restore still reports the
- * delta, nudge stays silent).
+ * delta).
  */
 
 import { describe, test, expect, beforeEach } from 'vitest';
@@ -241,14 +241,6 @@ describe('tween handoff', () => {
     world.tweenActive = true;
     expect(world.anchor.restore()).toBe(50);
     expect(world.scroller.scrollTop).toBe(1000); // the tween absorbs it
-  });
-
-  test('nudge applies when idle and is suppressed mid-tween', () => {
-    world.anchor.nudge(12);
-    expect(world.scroller.scrollTop).toBe(1012);
-    world.tweenActive = true;
-    world.anchor.nudge(12);
-    expect(world.scroller.scrollTop).toBe(1012);
   });
 });
 

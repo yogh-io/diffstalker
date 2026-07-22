@@ -4,7 +4,9 @@
  * by hand. Covered: the binary-search scroll-spy (probe at scrollTop +
  * stickyOffset + 1, boundary hysteresis in both directions, suppression
  * while tweening and inside the post-jump window), the offset cache
- * (stale until invalidated), and the tween (optimistic active set,
+ * (stale until invalidated; rebuilt ARITHMETICALLY from the owner's
+ * height model with zero DOM reads, DOM fallback when the model can't
+ * cover a section), and the tween (optimistic active set,
  * eased frames, PER-FRAME retargeting when content shifts mid-glide,
  * distance-clamped duration, long-jump snap, reduced-motion and
  * smooth:false degrades, user-input cancellation + lastUserScrollAt).
@@ -69,6 +71,15 @@ function runFrame(ts: number): void {
   for (const cb of pending) cb(ts);
 }
 
+/** Sections provider over the three fake elements, in document order. */
+function sectionsOf(els: Record<'A' | 'B' | 'C', FakeSectionEl>): () => StackSection[] {
+  return () =>
+    (['A', 'B', 'C'] as const).map((key) => ({
+      key,
+      el: els[key] as unknown as HTMLElement,
+    }));
+}
+
 /** The standard stack: A at 0, B at 1000, C at 2500. */
 interface World {
   scroller: FakeScroller;
@@ -81,13 +92,8 @@ function makeWorld(stickyOffset = 0): World {
   const scroller = makeScroller();
   const els = { A: { offsetTop: 0 }, B: { offsetTop: 1000 }, C: { offsetTop: 2500 } };
   const activations: string[] = [];
-  const sections = (): StackSection[] =>
-    (['A', 'B', 'C'] as const).map((key) => ({
-      key,
-      el: els[key] as unknown as HTMLElement,
-    }));
   const scroll = useStackScroll(ref(scroller as unknown as HTMLElement), {
-    sections,
+    sections: sectionsOf(els),
     stickyOffset,
     onActiveKey: (key) => activations.push(key),
   });
@@ -225,6 +231,80 @@ describe('scroll-spy', () => {
     world.scroll.invalidateOffsets();
     spyAt(world, 500);
     expect(world.scroll.activeKey.value).toBe('B');
+  });
+});
+
+describe('arithmetic offsets (sectionHeights model)', () => {
+  /**
+   * A world whose DOM offsetTops COUNT their reads and disagree with
+   * the height model (A=0/B=1000/C=2500 in the DOM), so the tests can
+   * prove which source the rebuild used.
+   */
+  function makeHeightsWorld(heightFor: (key: string) => number | null, gap = 0) {
+    const scroller = makeScroller();
+    let domReads = 0;
+    const makeSection = (offsetTop: number): FakeSectionEl =>
+      ({
+        get offsetTop() {
+          domReads++;
+          return offsetTop;
+        },
+      }) as FakeSectionEl;
+    const els = { A: makeSection(0), B: makeSection(1000), C: makeSection(2500) };
+    const scroll = useStackScroll(ref(scroller as unknown as HTMLElement), {
+      sections: sectionsOf(els),
+      sectionHeights: () => ({ start: 0, gap, heightFor }),
+    });
+    return {
+      scroller,
+      scroll,
+      domReads: () => domReads,
+      spyAt(scrollTop: number) {
+        scroller.scrollTop = scrollTop;
+        scroller.dispatch('scroll');
+        runFrame(performance.now());
+      },
+    };
+  }
+
+  test('derives cumulative tops from the model with ZERO DOM reads', () => {
+    // Model: A 500px, B 700px, C 300px, gap 10 -> tops 0 / 510 / 1220.
+    const heights: Record<string, number> = { A: 500, B: 700, C: 300 };
+    const world = makeHeightsWorld((key) => heights[key] ?? null, 10);
+
+    // 600 is inside model-B (510..1210) but inside DOM-A (0..1000):
+    // the spy answering B proves the arithmetic path won.
+    world.spyAt(600);
+    expect(world.scroll.activeKey.value).toBe('B');
+    world.spyAt(1300);
+    expect(world.scroll.activeKey.value).toBe('C');
+    expect(world.domReads()).toBe(0);
+  });
+
+  test('rebuilds from the model after every invalidation — still no DOM reads', () => {
+    const heights: Record<string, number> = { A: 500, B: 700, C: 300 };
+    const world = makeHeightsWorld((key) => heights[key] ?? null);
+
+    world.spyAt(600);
+    expect(world.scroll.activeKey.value).toBe('B');
+
+    // A grows to 900 (tops now 0 / 900 / 1600); stale cache still says B…
+    heights.A = 900;
+    world.scroll.invalidateOffsets();
+    // …and the rebuilt cache puts 600 back inside A.
+    world.spyAt(600);
+    expect(world.scroll.activeKey.value).toBe('A');
+    expect(world.domReads()).toBe(0);
+  });
+
+  test('one unknowable section height falls back to the DOM pass', () => {
+    const heights: Record<string, number | null> = { A: 500, B: null, C: 300 };
+    const world = makeHeightsWorld((key) => heights[key] ?? null);
+
+    // 600 is inside DOM-A (0..1000); the model (if used) would say B.
+    world.spyAt(600);
+    expect(world.scroll.activeKey.value).toBe('A');
+    expect(world.domReads()).toBe(3); // exactly one read per section
   });
 });
 
