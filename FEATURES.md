@@ -681,6 +681,10 @@ git operations.
   is daemon-owned (HEAD-axis observation, in-memory), streamed over SSE with an
   epoch/`since` reconnect protocol, and pruned to a bounded size. Huge / binary
   files show a collapsed placeholder (open explicitly to render). Read-only.
+  On a long path the file name stays visible (the directory ellipses instead,
+  and the full path is on hover); a per-entry copy button copies the full path.
+  The kind badge and the "changed before the Journal started" (seeded) note
+  explain themselves on hover.
 - **History** — commit list (hash, message, author, relative date, ref chips)
   beside a commit detail: metadata + a multi-file diff with per-file section
   headers.

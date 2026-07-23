@@ -223,6 +223,62 @@ function clock(ts: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+// --- Path display: keep the file name visible on long paths ---
+
+/** The file name (last path segment) — the part worth never ellipsing. */
+function fileName(path: string): string {
+  const i = path.lastIndexOf('/');
+  return i === -1 ? path : path.slice(i + 1);
+}
+
+/** The directory prefix incl. its trailing slash — the part that ellipses. */
+function fileDir(path: string): string {
+  const i = path.lastIndexOf('/');
+  return i === -1 ? '' : path.slice(0, i + 1);
+}
+
+// --- Copy the full path ---
+
+/** Row key whose path was just copied — drives the transient "copied" label. */
+const copiedKey = ref<number | null>(null);
+let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function copyPath(row: JournalHunkRow): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(row.tip.path);
+    copiedKey.value = row.key;
+    if (copyTimer !== null) clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
+      copiedKey.value = null;
+      copyTimer = null;
+    }, 1200);
+  } catch {
+    // Clipboard unavailable / blocked (non-secure context, denied): best
+    // effort — the path is still visible and title-hoverable.
+  }
+}
+
+// --- Badge explanations (hover titles) ---
+
+/** What each hunk kind means — surfaced as the kind badge's hover title. */
+const KIND_HELP: Record<string, string> = {
+  created: 'First time this change was recorded — a new edit region (or a new file).',
+  edited: 'This change was edited in place — about the same size as before.',
+  expanded: 'This change grew — more lines than the last time it was recorded.',
+  shrunk: 'This change shrank — fewer lines than the last time it was recorded.',
+  reverted: 'This change was undone — the lines are back to the committed version.',
+  renamed: 'The file was renamed.',
+};
+
+function kindHelp(kind: string): string {
+  return KIND_HELP[kind] ?? '';
+}
+
+/** Why a change shows as "seeded" — the seeded note's hover title. */
+const SEEDED_HELP =
+  'This change was already in your working tree when the Journal started watching this repo. ' +
+  'It was reconstructed from the initial diff, not seen as a live edit.';
+
 /**
  * The line-range to display: the NEW side of the entry's @@ header, so
  * the label matches the editor's line numbers (the HEAD pre-image span
@@ -601,6 +657,10 @@ onBeforeUnmount(() => {
     clearTimeout(ticker);
     ticker = null;
   }
+  if (copyTimer !== null) {
+    clearTimeout(copyTimer);
+    copyTimer = null;
+  }
 });
 </script>
 
@@ -663,9 +723,28 @@ onBeforeUnmount(() => {
               @click="onHeaderClick(row)"
             >
               <span class="time" :title="absTime(row.tip.ts)">{{ relTime(row.tip.ts) }}</span>
-              <span class="path">{{ row.tip.path }}</span>
+              <span class="path" :title="row.tip.path"
+                ><span v-if="fileDir(row.tip.path)" class="path-dir">{{
+                  fileDir(row.tip.path)
+                }}</span
+                ><span class="path-name">{{ fileName(row.tip.path) }}</span></span
+              >
+              <button
+                class="copy-path"
+                data-testid="copy-path"
+                :title="copiedKey === row.key ? 'Copied' : 'Copy full path'"
+                @click.stop="copyPath(row)"
+              >
+                {{ copiedKey === row.key ? 'copied' : 'copy' }}
+              </button>
               <span class="lines">{{ lineLabel(row.tip) }}</span>
-              <span class="kind" :data-kind="row.kind" data-testid="kind-badge">{{ row.kind }}</span>
+              <span
+                class="kind"
+                :data-kind="row.kind"
+                :title="kindHelp(row.kind)"
+                data-testid="kind-badge"
+                >{{ row.kind }}</span
+              >
               <button
                 v-if="row.members.length > 1"
                 class="fold-count"
@@ -676,8 +755,12 @@ onBeforeUnmount(() => {
               >
                 ×{{ row.members.length }}
               </button>
-              <span v-if="row.tip.seeded" class="seeded-note" data-testid="seeded-note"
-                >present when journal started</span
+              <span
+                v-if="row.tip.seeded"
+                class="seeded-note"
+                data-testid="seeded-note"
+                :title="SEEDED_HELP"
+                >changed before the Journal started</span
               >
               <span v-if="isOutdated(row)" class="outdated-badge" data-testid="outdated-badge"
                 >outdated {{ clock(outdatedAtOf(row)!) }}</span
@@ -850,12 +933,45 @@ onBeforeUnmount(() => {
   color: var(--text-dim);
 }
 
+/* The path is a flex row of dir + name: the directory shrinks and
+   ellipses at ITS end, but the file name never shrinks — so the most
+   useful part (the name) stays visible on a long path, with the ellipsis
+   landing in the middle (…dir/name). Full path is on the title. */
 .entry-header .path {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.entry-header .path-dir {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.entry-header .path-name {
+  flex: none;
+  white-space: nowrap;
   font-weight: 600;
+}
+
+.copy-path {
+  flex: none;
+  padding: 0 0.3125rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface-raised);
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+}
+
+.copy-path:hover {
+  color: var(--text);
+  border-color: var(--selection);
 }
 
 .entry-header .lines {

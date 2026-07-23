@@ -164,6 +164,43 @@ describe('rendering', () => {
     expect(entry.text()).toContain('edit-1');
   });
 
+  test('a long path keeps the file name; the directory ellipses, full path on the title', () => {
+    const { wrapper } = mountView([hunk(1, { path: 'packages/web/src/views/JournalView.vue' })]);
+    const entry = wrapper.get('[data-testid="journal-entry"]');
+    // The file name is its own non-shrinking span (never ellipsed)…
+    expect(entry.get('.path-name').text()).toBe('JournalView.vue');
+    // …the directory prefix (which ellipses) carries the rest…
+    expect(entry.get('.path-dir').text()).toBe('packages/web/src/views/');
+    // …and the whole path is available on hover.
+    expect(entry.get('.path').attributes('title')).toBe('packages/web/src/views/JournalView.vue');
+  });
+
+  test('a bare filename renders no directory span', () => {
+    const { wrapper } = mountView([hunk(1, { path: 'README.md' })]);
+    const entry = wrapper.get('[data-testid="journal-entry"]');
+    expect(entry.get('.path-name').text()).toBe('README.md');
+    expect(entry.find('.path-dir').exists()).toBe(false);
+  });
+
+  test('the copy button writes the full path and flips to a "copied" label', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const { wrapper } = mountView([hunk(1, { path: 'packages/web/src/views/JournalView.vue' })]);
+    const btn = wrapper.get('[data-testid="copy-path"]');
+    expect(btn.text()).toBe('copy');
+    await btn.trigger('click');
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith('packages/web/src/views/JournalView.vue');
+    expect(btn.text()).toBe('copied');
+  });
+
+  test('the kind badge explains itself on hover', () => {
+    const { wrapper } = mountView([hunk(1, { kind: 'created' })]);
+    expect(wrapper.get('[data-testid="kind-badge"]').attributes('title')).toContain(
+      'First time this change was recorded'
+    );
+  });
+
   test('a null diff (reverted tombstone) falls into the DiffView no-hunk note', () => {
     const { wrapper } = mountView([hunk(1, { kind: 'reverted', diff: null })]);
     const entry = wrapper.get('[data-testid="journal-entry"]');
@@ -218,11 +255,14 @@ describe('rendering', () => {
     );
   });
 
-  test('seeded entries render muted with the seeded note', () => {
+  test('seeded entries render muted with the seeded note (explained on hover)', () => {
     const { wrapper } = mountView([hunk(1, { seeded: true })]);
     const entry = wrapper.get('[data-testid="journal-entry"]');
     expect(entry.classes()).toContain('seeded');
-    expect(entry.get('[data-testid="seeded-note"]').text()).toBe('present when journal started');
+    const note = entry.get('[data-testid="seeded-note"]');
+    expect(note.text()).toBe('changed before the Journal started');
+    // The full meaning is spelled out in a hover title.
+    expect(note.attributes('title')).toContain('already in your working tree');
   });
 
   test('a superseded entry collapses to an outdated stub; click re-expands the stale snapshot', async () => {
