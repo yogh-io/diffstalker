@@ -32,7 +32,7 @@
  * hit the cache instead of re-tokenizing.
  */
 
-import hljs from 'highlight.js/lib/common';
+import hljs from './hljs';
 import { getLanguageFromPath } from '@diffstalker/core/view/languageDetection';
 import type { WordDiffSegment } from '@diffstalker/core/view/wordDiff';
 import type { DiffContentRow } from './diffRows';

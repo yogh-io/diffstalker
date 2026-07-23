@@ -18,6 +18,10 @@ const EXTENSION_TO_LANGUAGE: Record<string, string> = {
   htm: 'xml',
   xml: 'xml',
   svg: 'xml',
+  // Vue SFC: highlight as HTML — hljs's xml delegates <script>/<style>
+  // blocks to the js/css sublanguages, so template, script and style all
+  // get colored (close enough; the script's lang="ts" reads as JS).
+  vue: 'xml',
   css: 'css',
   scss: 'scss',
   sass: 'scss',
@@ -93,6 +97,11 @@ const EXTENSION_TO_LANGUAGE: Record<string, string> = {
   ini: 'ini',
   conf: 'ini',
   cfg: 'ini',
+
+  // Infrastructure as code
+  tf: 'hcl',
+  tfvars: 'hcl',
+  hcl: 'hcl',
 
   // SQL
   sql: 'sql',

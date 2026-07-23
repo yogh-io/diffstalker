@@ -23,7 +23,7 @@
  * inject via v-html.
  */
 
-import hljs from 'highlight.js/lib/common';
+import hljs from './hljs';
 import { getLanguageFromPath } from '@diffstalker/core/view/languageDetection';
 
 export interface HighlightedFile {
