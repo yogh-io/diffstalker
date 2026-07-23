@@ -184,15 +184,22 @@ onUnmounted(() => {
 .shell {
   height: 100%;
   display: grid;
+  /* The main column is minmax(0, 1fr), NOT 1fr: a bare 1fr track floors
+     at min-content, so a wide diff/journal line would stretch the whole
+     column — and every row that spans it (header, status) with it —
+     past the viewport, clipping the header's right-side controls. Flooring
+     at 0 keeps the layout at viewport width; wide content scrolls inside
+     its own container (.diff-scroll / the workspace) instead. */
   grid-template:
     'header header' auto
     'rail main' 1fr
     'status status' auto
-    / auto 1fr;
+    / auto minmax(0, 1fr);
 }
 
 .workspace {
   grid-area: main;
+  min-width: 0;
   overflow: auto;
   background: var(--bg);
 }
@@ -208,7 +215,7 @@ onUnmounted(() => {
       'railband' auto
       'main' 1fr
       'status' auto
-      / 1fr;
+      / minmax(0, 1fr);
   }
 }
 </style>

@@ -88,111 +88,146 @@ const modeTitle = computed(() =>
 
 <template>
   <header class="app-header">
-    <div class="brand" aria-hidden="true">
-      <span class="mark">
-        <span class="cell add"></span>
-        <span class="cell del"></span>
-      </span>
-      <span class="brand-name mono">diffstalker</span>
+    <div class="header-identity">
+      <div class="brand" aria-hidden="true">
+        <span class="mark">
+          <span class="cell add"></span>
+          <span class="cell del"></span>
+        </span>
+        <span class="brand-name mono">diffstalker</span>
+      </div>
+
+      <RepoSwitcher />
+
+      <div
+        v-if="branch"
+        class="branch mono"
+        data-testid="branch-info"
+        :title="branch.tracking ? `${branch.current} → ${branch.tracking}` : branch.current"
+      >
+        <span class="branch-name">{{ branch.current }}</span>
+        <template v-if="branch.tracking">
+          <span class="arrow" aria-hidden="true">&rarr;</span>
+          <span class="tracking">{{ branch.tracking }}</span>
+        </template>
+        <span v-if="branch.ahead > 0" class="count-add">&uarr;{{ branch.ahead }}</span>
+        <span v-if="branch.behind > 0" class="count-del">&darr;{{ branch.behind }}</span>
+      </div>
+
+      <p v-if="errorLine" class="error-line mono" data-testid="header-error" :title="errorLine">
+        {{ errorLine }}
+      </p>
     </div>
 
-    <RepoSwitcher />
+    <div class="header-toggles">
+      <button
+        class="mode-toggle mono"
+        data-testid="auto-toggle"
+        :class="{ on: ui.autoModeEnabled }"
+        :aria-pressed="ui.autoModeEnabled"
+        :title="autoTitle"
+        @click="ui.toggleAutoMode()"
+      >
+        <span class="dot" aria-hidden="true"></span
+        >{{ ui.autoModeEnabled ? 'auto on' : 'auto off' }}
+      </button>
 
-    <div
-      v-if="branch"
-      class="branch mono"
-      data-testid="branch-info"
-      :title="branch.tracking ? `${branch.current} → ${branch.tracking}` : branch.current"
-    >
-      <span class="branch-name">{{ branch.current }}</span>
-      <template v-if="branch.tracking">
-        <span class="arrow" aria-hidden="true">&rarr;</span>
-        <span class="tracking">{{ branch.tracking }}</span>
-      </template>
-      <span v-if="branch.ahead > 0" class="count-add">&uarr;{{ branch.ahead }}</span>
-      <span v-if="branch.behind > 0" class="count-del">&darr;{{ branch.behind }}</span>
+      <button
+        class="mode-toggle mono"
+        data-testid="syntax-toggle"
+        :class="{ on: ui.diffSyntaxEnabled }"
+        :aria-pressed="ui.diffSyntaxEnabled"
+        :title="syntaxTitle"
+        @click="ui.toggleDiffSyntax()"
+      >
+        <span class="dot" aria-hidden="true"></span
+        >{{ ui.diffSyntaxEnabled ? 'syntax on' : 'syntax off' }}
+      </button>
+
+      <button
+        class="mode-toggle mono"
+        data-testid="split-toggle"
+        :class="{ on: splitOn }"
+        :aria-pressed="splitOn"
+        :title="modeTitle"
+        @click="ui.toggleDiffMode()"
+      >
+        <span class="dot" aria-hidden="true"></span>{{ splitOn ? 'split' : 'unified' }}
+      </button>
+
+      <button
+        v-if="daemon.follow"
+        class="mode-toggle mono"
+        data-testid="follow-toggle"
+        :class="{ on: followActive }"
+        :disabled="!hasFollowTarget"
+        :aria-pressed="followActive"
+        :title="followTitle"
+        @click="daemon.toggleFollow()"
+      >
+        <span class="dot" aria-hidden="true"></span>{{ followLabel }}
+      </button>
     </div>
 
-    <p v-if="errorLine" class="error-line mono" data-testid="header-error" :title="errorLine">
-      {{ errorLine }}
-    </p>
+    <div class="header-pinned">
+      <button
+        class="finder-btn"
+        data-testid="finder-open"
+        :disabled="daemon.activeRepoId === null"
+        :title="
+          daemon.activeRepoId === null
+            ? 'Open a repository to find files'
+            : 'Find a file in the active repository'
+        "
+        @click="ui.openOverlay('finder')"
+      >
+        Find file <kbd class="mono">Ctrl P</kbd>
+      </button>
 
-    <div class="spacer"></div>
-
-    <button
-      class="mode-toggle mono"
-      data-testid="auto-toggle"
-      :class="{ on: ui.autoModeEnabled }"
-      :aria-pressed="ui.autoModeEnabled"
-      :title="autoTitle"
-      @click="ui.toggleAutoMode()"
-    >
-      <span class="dot" aria-hidden="true"></span>{{ ui.autoModeEnabled ? 'auto on' : 'auto off' }}
-    </button>
-
-    <button
-      class="mode-toggle mono"
-      data-testid="syntax-toggle"
-      :class="{ on: ui.diffSyntaxEnabled }"
-      :aria-pressed="ui.diffSyntaxEnabled"
-      :title="syntaxTitle"
-      @click="ui.toggleDiffSyntax()"
-    >
-      <span class="dot" aria-hidden="true"></span>{{ ui.diffSyntaxEnabled ? 'syntax on' : 'syntax off' }}
-    </button>
-
-    <button
-      class="mode-toggle mono"
-      data-testid="split-toggle"
-      :class="{ on: splitOn }"
-      :aria-pressed="splitOn"
-      :title="modeTitle"
-      @click="ui.toggleDiffMode()"
-    >
-      <span class="dot" aria-hidden="true"></span>{{ splitOn ? 'split' : 'unified' }}
-    </button>
-
-    <button
-      v-if="daemon.follow"
-      class="mode-toggle mono"
-      data-testid="follow-toggle"
-      :class="{ on: followActive }"
-      :disabled="!hasFollowTarget"
-      :aria-pressed="followActive"
-      :title="followTitle"
-      @click="daemon.toggleFollow()"
-    >
-      <span class="dot" aria-hidden="true"></span>{{ followLabel }}
-    </button>
-
-    <button
-      class="finder-btn"
-      data-testid="finder-open"
-      :disabled="daemon.activeRepoId === null"
-      :title="
-        daemon.activeRepoId === null
-          ? 'Open a repository to find files'
-          : 'Find a file in the active repository'
-      "
-      @click="ui.openOverlay('finder')"
-    >
-      Find file <kbd class="mono">Ctrl P</kbd>
-    </button>
-
-    <ThemeSwitcher />
+      <ThemeSwitcher />
+    </div>
   </header>
 </template>
 
 <style scoped>
+/* Three columns: identity (left) | toggles (middle) | pinned (right).
+   Only the toggles reflow — as the header narrows they wrap to more lines
+   WITHIN their own column, growing the header taller, while identity stays
+   top-left and find-file + theme stay pinned top-right (align-items:start
+   keeps the side columns on the top row when the toggles wrap). Nothing is
+   hidden or clipped. */
 .app-header {
   grid-area: header;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0 1rem;
-  height: 3rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 1rem;
+  padding: 0.75rem 1rem;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+}
+
+.header-identity,
+.header-toggles,
+.header-pinned {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.header-identity {
+  gap: 1rem;
+}
+
+/* The one reflowing group: toggles wrap within their column. */
+.header-toggles {
+  flex-wrap: wrap;
+  gap: 0.375rem 0.625rem;
+}
+
+.header-pinned {
+  gap: 1rem;
+  justify-self: end;
 }
 
 .brand {
@@ -262,10 +297,6 @@ const modeTitle = computed(() =>
   min-width: 0;
 }
 
-.spacer {
-  flex: 1;
-}
-
 /* Shared style for the auto and follow policy toggles. */
 .mode-toggle {
   display: inline-flex;
@@ -317,14 +348,5 @@ const modeTitle = computed(() =>
   padding: 0 0.25rem;
   border: 1px solid var(--border);
   border-radius: 3px;
-}
-
-/* Landscape-only: a portrait monitor is narrow by shape, not by space —
-   it keeps the full header (finder + follow). */
-@media (max-width: 56rem) and (orientation: landscape) {
-  .finder-btn,
-  .mode-toggle {
-    display: none;
-  }
 }
 </style>
