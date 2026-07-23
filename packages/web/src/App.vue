@@ -204,11 +204,11 @@ onUnmounted(() => {
   background: var(--bg);
 }
 
-/* Portrait/vertical monitors: the rail becomes a full-width tab band
-   between the header and the workspace. Fires on window SHAPE (see
-   useMediaQuery.PORTRAIT_QUERY) — landscape renders the grid above,
-   byte for byte. */
-@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+/* Narrow / portrait: the rail becomes a full-width tab band between the
+   header and the workspace. Fires on window SHAPE OR width ≤ 1080px (see
+   useMediaQuery.PORTRAIT_QUERY) — a wide landscape window keeps the rail
+   on the left. */
+@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
   .shell {
     grid-template:
       'header' auto

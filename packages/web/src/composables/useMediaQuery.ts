@@ -11,11 +11,15 @@ import { getCurrentInstance, onBeforeUnmount, ref } from 'vue';
 import type { Ref } from 'vue';
 
 /**
- * The ONE portrait trigger, mirrored by every portrait CSS block: it
- * fires on window SHAPE, not width, so a 1080px-wide portrait monitor
- * (above the narrow-width breakpoints) still gets the rotated layout.
+ * The ONE "stacked layout" trigger, mirrored by every portrait CSS block:
+ * the rail becomes a top tab band and every side-by-side view (list |
+ * diff) rotates to top/bottom. It fires on window SHAPE (portrait or
+ * squarer than 1:1) OR on width — at 1080px wide or less, nothing fits
+ * side by side, so a narrow LANDSCAPE window stacks too, not just a
+ * portrait monitor. (Name kept `PORTRAIT_QUERY` for its call sites.)
  */
-export const PORTRAIT_QUERY = '(orientation: portrait), (max-aspect-ratio: 1/1)';
+export const PORTRAIT_QUERY =
+  '(orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px)';
 
 export function useMediaQuery(query: string): Ref<boolean> {
   const matches = ref(false);

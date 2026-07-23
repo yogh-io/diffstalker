@@ -513,7 +513,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
 
 /* Portrait: rotate column → row. Full-width detail below a bounded
    commit band, with a draggable row resizer (portrait-only element). */
-@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
   .history {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(6rem, var(--history-top, 28vh)) 6px minmax(0, 1fr);

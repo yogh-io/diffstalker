@@ -168,7 +168,7 @@ const ICON_PATHS: Record<ViewName, string> = {
 }
 
 /* Portrait: a horizontal tab band, full width under the header. */
-@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
   .rail {
     grid-area: railband;
     flex-direction: row;
@@ -214,7 +214,7 @@ body > .toolbar-slot {
   display: none;
 }
 
-@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
   /* Toolbar region for the active view's lifted controls: a flex
      SIBLING of the tabs in the same row (never absolutely positioned,
      so it cannot overlap them). margin-left:auto pushes it to the

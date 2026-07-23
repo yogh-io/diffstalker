@@ -767,7 +767,7 @@ const rootStyle = computed(() => ({
 /* Portrait: rotate column → row. Full-width diffs below a bounded file
    band; the same resizer drags the row split (after the 44rem block so
    a narrow portrait window gets this layout, resizer included). */
-@media (orientation: portrait), (max-aspect-ratio: 1/1) {
+@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
   .changes {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(6rem, var(--changes-top, 30vh)) 6px minmax(0, 1fr);

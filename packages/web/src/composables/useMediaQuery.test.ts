@@ -86,6 +86,8 @@ describe('useMediaQuery', () => {
     const portrait: Ref<boolean> = usePortrait();
     expect(portrait.value).toBe(false);
     expect(spy).toHaveBeenCalledWith(PORTRAIT_QUERY);
-    expect(PORTRAIT_QUERY).toBe('(orientation: portrait), (max-aspect-ratio: 1/1)');
+    expect(PORTRAIT_QUERY).toBe(
+      '(orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px)'
+    );
   });
 });
