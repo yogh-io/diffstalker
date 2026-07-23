@@ -516,7 +516,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
 @media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
   .history {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(6rem, var(--history-top, 28vh)) 6px minmax(0, 1fr);
+    grid-template-rows: minmax(6rem, var(--history-top, 28vh)) 8px minmax(0, 1fr);
   }
 
   .commits-col {
@@ -524,17 +524,41 @@ function selectAndFocusPayload(commit: CommitInfo): void {
     border-bottom: 1px solid var(--border);
   }
 
+  /* A visible divider bar (not a bare drag gap) so the two stacked panes
+     read as clearly separate, with a centered grab handle signalling it
+     drags. */
   .row-resizer {
-    height: 6px;
+    height: 8px;
     cursor: row-resize;
-    background: transparent;
+    background: var(--surface-raised);
+    box-shadow:
+      inset 0 1px 0 var(--border),
+      inset 0 -1px 0 var(--border);
     touch-action: none;
+    position: relative;
+  }
+
+  .row-resizer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 2.25rem;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--text-dim);
+    opacity: 0.5;
   }
 
   .row-resizer:hover,
   .row-resizer:focus-visible {
     background: var(--selection);
-    opacity: 0.5;
+  }
+
+  .row-resizer:hover::after,
+  .row-resizer:focus-visible::after {
+    background: var(--surface);
+    opacity: 0.9;
   }
 }
 </style>

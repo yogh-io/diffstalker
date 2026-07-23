@@ -770,7 +770,7 @@ const rootStyle = computed(() => ({
 @media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
   .changes {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(6rem, var(--changes-top, 30vh)) 6px minmax(0, 1fr);
+    grid-template-rows: minmax(6rem, var(--changes-top, 30vh)) 8px minmax(0, 1fr);
   }
 
   .files-col {
@@ -778,11 +778,41 @@ const rootStyle = computed(() => ({
     border-bottom: 1px solid var(--border);
   }
 
+  /* A visible divider bar (not a bare drag gap) so the file band and the
+     diffs read as clearly separate, with a centered grab handle. */
   .resizer {
     display: block;
     width: auto;
-    height: 6px;
+    height: 8px;
     cursor: row-resize;
+    background: var(--surface-raised);
+    box-shadow:
+      inset 0 1px 0 var(--border),
+      inset 0 -1px 0 var(--border);
+    position: relative;
+  }
+
+  .resizer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    margin: auto;
+    width: 2.25rem;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--text-dim);
+    opacity: 0.5;
+  }
+
+  .resizer:hover,
+  .resizer:focus-visible {
+    background: var(--selection);
+  }
+
+  .resizer:hover::after,
+  .resizer:focus-visible::after {
+    background: var(--surface);
+    opacity: 0.9;
   }
 }
 </style>
