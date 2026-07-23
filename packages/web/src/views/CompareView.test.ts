@@ -325,6 +325,22 @@ describe('file tree', () => {
     expect(repo.compare.selection).toMatchObject({ type: 'file', index: 2 });
   });
 
+  test('scrolling onto a file (DiffStack active-file spy) selects it — same as a click', async () => {
+    const { wrapper, repo } = mountView();
+    const spy = vi.spyOn(repo, 'selectCompareFile');
+
+    // The stack keys sections by path and emits that key from its
+    // scroll-spy; feeding it the path drives the SAME selection (and thus
+    // the same `.selected` focus indicator) a click would.
+    const path = wrapper.findAll('.file-row')[2].attributes('title');
+    wrapper.findComponent(DiffStack).vm.$emit('active-file', path);
+    await wrapper.vm.$nextTick();
+
+    expect(spy).toHaveBeenCalledWith(2);
+    expect(repo.compare.selection).toMatchObject({ type: 'file', index: 2 });
+    expect(wrapper.findAll('.file-row')[2].classes()).toContain('selected');
+  });
+
   test('keyboard: arrows move the file selection in tree order, clamped', async () => {
     const { wrapper, repo } = mountView();
 

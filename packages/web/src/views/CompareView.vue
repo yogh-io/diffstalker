@@ -21,7 +21,7 @@
  * promise.
  */
 
-import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
@@ -215,6 +215,50 @@ function moveFileSelection(delta: number): void {
   });
 }
 
+// --- Scroll-follow: the file band tracks the file the diffs are scrolled
+// onto, using the SAME selection the click path sets — so the focus
+// indicator is identical whether you click a row or scroll onto its diff
+// (mirrors ChangesView, which already does this). ---
+
+/** Suppress the band auto-scroll while the pointer is inside the list. */
+const pointerInList = ref(false);
+
+/**
+ * DiffStack scroll-spy: the diffs scrolled onto a new file. Select it via
+ * the store's plain setter — NOT selectFile (which would scroll the diffs
+ * and loop) — so it just records the selection, which drives the very same
+ * `.selected` highlight a click produces.
+ */
+function onActiveFile(key: string): void {
+  const index = files.value.findIndex((f) => f.path === key);
+  if (index !== -1) repo.selectCompareFile(index);
+}
+
+/**
+ * Nearest-edge scroll of the selected row into the file band — manual
+ * scrollTop math on the band, never scrollIntoView (which would scroll
+ * every ancestor).
+ */
+function scrollActiveRowIntoView(): void {
+  const scroller = filesEl.value;
+  const index = selectedFileIndex.value;
+  if (!scroller || index === null) return;
+  const row = scroller.querySelector<HTMLElement>(`.file-row[data-file-index="${index}"]`);
+  if (!row) return;
+  const outer = scroller.getBoundingClientRect();
+  const inner = row.getBoundingClientRect();
+  if (inner.top < outer.top) scroller.scrollTop += inner.top - outer.top;
+  else if (inner.bottom > outer.bottom) scroller.scrollTop += inner.bottom - outer.bottom;
+}
+
+watch(
+  () => selectedFileIndex.value,
+  () => {
+    if (pointerInList.value) return;
+    void nextTick(scrollActiveRowIntoView);
+  }
+);
+
 // --- Per-file diff sections (right, DiffStack) ---
 
 function toggleFileCollapsed(path: string): void {
@@ -381,6 +425,8 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
           role="listbox"
           aria-label="Changed files"
           data-testid="compare-files"
+          @pointerenter="pointerInList = true"
+          @pointerleave="pointerInList = false"
         >
           <template v-for="row in renderRows" :key="`${row.type}:${row.fullPath}`">
             <!-- role=presentation: only file rows are listbox options.
@@ -477,6 +523,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
           :tabindex="isPortrait ? 0 : undefined"
           :role="isPortrait ? 'region' : undefined"
           :aria-label="isPortrait ? 'File diffs' : undefined"
+          @active-file="onActiveFile"
           @toggle-collapse="toggleFileCollapsed"
           @keydown="onPayloadKeydown"
         />
@@ -732,8 +779,11 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   background: var(--surface-raised);
 }
 
+/* The focus indicator — same whether you click a row or scroll its diff
+   into view. A selection-tinted row, clearly stronger than the
+   surface-raised hover, plus the accent bar and accent-colored name. */
 .file-row.selected {
-  background: var(--surface-raised);
+  background: color-mix(in srgb, var(--selection) 18%, var(--surface));
   border-left-color: var(--selection);
 }
 

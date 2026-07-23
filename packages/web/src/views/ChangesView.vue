@@ -595,8 +595,11 @@ const rootStyle = computed(() => ({
   background: var(--surface-raised);
 }
 
+/* The focus indicator — same whether you click a row or scroll its diff
+   into view. A selection-tinted row, clearly stronger than the
+   surface-raised hover, plus the accent bar and accent-colored name. */
 .file-row.selected {
-  background: var(--surface-raised);
+  background: color-mix(in srgb, var(--selection) 18%, var(--surface));
   border-left-color: var(--selection);
 }
 
