@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-23
+
 ### Added
 
 - **Journal view (web UI).** A new second view — a chronological, downward-only
@@ -22,6 +24,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconnect protocol so a client never sees a torn or interleaved log. Huge and
   binary files show a collapsed placeholder. Observation is guarded against
   torn reads during external `git checkout`/rebase so those never storm the log.
+- **Diff viewing modes (web UI).** Two global, persisted header toggles applied
+  to every diff surface (Changes, Journal, History, Compare) through the one
+  shared diff renderer: **syntax highlighting** (highlight.js-tokenized content
+  vs. plain text — language detected per file, theme-colored so it stays readable
+  over the add/del row tints, composing with the existing word-level
+  highlighting) and a **split / side-by-side view** (old on the left, new on the
+  right; deletions paired with additions row-for-row, long lines scrolling
+  horizontally).
+- **File staging in the web UI.** The Changes view gains a per-row stage (+) /
+  unstage (−) button — the web UI's first working-tree mutation. No commit,
+  discard, or hunk-staging; those stay in the terminal UI.
+- **Stacked diff surface (web UI).** Changes and Compare render every file's diff
+  in one continuous scroll with sticky per-file headers and per-file collapse;
+  the file list becomes a jump navigator into the stack.
+- **Broader syntax-highlighting coverage.** The Explorer file viewer and the diff
+  syntax mode now cover many more file types — Vue SFCs, Jenkinsfiles (Groovy),
+  Dockerfiles, PowerShell, HCL/Terraform, F#, Elixir, Clojure, and others —
+  instead of falling back to plain text.
+
+### Changed
+
+- **Responsive web layout.** The header reflows on narrow / portrait screens —
+  the repo identity and the find-file + theme controls stay put while the mode
+  toggles drop to their own full-width row — and at 1080px wide or less the
+  activity rail becomes a top tab band and every side-by-side view (list | diff)
+  stacks top-over-bottom, so nothing overflows on a vertical monitor. The app no
+  longer stretches past the viewport on a wide diff line.
+- **Journal polish.** Entries live-tick their relative time from the moment they
+  arrive, keep the file name visible on long paths (the directory ellipses, full
+  path on hover), and gain a copy-full-path button; the kind badge and the
+  "changed before the Journal started" (seeded) note explain themselves on hover.
+- The draggable divider between the two panes in every split view is now a
+  visible bar with a grab handle, so the file list and the diff / content read as
+  clearly separate. Ellipsized paths and labels throughout the UI gained hover
+  titles so the full text is always reachable.
 
 ## [0.6.0] - 2026-07-21
 
