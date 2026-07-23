@@ -190,16 +190,17 @@ const modeTitle = computed(() =>
 </template>
 
 <style scoped>
-/* Three columns: identity (left) | toggles (middle) | pinned (right).
-   Only the toggles reflow — as the header narrows they wrap to more lines
-   WITHIN their own column, growing the header taller, while identity stays
-   top-left and find-file + theme stay pinned top-right (align-items:start
-   keeps the side columns on the top row when the toggles wrap). Nothing is
-   hidden or clipped. */
+/* Wide: three columns on one row — identity (left) | toggles (middle) |
+   pinned find-file + theme (right). When the header no longer has ample
+   room for the toggles inline (≤ 80rem — a 1080px portrait screen falls
+   here), the WHOLE toggles group drops to its own full-width row beneath
+   identity + pinned, rather than cramming into the narrow middle column.
+   It never wraps inside a squeezed middle track. */
 .app-header {
   grid-area: header;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'identity toggles pinned';
   align-items: start;
   column-gap: 1rem;
   padding: 0.75rem 1rem;
@@ -216,18 +217,31 @@ const modeTitle = computed(() =>
 }
 
 .header-identity {
+  grid-area: identity;
   gap: 1rem;
 }
 
-/* The one reflowing group: toggles wrap within their column. */
+/* Wraps only within its OWN full-width row when even that is too narrow. */
 .header-toggles {
+  grid-area: toggles;
   flex-wrap: wrap;
   gap: 0.375rem 0.625rem;
 }
 
 .header-pinned {
+  grid-area: pinned;
   gap: 1rem;
   justify-self: end;
+}
+
+@media (max-width: 80rem) {
+  .app-header {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      'identity pinned'
+      'toggles toggles';
+    row-gap: 0.5rem;
+  }
 }
 
 .brand {
