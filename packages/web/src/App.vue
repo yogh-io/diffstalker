@@ -190,11 +190,15 @@ onUnmounted(() => {
      past the viewport, clipping the header's right-side controls. Flooring
      at 0 keeps the layout at viewport width; wide content scrolls inside
      its own container (.diff-scroll / the workspace) instead. */
+  /* The rail is a full-width tab band between the header and the
+     workspace at EVERY width — the nav never reflows to a left sidebar,
+     so it never steals horizontal room from the diff. */
   grid-template:
-    'header header' auto
-    'rail main' 1fr
-    'status status' auto
-    / auto minmax(0, 1fr);
+    'header' auto
+    'railband' auto
+    'main' 1fr
+    'status' auto
+    / minmax(0, 1fr);
 }
 
 .workspace {
@@ -202,20 +206,5 @@ onUnmounted(() => {
   min-width: 0;
   overflow: auto;
   background: var(--bg);
-}
-
-/* Narrow / portrait: the rail becomes a full-width tab band between the
-   header and the workspace. Fires on window SHAPE OR width ≤ 1080px (see
-   useMediaQuery.PORTRAIT_QUERY) — a wide landscape window keeps the rail
-   on the left. */
-@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
-  .shell {
-    grid-template:
-      'header' auto
-      'railband' auto
-      'main' 1fr
-      'status' auto
-      / minmax(0, 1fr);
-  }
 }
 </style>

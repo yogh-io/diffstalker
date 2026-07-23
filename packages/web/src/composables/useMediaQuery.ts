@@ -11,15 +11,20 @@ import { getCurrentInstance, onBeforeUnmount, ref } from 'vue';
 import type { Ref } from 'vue';
 
 /**
- * The ONE "stacked layout" trigger, mirrored by every portrait CSS block:
- * the rail becomes a top tab band and every side-by-side view (list |
- * diff) rotates to top/bottom. It fires on window SHAPE (portrait or
- * squarer than 1:1) OR on width — at 1080px wide or less, nothing fits
- * side by side, so a narrow LANDSCAPE window stacks too, not just a
- * portrait monitor. (Name kept `PORTRAIT_QUERY` for its call sites.)
+ * The "stacked view" trigger, mirrored by every portrait CSS block: every
+ * side-by-side view (file list | diff) rotates to top/bottom, and the
+ * active view lifts its toolbar into the tab band. It fires on window
+ * SHAPE (portrait or squarer than 1:1) OR on width — at 1400px wide or
+ * less, list-beside-diff is too cramped, so a narrow LANDSCAPE window
+ * stacks too, not just a portrait monitor. (Name kept `PORTRAIT_QUERY`
+ * for its call sites.)
+ *
+ * This is ONLY the view-split trigger now. The nav rail is a top tab band
+ * at every width (see ActivityRail.vue / App.vue) — it no longer reflows,
+ * so it never eats horizontal room from the diff.
  */
 export const PORTRAIT_QUERY =
-  '(orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px)';
+  '(orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px)';
 
 export function useMediaQuery(query: string): Ref<boolean> {
   const matches = ref(false);

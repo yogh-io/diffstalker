@@ -882,7 +882,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
    jump-index over the full-width stacked diffs; base picker + commits
    toggle live in the tab band (Teleport — they keep this component's
    scope, so the in-band restyles below reach them). */
-@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
+@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px) {
   .pr-body {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(4rem, var(--compare-top, 22vh)) 8px minmax(0, 1fr);

@@ -626,7 +626,7 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
    lives in the tab band's slot (Teleport), freeing a row here. The
    teleported toolbar keeps this component's scope, so the in-band
    restyle below still applies to it. */
-@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
+@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px) {
   .explorer {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(6rem, var(--explorer-top, 34vh)) 8px minmax(0, 1fr);

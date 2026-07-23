@@ -103,15 +103,22 @@ const ICON_PATHS: Record<ViewName, string> = {
 </template>
 
 <style scoped>
+/* The rail is a full-width horizontal tab band under the header at every
+   width — one layout, no reflow to a left sidebar (which would eat
+   horizontal room from the diff). */
 .rail {
-  grid-area: rail;
+  grid-area: railband;
   display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  width: 10.5rem;
-  padding: 0.5rem 0;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  width: auto;
+  min-height: 2.75rem;
+  padding: 0.25rem 0.75rem;
   background: var(--surface);
-  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 
 .rail-item {
@@ -119,7 +126,7 @@ const ICON_PATHS: Record<ViewName, string> = {
   display: flex;
   align-items: center;
   gap: 0.625rem;
-  padding: 0.5rem 1rem;
+  padding: 0.375rem 0.75rem;
   color: var(--text-dim);
   font-size: var(--fs-base);
   text-align: left;
@@ -133,14 +140,15 @@ const ICON_PATHS: Record<ViewName, string> = {
   color: var(--text);
 }
 
-/* The signature: the active view's indicator is the theme's add-green. */
+/* The signature: the active view's indicator is the theme's add-green —
+   a bar under the active tab in the horizontal band. */
 .rail-item.active::before {
   content: '';
   position: absolute;
-  left: 0;
-  top: 0.375rem;
-  bottom: 0.375rem;
-  width: 2px;
+  left: 0.375rem;
+  right: 0.375rem;
+  bottom: 0;
+  height: 2px;
   background: var(--accent);
 }
 
@@ -152,12 +160,9 @@ const ICON_PATHS: Record<ViewName, string> = {
   white-space: nowrap;
 }
 
+/* Cramped band: drop the labels to icon-only tabs so all five fit
+   without wrapping (the toolbar still shares the row on toolbar views). */
 @media (max-width: 56rem) {
-  .rail {
-    width: 3rem;
-    align-items: center;
-  }
-
   .rail-item {
     padding: 0.5rem;
   }
@@ -165,38 +170,6 @@ const ICON_PATHS: Record<ViewName, string> = {
   .rail-label {
     display: none;
   }
-}
-
-/* Portrait: a horizontal tab band, full width under the header. */
-@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
-  .rail {
-    grid-area: railband;
-    flex-direction: row;
-    align-items: center;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-    width: auto;
-    min-height: 2.75rem;
-    padding: 0.25rem 0.75rem;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .rail-item {
-    padding: 0.375rem 0.75rem;
-  }
-
-  /* The add-green indicator moves under the active tab. */
-  .rail-item.active::before {
-    top: auto;
-    bottom: 0;
-    left: 0.375rem;
-    right: 0.375rem;
-    width: auto;
-    height: 2px;
-  }
-
 }
 </style>
 
@@ -214,7 +187,7 @@ body > .toolbar-slot {
   display: none;
 }
 
-@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px) {
+@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px) {
   /* Toolbar region for the active view's lifted controls: a flex
      SIBLING of the tabs in the same row (never absolutely positioned,
      so it cannot overlap them). margin-left:auto pushes it to the

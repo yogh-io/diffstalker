@@ -87,7 +87,7 @@ describe('useMediaQuery', () => {
     expect(portrait.value).toBe(false);
     expect(spy).toHaveBeenCalledWith(PORTRAIT_QUERY);
     expect(PORTRAIT_QUERY).toBe(
-      '(orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1080px)'
+      '(orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px)'
     );
   });
 });
