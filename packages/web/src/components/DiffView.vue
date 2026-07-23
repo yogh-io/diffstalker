@@ -361,6 +361,16 @@ onBeforeUnmount(() => {
   min-width: 100%;
 }
 
+/* Split mode: the sections must NOT shrink-wrap to content. max-content
+   would size them to the SUM of both sides' longest lines, and each "50%"
+   pane would then be half of that inflated width (off-centre divider).
+   Pin them to a definite 100% of the scroll container so the panes are a
+   true 50% of the visible width; each side scrolls its own long lines. */
+.diff-scroll.split .file-section,
+.diff-scroll.split .hunk {
+  width: 100%;
+}
+
 .file-section + .file-section {
   margin-top: 0.75rem;
 }
