@@ -2,8 +2,10 @@
 /**
  * Changes view: the working-tree viewer as a GitHub-style stacked diff
  * surface — files | ONE DiffStack rendering every file's diff, with a
- * draggable split between them. READ-ONLY: no staging, no discard, no
- * commit — the web UI only watches.
+ * draggable split between them. The one write affordance is a per-row
+ * stage (+) / unstage (−) button (repo.stageFile / unstageFile); there
+ * is still no discard, no commit, no hunk-staging — those stay in the
+ * terminal UI.
  *
  * Files column — a JUMP NAVIGATOR, not a detail switcher:
  * shared.status.files grouped by core's fileCategories into Modified /
@@ -431,6 +433,21 @@ const rootStyle = computed(() => ({
             @keydown.space.prevent="jumpToFile(file)"
             @keydown="onRowBandKeydown"
           >
+            <!-- Stage (+) an unstaged file, unstage (−) a staged one. At
+                 the row START so it stays visible even when a long path
+                 makes the row wider than the pane. Out of the
+                 roving-tabindex band (tabindex -1) so it doesn't disturb
+                 j/k row nav; @click.stop keeps the row's jump from firing. -->
+            <button
+              class="stage-btn"
+              tabindex="-1"
+              :data-testid="file.staged ? 'unstage-file' : 'stage-file'"
+              :title="file.staged ? 'Unstage this file' : 'Stage this file'"
+              :aria-label="`${file.staged ? 'Unstage' : 'Stage'} ${file.path}`"
+              @click.stop="file.staged ? repo.unstageFile(file.path) : repo.stageFile(file.path)"
+            >
+              {{ file.staged ? '−' : '+' }}
+            </button>
             <span class="letter" :data-status="file.status">{{ statusLetter(file.status) }}</span>
             <span class="path"
               ><span class="dir">{{ splitPath(file.path).dir }}</span
@@ -680,6 +697,29 @@ const rootStyle = computed(() => ({
 
 .file-row .hunks + .stats {
   margin-left: 0;
+}
+
+/* Stage (+) / unstage (−) affordance at the row's end. Always shown but
+   dim, brightening on hover, so it reads as an action without competing
+   with the file name. */
+.stage-btn {
+  flex: none;
+  align-self: center;
+  width: 1.375rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: var(--fs-content);
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+.stage-btn:hover {
+  color: var(--text);
+  border-color: var(--selection);
+  background: var(--surface-raised);
 }
 
 /* --- Resizer --- */

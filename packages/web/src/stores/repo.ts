@@ -1,9 +1,11 @@
 /**
  * useRepoStore: the per-active-repo Pinia store — the browser port of the
- * CLI's RepoSession (packages/cli/src/daemon/RepoSession.ts), READ-ONLY:
- * the web UI is a viewer, so this store runs no git mutations. The only
- * non-GET requests it makes are POST /repos (attach) and DELETE /repos/:id
- * (release) — refcounting, not git operations. The release fires on a
+ * CLI's RepoSession (packages/cli/src/daemon/RepoSession.ts). Nearly a
+ * viewer: the only git mutations it makes are file-level stage / unstage
+ * (stageFile / unstageFile → POST /stage, /unstage); no commit, discard,
+ * hunk-staging, or remote/branch ops. Its other non-GET requests are
+ * POST /repos (attach) and DELETE /repos/:id (release) — refcounting, not
+ * git operations. The release fires on a
  * repo switch, on dispose(), and — via releaseOnUnload(), wired to
  * pagehide in App.vue — when the page unloads: without that unload
  * release a reload/close would leak the ref and the daemon would never
@@ -583,6 +585,43 @@ export const useRepoStore = defineStore('repo', () => {
   /** Surface an error in the UI; cleared by the next applied state. */
   function setError(message: string): void {
     shared.value = { ...shared.value, error: message };
+  }
+
+  /**
+   * Stage or unstage one file by path — the ONLY working-tree mutations
+   * the web UI makes. The daemon does the git op and broadcasts the fresh
+   * status over the SSE stream (applyWireState's single sink), which is
+   * how the view updates — we deliberately do NOT apply the POST's own
+   * {state} envelope: a slow response could land AFTER a newer
+   * state-change (an interleaved live edit) and regress the view, and
+   * applyWireState has no ordering guard. Awaiting the POST only lets a
+   * git refusal surface in shared.error; a connection loss enters the
+   * reconnect state; a repo switch mid-flight drops the error so it can't
+   * touch the new repo.
+   */
+  async function setStaged(path: string, staged: boolean): Promise<void> {
+    const id = repoId.value;
+    if (id === null) return;
+    const gen = generation;
+    try {
+      if (staged) await client.stage(id, path);
+      else await client.unstage(id, path);
+    } catch (err) {
+      if (gen !== generation) return;
+      if (isConnectionError(err)) {
+        handleConnectionLoss();
+        return;
+      }
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  function stageFile(path: string): Promise<void> {
+    return setStaged(path, true);
+  }
+
+  function unstageFile(path: string): Promise<void> {
+    return setStaged(path, false);
   }
 
   /**
@@ -1403,6 +1442,9 @@ export const useRepoStore = defineStore('repo', () => {
     releaseOnUnload,
     refresh,
     setError,
+    // working-tree mutations (file-level stage/unstage only)
+    stageFile,
+    unstageFile,
     // selection
     selectFile,
     // working-diff cache

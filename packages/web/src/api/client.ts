@@ -1,11 +1,12 @@
 /**
- * DiffstalkerClient (browser): a typed READ-ONLY client for the
- * diffstalkerd endpoints the web viewer uses, mirroring
- * @diffstalker/client's method surface over the browser transport
- * (fetch + EventSource, same-origin relative URLs). The web UI is a
- * viewer: the only non-GET calls are opening a repo (POST /repos) and
- * releasing it (DELETE /repos/:id) — attach/refcount, not git
- * mutations.
+ * DiffstalkerClient (browser): a typed client for the diffstalkerd
+ * endpoints the web UI uses, mirroring @diffstalker/client's method
+ * surface over the browser transport (fetch + EventSource, same-origin
+ * relative URLs). The web UI is a near-viewer: besides opening a repo
+ * (POST /repos) and releasing it (DELETE /repos/:id), the only git
+ * mutations it makes are file-level stage / unstage (POST /stage,
+ * /unstage). No commit, discard, hunk-staging, or remote/branch ops —
+ * those stay in the terminal UI.
  *
  * Wire types are reused TYPE-ONLY from @diffstalker/client and core DTO
  * types TYPE-ONLY from @diffstalker/core — both erase at build, so no
@@ -128,6 +129,21 @@ export class DiffstalkerClient {
       'GET',
       this.repoPath(id, '/diff') + toQuery({ path: opts.path, staged: opts.staged })
     );
+  }
+
+  /**
+   * Stage / unstage one file by path — the ONLY working-tree mutations
+   * the web UI makes. The daemon resolves the entry (staged side inferred
+   * from the endpoint) and returns the fresh shared state, which is also
+   * broadcast over SSE. A refused/failed mutation rejects via DaemonError
+   * with the daemon's {error} message, like every other call.
+   */
+  stage(id: string, path: string): Promise<{ state: WireSharedState }> {
+    return request('POST', this.repoPath(id, '/stage'), { path });
+  }
+
+  unstage(id: string, path: string): Promise<{ state: WireSharedState }> {
+    return request('POST', this.repoPath(id, '/unstage'), { path });
   }
 
   // --- History / compare ---

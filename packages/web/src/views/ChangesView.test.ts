@@ -597,15 +597,31 @@ describe('resizable split', () => {
   });
 });
 
-describe('viewer stance (read-only)', () => {
-  test('rows and section headers carry NO stage/unstage/discard controls', () => {
+describe('write stance (file-level stage/unstage only)', () => {
+  test('each row carries a stage/unstage button; still no discard / bulk / commit controls', () => {
     const { wrapper } = mountView();
 
-    for (const id of ['stage-file', 'unstage-file', 'discard-file', 'stage-all', 'unstage-all']) {
+    // Unstaged rows offer stage (+), the staged row offers unstage (−).
+    expect(wrapper.findAll('[data-testid="stage-file"]').length).toBeGreaterThan(0);
+    expect(wrapper.find('[data-testid="unstage-file"]').exists()).toBe(true);
+    // But nothing beyond file-level stage/unstage lives here.
+    for (const id of ['discard-file', 'stage-all', 'unstage-all']) {
       expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(false);
     }
-    // Rows contain no buttons at all — jumping is the only affordance.
-    expect(wrapper.find('[data-testid="file-list"]').findAll('button')).toHaveLength(0);
+  });
+
+  test('clicking a stage button calls stageFile; the staged row calls unstageFile', async () => {
+    const { wrapper, repo } = mountView();
+    const stageSpy = vi.spyOn(repo, 'stageFile').mockResolvedValue();
+    const unstageSpy = vi.spyOn(repo, 'unstageFile').mockResolvedValue();
+
+    // First unstaged row is main.ts (Modified section, first file).
+    await wrapper.find('[data-testid="stage-file"]').trigger('click');
+    expect(stageSpy).toHaveBeenCalledWith('src/app/main.ts');
+
+    // The Staged section's row unstages the same path (partially staged).
+    await wrapper.find('[data-testid="unstage-file"]').trigger('click');
+    expect(unstageSpy).toHaveBeenCalledWith('src/app/main.ts');
   });
 
   test('there is NO commit column or commit controls', () => {

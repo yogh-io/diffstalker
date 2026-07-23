@@ -221,12 +221,12 @@ describe('explorer', () => {
 });
 
 describe('read-only surface', () => {
-  test('the client exposes NO git-mutating methods', () => {
-    // The viewer stance, asserted structurally: none of the removed
-    // mutation methods exist on the client anymore.
+  test('the client exposes file-level stage/unstage but NO other git mutations', () => {
+    // The near-viewer stance, asserted structurally: file-level
+    // stage/unstage exist; every other mutation method does not.
+    expect(typeof (client as unknown as Record<string, unknown>).stage).toBe('function');
+    expect(typeof (client as unknown as Record<string, unknown>).unstage).toBe('function');
     const forbidden = [
-      'stage',
-      'unstage',
       'stageAll',
       'unstageAll',
       'discard',

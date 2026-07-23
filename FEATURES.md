@@ -657,9 +657,10 @@ When enabled (`a` toggle):
 (run `diffstalkerd --port N`, open `http://localhost:N` — same-origin, since the
 daemon has no CORS and a browser can't reach the unix socket). It is a pure daemon
 client over the same REST + SSE, laid out for a real screen (persistent panes
-instead of tab-switching). The web UI is a **read-only viewer**: it runs no git
-mutations — no staging, committing, discarding, or remote/branch operations
-(those live in the terminal UI). Its only non-GET calls are opening a repo
+instead of tab-switching). The web UI is **nearly a viewer**: the only git
+mutation it makes is file-level **stage / unstage** (from the Changes list);
+there is no commit, discard, hunk-staging, or remote/branch operation (those
+live in the terminal UI). Its other non-GET calls are opening a repo
 (`POST /repos`) and releasing it (`DELETE /repos/:id`) — attach/refcount, not
 git operations.
 
@@ -668,7 +669,9 @@ git operations.
 - **Changes** — the working-tree viewer: a grouped file list (Modified /
   Untracked / Staged) with status letters, +/− stats, and hunk-count
   indicators, beside the selected file's diff. Word-level highlighting,
-  per-hunk edit times, line-number gutters. No staging or commit controls.
+  per-hunk edit times, line-number gutters. Each row has a stage (+) /
+  unstage (−) button at its start (the file moves between the Modified/
+  Untracked and Staged sections live); no commit, discard, or hunk-staging.
 - **Journal** — a chronological, downward-only log of every change as it
   happens, tracked **per hunk** (not per file): two edits to two different
   files land as two entries at the bottom even if those files also changed

@@ -1474,3 +1474,70 @@ describe('reconnect', () => {
     expect(store.repoId).toBe('r2');
   });
 });
+
+// --- Working-tree mutations (file-level stage / unstage) ---
+
+describe('stageFile / unstageFile', () => {
+  test('stageFile POSTs /stage with the path; the SSE state-change updates the view', async () => {
+    onRequest = (call) => {
+      if (call.method === 'POST' && call.url === '/repos/r1/stage') {
+        return { body: { state: wireState([]) } };
+      }
+      return undefined;
+    };
+    const { store, source } = await openStore([
+      { path: 'a.ts', status: 'modified', staged: false },
+    ]);
+
+    await store.stageFile('a.ts');
+    await flush();
+
+    const posts = fake.callsTo('/repos/r1/stage');
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toEqual({ path: 'a.ts' });
+    // The view updates from the daemon's SSE state-change (its single state
+    // source), NOT the POST body — so a slow response can't regress it.
+    expect(store.shared.status?.files[0].staged).toBe(false);
+    source.emit('state-change', wireState([{ path: 'a.ts', status: 'modified', staged: true }]));
+    await flush();
+    expect(store.shared.status?.files[0].staged).toBe(true);
+  });
+
+  test('unstageFile POSTs /unstage with the path', async () => {
+    onRequest = (call) => {
+      if (call.method === 'POST' && call.url === '/repos/r1/unstage') {
+        return { body: { state: wireState([]) } };
+      }
+      return undefined;
+    };
+    const { store } = await openStore([{ path: 'a.ts', status: 'modified', staged: true }]);
+
+    await store.unstageFile('a.ts');
+    await flush();
+
+    const posts = fake.callsTo('/repos/r1/unstage');
+    expect(posts).toHaveLength(1);
+    expect(posts[0].body).toEqual({ path: 'a.ts' });
+  });
+
+  test('a git error from the daemon surfaces in shared.error and never throws', async () => {
+    onRequest = (call) => {
+      if (call.method === 'POST' && call.url === '/repos/r1/stage') {
+        return { status: 500, body: { error: 'fatal: pathspec did not match any files' } };
+      }
+      return undefined;
+    };
+    const { store } = await openStore([{ path: 'a.ts', status: 'modified', staged: false }]);
+
+    await expect(store.stageFile('a.ts')).resolves.toBeUndefined();
+    await flush();
+    expect(store.shared.error).toContain('pathspec');
+  });
+
+  test('with no repo open, stageFile is a no-op (no request)', async () => {
+    const store = useRepoStore();
+    await store.stageFile('a.ts');
+    await flush();
+    expect(fake.callsTo('/repos/r1/stage')).toHaveLength(0);
+  });
+});
