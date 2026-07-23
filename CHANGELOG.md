@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-23
+
+### Changed
+
+- **Compare view — the active-file indicator follows your scroll.** As you scroll
+  the stacked diffs, the file list highlights whichever file you are on (and
+  nearest-edge-scrolls to keep that row in view), through the SAME mechanism a
+  click uses. That focus indicator is now prominent — a selection-tinted row,
+  clearly distinct from the hover state — in both the Compare and Changes views,
+  and the first file is selected on load so the indicator is present from the
+  start.
+
 ## [0.7.0] - 2026-07-23
 
 ### Added
