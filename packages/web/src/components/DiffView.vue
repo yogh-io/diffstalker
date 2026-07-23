@@ -14,10 +14,13 @@
  * Mode (the `mode` prop, a global toggle): 'unified' stacks the rows as
  * above; 'split' lays each hunk out side by side — old on the left, new
  * on the right — one visual row per del/add pair (utils/diffSplit), the
- * short side padded. The two columns are independent horizontal
- * scrollers rendering the same split rows at equal heights, so they stay
- * aligned and share the vertical scroll. splitRowCount is the single
- * source of truth for the row count, shared with DiffStack's height model.
+ * short side padded. Both sides render the same split rows at equal
+ * heights so they stay aligned; the sides size to their content (a 50/50
+ * fill when lines are short) and the whole body scrolls horizontally via
+ * the pane's one .diff-scroll — long lines are reachable there, and no
+ * per-side scrollbar means no extra height for the exact-body-height
+ * model. splitRowCount is the single source of truth for the row count,
+ * shared with DiffStack's height model.
  *
  * Virtualization: rows get `content-visibility: auto` with a
  * `contain-intrinsic-size` estimate, so off-screen rows skip layout and
@@ -107,9 +110,7 @@ const model = computed(() => buildDiffModel(props.diff));
  * boolean casting — so this is force-on OR auto, not a tri-state.)
  */
 const showHeaders = computed(
-  () =>
-    props.showFileHeaders ||
-    model.value.sections.filter((s) => s.filePath !== null).length > 1
+  () => props.showFileHeaders || model.value.sections.filter((s) => s.filePath !== null).length > 1
 );
 
 // Relative hunk times tick: one light 1s interval, only while the
@@ -192,11 +193,7 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
     :style="{ '--ln-w': `${model.lineNumWidth}ch` }"
   >
     <section v-for="s in model.sections" :key="s.key" class="file-section">
-      <div
-        v-if="showHeaders && s.filePath"
-        class="file-header"
-        data-testid="file-section-header"
-      >
+      <div v-if="showHeaders && s.filePath" class="file-header" data-testid="file-section-header">
         <span class="pin-x">{{ s.filePath }}</span>
       </div>
       <div v-for="(note, i) in s.notes" :key="i" class="file-note">
@@ -227,9 +224,7 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
             <span class="ln old">{{ row.oldLineNum ?? '' }}</span
             ><span class="ln new">{{ row.newLineNum ?? '' }}</span
             ><span class="marker">{{ marker(row) }}</span
-            ><span class="content"
-              ><DiffLineContent :row="row" :pieces="pieces(row, s)"
-            /></span>
+            ><span class="content"><DiffLineContent :row="row" :pieces="pieces(row, s)" /></span>
           </div>
         </template>
 
@@ -248,10 +243,7 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
               <span class="ln">{{ sr.left?.oldLineNum ?? '' }}</span
               ><span class="marker">{{ sr.left && sr.left.kind === 'del' ? '-' : '' }}</span
               ><span class="content"
-                ><DiffLineContent
-                  v-if="sr.left"
-                  :row="sr.left"
-                  :pieces="sidePieces(sr.left, s)"
+                ><DiffLineContent v-if="sr.left" :row="sr.left" :pieces="sidePieces(sr.left, s)"
               /></span>
             </div>
           </div>
@@ -265,10 +257,7 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
               <span class="ln">{{ sr.right?.newLineNum ?? '' }}</span
               ><span class="marker">{{ sr.right && sr.right.kind === 'add' ? '+' : '' }}</span
               ><span class="content"
-                ><DiffLineContent
-                  v-if="sr.right"
-                  :row="sr.right"
-                  :pieces="sidePieces(sr.right, s)"
+                ><DiffLineContent v-if="sr.right" :row="sr.right" :pieces="sidePieces(sr.right, s)"
               /></span>
             </div>
           </div>
@@ -535,30 +524,26 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
 
 /* --- Split view (old | new, side by side) --- */
 
-/* Two independent horizontal scrollers. Both render the SAME split rows
-   in the same order at equal heights, so their lines stay aligned and
-   share the pane's vertical scroll; each side scrolls its own long
-   lines. A single grid can't do this — one side's wide line would push
-   the divider on every row. */
+/* Old on the left, new on the right, sharing one horizontal scroller (the
+   pane's own .diff-scroll, whose always-on track the exact-body-height
+   model already counts). The two sides size to their content — short
+   lines fall back to a 50/50 fill via the flex basis, long lines widen
+   their side so the whole body overflows .diff-scroll and scrolls there.
+   Crucially the sides do NOT clip: an earlier per-side overflow hid long
+   lines behind a scrollbar-less edge (unreachable). No per-side scrollbar
+   means no extra height, so the height model stays exact. */
 .split-body {
   display: flex;
   align-items: stretch;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
 }
 
 .split-side {
+  /* No min-width:0 and no own overflow: the side's min-content is its
+     widest line (white-space: pre), so content is never clipped — it
+     widens the side and scrolls via .diff-scroll instead. */
   flex: 1 1 50%;
-  min-width: 0;
-  overflow-x: auto;
-  /* Hide the horizontal scrollbar so it reserves NO layout height: a
-     per-side track would add height DiffStack's exact-body-height model
-     (which counts split rows × --row-h) doesn't know about, drifting its
-     scroll offsets. Long lines still scroll via trackpad / shift-wheel. */
-  scrollbar-width: none;
-}
-
-.split-side::-webkit-scrollbar {
-  display: none;
 }
 
 .split-side.left {
