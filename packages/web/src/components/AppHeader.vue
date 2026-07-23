@@ -98,7 +98,12 @@ const modeTitle = computed(() =>
 
     <RepoSwitcher />
 
-    <div v-if="branch" class="branch mono" data-testid="branch-info">
+    <div
+      v-if="branch"
+      class="branch mono"
+      data-testid="branch-info"
+      :title="branch.tracking ? `${branch.current} → ${branch.tracking}` : branch.current"
+    >
       <span class="branch-name">{{ branch.current }}</span>
       <template v-if="branch.tracking">
         <span class="arrow" aria-hidden="true">&rarr;</span>
@@ -108,7 +113,9 @@ const modeTitle = computed(() =>
       <span v-if="branch.behind > 0" class="count-del">&darr;{{ branch.behind }}</span>
     </div>
 
-    <p v-if="errorLine" class="error-line mono" data-testid="header-error">{{ errorLine }}</p>
+    <p v-if="errorLine" class="error-line mono" data-testid="header-error" :title="errorLine">
+      {{ errorLine }}
+    </p>
 
     <div class="spacer"></div>
 

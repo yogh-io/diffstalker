@@ -38,7 +38,7 @@ const { openByPath } = useRepoOpen();
           @click="openByPath(path)"
         >
           <span class="name mono">{{ basename(path) }}</span>
-          <span class="path mono">{{ path }}</span>
+          <span class="path mono" :title="path">{{ path }}</span>
         </button>
       </div>
     </div>

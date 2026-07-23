@@ -37,7 +37,12 @@ const deletions = computed(
       <span class="dot" aria-hidden="true"></span>{{ connectionLabel }}
     </span>
 
-    <span v-if="followTarget" class="follow-target" data-testid="follow-target">
+    <span
+      v-if="followTarget"
+      class="follow-target"
+      data-testid="follow-target"
+      :title="followTarget"
+    >
       follow: {{ followTarget }}
     </span>
 

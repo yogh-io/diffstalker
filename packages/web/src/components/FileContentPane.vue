@@ -54,7 +54,7 @@ const isEmptyFile = computed(
 <template>
   <div class="file-pane">
     <header v-if="path" class="pane-header mono" data-testid="file-header">
-      <span class="file-path">{{ path }}</span>
+      <span class="file-path" :title="path">{{ path }}</span>
       <span class="file-meta">
         <span v-if="highlighted?.language" class="file-lang">{{ highlighted.language }}</span>
         <span v-if="file" class="file-size">{{ formatBytes(file.size) }}</span>

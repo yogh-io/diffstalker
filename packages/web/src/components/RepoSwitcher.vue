@@ -86,7 +86,7 @@ onBeforeUnmount(() => {
         >
           <span class="name mono">{{ basename(repo.path) }}</span>
           <span v-if="repo.branch" class="branch mono">{{ repo.branch }}</span>
-          <span class="path mono">{{ repo.path }}</span>
+          <span class="path mono" :title="repo.path">{{ repo.path }}</span>
         </button>
       </div>
 
@@ -99,7 +99,7 @@ onBeforeUnmount(() => {
           @click="pickRecent(path)"
         >
           <span class="name mono">{{ basename(path) }}</span>
-          <span class="path mono">{{ path }}</span>
+          <span class="path mono" :title="path">{{ path }}</span>
         </button>
       </div>
     </div>

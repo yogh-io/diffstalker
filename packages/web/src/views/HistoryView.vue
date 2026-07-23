@@ -213,11 +213,13 @@ function selectAndFocusPayload(commit: CommitInfo): void {
           >
             <span class="row-top">
               <span class="hash mono">{{ commit.shortHash }}</span>
-              <span class="message">{{ commit.message }}</span>
+              <span class="message" :title="commit.message">{{ commit.message }}</span>
             </span>
             <span class="row-meta mono">
-              <span v-for="tag in refTags(commit)" :key="tag" class="ref-tag">{{ tag }}</span>
-              <span class="author">{{ commit.author }}</span>
+              <span v-for="tag in refTags(commit)" :key="tag" class="ref-tag" :title="tag">{{
+                tag
+              }}</span>
+              <span class="author" :title="commit.author">{{ commit.author }}</span>
               <span class="date">{{ relTime(commit) }}</span>
             </span>
           </div>
@@ -261,7 +263,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
       <template v-if="selected">
         <header class="detail-header">
           <div class="detail-top">
-            <span class="full-hash mono">{{ selected.hash }}</span>
+            <span class="full-hash mono" :title="selected.hash">{{ selected.hash }}</span>
           </div>
           <p class="detail-message">{{ selected.message }}</p>
           <p class="detail-meta mono">

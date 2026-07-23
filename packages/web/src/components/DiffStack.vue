@@ -983,7 +983,7 @@ defineExpose({
           {{ isCollapsed(item) ? '▸' : '▾' }}
         </button>
         <span class="letter mono" :data-status="item.status">{{ statusLetter(item.status) }}</span>
-        <span class="path mono">{{ item.path }}</span>
+        <span class="path mono" :title="item.path">{{ item.path }}</span>
         <span v-if="item.uncommitted" class="uncommitted-tag mono">[uncommitted]</span>
         <span class="stats mono">
           <span v-if="item.stats.insertions" class="count-add">+{{ item.stats.insertions }}</span>

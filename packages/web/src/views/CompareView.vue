@@ -363,7 +363,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
         <ul v-if="commitsOpen" class="commit-list mono" data-testid="compare-commits">
           <li v-for="commit in compareDiff.commits" :key="commit.hash" class="commit-row">
             <span class="hash">{{ commit.shortHash }}</span>
-            <span class="message">{{ commit.message }}</span>
+            <span class="message" :title="commit.message">{{ commit.message }}</span>
             <span class="meta"
               ><span class="author">{{ commit.author }}</span>
               <span class="date">{{ relTime(commit) }}</span></span
@@ -405,7 +405,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
               >
                 {{ collapsedDirs.has(row.fullPath) ? '▸' : '▾' }}
               </button>
-              <span class="dir-name">{{ row.name }}/</span>
+              <span class="dir-name" :title="row.fullPath">{{ row.name }}/</span>
             </div>
             <div
               v-else

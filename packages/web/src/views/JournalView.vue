@@ -699,7 +699,9 @@ onBeforeUnmount(() => {
           class="boundary mono"
           data-testid="journal-boundary"
         >
-          <span class="boundary-label">{{ boundaryText(row.entry) }}</span>
+          <span class="boundary-label" :title="boundaryText(row.entry)">{{
+            boundaryText(row.entry)
+          }}</span>
         </div>
 
         <!-- The reveal wrapper is an inert block until the row enters
