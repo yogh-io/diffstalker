@@ -42,7 +42,7 @@
  * section, so a multi-file diff highlights each file in its own language.
  */
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { DiffResult } from '@diffstalker/core/git/diff';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import { buildDiffModel } from '../utils/diffRows';
@@ -167,6 +167,44 @@ function marker(row: DiffContentRow): string {
 }
 
 const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length > 0));
+
+// --- Split view: keep the two 50% panes' horizontal scroll in lockstep ---
+
+/** The diff-scroll root, for the delegated scroll listener below. */
+const rootEl = ref<HTMLElement | null>(null);
+
+/**
+ * When one split pane is scrolled horizontally, mirror its scrollLeft onto
+ * every other split pane so both columns move together. Capture phase —
+ * scroll does not bubble — and a rAF-gated flag so the mirrored writes
+ * don't re-enter. A pane whose lines fit simply clamps to 0.
+ */
+let syncingSplitScroll = false;
+function onSplitScroll(event: Event): void {
+  const target = event.target;
+  if (
+    syncingSplitScroll ||
+    !(target instanceof HTMLElement) ||
+    !target.classList.contains('split-side')
+  ) {
+    return;
+  }
+  syncingSplitScroll = true;
+  const left = target.scrollLeft;
+  rootEl.value?.querySelectorAll<HTMLElement>('.split-side').forEach((side) => {
+    if (side !== target && side.scrollLeft !== left) side.scrollLeft = left;
+  });
+  requestAnimationFrame(() => {
+    syncingSplitScroll = false;
+  });
+}
+
+onMounted(() => {
+  rootEl.value?.addEventListener('scroll', onSplitScroll, true);
+});
+onBeforeUnmount(() => {
+  rootEl.value?.removeEventListener('scroll', onSplitScroll, true);
+});
 </script>
 
 <template>
@@ -187,8 +225,9 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
 
   <div
     v-else
+    ref="rootEl"
     class="diff-scroll mono"
-    :class="{ 'with-file-headers': showHeaders }"
+    :class="{ 'with-file-headers': showHeaders, split: isSplit }"
     data-testid="diff-view"
     :style="{ '--ln-w': `${model.lineNumWidth}ch` }"
   >
@@ -304,6 +343,13 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
   background: var(--bg);
   font-size: var(--fs-base);
   line-height: 1.55;
+}
+
+/* Split mode: the two 50% panes scroll horizontally on their own, so the
+   outer always-on track would just be an empty, non-functional scrollbar.
+   Hide it. (Unified keeps the track for the exact-height model.) */
+.diff-scroll.split {
+  overflow-x: hidden;
 }
 
 /* Sections span the full horizontal scroll width so header/hunk
@@ -524,26 +570,22 @@ const hasNotes = computed(() => model.value.sections.some((s) => s.notes.length 
 
 /* --- Split view (old | new, side by side) --- */
 
-/* Old on the left, new on the right, sharing one horizontal scroller (the
-   pane's own .diff-scroll, whose always-on track the exact-body-height
-   model already counts). The two sides size to their content — short
-   lines fall back to a 50/50 fill via the flex basis, long lines widen
-   their side so the whole body overflows .diff-scroll and scrolls there.
-   Crucially the sides do NOT clip: an earlier per-side overflow hid long
-   lines behind a scrollbar-less edge (unreachable). No per-side scrollbar
-   means no extra height, so the height model stays exact. */
+/* Old on the left, new on the right — each side is EXACTLY half the pane,
+   always, regardless of content (flex: 0 0 50%; min-width: 0 lets it hold
+   50% even when its lines are wider). A long line scrolls horizontally
+   WITHIN its 50% pane (overflow-x); the two panes' scroll positions are
+   kept in lockstep in script (onSplitScroll), so scrolling one scrolls
+   the other. */
 .split-body {
   display: flex;
   align-items: stretch;
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
 }
 
 .split-side {
-  /* No min-width:0 and no own overflow: the side's min-content is its
-     widest line (white-space: pre), so content is never clipped — it
-     widens the side and scrolls via .diff-scroll instead. */
-  flex: 1 1 50%;
+  flex: 0 0 50%;
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .split-side.left {

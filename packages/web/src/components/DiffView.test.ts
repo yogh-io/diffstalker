@@ -484,3 +484,44 @@ describe('split mode (the `mode` prop)', () => {
     expect(wrapper.find('.split-body [class*="hljs-"]').exists()).toBe(true);
   });
 });
+
+describe('split mode — 50/50 panes with synced horizontal scroll', () => {
+  const diff = makeDiff([
+    header('src/foo.ts'),
+    hunk('@@ -1,2 +1,2 @@'),
+    del('const aVeryLongOldIdentifierThatOverflowsTheHalfWidthPane = 1;', 1),
+    add('const aVeryLongNewIdentifierThatOverflowsTheHalfWidthPane = 2;', 1),
+    ctx('keep', 2, 2),
+  ]);
+
+  test('scrolling one pane mirrors scrollLeft onto the other (both directions)', () => {
+    // rAF resets the re-entry guard; run it synchronously so the two
+    // dispatches below each start with a clear guard.
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', mode: 'split' });
+    const sides = wrapper.findAll('.split-side');
+    expect(sides.length).toBeGreaterThanOrEqual(2);
+    const left = sides[0].element as HTMLElement;
+    const right = sides[1].element as HTMLElement;
+
+    // Scroll the left pane → the right follows.
+    left.scrollLeft = 64;
+    left.dispatchEvent(new Event('scroll'));
+    expect(right.scrollLeft).toBe(64);
+
+    // …and the reverse.
+    right.scrollLeft = 20;
+    right.dispatchEvent(new Event('scroll'));
+    expect(left.scrollLeft).toBe(20);
+
+    vi.unstubAllGlobals();
+  });
+
+  test('the outer horizontal track is hidden in split (panes scroll themselves)', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', mode: 'split' });
+    expect(wrapper.find('[data-testid="diff-view"]').classes()).toContain('split');
+  });
+});
