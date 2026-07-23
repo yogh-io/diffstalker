@@ -259,6 +259,20 @@ watch(
   }
 );
 
+/**
+ * Start with the first file selected the moment the diff lands (or after a
+ * refresh clears the selection) so the focus indicator is present from the
+ * start — files[0] is the top of the diff stack, i.e. where the scroll
+ * already sits. Plain store setter, no scroll (the stack is already there).
+ */
+watch(
+  () => files.value,
+  (list) => {
+    if (list.length > 0 && selectedFileIndex.value === null) repo.selectCompareFile(0);
+  },
+  { immediate: true }
+);
+
 // --- Per-file diff sections (right, DiffStack) ---
 
 function toggleFileCollapsed(path: string): void {

@@ -341,16 +341,28 @@ describe('file tree', () => {
     expect(wrapper.findAll('.file-row')[2].classes()).toContain('selected');
   });
 
+  test('the first file is selected on load (focus indicator present from the start)', () => {
+    const { wrapper, repo } = mountView();
+    expect(repo.compare.selection).toMatchObject({ type: 'file', index: 0 });
+    expect(wrapper.findAll('.file-row')[0].classes()).toContain('selected');
+  });
+
   test('keyboard: arrows move the file selection in tree order, clamped', async () => {
     const { wrapper, repo } = mountView();
-
-    await wrapper.findAll('.file-row')[0].trigger('keydown', { key: 'ArrowDown' });
+    // The first file is pre-selected, so the first ArrowDown moves off it.
     expect(repo.compare.selection).toMatchObject({ type: 'file', index: 0 });
 
     await wrapper.findAll('.file-row')[0].trigger('keydown', { key: 'ArrowDown' });
     expect(repo.compare.selection).toMatchObject({ type: 'file', index: 1 });
 
-    await wrapper.findAll('.file-row')[1].trigger('keydown', { key: 'ArrowUp' });
+    await wrapper.findAll('.file-row')[0].trigger('keydown', { key: 'ArrowDown' });
+    expect(repo.compare.selection).toMatchObject({ type: 'file', index: 2 });
+
+    await wrapper.findAll('.file-row')[0].trigger('keydown', { key: 'ArrowUp' });
+    await wrapper.findAll('.file-row')[0].trigger('keydown', { key: 'ArrowUp' });
+    expect(repo.compare.selection).toMatchObject({ type: 'file', index: 0 });
+
+    // Clamped at the top.
     await wrapper.findAll('.file-row')[0].trigger('keydown', { key: 'ArrowUp' });
     expect(repo.compare.selection).toMatchObject({ type: 'file', index: 0 });
   });
