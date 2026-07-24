@@ -109,10 +109,21 @@ export const useDaemonStore = defineStore('daemon', () => {
       onFollowChange: (event) => {
         lastFollowChange.value = event;
         if (follow.value) {
+          // followedPath mirrors GET /follow: the followed repo's WORKTREE
+          // ROOT. event.path is the hook file CONTENT (often a file inside
+          // the repo), so it must NOT be written here — that gave the header
+          // a filename (or an empty basename) instead of the repo name, and
+          // diverged from the repo the diffs actually switched to. Resolve
+          // the root from the open-repo list by id; keep the prior root
+          // until repo-opened for this id lands (the header re-derives the
+          // name reactively from the id, so it self-heals either way).
+          const root =
+            repos.value.find((repo) => repo.id === event.repoId)?.path ??
+            follow.value.followedPath;
           follow.value = {
             ...follow.value,
             followedRepoId: event.repoId,
-            followedPath: event.path,
+            followedPath: root,
           };
         }
       },

@@ -214,16 +214,23 @@ describe('useDaemonStore', () => {
     expect(store.repos.map((r) => r.id)).toEqual(['r2']);
   });
 
-  test('follow-change records the event and updates the follow state', async () => {
+  test('follow-change records the event and resolves followedPath to the repo root', async () => {
     const store = useDaemonStore();
     store.connect();
     const source = FakeEventSource.latest();
     source.emit('snapshot', []);
     await flush(); // follow state loaded
 
-    const event = { repoId: 'r2', path: '/other', rawContent: '/other/src/a.ts' };
+    // repo-opened lands before follow-change (the daemon's ordering).
+    source.emit('repo-opened', { id: 'r2', path: '/other' });
+
+    // The event's `path` is the hook file CONTENT — here a file inside r2.
+    const event = { repoId: 'r2', path: '/other/src/a.ts', rawContent: '/other/src/a.ts' };
     source.emit('follow-change', event);
+
     expect(store.lastFollowChange).toEqual(event);
+    // followedRepoId tracks the event; followedPath is the repo ROOT (from
+    // the open-repo list) — NOT the hook file path — matching GET /follow.
     expect(store.follow).toMatchObject({ followedRepoId: 'r2', followedPath: '/other' });
   });
 

@@ -23,6 +23,7 @@ import { computed } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
+import { basename } from '../utils/format';
 import RepoSwitcher from './RepoSwitcher.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
 
@@ -44,16 +45,40 @@ const errorLine = computed(() =>
 /** Daemon-side: is there a hook file to follow at all? */
 const hasFollowTarget = computed(() => (daemon.follow?.targetFile ?? null) !== null);
 
-/** The followed worktree root, once the first hook hit landed. */
-const followedPath = computed(() => daemon.follow?.followedPath ?? null);
+/**
+ * The followed repo, keyed by followedRepoId in the open-repo list — the
+ * SAME source the switcher uses for the active repo, and the SAME id
+ * useFollowMode switches the active repo (and thus the diffs) to. Deriving
+ * the label from the repo id, not from followedPath, keeps "following X"
+ * honest: a follow-change event's `path` is the hook file content (often a
+ * file inside the repo), so basename-ing it gave a filename — or, for a
+ * directory with a trailing slash, an empty string ("following "). The
+ * repo-list name matches whatever the diffs below actually show.
+ */
+const followedRepo = computed(() => {
+  const id = daemon.follow?.followedRepoId ?? null;
+  return id !== null ? (daemon.repos.find((r) => r.id === id) ?? null) : null;
+});
+
+/** The followed worktree root path (for the tooltip / full path). */
+const followedPath = computed(
+  () => followedRepo.value?.path ?? daemon.follow?.followedPath ?? null
+);
+
+/** The followed repo's name: repo-list name first, path basename fallback
+ * (used only in the window between follow-change and repo-opened landing). */
+const followedName = computed(() => {
+  if (followedRepo.value) return basename(followedRepo.value.path);
+  const path = daemon.follow?.followedPath ?? null;
+  return path ? basename(path) : null;
+});
 
 const followActive = computed(() => hasFollowTarget.value && daemon.followEnabled);
 
 const followLabel = computed(() => {
   if (!hasFollowTarget.value) return 'no follow target';
   if (!daemon.followEnabled) return 'follow off';
-  const target = followedPath.value;
-  return target !== null ? `following ${target.split('/').pop()}` : 'follow on';
+  return followedName.value ? `following ${followedName.value}` : 'follow on';
 });
 
 const followTitle = computed(() => {

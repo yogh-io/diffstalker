@@ -168,6 +168,21 @@ describe('follow toggle', () => {
     expect(toggle.text()).toBe('following diffstalker');
     expect(toggle.attributes('title')).toContain('/home/u/projects/diffstalker');
   });
+
+  test('names the followed repo by id, not by the hook path (which may be a file)', () => {
+    // A follow-change event carries the hook file CONTENT as `path` — often
+    // a file inside the repo. The label must name the followed REPO (by id,
+    // the same repo the diffs switch to), not basename that file path.
+    const daemon = useDaemonStore();
+    daemon.repos = [{ id: 'r1', path: '/home/u/projects/calc', branch: 'main' }];
+    daemon.follow = followState({
+      followedRepoId: 'r1',
+      followedPath: '/home/u/projects/calc/src/e2e/CommonPage.ts',
+    });
+    const wrapper = mountHeader();
+    const toggle = wrapper.find('[data-testid="follow-toggle"]');
+    expect(toggle.text()).toBe('following calc');
+  });
 });
 
 describe('viewer stance (read-only)', () => {

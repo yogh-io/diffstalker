@@ -66,6 +66,7 @@ onBeforeUnmount(() => {
       class="switch-btn"
       aria-haspopup="true"
       :aria-expanded="open"
+      :title="activeRepo ? activeRepo.path : undefined"
       @click="open = !open"
     >
       <span class="repo-label mono">{{ activeRepo ? basename(activeRepo.path) : 'no repo' }}</span>
@@ -84,8 +85,8 @@ onBeforeUnmount(() => {
           :class="{ active: repo.id === daemon.activeRepoId }"
           @click="pick(repo)"
         >
-          <span class="name mono">{{ basename(repo.path) }}</span>
-          <span v-if="repo.branch" class="branch mono">{{ repo.branch }}</span>
+          <span class="name mono" :title="basename(repo.path)">{{ basename(repo.path) }}</span>
+          <span v-if="repo.branch" class="branch mono" :title="repo.branch">{{ repo.branch }}</span>
           <span class="path mono" :title="repo.path">{{ repo.path }}</span>
         </button>
       </div>
@@ -98,7 +99,7 @@ onBeforeUnmount(() => {
           class="repo-row"
           @click="pickRecent(path)"
         >
-          <span class="name mono">{{ basename(path) }}</span>
+          <span class="name mono" :title="basename(path)">{{ basename(path) }}</span>
           <span class="path mono" :title="path">{{ path }}</span>
         </button>
       </div>
@@ -119,15 +120,24 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--surface-raised);
+  min-width: 0;
 }
 
 .switch-btn:hover {
   border-color: var(--text-dim);
 }
 
+/* A long repo name (e.g. a branch-named worktree dir) must ellipsize on
+   ONE line, not wrap at its hyphens into a tall stack. Full name on hover
+   (the button's title). */
 .repo-label {
   font-size: var(--fs-base);
   font-weight: 600;
+  max-width: 16rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .caret {
@@ -169,7 +179,11 @@ onBeforeUnmount(() => {
 
 .repo-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  /* minmax(0, 1fr), NOT 1fr: a bare 1fr floors at the name's min-content,
+     so a long hyphenated name wraps hyphen-by-hyphen into a tall column
+     while the branch keeps its width. Flooring at 0 lets the name shrink
+     and ellipsize on one line instead. */
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0 0.5rem;
   padding: 0.375rem 0.5rem;
   border-radius: 4px;
@@ -187,12 +201,23 @@ onBeforeUnmount(() => {
 .name {
   font-size: var(--fs-base);
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .branch {
   font-size: var(--fs-small);
   color: var(--text-dim);
   justify-self: end;
+  /* Cap the branch so a long branch name can't starve the name column;
+     it ellipsizes too (full value on hover). */
+  max-width: 12rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .path {
