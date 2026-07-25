@@ -7,7 +7,11 @@
  * - ? — toggle the hotkeys help;
  * - 1..N — switch view, derived from VIEWS so the digits always match
  *   the rail order (1=Changes, 2=Journal, 3=History, ...);
- * - a — toggle auto mode (auto-select/auto-switch on changes).
+ * - a/s/d/f — the display toggles, grouped on the home row: a=auto mode
+ *   (auto-select/auto-switch on changes), s=diff syntax highlighting,
+ *   d=split/unified diff layout, f=follow mode. f is a no-op when the
+ *   daemon has no follow target (mirrors the header button's disabled
+ *   state); a/s/d/f share the CLI's a and f bindings.
  *
  * Bare keys (digits, ?) never fire while the user is typing in an
  * input/textarea/select/contenteditable (the finder's input included)
@@ -36,6 +40,31 @@ function isEditable(target: EventTarget | null): boolean {
 export function useGlobalKeys(): void {
   const ui = useUiStore();
   const daemon = useDaemonStore();
+
+  /**
+   * The bare-key display toggles, grouped on the home row (a s d f). Kept out of
+   * onKeydown so that hot path stays flat. Returns true when it claimed the key.
+   */
+  function handleDisplayToggle(key: string): boolean {
+    switch (key) {
+      case 'a':
+        ui.toggleAutoMode();
+        return true;
+      case 's':
+        ui.toggleDiffSyntax();
+        return true;
+      case 'd':
+        ui.toggleDiffMode();
+        return true;
+      case 'f':
+        // Follow acts only when the daemon has a hook file to follow — mirrors
+        // the header button's disabled state; otherwise the key does nothing.
+        if ((daemon.follow?.targetFile ?? null) !== null) daemon.toggleFollow();
+        return true;
+      default:
+        return false;
+    }
+  }
 
   function onKeydown(event: KeyboardEvent): void {
     if (event.defaultPrevented) return;
@@ -79,10 +108,8 @@ export function useGlobalKeys(): void {
 
     if (ui.activeOverlay !== null) return; // overlays are modal
 
-    if (event.key === 'a') {
-      ui.toggleAutoMode();
-      return;
-    }
+    // Display toggles on the home row (a s d f).
+    if (handleDisplayToggle(event.key)) return;
 
     const view = VIEW_KEYS[event.key];
     if (view !== undefined) ui.setActiveView(view);

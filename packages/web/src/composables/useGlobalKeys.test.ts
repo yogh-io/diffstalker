@@ -1,7 +1,8 @@
 /**
- * useGlobalKeys tests: 1–5 switch views (rail order) and `a` toggles auto mode
+ * useGlobalKeys tests: 1–5 switch views (rail order) and the home-row toggles
+ * a/s/d/f flip auto mode, diff syntax, split/unified, and follow
  * (never while typing or with a modifier held, never under an open
- * overlay), Ctrl/⌘+P toggles the finder (only with an active repo),
+ * overlay; f is inert without a follow target), Ctrl/⌘+P toggles the finder (only with an active repo),
  * ? toggles the help overlay, Esc closes the open overlay. Driven through window keydown events on a
  * bare harness component — the overlays themselves are covered by their
  * own component tests.
@@ -120,6 +121,89 @@ describe('auto mode (a)', () => {
     press('a');
     expect(ui.autoModeEnabled).toBe(false);
     expect(ui.activeOverlay).toBe('help');
+  });
+});
+
+describe('diff syntax (s)', () => {
+  test('s toggles syntax highlighting on and off', () => {
+    const ui = useUiStore();
+    const start = ui.diffSyntaxEnabled;
+    press('s');
+    expect(ui.diffSyntaxEnabled).toBe(!start);
+    press('s');
+    expect(ui.diffSyntaxEnabled).toBe(start);
+  });
+
+  test('s is inert while typing, chorded, or under an overlay', () => {
+    const ui = useUiStore();
+    const start = ui.diffSyntaxEnabled;
+    pressInInput('s');
+    press('s', { ctrlKey: true });
+    ui.openOverlay('help');
+    press('s');
+    expect(ui.diffSyntaxEnabled).toBe(start);
+  });
+});
+
+describe('diff layout (d)', () => {
+  test('d toggles split / unified', () => {
+    const ui = useUiStore();
+    const start = ui.diffMode;
+    const other = start === 'split' ? 'unified' : 'split';
+    press('d');
+    expect(ui.diffMode).toBe(other);
+    press('d');
+    expect(ui.diffMode).toBe(start);
+  });
+
+  test('d is inert while typing, chorded, or under an overlay', () => {
+    const ui = useUiStore();
+    const start = ui.diffMode;
+    pressInInput('d');
+    press('d', { metaKey: true });
+    ui.openOverlay('help');
+    press('d');
+    expect(ui.diffMode).toBe(start);
+  });
+});
+
+describe('follow (f)', () => {
+  const withTarget = {
+    targetFile: '/repo/.git/HEAD',
+    enabled: true,
+    followedRepoId: null,
+    followedPath: null,
+  };
+
+  test('f toggles follow when the daemon has a follow target', () => {
+    const daemon = useDaemonStore();
+    daemon.follow = { ...withTarget };
+    expect(daemon.followEnabled).toBe(true);
+    press('f');
+    expect(daemon.followEnabled).toBe(false);
+    press('f');
+    expect(daemon.followEnabled).toBe(true);
+  });
+
+  test('f is a no-op when there is no follow target', () => {
+    const daemon = useDaemonStore();
+    daemon.follow = null;
+    press('f');
+    expect(daemon.followEnabled).toBe(true);
+    daemon.follow = { ...withTarget, targetFile: null };
+    press('f');
+    expect(daemon.followEnabled).toBe(true);
+  });
+
+  test('f is inert while typing or under an overlay', () => {
+    const daemon = useDaemonStore();
+    const ui = useUiStore();
+    daemon.follow = { ...withTarget };
+    pressInInput('f');
+    expect(daemon.followEnabled).toBe(true);
+    ui.openOverlay('help');
+    press('f');
+    expect(daemon.followEnabled).toBe(true);
   });
 });
 
