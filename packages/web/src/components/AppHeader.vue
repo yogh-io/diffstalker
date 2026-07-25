@@ -360,12 +360,23 @@ const modeTitle = computed(() =>
   background: var(--text-dim);
 }
 
+/* On: the WHOLE chip lights up — a green fill, an add-green border, and a
+   glowing dot — not just the dot. The dot (the signature marker) stays. All
+   tints derive from the theme's add-green, so they adapt per theme. */
 .mode-toggle.on {
   color: var(--text);
+  border-color: color-mix(in srgb, var(--add) 60%, var(--border));
+  background: color-mix(in srgb, var(--add) 15%, var(--surface));
+}
+
+.mode-toggle.on:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--add) 80%, var(--border));
+  background: color-mix(in srgb, var(--add) 24%, var(--surface));
 }
 
 .mode-toggle.on .dot {
   background: var(--add);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--add) 70%, transparent);
 }
 
 .finder-btn {
