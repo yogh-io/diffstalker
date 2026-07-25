@@ -36,6 +36,7 @@ import {
   FileHunkCounts,
 } from '../git/diff.js';
 import { HunkTimeTracker } from '../git/hunkTimes.js';
+import { resolveGitDirs } from '../git/worktree.js';
 import { splitDiffByFile } from '../view/splitDiffByFile.js';
 import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
 import type { JournalObservation } from '../types/journal.js';
@@ -216,15 +217,23 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   // --- File watching ---
 
   startWatching(): void {
-    const gitDir = path.join(this.repoPath, '.git');
-    if (!fs.existsSync(gitDir)) return;
+    // Resolve the REAL git dirs, not `<repo>/.git`: for a linked worktree
+    // (bare-repo layout) `.git` is a pointer file — HEAD/index live in the
+    // per-worktree dir and refs are shared in the common dir. Watching
+    // `<repo>/.git/{HEAD,index,refs}` there watches paths that never exist,
+    // so a commit/rebase/fetch would fire nothing and the view would go
+    // stale. `commonDir` picks up `packed-refs` (git fetch / pack-refs) for
+    // plain repos too.
+    const dirs = resolveGitDirs(this.repoPath);
+    if (dirs === null) return;
 
-    const indexFile = path.join(gitDir, 'index');
-    const headFile = path.join(gitDir, 'HEAD');
-    const refsDir = path.join(gitDir, 'refs');
+    const indexFile = path.join(dirs.gitDir, 'index');
+    const headFile = path.join(dirs.gitDir, 'HEAD');
+    const refsDir = path.join(dirs.commonDir, 'refs');
+    const packedRefs = path.join(dirs.commonDir, 'packed-refs');
     const gitignorePath = path.join(this.repoPath, '.gitignore');
 
-    this.gitWatcher = watch([indexFile, headFile, refsDir, gitignorePath], {
+    this.gitWatcher = watch([indexFile, headFile, refsDir, packedRefs, gitignorePath], {
       persistent: true,
       ignoreInitial: true,
       usePolling: true,

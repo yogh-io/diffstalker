@@ -123,6 +123,37 @@ function resolveWorktreeGitDir(worktreePath: string): string | null {
   }
 }
 
+export interface GitDirs {
+  /** The per-worktree git dir — `HEAD` and `index` live here. For a linked
+   * worktree this is `<repo>/.bare/worktrees/<name>`, not `<worktree>/.git`. */
+  gitDir: string;
+  /** The shared common git dir — `refs/` and `packed-refs` live here (shared
+   * across all worktrees). Equals `gitDir` for a plain (non-worktree) repo. */
+  commonDir: string;
+}
+
+/**
+ * Resolve a worktree's real git dirs WITHOUT spawning git (used by the file
+ * watcher, which must point at where HEAD/index/refs actually live). A linked
+ * worktree's `.git` is a pointer FILE, its `HEAD`/`index` sit in the
+ * per-worktree dir, and its refs are shared in the common dir named by the
+ * `commondir` file. A plain repo has both in `<repo>/.git`.
+ *
+ * Returns null when the path is not a git working tree.
+ */
+export function resolveGitDirs(worktreePath: string): GitDirs | null {
+  const gitDir = resolveWorktreeGitDir(worktreePath);
+  if (gitDir === null) return null;
+  let commonDir = gitDir;
+  try {
+    const rel = fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim();
+    if (rel) commonDir = path.isAbsolute(rel) ? rel : path.resolve(gitDir, rel);
+  } catch {
+    // No commondir file -> a plain repo; gitDir already IS the common dir.
+  }
+  return { gitDir, commonDir };
+}
+
 /**
  * Parse the output of `git worktree list --porcelain` into structured entries.
  * Records are separated by blank lines; each starts with a `worktree <path>`

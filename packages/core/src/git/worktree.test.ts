@@ -2,7 +2,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, it, expect } from 'vitest';
-import { parseWorktreePorcelain, pickDefaultWorktree, type WorktreeInfo } from './worktree.js';
+import {
+  parseWorktreePorcelain,
+  pickDefaultWorktree,
+  resolveGitDirs,
+  type WorktreeInfo,
+} from './worktree.js';
 
 describe('parseWorktreePorcelain', () => {
   it('parses a bare-repo layout with several worktrees', () => {
@@ -114,5 +119,41 @@ describe('pickDefaultWorktree', () => {
     expect(
       pickDefaultWorktree([{ path: '/x/.bare', branch: null, head: null, isBare: true }])
     ).toBeNull();
+  });
+});
+
+describe('resolveGitDirs', () => {
+  let root: string;
+
+  afterEach(() => {
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a plain repo: gitDir and commonDir are both <repo>/.git', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-gd-'));
+    const repo = path.join(root, 'repo');
+    const gitDir = path.join(repo, '.git');
+    fs.mkdirSync(path.join(gitDir, 'refs'), { recursive: true });
+
+    expect(resolveGitDirs(repo)).toEqual({ gitDir, commonDir: gitDir });
+  });
+
+  it('a linked worktree: per-worktree gitDir, shared commonDir via commondir', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-gd-'));
+    const wt = path.join(root, 'fix-a');
+    const bare = path.join(root, '.bare');
+    const gitDir = path.join(bare, 'worktrees', 'fix-a');
+    fs.mkdirSync(wt, { recursive: true });
+    fs.mkdirSync(gitDir, { recursive: true });
+    // .git is a POINTER FILE, not a dir; commondir names the shared dir.
+    fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${gitDir}\n`);
+    fs.writeFileSync(path.join(gitDir, 'commondir'), '../..\n');
+
+    expect(resolveGitDirs(wt)).toEqual({ gitDir, commonDir: bare });
+  });
+
+  it('returns null for a non-repo directory', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-gd-'));
+    expect(resolveGitDirs(root)).toBeNull();
   });
 });
