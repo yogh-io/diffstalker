@@ -9,18 +9,28 @@
  */
 
 import { computed, ref, useId } from 'vue';
+import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore } from '../stores/repo';
 import { useRepoOpen } from '../composables/useRepoOpen';
 
 const emit = defineEmits<{ opened: [] }>();
 
+const daemon = useDaemonStore();
 const repo = useRepoStore();
 const { openByPath } = useRepoOpen();
 
 /** Only a refused open (not-a-repo mode), never a live repo's error. */
 const openError = computed(() => (repo.isRepo ? null : repo.shared.error));
 
-const path = ref('');
+/**
+ * Prefill with the active repo's path (the working dir we're viewing), so
+ * the field is a ready-to-edit starting point — tweak it to open a sibling
+ * repo or worktree — not an empty box. Empty (with the placeholder) only in
+ * the no-repo-open empty state. Set once at mount; the form is re-created
+ * each time the switcher panel opens, so it re-seeds from the active repo.
+ */
+const activePath = daemon.repos.find((r) => r.id === daemon.activeRepoId)?.path ?? '';
+const path = ref(activePath);
 const busy = ref(false);
 const inputId = useId();
 
