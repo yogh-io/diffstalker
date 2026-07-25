@@ -12,6 +12,8 @@ import { computed } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
+import { useActiveWorktrees } from '../composables/useActiveWorktrees';
+import { basename } from '../utils/format';
 import RepoSwitcher from './RepoSwitcher.vue';
 import WorktreeSwitcher from './WorktreeSwitcher.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
@@ -19,8 +21,32 @@ import ThemeSwitcher from './ThemeSwitcher.vue';
 const daemon = useDaemonStore();
 const repo = useRepoStore();
 const ui = useUiStore();
+const { worktrees, hasMultiple } = useActiveWorktrees();
 
 const branch = computed(() => repo.shared.status?.branch ?? null);
+
+/** The active worktree's displayed name (branch, or dir name when detached)
+ * — matches what the worktree select shows for the current worktree. */
+const activeWorktreeName = computed(() => {
+  const activePath = daemon.repos.find((r) => r.id === daemon.activeRepoId)?.path ?? null;
+  const wt = worktrees.value.find((w) => w.path === activePath);
+  return wt ? (wt.branch ?? basename(wt.path)) : null;
+});
+
+/**
+ * Show the branch name in the breadcrumb UNLESS the worktree select is up
+ * and already shows that exact name (branch == worktree) — then it would be
+ * a duplicate, so drop it and let the breadcrumb read "→ <upstream>". Only
+ * drop it when there IS an upstream to show, so the breadcrumb is never empty.
+ */
+const showBranchName = computed(
+  () =>
+    !(
+      hasMultiple.value &&
+      branch.value?.tracking != null &&
+      branch.value.current === activeWorktreeName.value
+    )
+);
 
 /**
  * One error line. With a repo active, the repo's error (incl. the calm
@@ -53,7 +79,7 @@ const errorLine = computed(() =>
         data-testid="branch-info"
         :title="branch.tracking ? `${branch.current} → ${branch.tracking}` : branch.current"
       >
-        <span class="branch-name">{{ branch.current }}</span>
+        <span v-if="showBranchName" class="branch-name">{{ branch.current }}</span>
         <template v-if="branch.tracking">
           <span class="arrow" aria-hidden="true">&rarr;</span>
           <span class="tracking">{{ branch.tracking }}</span>
