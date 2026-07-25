@@ -1,49 +1,93 @@
 /**
- * useUrlSync tests: parse the reproducible bits from the query (unknown
- * view -> null), and write repo/view/base back to the query as the store
- * state changes.
+ * useUrlSync tests: parse the clean path (repo path segments + view + an
+ * optional `:`-encoded compare base), and write repo/view/base back to the
+ * path — home-relative — as store state changes.
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { defineComponent } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
-import { parseUrlState, useUrlSync } from './useUrlSync';
+import { parseUrlPath, useUrlSync } from './useUrlSync';
 import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
+import { makeFakeFetch } from '../testing/fakes';
 
-function setUrl(query: string): void {
-  window.history.replaceState(null, '', query ? `/?${query}` : '/');
+const HOME = '/home/u';
+
+function setPath(pathname: string): void {
+  window.history.replaceState(null, '', pathname);
 }
 
 beforeEach(() => {
   localStorage.clear();
   setActivePinia(createPinia());
-  setUrl('');
+  setPath('/');
+  // /health carries the daemon home; everything else 404s.
+  vi.stubGlobal(
+    'fetch',
+    makeFakeFetch((call) =>
+      call.url === '/health'
+        ? { body: { ok: true, ready: true, home: HOME } }
+        : { status: 404, body: {} }
+    ).fn
+  );
 });
 
 afterEach(() => {
-  setUrl('');
+  vi.unstubAllGlobals();
+  setPath('/');
 });
 
-describe('parseUrlState', () => {
-  test('reads repo, a known view, and base', () => {
-    setUrl('repo=%2Fhome%2Fu%2Fcalculator%2Ffix-a&view=compare&base=upstream%2Fmain');
-    expect(parseUrlState()).toEqual({
-      repo: '/home/u/calculator/fix-a',
+describe('parseUrlPath', () => {
+  test('repo path + view', () => {
+    expect(parseUrlPath('/gitRepos/calculator/fix-a/history')).toEqual({
+      repoRel: 'gitRepos/calculator/fix-a',
+      view: 'history',
+      base: null,
+    });
+  });
+
+  test('compare with a :-encoded base decodes to a slashed ref', () => {
+    expect(parseUrlPath('/gitRepos/calculator/fix-a/compare/upstream:main')).toEqual({
+      repoRel: 'gitRepos/calculator/fix-a',
       view: 'compare',
       base: 'upstream/main',
     });
   });
 
-  test('drops an unknown view; missing bits are null', () => {
-    setUrl('view=bogus');
-    expect(parseUrlState()).toEqual({ repo: null, view: null, base: null });
+  test('compare with no base', () => {
+    expect(parseUrlPath('/gitRepos/diffstalker/compare')).toEqual({
+      repoRel: 'gitRepos/diffstalker',
+      view: 'compare',
+      base: null,
+    });
+  });
+
+  test('a base equal to a view keyword is still read as the base (compare checked first)', () => {
+    expect(parseUrlPath('/gitRepos/x/compare/history')).toEqual({
+      repoRel: 'gitRepos/x',
+      view: 'compare',
+      base: 'history',
+    });
+  });
+
+  test('a worktree segment named like a (non-compare) view is not mistaken for the view', () => {
+    // repo ends in a dir called "history"; the appended view is "changes".
+    expect(parseUrlPath('/gitRepos/x/history/changes')).toEqual({
+      repoRel: 'gitRepos/x/history',
+      view: 'changes',
+      base: null,
+    });
+  });
+
+  test('empty path -> nothing', () => {
+    expect(parseUrlPath('/')).toEqual({ repoRel: null, view: null, base: null });
   });
 });
 
-describe('writes state to the query', () => {
+describe('writes a clean, home-relative path', () => {
   const Harness = defineComponent({
     setup() {
       useUrlSync();
@@ -51,37 +95,35 @@ describe('writes state to the query', () => {
     },
   });
 
-  test('active repo path, view, and selected base ride the query', async () => {
+  test('home-relative repo path + view + :-encoded base', async () => {
     const daemon = useDaemonStore();
     const ui = useUiStore();
     const repo = useRepoStore();
-    daemon.repos = [{ id: 'r1', path: '/home/u/calculator/fix-a', branch: 'fix-a' }];
+    daemon.repos = [{ id: 'r1', path: `${HOME}/gitRepos/calculator/fix-a`, branch: 'fix-a' }];
     daemon.activeRepoId = 'r1';
 
     mount(Harness);
+    await flushPromises(); // home loads from /health
     ui.setActiveView('compare');
     repo.selectedCompareBase = 'upstream/main';
     await flushPromises();
 
-    const params = new URLSearchParams(window.location.search);
-    expect(params.get('repo')).toBe('/home/u/calculator/fix-a');
-    expect(params.get('view')).toBe('compare');
-    expect(params.get('base')).toBe('upstream/main');
+    expect(window.location.pathname).toBe(
+      '/gitRepos/calculator/fix-a/compare/upstream:main'
+    );
   });
 
-  test('no base param when none is selected', async () => {
+  test('no base segment for a non-compare view', async () => {
     const daemon = useDaemonStore();
     const ui = useUiStore();
-    daemon.repos = [{ id: 'r1', path: '/repo', branch: null }];
+    daemon.repos = [{ id: 'r1', path: `${HOME}/gitRepos/diffstalker`, branch: 'main' }];
     daemon.activeRepoId = 'r1';
 
     mount(Harness);
+    await flushPromises();
     ui.setActiveView('history');
     await flushPromises();
 
-    const params = new URLSearchParams(window.location.search);
-    expect(params.get('repo')).toBe('/repo');
-    expect(params.get('view')).toBe('history');
-    expect(params.has('base')).toBe(false);
+    expect(window.location.pathname).toBe('/gitRepos/diffstalker/history');
   });
 });

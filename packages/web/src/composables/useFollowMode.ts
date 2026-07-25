@@ -114,7 +114,16 @@ export function useFollowMode(): void {
   watch(
     () => daemon.lastFollowChange,
     (event) => {
-      if (event !== null && daemon.followEnabled) enqueue(event);
+      if (event === null) return;
+      // A repo pinned by the URL wins over the follow target the daemon
+      // already had at page load: consume that one seeded change without
+      // navigating, so the shared/reloaded URL is reproducible. A LATER hook
+      // write (a fresh follow-change) still switches live as normal.
+      if (daemon.skipInitialFollow) {
+        daemon.skipInitialFollow = false;
+        return;
+      }
+      if (daemon.followEnabled) enqueue(event);
     }
   );
 

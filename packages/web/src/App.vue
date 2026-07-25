@@ -138,16 +138,24 @@ function activateFirst(repos: typeof daemon.repos): void {
 // auto-activation so they don't race it. The view is applied in setup (before
 // mount) so the first paint is the shared view. The compare base rides the
 // repo once it opens.
-async function applyUrlRepo(path: string, base: string | null): Promise<void> {
-  const ok = await openByPath(path);
+const urlSync = useUrlSync();
+
+async function applyUrlRepo(repoRel: string, base: string | null): Promise<void> {
+  await urlSync.whenHomeReady;
+  // Home-relative first; fall back to an absolute open for a repo outside
+  // home (the URL kept its absolute path there).
+  let ok = await openByPath(urlSync.toAbsolute(repoRel));
+  if (!ok && !repoRel.startsWith('/')) ok = await openByPath('/' + repoRel);
   if (ok && base !== null) await repo.setSelectedCompareBase(base);
 }
 
-const { initial: urlInit } = useUrlSync();
-if (urlInit.view) ui.setActiveView(urlInit.view);
-if (urlInit.repo !== null) {
+if (urlSync.initial.view) ui.setActiveView(urlSync.initial.view);
+if (urlSync.initial.repoRel !== null) {
   disarmAutoActivate();
-  void applyUrlRepo(urlInit.repo, urlInit.base);
+  // The URL repo wins over the initial follow target too (follow resumes on
+  // the next live hook change).
+  daemon.skipInitialFollow = true;
+  void applyUrlRepo(urlSync.initial.repoRel, urlSync.initial.base);
 }
 
 watch(

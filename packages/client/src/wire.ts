@@ -92,6 +92,9 @@ export interface MutationEnvelope {
 export interface HealthState {
   ok: boolean;
   ready: boolean;
+  /** The daemon's $HOME, so clients can show/store paths relative to it
+   * (a home-relative URL drops the /home/<user> prefix). Null if unknown. */
+  home?: string | null;
 }
 
 /** A repo as identified by the daemon (POST /repos, SSE repo-opened). */

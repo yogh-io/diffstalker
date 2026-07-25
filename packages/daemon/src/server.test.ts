@@ -100,7 +100,7 @@ describe('daemon over unix socket', () => {
   test('GET /health responds ok', async () => {
     const res = await request('/health');
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, ready: true });
+    expect(await res.json()).toMatchObject({ ok: true, ready: true });
   });
 
   test('unknown route is a JSON 404 with {error} only', async () => {

@@ -121,7 +121,7 @@ afterAll(async () => {
 
 describe('health and repos', () => {
   test('health reports ok', async () => {
-    expect(await client.health()).toEqual({ ok: true, ready: true });
+    expect(await client.health()).toMatchObject({ ok: true, ready: true });
   });
 
   test('openRepo returns id + normalized path; listRepos includes it', async () => {

@@ -69,7 +69,7 @@ describe('daemon static serving (web UI)', () => {
     const res = await fetch(`${baseUrl}/health`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/json');
-    expect(await res.json()).toEqual({ ok: true, ready: true });
+    expect(await res.json()).toMatchObject({ ok: true, ready: true });
   });
 
   test('unknown paths under API prefixes stay JSON 404s, not SPA fallbacks', async () => {

@@ -70,6 +70,10 @@ export const useDaemonStore = defineStore('daemon', () => {
   const follow = shallowRef<FollowState | null>(null);
   const followEnabled = shallowRef(true);
   const lastFollowChange = shallowRef<FollowChangeEvent | null>(null);
+  /** One-shot: when a URL pins a repo on cold load, useFollowMode consumes
+   * the initial (page-load) follow target without navigating, so the URL is
+   * reproducible. Cleared after that one seeded change; live follow resumes. */
+  const skipInitialFollow = shallowRef(false);
   const activeRepoId = shallowRef<string | null>(null);
   /** Working trees of the active repo (bare entry filtered out), for the
    * worktree switcher and the repo picker's project name. Refreshed on
@@ -286,6 +290,7 @@ export const useDaemonStore = defineStore('daemon', () => {
     follow,
     followEnabled,
     lastFollowChange,
+    skipInitialFollow,
     activeRepoId,
     worktrees,
     error,
