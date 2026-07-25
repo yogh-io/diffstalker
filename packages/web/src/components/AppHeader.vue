@@ -13,6 +13,7 @@ import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import RepoSwitcher from './RepoSwitcher.vue';
+import WorktreeSwitcher from './WorktreeSwitcher.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
 
 const daemon = useDaemonStore();
@@ -43,6 +44,8 @@ const errorLine = computed(() =>
       </div>
 
       <RepoSwitcher />
+
+      <WorktreeSwitcher />
 
       <div
         v-if="branch"
