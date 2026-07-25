@@ -10,6 +10,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useUiStore } from '../stores/ui';
 import { useRepoOpen } from '../composables/useRepoOpen';
+import { useActiveWorktrees } from '../composables/useActiveWorktrees';
 import { basename } from '../utils/format';
 import RepoOpenForm from './RepoOpenForm.vue';
 import type { RepoSummary } from '@diffstalker/client';
@@ -17,6 +18,7 @@ import type { RepoSummary } from '@diffstalker/client';
 const daemon = useDaemonStore();
 const ui = useUiStore();
 const { openByPath, activate } = useRepoOpen();
+const { hasMultiple, projectName } = useActiveWorktrees();
 
 const open = ref(false);
 const rootEl = ref<HTMLElement | null>(null);
@@ -24,6 +26,17 @@ const rootEl = ref<HTMLElement | null>(null);
 const activeRepo = computed(
   () => daemon.repos.find((repo) => repo.id === daemon.activeRepoId) ?? null
 );
+
+/**
+ * The trigger label: the PROJECT name when the active repo is one of
+ * several worktrees (the worktree switcher beside it names the worktree),
+ * otherwise the repo's own directory name. Keeps the worktree/branch name
+ * from appearing twice across the picker and the switcher.
+ */
+const triggerLabel = computed(() => {
+  if (!activeRepo.value) return 'no repo';
+  return hasMultiple.value ? projectName.value : basename(activeRepo.value.path);
+});
 
 const recentsNotOpen = computed(() =>
   ui.recentRepos.filter((path) => !daemon.repos.some((repo) => repo.path === path))
@@ -69,7 +82,7 @@ onBeforeUnmount(() => {
       :title="activeRepo ? activeRepo.path : undefined"
       @click="open = !open"
     >
-      <span class="repo-label mono">{{ activeRepo ? basename(activeRepo.path) : 'no repo' }}</span>
+      <span class="repo-label mono">{{ triggerLabel }}</span>
       <span class="caret" aria-hidden="true">&#9662;</span>
     </button>
 

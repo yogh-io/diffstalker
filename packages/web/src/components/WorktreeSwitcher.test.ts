@@ -1,8 +1,8 @@
 /**
  * WorktreeSwitcher tests: hidden for a single-worktree repo; for a repo
- * with several worktrees it shows the project name (common parent dir) +
- * a select of the worktrees (branch-labeled), with the active worktree
- * selected; picking another opens it by path (POST /repos).
+ * with several worktrees it shows a branch-labeled select with the active
+ * worktree selected; picking another opens it by path (POST /repos). The
+ * worktree list comes from the daemon store (set directly here).
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -11,11 +11,10 @@ import { createPinia, setActivePinia } from 'pinia';
 import WorktreeSwitcher from './WorktreeSwitcher.vue';
 import { useDaemonStore } from '../stores/daemon';
 import { makeFakeFetch } from '../testing/fakes';
-import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
+import type { WorktreeInfo } from '@diffstalker/client';
 
 const CALC = '/home/u/gitRepos/calculator';
 const WORKTREES: WorktreeInfo[] = [
-  { path: `${CALC}/.bare`, branch: null, head: null, isBare: true },
   { path: `${CALC}/main`, branch: 'main', head: 'aaa', isBare: false },
   { path: `${CALC}/fix-a`, branch: 'fix-a', head: 'bbb', isBare: false },
   { path: `${CALC}/detached`, branch: null, head: 'ccc', isBare: false },
@@ -23,14 +22,20 @@ const WORKTREES: WorktreeInfo[] = [
 
 let posted: Array<{ path: string }>;
 
-function stubFetch(worktrees: WorktreeInfo[]): void {
+function prime(worktrees: WorktreeInfo[], activePath: string): void {
+  const daemon = useDaemonStore();
+  daemon.repos = [{ id: 'r1', path: activePath, branch: null }];
+  daemon.activeRepoId = 'r1';
+  daemon.worktrees = worktrees;
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  setActivePinia(createPinia());
   posted = [];
   vi.stubGlobal(
     'fetch',
     makeFakeFetch((call) => {
-      if (call.method === 'GET' && /\/repos\/[^/]+\/worktrees$/.test(call.url)) {
-        return { body: worktrees };
-      }
       if (call.method === 'POST' && call.url === '/repos') {
         const body = call.body as { path: string };
         posted.push(body);
@@ -39,17 +44,6 @@ function stubFetch(worktrees: WorktreeInfo[]): void {
       return { status: 404, body: {} };
     }).fn
   );
-}
-
-function primeActive(path: string): void {
-  const daemon = useDaemonStore();
-  daemon.repos = [{ id: 'r1', path, branch: null }];
-  daemon.activeRepoId = 'r1';
-}
-
-beforeEach(() => {
-  localStorage.clear();
-  setActivePinia(createPinia());
 });
 
 afterEach(() => {
@@ -57,52 +51,32 @@ afterEach(() => {
 });
 
 describe('visibility', () => {
-  test('hidden when the repo has no active id', async () => {
-    stubFetch(WORKTREES);
+  test('hidden when no repo is active', () => {
     const wrapper = mount(WorktreeSwitcher);
-    await flushPromises();
     expect(wrapper.find('[data-testid="worktree-select"]').exists()).toBe(false);
   });
 
-  test('hidden when there is only one (non-bare) worktree', async () => {
-    stubFetch([
-      { path: `${CALC}/only`, branch: 'only', head: 'aaa', isBare: false },
-      { path: `${CALC}/.bare`, branch: null, head: null, isBare: true },
-    ]);
-    primeActive(`${CALC}/only`);
+  test('hidden when there is only one worktree', () => {
+    prime([{ path: `${CALC}/only`, branch: 'only', head: 'aaa', isBare: false }], `${CALC}/only`);
     const wrapper = mount(WorktreeSwitcher);
-    await flushPromises();
     expect(wrapper.find('[data-testid="worktree-select"]').exists()).toBe(false);
   });
 });
 
 describe('multi-worktree repo', () => {
-  test('shows the project name + a branch-labeled select, active worktree selected', async () => {
-    stubFetch(WORKTREES);
-    primeActive(`${CALC}/fix-a`);
-    const wrapper = mount(WorktreeSwitcher);
-    await flushPromises();
+  test('branch-labeled options, active worktree selected, detached -> dir name', () => {
+    prime(WORKTREES, `${CALC}/fix-a`);
+    const select = mount(WorktreeSwitcher).find('[data-testid="worktree-select"]');
 
-    expect(wrapper.find('.project').text()).toBe('calculator');
-
-    const select = wrapper.find('[data-testid="worktree-select"]');
     expect(select.exists()).toBe(true);
-    // The bare entry is filtered out; the three working trees remain.
-    const options = select.findAll('option');
-    expect(options.map((o) => o.text())).toEqual(['main', 'fix-a', 'detached']);
-    // Detached (no branch) falls back to its dir name.
-    expect(options[2].text()).toBe('detached');
-    // The active worktree is the selected value.
+    expect(select.findAll('option').map((o) => o.text())).toEqual(['main', 'fix-a', 'detached']);
     expect((select.element as HTMLSelectElement).value).toBe(`${CALC}/fix-a`);
   });
 
   test('picking a different worktree opens it by path', async () => {
-    stubFetch(WORKTREES);
-    primeActive(`${CALC}/fix-a`);
-    const wrapper = mount(WorktreeSwitcher);
-    await flushPromises();
+    prime(WORKTREES, `${CALC}/fix-a`);
+    const select = mount(WorktreeSwitcher).find('[data-testid="worktree-select"]');
 
-    const select = wrapper.find('[data-testid="worktree-select"]');
     await select.setValue(`${CALC}/main`);
     await flushPromises();
 

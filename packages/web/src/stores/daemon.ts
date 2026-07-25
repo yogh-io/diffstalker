@@ -21,7 +21,13 @@ import { shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import type { SseHandle } from '../api/transport';
-import type { FollowChangeEvent, FollowState, RepoRef, RepoSummary } from '@diffstalker/client';
+import type {
+  FollowChangeEvent,
+  FollowState,
+  RepoRef,
+  RepoSummary,
+  WorktreeInfo,
+} from '@diffstalker/client';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -65,6 +71,10 @@ export const useDaemonStore = defineStore('daemon', () => {
   const followEnabled = shallowRef(true);
   const lastFollowChange = shallowRef<FollowChangeEvent | null>(null);
   const activeRepoId = shallowRef<string | null>(null);
+  /** Working trees of the active repo (bare entry filtered out), for the
+   * worktree switcher and the repo picker's project name. Refreshed on
+   * every repo switch. */
+  const worktrees = shallowRef<WorktreeInfo[]>([]);
   const error = shallowRef<string | null>(null);
 
   let subscription: SseHandle | null = null;
@@ -232,6 +242,21 @@ export const useDaemonStore = defineStore('daemon', () => {
     upsertRepo(ref);
     activeRepoId.value = ref.id;
     error.value = null;
+    void refreshWorktrees(ref.id);
+  }
+
+  /**
+   * Pull the active repo's worktrees (GET /repos/:id/worktrees), dropping
+   * the bare entry. Best-effort: a failure just empties the list (the
+   * switcher hides). Stale-guarded against a newer switch.
+   */
+  async function refreshWorktrees(id: string): Promise<void> {
+    try {
+      const list = await client.worktrees(id);
+      if (activeRepoId.value === id) worktrees.value = list.filter((w) => !w.isBare);
+    } catch {
+      if (activeRepoId.value === id) worktrees.value = [];
+    }
   }
 
   /** Release a repo (refcounted daemon-side) and drop it locally. */
@@ -243,7 +268,10 @@ export const useDaemonStore = defineStore('daemon', () => {
       return;
     }
     repos.value = repos.value.filter((repo) => repo.id !== id);
-    if (activeRepoId.value === id) activeRepoId.value = null;
+    if (activeRepoId.value === id) {
+      activeRepoId.value = null;
+      worktrees.value = [];
+    }
   }
 
   function toggleFollow(): boolean {
@@ -259,6 +287,7 @@ export const useDaemonStore = defineStore('daemon', () => {
     followEnabled,
     lastFollowChange,
     activeRepoId,
+    worktrees,
     error,
     // actions
     connect,

@@ -261,8 +261,9 @@ describe('useDaemonStore', () => {
     expect(store.repos.map((r) => r.id)).toEqual(['r2']);
     expect(store.activeRepoId).toBe('r2');
     expect(store.error).toBeNull();
-    // repoStore.open owns the POST; the daemon store only tracks.
-    expect(fake.calls).toHaveLength(0);
+    // repoStore.open owns the POST; the daemon store only tracks (it does
+    // GET the active repo's worktrees, but it never POSTs).
+    expect(fake.calls.some((c) => c.method === 'POST')).toBe(false);
 
     // Tracking the same repo again adds no duplicate.
     store.trackActive({ id: 'r2', path: '/other' });
