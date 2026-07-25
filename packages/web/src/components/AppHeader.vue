@@ -76,9 +76,9 @@ const followedName = computed(() => {
 const followActive = computed(() => hasFollowTarget.value && daemon.followEnabled);
 
 const followLabel = computed(() => {
-  if (!hasFollowTarget.value) return 'no follow target';
-  if (!daemon.followEnabled) return 'follow off';
-  return followedName.value ? `following ${followedName.value}` : 'follow on';
+  if (!hasFollowTarget.value) return 'no [f]ollow target';
+  if (!daemon.followEnabled) return '[f]ollow off';
+  return followedName.value ? `[f]ollowing ${followedName.value}` : '[f]ollow on';
 });
 
 const followTitle = computed(() => {
@@ -154,7 +154,7 @@ const modeTitle = computed(() =>
         @click="ui.toggleAutoMode()"
       >
         <span class="dot" aria-hidden="true"></span
-        >{{ ui.autoModeEnabled ? 'auto on' : 'auto off' }}
+        >{{ ui.autoModeEnabled ? '[a]uto on' : '[a]uto off' }}
       </button>
 
       <button
@@ -166,7 +166,7 @@ const modeTitle = computed(() =>
         @click="ui.toggleDiffSyntax()"
       >
         <span class="dot" aria-hidden="true"></span
-        >{{ ui.diffSyntaxEnabled ? 'syntax on' : 'syntax off' }}
+        >{{ ui.diffSyntaxEnabled ? '[s]yntax on' : '[s]yntax off' }}
       </button>
 
       <button
@@ -177,7 +177,7 @@ const modeTitle = computed(() =>
         :title="modeTitle"
         @click="ui.toggleDiffMode()"
       >
-        <span class="dot" aria-hidden="true"></span>{{ splitOn ? 'split' : 'unified' }}
+        <span class="dot" aria-hidden="true"></span>{{ splitOn ? '[d]iff split' : '[d]iff unified' }}
       </button>
 
       <button

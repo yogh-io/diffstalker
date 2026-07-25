@@ -47,24 +47,24 @@ describe('auto toggle', () => {
     const wrapper = mountHeader();
     const toggle = wrapper.find('[data-testid="auto-toggle"]');
 
-    expect(toggle.text()).toBe('auto off');
+    expect(toggle.text()).toBe('[a]uto off');
     expect(toggle.attributes('aria-pressed')).toBe('false');
 
     await toggle.trigger('click');
     expect(ui.autoModeEnabled).toBe(true);
-    expect(toggle.text()).toBe('auto on');
+    expect(toggle.text()).toBe('[a]uto on');
     expect(toggle.attributes('aria-pressed')).toBe('true');
 
     await toggle.trigger('click');
     expect(ui.autoModeEnabled).toBe(false);
-    expect(toggle.text()).toBe('auto off');
+    expect(toggle.text()).toBe('[a]uto off');
   });
 
   test('reflects a stored auto-mode preference on mount', () => {
     localStorage.setItem('diffstalker:prefs', JSON.stringify({ autoMode: true }));
     const wrapper = mountHeader();
     const toggle = wrapper.find('[data-testid="auto-toggle"]');
-    expect(toggle.text()).toBe('auto on');
+    expect(toggle.text()).toBe('[a]uto on');
     expect(toggle.attributes('aria-pressed')).toBe('true');
   });
 });
@@ -75,24 +75,24 @@ describe('syntax toggle', () => {
     const wrapper = mountHeader();
     const toggle = wrapper.find('[data-testid="syntax-toggle"]');
 
-    expect(toggle.text()).toBe('syntax off');
+    expect(toggle.text()).toBe('[s]yntax off');
     expect(toggle.attributes('aria-pressed')).toBe('false');
 
     await toggle.trigger('click');
     expect(ui.diffSyntaxEnabled).toBe(true);
-    expect(toggle.text()).toBe('syntax on');
+    expect(toggle.text()).toBe('[s]yntax on');
     expect(toggle.attributes('aria-pressed')).toBe('true');
 
     await toggle.trigger('click');
     expect(ui.diffSyntaxEnabled).toBe(false);
-    expect(toggle.text()).toBe('syntax off');
+    expect(toggle.text()).toBe('[s]yntax off');
   });
 
   test('reflects a stored diff-syntax preference on mount', () => {
     localStorage.setItem('diffstalker:prefs', JSON.stringify({ diffSyntax: true }));
     const wrapper = mountHeader();
     const toggle = wrapper.find('[data-testid="syntax-toggle"]');
-    expect(toggle.text()).toBe('syntax on');
+    expect(toggle.text()).toBe('[s]yntax on');
     expect(toggle.attributes('aria-pressed')).toBe('true');
   });
 });
@@ -103,24 +103,24 @@ describe('split toggle', () => {
     const wrapper = mountHeader();
     const toggle = wrapper.find('[data-testid="split-toggle"]');
 
-    expect(toggle.text()).toBe('unified');
+    expect(toggle.text()).toBe('[d]iff unified');
     expect(toggle.attributes('aria-pressed')).toBe('false');
 
     await toggle.trigger('click');
     expect(ui.diffMode).toBe('split');
-    expect(toggle.text()).toBe('split');
+    expect(toggle.text()).toBe('[d]iff split');
     expect(toggle.attributes('aria-pressed')).toBe('true');
 
     await toggle.trigger('click');
     expect(ui.diffMode).toBe('unified');
-    expect(toggle.text()).toBe('unified');
+    expect(toggle.text()).toBe('[d]iff unified');
   });
 
   test('reflects a stored split preference on mount', () => {
     localStorage.setItem('diffstalker:prefs', JSON.stringify({ diffMode: 'split' }));
     const wrapper = mountHeader();
     const toggle = wrapper.find('[data-testid="split-toggle"]');
-    expect(toggle.text()).toBe('split');
+    expect(toggle.text()).toBe('[d]iff split');
     expect(toggle.attributes('aria-pressed')).toBe('true');
   });
 });
@@ -135,7 +135,7 @@ describe('follow toggle', () => {
     useDaemonStore().follow = followState({ targetFile: null, enabled: false });
     const wrapper = mountHeader();
     const toggle = wrapper.find('[data-testid="follow-toggle"]');
-    expect(toggle.text()).toBe('no follow target');
+    expect(toggle.text()).toBe('no [f]ollow target');
     expect(toggle.attributes('disabled')).toBeDefined();
   });
 
@@ -145,17 +145,17 @@ describe('follow toggle', () => {
     const wrapper = mountHeader();
     const toggle = wrapper.find('[data-testid="follow-toggle"]');
 
-    expect(toggle.text()).toBe('follow on'); // enabled, no hit yet
+    expect(toggle.text()).toBe('[f]ollow on'); // enabled, no hit yet
     expect(toggle.attributes('aria-pressed')).toBe('true');
 
     await toggle.trigger('click');
     expect(daemon.followEnabled).toBe(false);
-    expect(toggle.text()).toBe('follow off');
+    expect(toggle.text()).toBe('[f]ollow off');
     expect(toggle.attributes('aria-pressed')).toBe('false');
 
     await toggle.trigger('click');
     expect(daemon.followEnabled).toBe(true);
-    expect(toggle.text()).toBe('follow on');
+    expect(toggle.text()).toBe('[f]ollow on');
   });
 
   test('shows the followed target once known', () => {
@@ -165,7 +165,7 @@ describe('follow toggle', () => {
     });
     const wrapper = mountHeader();
     const toggle = wrapper.find('[data-testid="follow-toggle"]');
-    expect(toggle.text()).toBe('following diffstalker');
+    expect(toggle.text()).toBe('[f]ollowing diffstalker');
     expect(toggle.attributes('title')).toContain('/home/u/projects/diffstalker');
   });
 
@@ -181,7 +181,7 @@ describe('follow toggle', () => {
     });
     const wrapper = mountHeader();
     const toggle = wrapper.find('[data-testid="follow-toggle"]');
-    expect(toggle.text()).toBe('following calc');
+    expect(toggle.text()).toBe('[f]ollowing calc');
   });
 });
 
