@@ -138,6 +138,9 @@ async function mountWithRepos(
 
 beforeEach(() => {
   localStorage.clear();
+  // Reset the URL — useUrlSync reads the query on mount, and happy-dom's
+  // window persists across tests, so a prior test's ?repo=… would leak in.
+  window.history.replaceState(null, '', '/');
   delete document.documentElement.dataset.theme;
   // Deterministic system theme: prefer dark (happy-dom reports light).
   vi.stubGlobal(

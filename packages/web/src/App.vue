@@ -27,6 +27,7 @@ import { useRepoOpen } from './composables/useRepoOpen';
 import { useGlobalKeys } from './composables/useGlobalKeys';
 import { useFollowMode } from './composables/useFollowMode';
 import { useAutoMode } from './composables/useAutoMode';
+import { useUrlSync } from './composables/useUrlSync';
 import AppHeader from './components/AppHeader.vue';
 import ActivityRail from './components/ActivityRail.vue';
 import StatusBar from './components/StatusBar.vue';
@@ -43,7 +44,7 @@ import type { ViewName } from './prefs';
 const daemon = useDaemonStore();
 const repo = useRepoStore();
 const ui = useUiStore();
-const { activate } = useRepoOpen();
+const { activate, openByPath } = useRepoOpen();
 
 // Stamp the theme before first paint (setup runs before mount).
 ui.init();
@@ -129,6 +130,24 @@ function disarmAutoActivate(): void {
 function activateFirst(repos: typeof daemon.repos): void {
   if (daemon.activeRepoId !== null || repos.length === 0) return;
   void activate(repos[0]);
+}
+
+// URL state: reproduce the shown repo/view/base from the query, and keep
+// the query in sync as those change (useUrlSync installs the write watcher).
+// A repo in the URL WINS over follow / first-repo on cold load — disarm the
+// auto-activation so they don't race it. The view is applied in setup (before
+// mount) so the first paint is the shared view. The compare base rides the
+// repo once it opens.
+async function applyUrlRepo(path: string, base: string | null): Promise<void> {
+  const ok = await openByPath(path);
+  if (ok && base !== null) await repo.setSelectedCompareBase(base);
+}
+
+const { initial: urlInit } = useUrlSync();
+if (urlInit.view) ui.setActiveView(urlInit.view);
+if (urlInit.repo !== null) {
+  disarmAutoActivate();
+  void applyUrlRepo(urlInit.repo, urlInit.base);
 }
 
 watch(
