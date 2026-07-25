@@ -2,28 +2,16 @@
 /**
  * Global header: wordmark, repo switcher, branch + tracking + ahead/behind
  * (mono, diff-colored counts — read-only text), one calm error line, the
- * auto-mode toggle, the diff syntax-highlighting toggle, the diff
- * unified/split toggle, the follow toggle, the fuzzy finder trigger,
- * theme switcher. No git controls: the web UI is a viewer.
- *
- * Auto: flips the client-side auto-mode policy (useAutoMode acts on
- * state changes only while it is on) — pure viewing: auto-select the
- * newest-changed file, auto-switch Changes/History. Persisted in prefs.
- *
- * Follow: the daemon owns the watcher; the button flips the CLIENT-side
- * followEnabled policy toggle (useFollowMode acts on follow-change only
- * while it is on — same split as the CLI's FollowMode). Honest states:
- * "no follow target" when the daemon runs without a hook file (the
- * toggle would do nothing — disabled), "follow off" when the client
- * toggle is off, "following <target>" when on (the followed worktree,
- * from daemon.follow, once the first hit lands).
+ * fuzzy finder trigger, theme switcher. No git controls: the web UI is a
+ * viewer. The four display toggles (auto / syntax / split / follow) live
+ * in the tab band (HeaderToggles, rendered by ActivityRail), NOT here —
+ * keeping them off the header saves it a row.
  */
 
 import { computed } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
-import { basename } from '../utils/format';
 import RepoSwitcher from './RepoSwitcher.vue';
 import ThemeSwitcher from './ThemeSwitcher.vue';
 
@@ -40,74 +28,6 @@ const branch = computed(() => repo.shared.status?.branch ?? null);
  */
 const errorLine = computed(() =>
   daemon.activeRepoId !== null ? repo.shared.error : (daemon.error ?? repo.shared.error)
-);
-
-/** Daemon-side: is there a hook file to follow at all? */
-const hasFollowTarget = computed(() => (daemon.follow?.targetFile ?? null) !== null);
-
-/**
- * The followed repo, keyed by followedRepoId in the open-repo list — the
- * SAME source the switcher uses for the active repo, and the SAME id
- * useFollowMode switches the active repo (and thus the diffs) to. Deriving
- * the label from the repo id, not from followedPath, keeps "following X"
- * honest: a follow-change event's `path` is the hook file content (often a
- * file inside the repo), so basename-ing it gave a filename — or, for a
- * directory with a trailing slash, an empty string ("following "). The
- * repo-list name matches whatever the diffs below actually show.
- */
-const followedRepo = computed(() => {
-  const id = daemon.follow?.followedRepoId ?? null;
-  return id !== null ? (daemon.repos.find((r) => r.id === id) ?? null) : null;
-});
-
-/** The followed worktree root path (for the tooltip / full path). */
-const followedPath = computed(
-  () => followedRepo.value?.path ?? daemon.follow?.followedPath ?? null
-);
-
-/** The followed repo's name: repo-list name first, path basename fallback
- * (used only in the window between follow-change and repo-opened landing). */
-const followedName = computed(() => {
-  if (followedRepo.value) return basename(followedRepo.value.path);
-  const path = daemon.follow?.followedPath ?? null;
-  return path ? basename(path) : null;
-});
-
-const followActive = computed(() => hasFollowTarget.value && daemon.followEnabled);
-
-const followLabel = computed(() => {
-  if (!hasFollowTarget.value) return 'no [f]ollow target';
-  if (!daemon.followEnabled) return '[f]ollow off';
-  return followedName.value ? `[f]ollowing ${followedName.value}` : '[f]ollow on';
-});
-
-const followTitle = computed(() => {
-  if (!hasFollowTarget.value) {
-    return 'The daemon is not watching a follow hook file (started with --no-follow)';
-  }
-  const target = followedPath.value !== null ? `Following ${followedPath.value}. ` : '';
-  return daemon.followEnabled
-    ? `${target}Click to stop switching repos on follow changes`
-    : `${target}Click to switch repos when the follow hook changes`;
-});
-
-const autoTitle = computed(() =>
-  ui.autoModeEnabled
-    ? 'Auto mode is on: the newest change is selected and flashed, and the view follows changes appearing or drying up. Click to turn off (a)'
-    : 'Turn on auto mode: auto-select the newest-changed file and auto-switch Changes/History (a)'
-);
-
-const syntaxTitle = computed(() =>
-  ui.diffSyntaxEnabled
-    ? 'Syntax highlighting is on for every diff. Click to show plain text'
-    : 'Turn on syntax highlighting for every diff'
-);
-
-const splitOn = computed(() => ui.diffMode === 'split');
-const modeTitle = computed(() =>
-  splitOn.value
-    ? 'Diffs are side by side (old | new). Click for the unified view'
-    : 'Show diffs side by side (old | new) instead of unified'
 );
 </script>
 
@@ -144,56 +64,6 @@ const modeTitle = computed(() =>
       </p>
     </div>
 
-    <div class="header-toggles">
-      <button
-        class="mode-toggle mono"
-        data-testid="auto-toggle"
-        :class="{ on: ui.autoModeEnabled }"
-        :aria-pressed="ui.autoModeEnabled"
-        :title="autoTitle"
-        @click="ui.toggleAutoMode()"
-      >
-        <span class="dot" aria-hidden="true"></span
-        >{{ ui.autoModeEnabled ? '[a]uto on' : '[a]uto off' }}
-      </button>
-
-      <button
-        class="mode-toggle mono"
-        data-testid="syntax-toggle"
-        :class="{ on: ui.diffSyntaxEnabled }"
-        :aria-pressed="ui.diffSyntaxEnabled"
-        :title="syntaxTitle"
-        @click="ui.toggleDiffSyntax()"
-      >
-        <span class="dot" aria-hidden="true"></span
-        >{{ ui.diffSyntaxEnabled ? '[s]yntax on' : '[s]yntax off' }}
-      </button>
-
-      <button
-        class="mode-toggle mono"
-        data-testid="split-toggle"
-        :class="{ on: splitOn }"
-        :aria-pressed="splitOn"
-        :title="modeTitle"
-        @click="ui.toggleDiffMode()"
-      >
-        <span class="dot" aria-hidden="true"></span>{{ splitOn ? '[d]iff split' : '[d]iff unified' }}
-      </button>
-
-      <button
-        v-if="daemon.follow"
-        class="mode-toggle mono"
-        data-testid="follow-toggle"
-        :class="{ on: followActive }"
-        :disabled="!hasFollowTarget"
-        :aria-pressed="followActive"
-        :title="followTitle"
-        @click="daemon.toggleFollow()"
-      >
-        <span class="dot" aria-hidden="true"></span>{{ followLabel }}
-      </button>
-    </div>
-
     <div class="header-pinned">
       <button
         class="finder-btn"
@@ -215,18 +85,15 @@ const modeTitle = computed(() =>
 </template>
 
 <style scoped>
-/* Wide: three columns on one row — identity (left) | toggles (middle) |
-   pinned find-file + theme (right). When the header no longer has ample
-   room for the toggles inline (≤ 80rem — a 1080px portrait screen falls
-   here), the WHOLE toggles group drops to its own full-width row beneath
-   identity + pinned, rather than cramming into the narrow middle column.
-   It never wraps inside a squeezed middle track. */
+/* Two columns: identity (left, shrinks/ellipsizes) | pinned find-file +
+   theme (right). The display toggles moved to the tab band, so the header
+   no longer needs a reflow row for them. */
 .app-header {
   grid-area: header;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas: 'identity toggles pinned';
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'identity pinned';
+  align-items: center;
   column-gap: 1rem;
   padding: 0.75rem 1rem;
   background: var(--surface);
@@ -234,7 +101,6 @@ const modeTitle = computed(() =>
 }
 
 .header-identity,
-.header-toggles,
 .header-pinned {
   display: flex;
   align-items: center;
@@ -246,27 +112,10 @@ const modeTitle = computed(() =>
   gap: 1rem;
 }
 
-/* Wraps only within its OWN full-width row when even that is too narrow. */
-.header-toggles {
-  grid-area: toggles;
-  flex-wrap: wrap;
-  gap: 0.375rem 0.625rem;
-}
-
 .header-pinned {
   grid-area: pinned;
   gap: 1rem;
   justify-self: end;
-}
-
-@media (max-width: 80rem) {
-  .app-header {
-    grid-template-columns: 1fr auto;
-    grid-template-areas:
-      'identity pinned'
-      'toggles toggles';
-    row-gap: 0.5rem;
-  }
 }
 
 .brand {
@@ -334,49 +183,6 @@ const modeTitle = computed(() =>
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-}
-
-/* Shared style for the auto and follow policy toggles. */
-.mode-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.25rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: var(--fs-small);
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-.mode-toggle:hover:not(:disabled) {
-  border-color: var(--text-dim);
-}
-
-.mode-toggle .dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--text-dim);
-}
-
-/* On: the WHOLE chip lights up — a green fill, an add-green border, and a
-   glowing dot — not just the dot. The dot (the signature marker) stays. All
-   tints derive from the theme's add-green, so they adapt per theme. */
-.mode-toggle.on {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--add) 60%, var(--border));
-  background: color-mix(in srgb, var(--add) 15%, var(--surface));
-}
-
-.mode-toggle.on:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--add) 80%, var(--border));
-  background: color-mix(in srgb, var(--add) 24%, var(--surface));
-}
-
-.mode-toggle.on .dot {
-  background: var(--add);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--add) 70%, transparent);
 }
 
 .finder-btn {

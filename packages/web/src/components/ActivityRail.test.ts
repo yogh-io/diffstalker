@@ -50,8 +50,8 @@ describe('tabs', () => {
   });
 });
 
-describe('portrait toolbar slot layout', () => {
-  test('the slot is a direct flex sibling of the tab buttons inside the band', () => {
+describe('band right group (view toolbar + display toggles)', () => {
+  test('the toolbar slot lives in .band-right, a flex sibling of the tabs', () => {
     const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
     const band = wrapper.find('nav.rail').element;
 
@@ -59,21 +59,31 @@ describe('portrait toolbar slot layout', () => {
     const tabs = children.filter((el) => el.classList.contains('rail-item'));
     expect(tabs).toHaveLength(5);
 
-    // Same parent, same flow — the slot shares the band row with the tabs.
-    const slot = children.find((el) => el.id === 'view-toolbar-slot');
-    expect(slot).toBeDefined();
-    expect(slot!.parentElement).toBe(tabs[0].parentElement);
+    // The right group is a direct flex sibling of the tabs in the band.
+    const bandRight = children.find((el) => el.classList.contains('band-right'));
+    expect(bandRight).toBeDefined();
+    expect(bandRight!.parentElement).toBe(tabs[0].parentElement);
+
+    // The view-toolbar slot is adopted INTO the right group (to the left of
+    // the global toggles), not left absolutely positioned over the tabs.
+    const slot = bandRight!.querySelector('#view-toolbar-slot');
+    expect(slot).not.toBeNull();
+    // The toggles render there too (the follow one is conditional).
+    expect(bandRight!.querySelector('[data-testid="auto-toggle"]')).not.toBeNull();
   });
 
-  test('the slot is never absolutely positioned; portrait right-aligns it in flow', () => {
-    // Every .toolbar-slot rule in the SFC: none may take the slot out
-    // of flow (that is what made it overlap the tab labels).
+  test('the slot is never absolutely positioned; the right group is in-flow, right-aligned', () => {
+    // No .toolbar-slot rule may take the slot out of flow (that is what made
+    // it overlap the tab labels).
     const slotRules = railSource.match(/\.toolbar-slot[^{]*\{[^}]*\}/g) ?? [];
     expect(slotRules.length).toBeGreaterThan(0);
     for (const rule of slotRules) {
       expect(rule).not.toMatch(/position\s*:\s*absolute/);
     }
-    // The portrait rule right-aligns it as a flex item instead.
-    expect(slotRules.some((rule) => /margin-left\s*:\s*auto/.test(rule))).toBe(true);
+    // The right group is pushed to the edge as a flex item (margin-left
+    // auto), not positioned out of flow.
+    const bandRightRule = railSource.match(/\.band-right\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(bandRightRule).toMatch(/margin-left\s*:\s*auto/);
+    expect(bandRightRule).not.toMatch(/position\s*:\s*absolute/);
   });
 });

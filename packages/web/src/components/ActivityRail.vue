@@ -28,18 +28,20 @@
 
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { useUiStore, VIEWS } from '../stores/ui';
+import HeaderToggles from './HeaderToggles.vue';
 import type { ViewName } from '../prefs';
 
 const ui = useUiStore();
 
-const railEl = ref<HTMLElement | null>(null);
+/** The band's right group: [view-toolbar slot][global display toggles]. */
+const bandRightEl = ref<HTMLElement | null>(null);
 
 /** The adopted #view-toolbar-slot element (see the header comment). */
 let slotEl: HTMLElement | null = null;
 
 onMounted(() => {
-  const rail = railEl.value;
-  if (!rail) return;
+  const bandRight = bandRightEl.value;
+  if (!bandRight) return;
   let slot = document.getElementById('view-toolbar-slot');
   if (!slot) {
     // No index.html in this document (tests mounting the rail alone).
@@ -47,7 +49,9 @@ onMounted(() => {
     slot.id = 'view-toolbar-slot';
   }
   slot.classList.add('toolbar-slot');
-  rail.appendChild(slot);
+  // Insert the view toolbar to the LEFT of the global toggles (which are
+  // the last child of bandRight), so the toggles stay pinned far-right.
+  bandRight.insertBefore(slot, bandRight.firstChild);
   slotEl = slot;
 });
 
@@ -55,7 +59,7 @@ onBeforeUnmount(() => {
   // Park the slot back on <body> so it stays in the document for the
   // next rail instance (and for teleports that outlive this one). Only
   // when actually in the document — detached test mounts just drop it.
-  if (slotEl?.isConnected && railEl.value?.contains(slotEl)) {
+  if (slotEl?.isConnected && bandRightEl.value?.contains(slotEl)) {
     document.body.appendChild(slotEl);
   }
   slotEl = null;
@@ -95,10 +99,12 @@ const ICON_PATHS: Record<ViewName, string> = {
       <span class="rail-label">{{ view.label }}</span>
     </button>
 
-    <!-- Portrait toolbar slot: the active view Teleports its toolbar
-         controls into #view-toolbar-slot, which onMounted adopts from
-         index.html as the last band child (right here). Hidden (and
-         empty) in landscape. -->
+    <!-- Right group, pinned to the band's right edge: the active view's
+         Teleported toolbar (#view-toolbar-slot, adopted onMounted as the
+         FIRST child here) then the always-present global display toggles. -->
+    <div ref="bandRightEl" class="band-right">
+      <HeaderToggles />
+    </div>
   </nav>
 </template>
 
@@ -160,6 +166,19 @@ const ICON_PATHS: Record<ViewName, string> = {
   white-space: nowrap;
 }
 
+/* Right group: the view toolbar (adopted slot) + the global display
+   toggles, pinned to the band's right edge (margin-left:auto). Wraps
+   below the tabs when the band is too narrow. */
+.band-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.625rem;
+  min-width: 0;
+  margin-left: auto;
+}
+
 /* Cramped band: drop the labels to icon-only tabs so all five fit
    without wrapping (the toolbar still shares the row on toolbar views). */
 @media (max-width: 56rem) {
@@ -188,26 +207,23 @@ body > .toolbar-slot {
 }
 
 @media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px) {
-  /* Toolbar region for the active view's lifted controls: a flex
-     SIBLING of the tabs in the same row (never absolutely positioned,
-     so it cannot overlap them). margin-left:auto pushes it to the
-     right edge; when the band runs out of width the row wraps and the
-     controls drop to their own line. The controls themselves may wrap
-     too. */
-  .rail > .toolbar-slot {
+  /* The active view's lifted controls, inside .band-right and to the LEFT
+     of the global toggles (never absolutely positioned, so they cannot
+     overlap the tabs). .band-right's margin-left:auto right-aligns the
+     whole group; when the band runs out of width the row wraps and the
+     group drops to its own line. The controls themselves may wrap too. */
+  .band-right > .toolbar-slot {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     justify-content: flex-end;
     gap: 0.625rem;
     min-width: 0;
-    margin-left: auto;
   }
 
-  /* Nothing teleported (Changes/History): drop the empty slot from flow.
-     The tabs are left-aligned (justify-content: flex-start) on every view,
-     so all four tabs line up on the left whether or not a toolbar lifts in. */
-  .rail > .toolbar-slot:empty {
+  /* Nothing teleported (Changes/History): drop the empty slot from flow so
+     the toggles sit flush at the right; the tabs stay left-aligned. */
+  .band-right > .toolbar-slot:empty {
     display: none;
   }
 }

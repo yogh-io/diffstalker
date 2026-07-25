@@ -1,10 +1,9 @@
 /**
- * AppHeader tests: the follow indicator is a real toggle over the
- * client-side followEnabled policy with honest states (no follow
- * target / follow off / following <target>), the finder trigger opens
- * the overlay (disabled without an active repo), and the viewer stance
- * — the header carries NO git controls (fetch/pull/push, branch,
- * stash, reset are gone).
+ * AppHeader tests: the finder trigger opens the overlay (disabled without
+ * an active repo), and the viewer stance — the header carries NO git
+ * controls (fetch/pull/push, branch, stash, reset are gone). The display
+ * toggles (auto/syntax/split/follow) moved to the tab band; they are
+ * covered by HeaderToggles.test.ts.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -41,150 +40,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('auto toggle', () => {
-  test('honest off state by default; clicking flips autoModeEnabled and persists', async () => {
-    const ui = useUiStore();
-    const wrapper = mountHeader();
-    const toggle = wrapper.find('[data-testid="auto-toggle"]');
-
-    expect(toggle.text()).toBe('[a]uto off');
-    expect(toggle.attributes('aria-pressed')).toBe('false');
-
-    await toggle.trigger('click');
-    expect(ui.autoModeEnabled).toBe(true);
-    expect(toggle.text()).toBe('[a]uto on');
-    expect(toggle.attributes('aria-pressed')).toBe('true');
-
-    await toggle.trigger('click');
-    expect(ui.autoModeEnabled).toBe(false);
-    expect(toggle.text()).toBe('[a]uto off');
-  });
-
-  test('reflects a stored auto-mode preference on mount', () => {
-    localStorage.setItem('diffstalker:prefs', JSON.stringify({ autoMode: true }));
-    const wrapper = mountHeader();
-    const toggle = wrapper.find('[data-testid="auto-toggle"]');
-    expect(toggle.text()).toBe('[a]uto on');
-    expect(toggle.attributes('aria-pressed')).toBe('true');
-  });
-});
-
-describe('syntax toggle', () => {
-  test('honest off state by default; clicking flips diffSyntaxEnabled and persists', async () => {
-    const ui = useUiStore();
-    const wrapper = mountHeader();
-    const toggle = wrapper.find('[data-testid="syntax-toggle"]');
-
-    expect(toggle.text()).toBe('[s]yntax off');
-    expect(toggle.attributes('aria-pressed')).toBe('false');
-
-    await toggle.trigger('click');
-    expect(ui.diffSyntaxEnabled).toBe(true);
-    expect(toggle.text()).toBe('[s]yntax on');
-    expect(toggle.attributes('aria-pressed')).toBe('true');
-
-    await toggle.trigger('click');
-    expect(ui.diffSyntaxEnabled).toBe(false);
-    expect(toggle.text()).toBe('[s]yntax off');
-  });
-
-  test('reflects a stored diff-syntax preference on mount', () => {
-    localStorage.setItem('diffstalker:prefs', JSON.stringify({ diffSyntax: true }));
-    const wrapper = mountHeader();
-    const toggle = wrapper.find('[data-testid="syntax-toggle"]');
-    expect(toggle.text()).toBe('[s]yntax on');
-    expect(toggle.attributes('aria-pressed')).toBe('true');
-  });
-});
-
-describe('split toggle', () => {
-  test('unified by default; clicking flips diffMode to split and persists', async () => {
-    const ui = useUiStore();
-    const wrapper = mountHeader();
-    const toggle = wrapper.find('[data-testid="split-toggle"]');
-
-    expect(toggle.text()).toBe('[d]iff unified');
-    expect(toggle.attributes('aria-pressed')).toBe('false');
-
-    await toggle.trigger('click');
-    expect(ui.diffMode).toBe('split');
-    expect(toggle.text()).toBe('[d]iff split');
-    expect(toggle.attributes('aria-pressed')).toBe('true');
-
-    await toggle.trigger('click');
-    expect(ui.diffMode).toBe('unified');
-    expect(toggle.text()).toBe('[d]iff unified');
-  });
-
-  test('reflects a stored split preference on mount', () => {
-    localStorage.setItem('diffstalker:prefs', JSON.stringify({ diffMode: 'split' }));
-    const wrapper = mountHeader();
-    const toggle = wrapper.find('[data-testid="split-toggle"]');
-    expect(toggle.text()).toBe('[d]iff split');
-    expect(toggle.attributes('aria-pressed')).toBe('true');
-  });
-});
-
-describe('follow toggle', () => {
-  test('hidden until the daemon follow state is loaded', () => {
-    const wrapper = mountHeader();
-    expect(wrapper.find('[data-testid="follow-toggle"]').exists()).toBe(false);
-  });
-
-  test('no hook file: honest "no follow target", disabled', async () => {
-    useDaemonStore().follow = followState({ targetFile: null, enabled: false });
-    const wrapper = mountHeader();
-    const toggle = wrapper.find('[data-testid="follow-toggle"]');
-    expect(toggle.text()).toBe('no [f]ollow target');
-    expect(toggle.attributes('disabled')).toBeDefined();
-  });
-
-  test('clicking flips followEnabled: follow on -> follow off -> back', async () => {
-    const daemon = useDaemonStore();
-    daemon.follow = followState();
-    const wrapper = mountHeader();
-    const toggle = wrapper.find('[data-testid="follow-toggle"]');
-
-    expect(toggle.text()).toBe('[f]ollow on'); // enabled, no hit yet
-    expect(toggle.attributes('aria-pressed')).toBe('true');
-
-    await toggle.trigger('click');
-    expect(daemon.followEnabled).toBe(false);
-    expect(toggle.text()).toBe('[f]ollow off');
-    expect(toggle.attributes('aria-pressed')).toBe('false');
-
-    await toggle.trigger('click');
-    expect(daemon.followEnabled).toBe(true);
-    expect(toggle.text()).toBe('[f]ollow on');
-  });
-
-  test('shows the followed target once known', () => {
-    useDaemonStore().follow = followState({
-      followedRepoId: 'r1',
-      followedPath: '/home/u/projects/diffstalker',
-    });
-    const wrapper = mountHeader();
-    const toggle = wrapper.find('[data-testid="follow-toggle"]');
-    expect(toggle.text()).toBe('[f]ollowing diffstalker');
-    expect(toggle.attributes('title')).toContain('/home/u/projects/diffstalker');
-  });
-
-  test('names the followed repo by id, not by the hook path (which may be a file)', () => {
-    // A follow-change event carries the hook file CONTENT as `path` — often
-    // a file inside the repo. The label must name the followed REPO (by id,
-    // the same repo the diffs switch to), not basename that file path.
-    const daemon = useDaemonStore();
-    daemon.repos = [{ id: 'r1', path: '/home/u/projects/calc', branch: 'main' }];
-    daemon.follow = followState({
-      followedRepoId: 'r1',
-      followedPath: '/home/u/projects/calc/src/e2e/CommonPage.ts',
-    });
-    const wrapper = mountHeader();
-    const toggle = wrapper.find('[data-testid="follow-toggle"]');
-    expect(toggle.text()).toBe('[f]ollowing calc');
-  });
-});
-
 describe('viewer stance (read-only)', () => {
   test('the header carries NO fetch/pull/push/branch/stash controls', () => {
     useDaemonStore().follow = followState();
@@ -194,8 +49,8 @@ describe('viewer stance (read-only)', () => {
     for (const id of ['remote-fetch', 'remote-pull', 'remote-push', 'actions-trigger']) {
       expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(false);
     }
-    // The only buttons left are the read-side chrome: follow toggle,
-    // repo switcher, finder trigger, theme switcher.
+    // The only buttons left are the read-side chrome: repo switcher, finder
+    // trigger, theme switcher (the display toggles moved to the tab band).
     const labels = wrapper.findAll('button').map((b) => b.text());
     expect(labels.join(' ')).not.toMatch(/fetch|pull|push|stash|branch|reset/i);
   });
