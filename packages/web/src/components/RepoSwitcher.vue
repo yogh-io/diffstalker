@@ -1,17 +1,20 @@
 <script setup lang="ts">
 /**
- * Repo switcher in the header: a button showing the active repo, opening
- * a panel that lists the daemon's open repos, the localStorage recents
- * that aren't open, and the open-by-path form. Esc or an outside click
- * closes the panel.
+ * Repo switcher in the header: a button showing the active repo/project,
+ * opening a panel that lists the daemon's open repos GROUPED BY PROJECT
+ * (all worktrees of one repo collapse to a single row — e.g. "calculator"
+ * — the worktree switcher beside the button picks the worktree), the
+ * localStorage recents that aren't open, and the open-by-path form. Esc or
+ * an outside click closes the panel.
  */
 
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useUiStore } from '../stores/ui';
 import { useRepoOpen } from '../composables/useRepoOpen';
 import { useActiveWorktrees } from '../composables/useActiveWorktrees';
-import { basename } from '../utils/format';
+import { DiffstalkerClient } from '../api/client';
+import { basename, commonParentDir } from '../utils/format';
 import RepoOpenForm from './RepoOpenForm.vue';
 import type { RepoSummary } from '@diffstalker/client';
 
@@ -19,6 +22,7 @@ const daemon = useDaemonStore();
 const ui = useUiStore();
 const { openByPath, activate } = useRepoOpen();
 const { hasMultiple, projectName } = useActiveWorktrees();
+const client = new DiffstalkerClient();
 
 const open = ref(false);
 const rootEl = ref<HTMLElement | null>(null);
@@ -38,12 +42,68 @@ const triggerLabel = computed(() => {
   return hasMultiple.value ? projectName.value : basename(activeRepo.value.path);
 });
 
+// --- Group open repos by project -------------------------------------------
+
+interface RepoProject {
+  /** Project root: the deepest dir containing all the repo's worktrees. */
+  root: string;
+  name: string;
+  /** The open worktrees of this project (one repo id each). */
+  repos: RepoSummary[];
+}
+
+/** repoId -> project root, resolved by pulling each repo's worktrees once. */
+const projectRootById = ref(new Map<string, string>());
+
+async function resolveProjects(): Promise<void> {
+  for (const repo of daemon.repos) {
+    if (projectRootById.value.has(repo.id)) continue;
+    let root = repo.path;
+    try {
+      const paths = (await client.worktrees(repo.id))
+        .filter((w) => !w.isBare)
+        .map((w) => w.path);
+      root = commonParentDir(paths) || repo.path;
+    } catch {
+      // Keep the repo path as its own project on failure.
+    }
+    projectRootById.value = new Map(projectRootById.value).set(repo.id, root);
+  }
+}
+
+// Resolve lazily: only while the panel is open, and again if the open-repo
+// set changes while it stays open (only unseen ids are fetched).
+watch(
+  [open, () => daemon.repos],
+  ([isOpen]) => {
+    if (isOpen) void resolveProjects();
+  },
+  { immediate: false }
+);
+
+const openProjects = computed<RepoProject[]>(() => {
+  const groups = new Map<string, RepoProject>();
+  for (const repo of daemon.repos) {
+    const root = projectRootById.value.get(repo.id) ?? repo.path;
+    let group = groups.get(root);
+    if (!group) {
+      group = { root, name: basename(root), repos: [] };
+      groups.set(root, group);
+    }
+    group.repos.push(repo);
+  }
+  return [...groups.values()];
+});
+
 const recentsNotOpen = computed(() =>
   ui.recentRepos.filter((path) => !daemon.repos.some((repo) => repo.path === path))
 );
 
-function pick(repo: RepoSummary): void {
-  void activate(repo);
+/** Activate a project: keep the active worktree if it's in this project,
+ * else switch to its first open worktree; the header select refines. */
+function pickProject(project: RepoProject): void {
+  const active = project.repos.find((repo) => repo.id === daemon.activeRepoId);
+  void activate(active ?? project.repos[0]);
   open.value = false;
 }
 
@@ -89,18 +149,23 @@ onBeforeUnmount(() => {
     <div v-if="open" class="panel">
       <RepoOpenForm @opened="open = false" />
 
-      <div v-if="daemon.repos.length" class="group" data-testid="open-repos">
+      <div v-if="openProjects.length" class="group" data-testid="open-repos">
         <p class="group-label">Open on daemon</p>
         <button
-          v-for="repo in daemon.repos"
-          :key="repo.id"
+          v-for="project in openProjects"
+          :key="project.root"
           class="repo-row"
-          :class="{ active: repo.id === daemon.activeRepoId }"
-          @click="pick(repo)"
+          :class="{ active: project.repos.some((r) => r.id === daemon.activeRepoId) }"
+          @click="pickProject(project)"
         >
-          <span class="name mono" :title="basename(repo.path)">{{ basename(repo.path) }}</span>
-          <span v-if="repo.branch" class="branch mono" :title="repo.branch">{{ repo.branch }}</span>
-          <span class="path mono" :title="repo.path">{{ repo.path }}</span>
+          <span class="name mono" :title="project.name">{{ project.name }}</span>
+          <span
+            v-if="project.repos.length > 1"
+            class="branch mono"
+            :title="`${project.repos.length} open worktrees`"
+            >{{ project.repos.length }} open</span
+          >
+          <span class="path mono" :title="project.root">{{ project.root }}</span>
         </button>
       </div>
 
