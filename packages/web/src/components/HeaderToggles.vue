@@ -99,7 +99,7 @@ const modeTitle = computed(() =>
       :title="autoTitle"
       @click="ui.toggleAutoMode()"
     >
-      <span class="dot" aria-hidden="true"></span><span class="key">a</span>uto
+      <span class="dot" aria-hidden="true"></span><span class="label"><span class="key">a</span>uto</span>
     </button>
 
     <button
@@ -111,7 +111,7 @@ const modeTitle = computed(() =>
       :title="syntaxTitle"
       @click="ui.toggleDiffSyntax()"
     >
-      <span class="dot" aria-hidden="true"></span><span class="key">s</span>yntax
+      <span class="dot" aria-hidden="true"></span><span class="label"><span class="key">s</span>yntax</span>
     </button>
 
     <button
@@ -123,7 +123,7 @@ const modeTitle = computed(() =>
       :title="modeTitle"
       @click="ui.toggleDiffMode()"
     >
-      <span class="dot" aria-hidden="true"></span><span class="key">d</span>iff
+      <span class="dot" aria-hidden="true"></span><span class="label"><span class="key">d</span>iff</span>
     </button>
 
     <button
@@ -137,7 +137,7 @@ const modeTitle = computed(() =>
       :title="followTitle"
       @click="daemon.toggleFollow()"
     >
-      <span class="dot" aria-hidden="true"></span><span class="key">f</span>ollow
+      <span class="dot" aria-hidden="true"></span><span class="label"><span class="key">f</span>ollow</span>
     </button>
   </div>
 </template>
