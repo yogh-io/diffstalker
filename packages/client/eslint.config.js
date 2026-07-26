@@ -19,6 +19,15 @@ export default tseslint.config(
       'sonarjs/no-os-command-from-path': 'off',
       // Tracked via metrics, not a lint gate
       'sonarjs/cognitive-complexity': 'warn',
+      // sonarjs 4 (with eslint 10) added these as errors. They are opinionated
+      // (test-assertion / parameterized-test style) and, for super-linear-regex,
+      // conservative on our TRUSTED, bounded git output (not attacker input) —
+      // disabled to match this repo's existing sonarjs stance (slow-regex,
+      // no-control-regex, etc. are off; cognitive-complexity is a warning).
+      'sonarjs/prefer-specific-assertions': 'off',
+      'sonarjs/parameterized-tests': 'off',
+      'sonarjs/super-linear-regex': 'off',
+      'sonarjs/no-floating-point-equality': 'off',
       // These catch real bugs — enforce as errors, not tracked warnings
       'sonarjs/no-dead-store': 'error',
       'sonarjs/no-all-duplicated-branches': 'error',

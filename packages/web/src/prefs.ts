@@ -125,7 +125,7 @@ function sanitize(raw: unknown): Prefs {
 }
 
 export function loadPrefs(): Prefs {
-  let text: string | null = null;
+  let text: string | null;
   try {
     text = localStorage.getItem(PREFS_KEY);
   } catch {
