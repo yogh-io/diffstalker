@@ -2,11 +2,12 @@
 
 A live, always-on view of everything changing in your git repos — open it in your **browser** or your **terminal**. It watches your repositories in real time, follows you as you switch projects, and shows word-level diffs so you always know exactly what changed.
 
-| Dark | Light |
-|:----:|:-----:|
-| ![diffstalker web — Changes (dark)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-changes-dark.jpg) | ![diffstalker web — Changes (light)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-changes-light.jpg) |
+<p>
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-changes-dark.jpg" alt="diffstalker web — Changes view" width="49%">
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-changes-light.jpg" alt="" width="49%">
+</p>
 
-*The web UI, live: your working-tree changes with word-level diffs and per-hunk edit times ("1 minute ago"). Point it at a repo and leave it open — it updates itself. Every screenshot below is shown in both built-in themes; there are six in all.*
+*The web UI, live: your working-tree changes with word-level diffs and per-hunk edit times ("1 minute ago"). Point it at a repo and leave it open — it updates itself.*
 
 ## Why diffstalker?
 
@@ -36,27 +37,31 @@ That's it. The UI streams live over SSE — status, diffs, and the change timeli
 
 **Journal** — a running timeline of every change as it happens, tracked per hunk. Each entry has a timestamp, path, a kind (created / edited / expanded / shrunk / reverted / renamed), stats, and its own diff. When a hunk changes again, the older entry collapses and a fresh one appears at the bottom.
 
-| Dark | Light |
-|:----:|:-----:|
-| ![Journal (dark)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-journal-dark.jpg) | ![Journal (light)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-journal-light.jpg) |
+<p>
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-journal-dark.jpg" alt="Journal view" width="49%">
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-journal-light.jpg" alt="" width="49%">
+</p>
 
 **History** — the commit log beside a full commit detail: metadata and a multi-file diff.
 
-| Dark | Light |
-|:----:|:-----:|
-| ![History (dark)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-history-dark.jpg) | ![History (light)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-history-light.jpg) |
+<p>
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-history-dark.jpg" alt="History view" width="49%">
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-history-light.jpg" alt="" width="49%">
+</p>
 
 **Compare** — a GitHub-PR-style view against any base branch: a collapsible commits list, a file tree, and stacked per-file diffs. Toggle between unified and side-by-side layout.
 
-| Dark | Light |
-|:----:|:-----:|
-| ![Compare (dark)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-compare-dark.jpg) | ![Compare (light)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-compare-light.jpg) |
+<p>
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-compare-dark.jpg" alt="Compare view" width="49%">
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-compare-light.jpg" alt="" width="49%">
+</p>
 
 **Explorer** — a lazy file tree with git-status decoration beside syntax-highlighted file content.
 
-| Dark | Light |
-|:----:|:-----:|
-| ![Explorer (dark)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-explorer-dark.jpg) | ![Explorer (light)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-explorer-light.jpg) |
+<p>
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-explorer-dark.jpg" alt="Explorer view" width="49%">
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-explorer-light.jpg" alt="" width="49%">
+</p>
 
 Plus, everywhere: word-level diff highlighting, an app-wide **unified / split** diff toggle, optional **syntax highlighting** in diffs, **follow** and **auto** mode, a fuzzy file finder (`Ctrl+P`), six themes, a hotkeys overlay (`?`), and a layout that reflows for portrait (vertical) monitors.
 
