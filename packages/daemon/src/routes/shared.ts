@@ -124,17 +124,24 @@ export function parseBoolParam(query: URLSearchParams, name: string, fallback: b
 
 /**
  * Parse a positive-integer query param; an absent param yields the default.
+ * An optional `max` bounds it above (a client asking for an unbounded
+ * `count` would otherwise make the daemon buffer an arbitrarily large
+ * result) — over the cap is a 400, not a silent clamp.
  */
 export function parsePositiveIntParam(
   query: URLSearchParams,
   name: string,
-  fallback: number
+  fallback: number,
+  max?: number
 ): number {
   const raw = query.get(name);
   if (raw === null) return fallback;
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1) {
     throw new HttpError(400, `Invalid "${name}" (expected a positive integer): ${raw}`);
+  }
+  if (max !== undefined && value > max) {
+    throw new HttpError(400, `Invalid "${name}" (must be <= ${max}): ${raw}`);
   }
   return value;
 }

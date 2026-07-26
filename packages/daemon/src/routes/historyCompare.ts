@@ -59,7 +59,7 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
 
   router.get('/repos/:id/history', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
-    const count = parsePositiveIntParam(query, 'count', 100);
+    const count = parsePositiveIntParam(query, 'count', 100, 5000);
     // CommitInfo dates are Date objects; sendJson's toWire turns them into
     // ISO strings.
     sendJson(res, 200, await getCommitHistory(handle.path, count));

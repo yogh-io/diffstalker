@@ -15,8 +15,9 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import type { AddressInfo, Socket } from 'node:net';
-import { Router } from './router.js';
+import { Router, sendJson } from './router.js';
 import { createStaticHandler } from './staticFiles.js';
+import { shouldGuard, guardRequest, SECURITY_HEADERS } from './security.js';
 import { RepoRegistry, type RepoHandle } from './repoRegistry.js';
 import { SseHub, DaemonEventHub } from './sse.js';
 import { FollowController } from './follow.js';
@@ -127,6 +128,23 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
   const staticHandler = options.webRoot ? createStaticHandler(options.webRoot) : undefined;
 
   const server = http.createServer((req, res) => {
+    // Security headers on every response, from one choke point (persist
+    // through the per-route writeHead, which merges rather than replaces).
+    for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+      res.setHeader(name, value);
+    }
+
+    // Origin guard (CSRF + DNS-rebinding), only when bound to loopback —
+    // the default, safe posture. A routable bind is operator-exposed and
+    // out of this threat model (index.ts warns instead).
+    if (shouldGuard(server.address())) {
+      const blocked = guardRequest(req);
+      if (blocked) {
+        sendJson(res, blocked.status, { error: blocked.message });
+        return;
+      }
+    }
+
     // handle() never rejects (it converts errors to JSON responses), but
     // a floating rejection here would crash the daemon — belt and braces.
     router.handle(req, res, staticHandler).catch(() => res.end());

@@ -140,6 +140,38 @@ function resolveWebRoot(explicit?: string): string | undefined {
   return undefined;
 }
 
+/** A loopback bind host (the safe, guarded posture). */
+function isLoopbackHost(host: string): boolean {
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+}
+
+/**
+ * A non-loopback bind exposes an UNAUTHENTICATED service that can read
+ * source and run git operations. Warn loudly — the README says localhost
+ * only, and the origin guard (security.ts) does not run off loopback.
+ */
+function warnIfExposed(host: string, port: number): void {
+  if (isLoopbackHost(host)) return;
+  console.error(
+    `diffstalkerd: WARNING — bound to non-loopback host ${host}. This daemon has NO ` +
+      `authentication; anyone who can reach ${host}:${port} can read your source and run ` +
+      `git operations. Do not expose it to an untrusted network.`
+  );
+}
+
+/**
+ * Print the browser URL for the web UI on a TCP port, then warn if the
+ * bind is a routable exposure. *.localhost resolves to loopback with no
+ * config, so the friendly host is the canonical bookmark.
+ */
+function announcePortAccess(host: string, port: number): void {
+  const url = isLoopbackHost(host)
+    ? `http://diffstalker.localhost:${port}/`
+    : `http://${host}:${port}/`;
+  console.error(`diffstalkerd: web UI at ${url}`);
+  warnIfExposed(host, port);
+}
+
 async function main(): Promise<void> {
   process.title = 'diffstalkerd';
 
@@ -183,17 +215,14 @@ async function main(): Promise<void> {
   }
   if (webRoot) {
     console.error(`diffstalkerd serving web UI from ${webRoot}`);
-    // Print the browser URL when the web UI is reachable from one (a TCP port —
-    // a browser can't open a unix socket). *.localhost resolves to loopback with
-    // no config, so the friendly host is the canonical bookmark.
+    // A browser can only reach a TCP port (not a unix socket); print the
+    // URL and warn if the bind is exposed.
     if (options.port !== undefined) {
-      const host = options.host ?? '127.0.0.1';
-      const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
-      const url = loopback
-        ? `http://diffstalker.localhost:${options.port}/`
-        : `http://${host}:${options.port}/`;
-      console.error(`diffstalkerd: web UI at ${url}`);
+      announcePortAccess(options.host ?? '127.0.0.1', options.port);
     }
+  } else if (options.port !== undefined) {
+    // No web UI, but a bound port can still be a routable exposure to warn about.
+    warnIfExposed(options.host ?? '127.0.0.1', options.port);
   }
 
   let shuttingDown = false;

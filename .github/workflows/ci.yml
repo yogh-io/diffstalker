@@ -1,0 +1,35 @@
+name: CI
+
+# Continuous checks on every push to main and every pull request. The
+# release workflow (release.yml) runs only on version tags; this is the
+# per-change signal — type-check, lint, and the full test suite — so
+# regressions surface at PR time, not at release time.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch/PR cancels the older in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      # tsc -b across all packages: bun test strips types without checking,
+      # so this is the only gate that catches type errors.
+      - run: bun run build
+
+      # ESLint + dependency-cruiser (0 errors expected; warnings allowed).
+      - run: bun run lint
+
+      # Full suite: core + cli + daemon + client + web.
+      - run: bun run test

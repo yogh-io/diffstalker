@@ -139,13 +139,38 @@ export async function getDiffAgainstHead(repoPath: string): Promise<DiffResult> 
   return { raw, lines: parseDiffWithLineNumbers(raw) };
 }
 
+/** Cap on the untracked file read below — mirrors explorerData's display
+ *  limit. A file larger than this yields an empty diff (catch-to-empty
+ *  convention) rather than buffering an unbounded read into memory. */
+const MAX_UNTRACKED_DIFF_BYTES = 1024 * 1024;
+
 export async function getDiffForUntracked(repoPath: string, file: string): Promise<DiffResult> {
   try {
     // Defense-in-depth: this branch reads the filesystem directly (git is
-    // not involved), so refuse paths that escape the repo root.
+    // not involved), so refuse paths that escape the repo root — lexically
+    // AND by realpath, so a symlink pointing out of the repo (e.g. at
+    // ~/.ssh) cannot leak its target the way /file and /tree already guard.
     const root = path.resolve(repoPath);
     const resolved = path.resolve(root, file);
     if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+      return { raw: '', lines: [] };
+    }
+    let real: string;
+    let realRoot: string;
+    try {
+      real = fs.realpathSync(resolved);
+      realRoot = fs.realpathSync(root);
+    } catch {
+      // Path or a link target does not resolve: nothing to serve.
+      return { raw: '', lines: [] };
+    }
+    if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
+      return { raw: '', lines: [] };
+    }
+    // Refuse non-regular files and cap the read so a huge untracked file
+    // cannot freeze the event loop / exhaust memory.
+    const stat = fs.statSync(real);
+    if (!stat.isFile() || stat.size > MAX_UNTRACKED_DIFF_BYTES) {
       return { raw: '', lines: [] };
     }
     // For untracked files, show the entire file as additions, shaped like

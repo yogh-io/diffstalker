@@ -63,6 +63,18 @@ socket file (nothing listening) is removed and reused.
 There is no authentication yet. Keep the daemon on a unix socket or
 localhost; a bearer-token check is planned before it may bind further.
 
+When bound to loopback (the default and safe posture), an origin guard
+runs: a `Host` allow-list rejects rebound hostnames (DNS-rebinding
+defense, 421), and state-changing requests with a cross-site
+`Sec-Fetch-Site` or a non-loopback `Origin` are rejected (CSRF defense,
+403). Non-browser clients (the CLI, `curl`) send neither header and a
+loopback `Host`, so they pass. Every response also carries hardening
+headers (`X-Content-Type-Options`, `X-Frame-Options: DENY`,
+`Referrer-Policy`, and a strict `Content-Security-Policy` for the served
+SPA). The guard does NOT run when you bind a routable interface with
+`--host` — that is an operator-exposed, unauthenticated deployment and the
+daemon prints a warning. See `SECURITY.md` at the repo root.
+
 ## Environment
 
 - `XDG_RUNTIME_DIR` — base for the default socket path. Required when no
