@@ -150,12 +150,13 @@ describe('rendering', () => {
   });
 
   test('a hunk group renders header (path, kind, stats) over a DiffView body', () => {
-    const { wrapper } = mountView([hunk(1, { kind: 'created' })]);
+    // A genuinely new file (status 'added') reads as "new file".
+    const { wrapper } = mountView([hunk(1, { kind: 'created', status: 'added' })]);
     const entry = wrapper.get('[data-testid="journal-entry"]');
     expect(entry.text()).toContain('src/a.ts');
     // Kind is a colour-coded word (the site's status idiom). The line range is
     // NOT duplicated in the header — it lives in the diff's own @@ hunk header.
-    expect(entry.get('[data-testid="kind-badge"]').text()).toBe('created');
+    expect(entry.get('[data-testid="kind-badge"]').text()).toBe('new file');
     expect(entry.text()).toContain('+2');
     expect(entry.text()).toContain('−1');
     // The reused DiffView renders the single-hunk snapshot.
@@ -194,10 +195,26 @@ describe('rendering', () => {
   });
 
   test('the kind badge explains itself on hover', () => {
-    const { wrapper } = mountView([hunk(1, { kind: 'created' })]);
-    expect(wrapper.get('[data-testid="kind-badge"]').attributes('title')).toContain(
-      'First time this change was recorded'
-    );
+    const { wrapper } = mountView([hunk(1, { kind: 'created', status: 'added' })]);
+    expect(wrapper.get('[data-testid="kind-badge"]').attributes('title')).toContain('A new file');
+  });
+
+  // 'created' means "first time this change-region was recorded" — it fires
+  // even for a new hunk in a long-existing file, where "created" reads wrong.
+  // Such an entry is relabelled "edited" (and coloured modified, not added).
+  test('a created hunk in an EXISTING file reads as "edited", not "created"', () => {
+    const { wrapper } = mountView([hunk(1, { kind: 'created', status: 'modified' })]);
+    const badge = wrapper.get('[data-testid="kind-badge"]');
+    expect(badge.text()).toBe('edited');
+    expect(badge.attributes('data-kind')).toBe('edited');
+    expect(badge.attributes('title')).toContain('new edit region in an existing file');
+  });
+
+  test('a genuinely new file is coloured as added (data-kind created)', () => {
+    const { wrapper } = mountView([hunk(1, { kind: 'created', status: 'untracked' })]);
+    const badge = wrapper.get('[data-testid="kind-badge"]');
+    expect(badge.text()).toBe('new file');
+    expect(badge.attributes('data-kind')).toBe('created');
   });
 
   test('a null diff (reverted tombstone) falls into the DiffView no-hunk note', () => {
@@ -220,9 +237,49 @@ describe('rendering', () => {
 
   test('boundary entries render as dividers with label and resolve count', () => {
     const { wrapper } = mountView([hunk(1), hunk(2), boundary(3, { resolves: [1, 2] })]);
-    expect(wrapper.get('[data-testid="journal-boundary"]').text()).toBe(
+    expect(wrapper.get('[data-testid="journal-boundary"] .boundary-label').text()).toBe(
       'committed a1b2c3d fix things — 2 changes'
     );
+  });
+
+  test('a commit folds and unfolds the entries it committed', async () => {
+    // Two edits, then a commit that resolves both (their tip seqs).
+    const { wrapper } = mountView([hunk(1), hunk(2, { path: 'src/b.ts' }), boundary(3, { resolves: [1, 2] })]);
+    const entries = () => wrapper.findAll('[data-testid="journal-entry"]');
+    const boundaryEl = wrapper.get('[data-testid="journal-boundary"]');
+    expect(entries()).toHaveLength(2);
+    expect(boundaryEl.classes()).toContain('foldable');
+    expect(boundaryEl.attributes('aria-expanded')).toBe('true');
+
+    // Fold: the two committed entries collapse away, only the commit line stays.
+    await boundaryEl.trigger('click');
+    expect(entries()).toHaveLength(0);
+    expect(boundaryEl.classes()).toContain('folded');
+    expect(boundaryEl.attributes('aria-expanded')).toBe('false');
+
+    // Unfold: they come back.
+    await boundaryEl.trigger('click');
+    expect(entries()).toHaveLength(2);
+    expect(boundaryEl.classes()).not.toContain('folded');
+  });
+
+  test('a partial commit folds only the entries it resolved, leaving survivors', async () => {
+    // Commit resolves entry 1 only; entry 2 (a still-dirty file) survives.
+    const { wrapper } = mountView([hunk(1), hunk(2, { path: 'src/b.ts' }), boundary(3, { resolves: [1] })]);
+    const seqs = () =>
+      wrapper.findAll('[data-testid="journal-entry"]').map((e) => e.attributes('data-seq'));
+    expect(seqs()).toEqual(['2', '1']);
+
+    await wrapper.get('[data-testid="journal-boundary"]').trigger('click');
+    // Only seq 1 (resolved) hides; seq 2 (survivor) stays.
+    expect(seqs()).toEqual(['2']);
+  });
+
+  test('a boundary that resolved nothing is not foldable', () => {
+    const { wrapper } = mountView([hunk(1), boundary(2, { kind: 'journal-start', label: '', resolves: [] })]);
+    const boundaryEl = wrapper.get('[data-testid="journal-boundary"]');
+    expect(boundaryEl.classes()).not.toContain('foldable');
+    expect(boundaryEl.attributes('role')).toBeUndefined();
   });
 
   test('a journal reset renders the restarted divider at the old end of the log', async () => {

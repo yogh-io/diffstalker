@@ -47,7 +47,12 @@ repo gained public-project governance, and the web UI got a round of polish.
   entry header was redesigned to match the rest of the site — a `--surface`
   strip with a kind-coloured left rail, the kind shown as colour-coded text
   (the site's status idiom) and a bold filename — dropping the bordered kind
-  pill and the line range that just duplicated the diff's own @@ header. Fixed selection-vs-hover across every list (a selected row was
+  pill and the line range that just duplicated the diff's own @@ header.
+- Journal: a commit (or any boundary that retired changes) can now be folded
+  to collapse the entries it committed into its one line, click to re-expand.
+  And "created" now reads as "new file" only for a genuinely new file — a new
+  change region in an existing file reads as "edited" (coloured modified),
+  which is what it actually is. Fixed selection-vs-hover across every list (a selected row was
   indistinguishable from a hovered one), added focus-visible rings, and gave the
   stage/unstage buttons semantic hover colors.
 - README leads with the web UI, with light and dark screenshots.

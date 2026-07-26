@@ -97,8 +97,17 @@ import {
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import { formatRelativeTime, formatDateAbsolute } from '@diffstalker/core/view/formatDate';
-import type { JournalBoundaryEntry, JournalHunkEntry } from '@diffstalker/core/types/journal';
-import { foldEntries, type JournalHunkRow, type JournalRow } from '../utils/foldEntries';
+import type {
+  JournalBoundaryEntry,
+  JournalHunkEntry,
+  JournalHunkKind,
+} from '@diffstalker/core/types/journal';
+import {
+  foldEntries,
+  type JournalBoundaryRow,
+  type JournalHunkRow,
+  type JournalRow,
+} from '../utils/foldEntries';
 import { useScrollAnchor, type AnchorCandidate } from '../composables/useScrollAnchor';
 import DiffView from '../components/DiffView.vue';
 
@@ -128,6 +137,10 @@ const expandedStale = reactive(new Set<number>());
 const expandedChains = reactive(new Set<number>());
 /** Marker rows (renamed) the user dismissed, by row key. */
 const dismissedMarkers = reactive(new Set<number>());
+/** Commit/boundary rows folded shut, by boundary seq — hides the entries the
+ *  boundary retired (its `resolves`) so a committed batch collapses to one
+ *  line, click to re-expand. */
+const foldedCommits = reactive(new Set<number>());
 
 function isOutdated(row: JournalHunkRow): boolean {
   return supersededAt.value.has(row.tip.seq);
@@ -165,6 +178,17 @@ function toggleChain(key: number): void {
 function toggleDismissed(key: number): void {
   if (dismissedMarkers.has(key)) dismissedMarkers.delete(key);
   else dismissedMarkers.add(key);
+}
+
+/** A boundary is foldable when it retired entries (commit / checkout / stash /
+ *  op-end carry `resolves`; journal-start / op-start do not). */
+function isFoldable(row: JournalBoundaryRow): boolean {
+  return row.entry.resolves.length > 0;
+}
+
+function toggleCommitFold(key: number): void {
+  if (foldedCommits.has(key)) foldedCommits.delete(key);
+  else foldedCommits.add(key);
 }
 
 function onHeaderClick(row: JournalHunkRow): void {
@@ -270,8 +294,42 @@ const KIND_HELP: Record<string, string> = {
   renamed: 'The file was renamed.',
 };
 
-function kindHelp(kind: string): string {
-  return KIND_HELP[kind] ?? '';
+/**
+ * A brand-new FILE, vs a new change-region in an existing file. The 'created'
+ * kind fires for BOTH (it means "no live hunk overlapped here yet"), so on its
+ * own it reads as "new file" even for a one-line edit to a long-lived file —
+ * the misleading label. status is the primary tell; the diff's `new file mode`
+ * header is the fallback (diff is null for reverted/oversize entries).
+ */
+function isNewFile(entry: JournalHunkEntry): boolean {
+  if (entry.status === 'untracked' || entry.status === 'added') return true;
+  return entry.diff?.raw.includes('new file mode') ?? false;
+}
+
+/**
+ * The kind used for COLOUR (the rail + the word): a 'created' hunk in an
+ * existing file is really an edit, so it colours as modified (amber), not
+ * added (green) — only a genuinely new file stays 'created'/green.
+ */
+function displayKind(row: JournalHunkRow): JournalHunkKind {
+  if (row.kind === 'created' && !isNewFile(row.tip)) return 'edited';
+  return row.kind;
+}
+
+/** The WORD shown: 'created' reads as "new file" only when it truly is one. */
+function kindLabel(row: JournalHunkRow): string {
+  const k = displayKind(row);
+  return k === 'created' ? 'new file' : k;
+}
+
+/** Hover title matching the shown label (the two faces of 'created' differ). */
+function kindTitle(row: JournalHunkRow): string {
+  if (row.kind === 'created') {
+    return isNewFile(row.tip)
+      ? 'A new file — its first change recorded in the Journal.'
+      : 'A new edit region in an existing file — recorded here for the first time.';
+  }
+  return KIND_HELP[row.kind] ?? '';
 }
 
 /** Why a change shows as "seeded" — the seeded note's hover title. */
@@ -389,6 +447,33 @@ const collapsedKeys = computed(() => {
 });
 
 /**
+ * Hunk-group row keys hidden because their commit boundary is folded. A group
+ * belongs to a boundary iff its LIVE (tip) seq is in that boundary's
+ * `resolves` — matching the tip (not every member) is what survives partial
+ * commits and folded chains (superseded members never appear in `resolves`).
+ */
+const hiddenKeys = computed(() => {
+  const hidden = new Set<number>();
+  if (foldedCommits.size === 0) return hidden;
+  const foldedResolves = new Set<number>();
+  for (const row of rows.value) {
+    if (row.type === 'boundary' && foldedCommits.has(row.key)) {
+      for (const seq of row.entry.resolves) foldedResolves.add(seq);
+    }
+  }
+  if (foldedResolves.size === 0) return hidden;
+  for (const row of rows.value) {
+    if (row.type === 'hunk-group' && foldedResolves.has(row.tip.seq)) hidden.add(row.key);
+  }
+  return hidden;
+});
+
+/** displayRows minus the entries hidden under a folded commit. */
+const visibleDisplayRows = computed(() =>
+  displayRows.value.filter((row) => !hiddenKeys.value.has(row.key))
+);
+
+/**
  * Elements whose collapse state flips in this commit. Side effect: a
  * collapse whose element sits ENTIRELY ABOVE the viewport is marked in
  * snapKeys — it snaps (transition off) and the anchor compensates; at
@@ -463,21 +548,43 @@ function markEnteringRows(nextRows: JournalRow[], prevRows: JournalRow[]): void 
   }
 }
 
+/**
+ * Elements entering/leaving because a commit fold toggled. A newly-hidden row
+ * LEAVES — push its current element so the below-fold skip can still apply
+ * when it sits below the viewport. A newly-shown row (unfold) ENTERS — push
+ * null, which disables the skip so the insert is always compensated.
+ */
+function foldChangeEls(nextHidden: Set<number>, prevHidden: Set<number>): (HTMLElement | null)[] {
+  const els: (HTMLElement | null)[] = [];
+  for (const key of nextHidden) {
+    if (!prevHidden.has(key)) els.push(entryEls.get(key) ?? null);
+  }
+  for (const key of prevHidden) {
+    if (!nextHidden.has(key)) els.push(null);
+  }
+  return els;
+}
+
 // Pre-flush: DOM still old. Classify each NEW collapse (snap vs
 // animate) and each entering row (animate vs snap, same policy), then
 // pick and measure the anchor.
 watch(
-  [rows, collapsedKeys],
-  ([nextRows, nextCollapsed], [prevRows, prevCollapsed]) => {
+  [rows, collapsedKeys, hiddenKeys],
+  ([nextRows, nextCollapsed, nextHidden], [prevRows, prevCollapsed, prevHidden]) => {
     snapKeys.clear();
     markEnteringRows(nextRows, prevRows);
     const changedEls = [
       ...collapseChangeEls(nextCollapsed, prevCollapsed),
       ...rowChangeEls(nextRows, prevRows),
+      ...foldChangeEls(nextHidden, prevHidden),
     ];
     if (changedEls.length === 0) return;
     anchor.prepare({
-      survivingKeys: new Set(nextRows.map((row) => String(row.key))),
+      // A row hidden by a fold is no longer a valid anchor target — exclude it
+      // so pickAnchor falls back to a row that survives into the next DOM.
+      survivingKeys: new Set(
+        nextRows.filter((row) => !nextHidden.has(row.key)).map((row) => String(row.key))
+      ),
       changedEls,
     });
   },
@@ -486,7 +593,7 @@ watch(
 
 // Post-flush: DOM patched, same task, before paint — compensate.
 watch(
-  [rows, collapsedKeys],
+  [rows, collapsedKeys, hiddenKeys],
   ([nextRows]) => {
     anchor.restore();
     committedRows = nextRows;
@@ -589,6 +696,7 @@ watch(
     dismissedMarkers.clear();
     expandedHuge.clear();
     enterKeys.clear();
+    foldedCommits.clear();
     // A stale mount-time load error must not linger over a fresh log.
     loadError.value = null;
     lastSeenSeq = tailSeq(entries.value);
@@ -667,13 +775,21 @@ onBeforeUnmount(() => {
         journal started {{ clock(mountedAt) }} — your edits will show up here
       </p>
 
-      <template v-for="row in displayRows" :key="row.key">
+      <template v-for="row in visibleDisplayRows" :key="row.key">
         <div
           v-if="row.type === 'boundary'"
           :ref="(el) => setEntryEl(row.key, el)"
           class="boundary mono"
+          :class="{ foldable: isFoldable(row), folded: foldedCommits.has(row.key) }"
           data-testid="journal-boundary"
+          :role="isFoldable(row) ? 'button' : undefined"
+          :aria-expanded="isFoldable(row) ? !foldedCommits.has(row.key) : undefined"
+          :title="isFoldable(row) ? (foldedCommits.has(row.key) ? 'Show this commit\'s changes' : 'Fold this commit\'s changes') : undefined"
+          @click="isFoldable(row) && toggleCommitFold(row.key)"
         >
+          <span v-if="isFoldable(row)" class="boundary-fold" aria-hidden="true">{{
+            foldedCommits.has(row.key) ? '▸' : '▾'
+          }}</span>
           <span class="boundary-label" :title="boundaryText(row.entry)">{{
             boundaryText(row.entry)
           }}</span>
@@ -690,7 +806,7 @@ onBeforeUnmount(() => {
               seeded: row.tip.seeded,
               snap: snapKeys.has(row.key),
             }"
-            :data-kind="row.kind"
+            :data-kind="displayKind(row)"
             :data-seq="row.key"
             data-testid="journal-entry"
           >
@@ -705,10 +821,10 @@ onBeforeUnmount(() => {
                    the amber trio (edited/expanded/shrunk) apart by word. -->
               <span
                 class="kind"
-                :data-kind="row.kind"
-                :title="kindHelp(row.kind)"
+                :data-kind="displayKind(row)"
+                :title="kindTitle(row)"
                 data-testid="kind-badge"
-                >{{ row.kind }}</span
+                >{{ kindLabel(row) }}</span
               >
 
               <!-- The filename stays bold; the directory ellipsises before it. -->
@@ -897,6 +1013,22 @@ onBeforeUnmount(() => {
 .boundary-label {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* A foldable boundary (a commit/checkout/stash that retired entries) is a
+   click target: collapse its changes to this one line, click to re-expand. */
+.boundary.foldable {
+  cursor: pointer;
+}
+
+.boundary.foldable:hover .boundary-label,
+.boundary.foldable:hover .boundary-fold {
+  color: var(--text);
+}
+
+.boundary-fold {
+  flex: none;
+  font-size: var(--fs-micro);
 }
 
 /* --- Hunk-group entries --- */
