@@ -59,11 +59,10 @@ deliberately no `/tmp` fallback. Pass `--socket PATH` explicitly instead.
 If a live daemon already answers on the socket path, startup fails; a stale
 socket file (nothing listening) is removed and reused.
 
-There is no authentication yet. Keep the daemon on a unix socket or
-localhost; a bearer-token check is planned before it may bind further.
-
-The daemon binds **loopback only** — a unix socket, or `--port` on
-`127.0.0.1`. There is no option to bind a routable interface. On a port an
+The daemon has no authentication, so it binds **loopback only** — a unix
+socket, or `--port` on `127.0.0.1`. There is no option to bind a routable
+interface (bearer-token auth would be a prerequisite for that, and is not
+implemented). On a port an
 origin guard runs: a `Host` allow-list rejects rebound hostnames
 (DNS-rebinding defense, 421), and state-changing requests with a cross-site
 `Sec-Fetch-Site` or a non-loopback `Origin` are rejected (CSRF defense,

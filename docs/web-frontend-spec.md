@@ -441,10 +441,10 @@ this doc as the web UI lands. (This revises the earlier "web = 3rd published pac
 
 - **Same-origin only.** No CORS headers and no auth on the daemon today; serving the SPA from the
   daemon keeps everything same-origin. `EventSource`/`fetch` need this.
-- **Localhost only.** `--port` binds `127.0.0.1` by default. Do **not** document exposing the daemon
-  beyond localhost until the planned **bearer token + CORS** land (daemon `server.ts` TODO). If a
-  user binds `--host 0.0.0.0`, the git-mutating REST surface is unauthenticated — out of scope for
-  the MVP; flag loudly in docs.
+- **Loopback only.** `--port` always binds `127.0.0.1`; there is no `--host` option (it was removed —
+  binding a routable interface without auth is unsupported). On a port the daemon runs an origin
+  guard (Host allow-list + cross-site/CSRF rejection) and exposes only the reduced web API. Bearer
+  token + full-API-off-loopback remain the `server.ts` TODO. See `SECURITY.md`.
 - **Body limit** 1 MiB (daemon `413`); the web client keeps request bodies (e.g. hunk patches) small.
 
 ---
