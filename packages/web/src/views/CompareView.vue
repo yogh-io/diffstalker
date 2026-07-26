@@ -74,6 +74,9 @@ async function loadCandidates(): Promise<void> {
 const compareDiff = computed(() => compare.value.compareDiff);
 const files = computed(() => compareDiff.value?.files ?? []);
 
+/** The branch being compared (the "head" of the PR); null when unknown. */
+const currentBranch = computed(() => repo.shared.status?.branch?.current || null);
+
 /** Selector options: the candidates, plus the current base if absent. */
 const baseOptions = computed(() => {
   const base = compare.value.baseBranch;
@@ -334,11 +337,16 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
     <header class="topbar" data-testid="compare-topbar">
       <Teleport defer to="#view-toolbar-slot" :disabled="!isPortrait">
         <label class="base-select">
+          <span v-if="currentBranch" class="head-branch mono" :title="currentBranch">{{
+            currentBranch
+          }}</span>
+          <span v-if="currentBranch" class="arrow" aria-hidden="true">→</span>
           <span class="label">base</span>
           <select
             class="mono"
             data-testid="base-select"
             aria-label="Base branch"
+            :disabled="compare.loading"
             :value="compare.baseBranch ?? ''"
             @change="onBaseChange"
           >
@@ -368,6 +376,15 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
         <span class="count-add">+{{ compareDiff.stats.additions }}</span>
         <span class="count-del">&minus;{{ compareDiff.stats.deletions }}</span>
       </p>
+
+      <!-- A base switch / uncommitted toggle keeps the old diff on screen
+           while it reloads; without this the UI looks dead. -->
+      <span
+        v-if="compare.loading && compareDiff"
+        class="topbar-busy mono"
+        data-testid="compare-busy"
+        >Loading…</span
+      >
     </header>
 
     <!-- A transient refresh error must not blank a loaded compare: the
@@ -399,7 +416,8 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
       class="state-line"
       data-testid="compare-clean"
     >
-      No changes compared to {{ compareDiff.baseBranch }}.
+      No changes{{ currentBranch ? ` on ${currentBranch}` : '' }} compared to
+      {{ compareDiff.baseBranch }}.
     </p>
 
     <template v-else-if="compareDiff">
@@ -432,7 +450,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
 
       <!-- PR body: file tree | stacked per-file diffs (portrait: file
            band above as a jump-index, full-width diffs below). -->
-      <div ref="prBodyEl" class="pr-body">
+      <div ref="prBodyEl" class="pr-body" :aria-busy="compare.loading && !!compareDiff">
         <aside
           ref="filesEl"
           class="files-col"
@@ -588,6 +606,28 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.25rem 0.375rem;
+  min-width: 10rem;
+}
+
+/* The compared branch → base direction, so it reads as a real PR
+   (this-branch against that-base), not just "a diff against something". */
+.head-branch {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.arrow {
+  color: var(--text-dim);
+}
+
+/* Kept-diff reload feedback: a muted chip while a base switch is in flight. */
+.topbar-busy {
+  color: var(--text-dim);
+  font-size: var(--fs-small);
 }
 
 .uncommitted-toggle {
@@ -729,6 +769,14 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   min-height: 0;
   display: grid;
   grid-template-columns: clamp(12rem, 28%, 24rem) minmax(0, 1fr);
+}
+
+/* Reloading (base switch / uncommitted toggle) with a diff still on screen:
+   dim it and swallow clicks so the stale diff reads as pending, not live. */
+.pr-body[aria-busy='true'] {
+  opacity: 0.55;
+  pointer-events: none;
+  transition: opacity 0.12s;
 }
 
 /* --- File tree (left) --- */
