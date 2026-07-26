@@ -32,6 +32,6 @@
     "release:major": "scripts/release.sh major"
   },
   "devDependencies": {
-    "dependency-cruiser": "^17.3.7"
+    "dependency-cruiser": "^18.1.0"
   }
 }
