@@ -119,7 +119,7 @@ jobs:
       # trusted publishing (needs >= 11.5.1), so we do NOT upgrade npm here:
       # `npm install -g npm@latest` pulls npm 12, whose engine requires a newer
       # node than setup-node provides, and fails. Use the bundled npm as-is.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
