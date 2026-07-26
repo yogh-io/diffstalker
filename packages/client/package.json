@@ -28,7 +28,7 @@
   "devDependencies": {
     "@diffstalker/core": "workspace:*",
     "diffstalkerd": "workspace:*",
-    "@eslint/js": "^9.39.2",
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.7",
     "dependency-cruiser": "^17.3.7",
     "eslint": "^9.39.2",
