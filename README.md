@@ -1,89 +1,95 @@
 # diffstalker
 
-A terminal git UI that lives on your second monitor. It watches your repositories in real time, follows you as you switch projects, and shows word-level diffs so you always know exactly what changed.
+A live, always-on view of everything changing in your git repos — open it in your **browser** or your **terminal**. It watches your repositories in real time, follows you as you switch projects, and shows word-level diffs so you always know exactly what changed.
 
-![diffstalker diff view](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/diff.png)
-*Stage files and review changes with word-level diff highlighting.*
+| Dark | Light |
+|:----:|:-----:|
+| ![diffstalker web — Changes (dark)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-changes-dark.jpg) | ![diffstalker web — Changes (light)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-changes-light.jpg) |
 
-![diffstalker history view](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/history.png)
-*Browse commit history and inspect past changes.*
+*The web UI, live: your working-tree changes with word-level diffs and per-hunk edit times ("1 minute ago"). Point it at a repo and leave it open — it updates itself. Every screenshot below is shown in both built-in themes; there are six in all.*
 
 ## Why diffstalker?
 
-**Keep up with AI.** When AI assistants edit your code, changes happen fast. diffstalker gives you a live view of what's being modified, so you can review changes as they happen rather than piecing things together afterward.
+**Keep up with AI.** When AI assistants edit your code, changes happen fast. diffstalker gives you a live picture of what's being modified — as it happens — so you review changes in the moment instead of reconstructing them afterward. The **Journal** view even keeps a running timeline of every edit.
 
-**Always-on visibility.** Put it on your second monitor and forget about it. As you switch between projects, diffstalker follows along - showing your current changes, staged files, and diffs without you ever needing to alt-tab or type `git status`.
+**Always-on visibility.** Put it on a second monitor and forget about it. As you switch between projects, diffstalker follows along — showing your current changes, staged files, and diffs without you ever needing to alt-tab or type `git status`.
 
-**Dead-simple integration.** Follow mode watches a plain text file for paths. Any script, hook, or tool can write to it. Add two lines to your shell config and every `cd` into a git repo updates the display automatically.
+**Runs in the browser.** A daemon does the git work and serves a full web UI over HTTP. Open a tab, keep it on a spare screen, and watch your repos live — no terminal required. Prefer the terminal? The same daemon backs a TUI too.
 
-**Everything at a glance.** Auto-tab mode ensures there's always something useful on screen - uncommitted changes when you have them, recent commits when you don't.
+**Dead-simple integration.** Follow mode watches one plain text file for repository paths. Any script, hook, or tool can write to it. Add two lines to your shell config and every `cd` into a git repo updates the display automatically.
 
-## Features
+## The web UI
 
-- **Five views** - Staging, Commit, History, PR comparison, and a file Explorer with syntax-highlighted preview
-- **Word-level diffs** - See exactly which words changed within each line, not just which lines differ
-- **Follow mode** - Automatically tracks whichever repo you're working in via a simple file-based hook
-- **Auto-tab** - Intelligently switches views based on context (changes → history → PR diff)
-- **Fuzzy file finder** - `Ctrl+P` to jump to any file in the repo
-- **PR review** - Compare your branch against any base branch with per-file and per-commit diffs
-- **Mouse & keyboard** - Click to stage, scroll through diffs, or use vim-style `j`/`k` navigation
-- **Right-click to discard** - Quickly throw away unwanted changes with confirmation
-- **Resizable panes** - `[` and `]` to adjust the split between file list and diff
-- **Line wrapping** - Toggle with `w` for long lines
-- **6 themes** - Dark, light, colorblind-friendly (blue/red palette), and ANSI-only variants that use your terminal's colors
+The engine runs as a background daemon, **diffstalkerd**, which serves a Vue 3 web app over the same REST + Server-Sent Events it uses internally. Run it on a port and open it in your browser:
 
-## Architecture
+```bash
+npm install -g diffstalkerd
+diffstalkerd --port 7337
+# then open http://localhost:7337
+```
 
-The git engine runs in a background daemon, **diffstalkerd**, which serves
-`@diffstalker/core` (headless git state) over REST + Server-Sent Events. The
-terminal UI is a lean client: it installs `diffstalkerd` as a dependency and
-auto-spawns it on a unix socket, opening repos over REST and following live
-state over SSE. It holds no in-process git of its own. The UX is unchanged —
-the split just means the same daemon can back other clients. A **web UI** (Vue 3)
-is now built in: the daemon serves a read-only viewer at `GET /` over the same
-REST + SSE (see below).
+That's it. The UI streams live over SSE — status, diffs, and the change timeline all update on their own. Follow mode is on by default, so the view switches with you as you move between projects (or open any repo by its absolute path from the switcher, top-left).
 
-## Installation
+### Five views
+
+**Changes** — your working tree, live (shown above). A grouped file list (Modified / Untracked / Staged) beside the selected file's diff, with word-level highlighting and per-hunk edit times. Click `+` / `−` on a row to stage or unstage.
+
+**Journal** — a running timeline of every change as it happens, tracked per hunk. Each entry has a timestamp, path, a kind (created / edited / expanded / shrunk / reverted / renamed), stats, and its own diff. When a hunk changes again, the older entry collapses and a fresh one appears at the bottom.
+
+| Dark | Light |
+|:----:|:-----:|
+| ![Journal (dark)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-journal-dark.jpg) | ![Journal (light)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-journal-light.jpg) |
+
+**History** — the commit log beside a full commit detail: metadata and a multi-file diff.
+
+| Dark | Light |
+|:----:|:-----:|
+| ![History (dark)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-history-dark.jpg) | ![History (light)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-history-light.jpg) |
+
+**Compare** — a GitHub-PR-style view against any base branch: a collapsible commits list, a file tree, and stacked per-file diffs. Toggle between unified and side-by-side layout.
+
+| Dark | Light |
+|:----:|:-----:|
+| ![Compare (dark)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-compare-dark.jpg) | ![Compare (light)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-compare-light.jpg) |
+
+**Explorer** — a lazy file tree with git-status decoration beside syntax-highlighted file content.
+
+| Dark | Light |
+|:----:|:-----:|
+| ![Explorer (dark)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-explorer-dark.jpg) | ![Explorer (light)](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-explorer-light.jpg) |
+
+Plus, everywhere: word-level diff highlighting, an app-wide **unified / split** diff toggle, optional **syntax highlighting** in diffs, **follow** and **auto** mode, a fuzzy file finder (`Ctrl+P`), six themes, a hotkeys overlay (`?`), and a layout that reflows for portrait (vertical) monitors.
+
+The web UI is a viewer with one write: file-level stage / unstage from the Changes list. Commit, discard, hunk-level staging, and remote/branch operations live in the terminal UI. See the [Web UI section of FEATURES.md](FEATURES.md#web-ui-browser-client) for the full list.
+
+> **Security:** the daemon has no authentication yet. `--port` binds `127.0.0.1` by default (override with `--host`). Keep it on localhost — do not expose it to a network.
+
+## The terminal UI
+
+The same daemon backs a terminal client, `diffstalker`, for when you'd rather stay in the shell. It auto-spawns the daemon for you on first run:
 
 ```bash
 npm install -g diffstalker
-```
-
-Installing `diffstalker` pulls in `diffstalkerd` automatically; the UI spawns
-it for you on first run.
-
-Or from source (the repo is a bun workspace of several packages):
-```bash
-git clone https://github.com/yogh-io/diffstalker.git
-cd diffstalker
-bun install && bun run build       # builds all packages
-cd packages/cli && bun link        # link the `diffstalker` bin
-# or run it directly: bun run start
-```
-
-For a local web UI in development:
-```bash
-bun run dev:web                    # Vite dev server (HMR) at http://localhost:5173
-bun run serve                      # dev daemon from source (always current, Bun
-                                   # inspector) serving the web UI at :17337.
-                                   # bun run serve /path/to/repo ... pre-opens repos.
-# (:7337 is reserved for the RELEASED diffstalkerd installed from npm — the stable
-#  build. :17337 is your local, always-up-to-date dev server.)
-```
-
-## Quick Start
-
-```bash
 diffstalker              # current directory
 diffstalker /path/to/repo
-diffstalker --follow     # watch for repo changes (recommended for second monitor)
+diffstalker --follow     # watch for repo changes (great on a second monitor)
 ```
 
-Follow mode watches `~/.cache/diffstalker/target` for repository paths. Write or append to this file - diffstalker reads the last non-empty line, so both styles work.
+![diffstalker terminal — diff view](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/diff.png)
+*Stage files and review changes with word-level diff highlighting.*
 
-### Integration Examples
+![diffstalker terminal — history view](https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/history.png)
+*Browse commit history and inspect past changes.*
 
-**Shell hook** - update on every `cd`:
+The terminal UI is the full-power client — staging, hunk staging, commit and amend, discard, PR compare, and remote/branch operations. Its five views map to keys `1`–`5` (Diff, Commit, History, PR, Explorer); press `?` for the full keybinding reference.
+
+## Follow mode
+
+Follow mode is what makes diffstalker "stalk" — it tracks whichever repo you're working in. The daemon watches `~/.cache/diffstalker/target`; write or append a repository path to that file and the display switches to it (it reads the last non-empty line, so both styles work). It's on by default.
+
+### Integration examples
+
+**Shell hook** — update on every `cd`:
 ```bash
 # Add to .bashrc or .zshrc
 diffstalker_notify() {
@@ -92,13 +98,13 @@ diffstalker_notify() {
 cd() { builtin cd "$@" && diffstalker_notify; }
 ```
 
-**Tmux** - update on pane/window switch:
+**Tmux** — update on pane/window switch:
 ```bash
 # In .tmux.conf
 set-hook -g pane-focus-in 'run-shell "tmux display -p \"#{pane_current_path}\" > ~/.cache/diffstalker/target"'
 ```
 
-**Neovim** - update when changing buffers:
+**Neovim** — update when changing buffers:
 ```lua
 -- In init.lua
 vim.api.nvim_create_autocmd({"BufEnter"}, {
@@ -118,19 +124,48 @@ echo "/path/to/repo" > ~/.cache/diffstalker/target   # overwrite
 echo "/path/to/repo" >> ~/.cache/diffstalker/target  # append (also works)
 ```
 
-The file-based approach is intentionally simple. IDE plugins, window manager hooks, project switchers, git hooks - if it can write to a file, it can drive diffstalker.
+The file-based approach is intentionally simple. IDE plugins, window manager hooks, project switchers, git hooks — if it can write to a file, it can drive diffstalker.
 
-## Views
+## Architecture
 
-| Key | View | What it does |
-|-----|------|--------------|
-| `1` | **Diff** | Stage/unstage files, review word-level diffs |
-| `2` | **Commit** | Write commit messages, amend previous commits |
-| `3` | **History** | Browse recent commits and inspect their diffs |
-| `4` | **PR** | Compare branch against a base branch with per-file navigation |
-| `5` | **Explorer** | Browse the file tree with syntax-highlighted preview and fuzzy finder |
+One engine, two front-ends. The git state lives in **diffstalkerd**, a Node http daemon that serves `@diffstalker/core` (headless git state) over REST + Server-Sent Events. Both clients are pure daemon clients that hold no in-process git of their own:
 
-## Keybindings
+- the **web UI** (Vue 3) is served by the daemon at `GET /` over the same REST + SSE, same-origin;
+- the **terminal UI** installs `diffstalkerd` as a dependency and auto-spawns it on a unix socket.
+
+Because the state is one shared service, both stay live over the same event stream.
+
+## Installation
+
+Web UI (the daemon that serves it):
+```bash
+npm install -g diffstalkerd
+diffstalkerd --port 7337    # open http://localhost:7337
+```
+
+Terminal UI (pulls in `diffstalkerd` automatically and spawns it for you):
+```bash
+npm install -g diffstalker
+```
+
+Or from source (the repo is a bun workspace of several packages):
+```bash
+git clone https://github.com/yogh-io/diffstalker.git
+cd diffstalker
+bun install && bun run build       # builds all packages
+cd packages/cli && bun link        # link the `diffstalker` bin
+# or run it directly: bun run start
+```
+
+For a local web UI in development:
+```bash
+bun run dev:web                    # Vite dev server (HMR) at http://localhost:5173
+bun run serve                      # dev daemon from source (always current, Bun
+                                   # inspector) serving the web UI at :17337.
+                                   # bun run serve /path/to/repo ... pre-opens repos.
+```
+
+## Keybindings (terminal UI)
 
 | Action | Keys |
 |--------|------|
@@ -146,11 +181,11 @@ The file-based approach is intentionally simple. IDE plugins, window manager hoo
 | Themes | `t` |
 | Help | `?` |
 
-Full keybinding reference available with `?` in the app.
+Full keybinding reference available with `?` in either UI.
 
 ## Themes
 
-Six built-in themes - press `t` to switch:
+Six built-in themes (both UIs) — the web has a switcher top-right; the terminal uses `t`:
 
 | Theme | Description |
 |-------|-------------|
@@ -160,7 +195,7 @@ Six built-in themes - press `t` to switch:
 
 ## Configuration
 
-Config file: `~/.config/diffstalker/config.json`
+Terminal UI config: `~/.config/diffstalker/config.json`
 
 ```json
 {
@@ -170,51 +205,26 @@ Config file: `~/.config/diffstalker/config.json`
 }
 ```
 
-## CLI Options
+## CLI options
 
+**Terminal UI** — `diffstalker [options] [path]`:
 ```
-diffstalker [options] [path]
-
-Options:
   -f, --follow [FILE]  Watch file for repo paths
   -s, --socket PATH    diffstalkerd socket to attach to or spawn on
   -d, --debug          Log path changes to stderr
   -h, --help           Show help
 ```
 
-## Web UI
-
-The daemon ships a browser UI (Vue 3), served at `GET /`. A browser can't reach a
-unix socket and the daemon sends no CORS headers, so run the daemon on a TCP port
-and open it same-origin:
-
-```bash
-diffstalkerd --port 4600
-# then open http://localhost:4600
+**Daemon** — `diffstalkerd [options]`:
+```
+  --port N             Bind TCP port N and serve the web UI at GET /
+  --host H             Host to bind with --port (default: 127.0.0.1)
+  --socket PATH        Bind a unix socket instead of a port
+  --no-follow          Disable follow mode
+  --follow-file PATH   Hook file to watch (default: ~/.cache/diffstalker/target)
 ```
 
-Open a repository by its absolute path (the switcher, top-left), or launch the
-daemon in follow mode and the UI switches with your hook file. The web UI is a
-**read-only viewer** — it runs no git mutations (no staging, committing,
-discarding, or remote/branch operations; those live in the terminal UI):
-
-- **Changes** — file list + working-tree diffs with word-level highlighting
-  (view only).
-- **History** — commit log + a multi-file commit diff.
-- **Compare** — a GitHub-style PR view against a base branch: file tree +
-  stacked per-file diffs, collapsible folders.
-- **Explorer** — a file tree with git-status decoration + syntax-highlighted
-  content.
-- Follow and auto mode, fuzzy file finder (Ctrl+P), the six themes, and keyboard
-  shortcuts (`?` for help).
-
-See the Web UI section of [FEATURES.md](FEATURES.md) for the full list.
-
-> Security: the daemon has no authentication yet. By default it binds an
-> owner-only unix socket (directory `0700`, socket `0600`) and no TCP port at
-> all; a port is only opened when you pass `--port` (bound to `127.0.0.1`
-> unless you set `--host`). Keep any port on localhost — do not expose it to a
-> network.
+See [`packages/daemon/README.md`](packages/daemon/README.md) for the full endpoint table and follow-mode notes.
 
 ## License
 
