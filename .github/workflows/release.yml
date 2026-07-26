@@ -91,7 +91,7 @@ jobs:
       # build+test+pack above, not the plumbing.
       - name: Upload tarballs
         if: ${{ !env.ACT }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dist-tarballs
           path: dist-tarballs/*.tgz
@@ -119,7 +119,7 @@ jobs:
       # trusted publishing (needs >= 11.5.1), so we do NOT upgrade npm here:
       # `npm install -g npm@latest` pulls npm 12, whose engine requires a newer
       # node than setup-node provides, and fails. Use the bundled npm as-is.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
@@ -128,7 +128,7 @@ jobs:
 
       - name: Download tarballs
         if: ${{ !env.ACT }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dist-tarballs
           path: dist-tarballs
@@ -167,7 +167,7 @@ jobs:
       # Release, and nothing after `npm publish` can prevent it.
       - name: Create GitHub Release
         if: ${{ !env.ACT }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
 
