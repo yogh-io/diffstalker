@@ -182,23 +182,6 @@ describe('rendering', () => {
     expect(entry.find('.path-dir').exists()).toBe(false);
   });
 
-  test('the copy button writes the full path and flips to a "copied" label', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
-    const { wrapper } = mountView([hunk(1, { path: 'packages/web/src/views/JournalView.vue' })]);
-    const btn = wrapper.get('[data-testid="copy-path"]');
-    expect(btn.text()).toBe('copy');
-    await btn.trigger('click');
-    await flushPromises();
-    expect(writeText).toHaveBeenCalledWith('packages/web/src/views/JournalView.vue');
-    expect(btn.text()).toBe('copied');
-  });
-
-  test('the kind badge explains itself on hover', () => {
-    const { wrapper } = mountView([hunk(1, { kind: 'created', status: 'added' })]);
-    expect(wrapper.get('[data-testid="kind-badge"]').attributes('title')).toContain('A new file');
-  });
-
   // 'created' means "first time this change-region was recorded" — it fires
   // even for a new hunk in a long-existing file, where "created" reads wrong.
   // Such an entry is relabelled "edited" (and coloured modified, not added).
@@ -207,7 +190,17 @@ describe('rendering', () => {
     const badge = wrapper.get('[data-testid="kind-badge"]');
     expect(badge.text()).toBe('edited');
     expect(badge.attributes('data-kind')).toBe('edited');
-    expect(badge.attributes('title')).toContain('new edit region in an existing file');
+  });
+
+  // expanded/shrunk fold into "edited" — the ±stats already say grew/shrank,
+  // so the kind vocabulary is just created / edited / reverted (+ renamed).
+  test('expanded and shrunk both read as "edited"', () => {
+    const { wrapper } = mountView([
+      hunk(1, { kind: 'expanded' }),
+      hunk(2, { kind: 'shrunk', path: 'src/b.ts' }),
+    ]);
+    const badges = wrapper.findAll('[data-testid="kind-badge"]');
+    expect(badges.map((b) => b.text())).toEqual(['edited', 'edited']);
   });
 
   test('a genuinely new file is coloured as added (data-kind created)', () => {
@@ -310,20 +303,11 @@ describe('rendering', () => {
     );
   });
 
-  test('seeded entries render muted with the seeded note (explained on hover)', () => {
-    const { wrapper } = mountView([hunk(1, { seeded: true })]);
-    const entry = wrapper.get('[data-testid="journal-entry"]');
-    expect(entry.classes()).toContain('seeded');
-    const note = entry.get('[data-testid="seeded-note"]');
-    // Compressed to a muted tag; the full sentence survives on the hover title.
-    expect(note.text()).toBe('seeded');
-    expect(note.attributes('title')).toContain('already in your working tree');
-  });
-
-  test('a superseded entry collapses to an outdated stub; click re-expands the stale snapshot', async () => {
-    // Split children (siblings 2) supersede without folding — the parent
-    // stays its own visible row and flips to outdated. Newest-first, so
-    // the stale parent (seq 1) renders LAST.
+  // A superseded (re-edited) entry is no longer a dashed one-line stub with a
+  // resurrection button — it just renders as a normal past row and scrolls away.
+  test('a superseded entry renders as a normal past row (no stub, no resurrection)', () => {
+    // Split children (siblings 2) supersede without folding — the parent (seq 1)
+    // stays its own visible row.
     const { wrapper } = mountView([
       hunk(1),
       hunk(2, { supersedes: [1], siblings: 2 }),
@@ -331,21 +315,14 @@ describe('rendering', () => {
     ]);
     const entries = wrapper.findAll('[data-testid="journal-entry"]');
     expect(entries).toHaveLength(3);
-    const stale = entries[2];
-    expect(stale.classes()).toContain('outdated');
-    expect(stale.get('[data-testid="outdated-badge"]').text()).toMatch(/^outdated \d{2}:\d{2}$/);
-    expect(stale.find('.clamp').classes()).toContain('closed');
-    // The live successors are not stubs.
-    expect(entries[1].find('.clamp').classes()).not.toContain('closed');
-
-    await stale.get('.entry-header').trigger('click');
-    expect(stale.find('.clamp').classes()).not.toContain('closed');
-
-    await stale.get('.entry-header').trigger('click');
-    expect(stale.find('.clamp').classes()).toContain('closed');
+    const stale = entries[2]; // newest-first, so the superseded parent is last
+    expect(stale.classes()).not.toContain('outdated');
+    expect(stale.find('[data-testid="outdated-badge"]').exists()).toBe(false);
+    // A full row: its diff body is shown, not collapsed.
+    expect(stale.find('[data-testid="entry-body"]').exists()).toBe(true);
   });
 
-  test('a folded chain shows one blurb with the ×N affordance; clicking expands the chain', async () => {
+  test('a folded chain shows one blurb with a static ×N marker (no drill-in)', () => {
     const { wrapper } = mountView([
       hunk(1, { kind: 'created' }),
       hunk(2, { supersedes: [1] }),
@@ -355,14 +332,10 @@ describe('rendering', () => {
     expect(entries).toHaveLength(1);
     const fold = entries[0].get('[data-testid="fold-count"]');
     expect(fold.text()).toBe('×3');
-    // The blurb shows the TIP's snapshot.
-    expect(entries[0].text()).toContain('edit-3');
+    // A static marker, not a control — walking the chain is forensics, cut.
+    expect(fold.element.tagName).toBe('SPAN');
+    expect(entries[0].text()).toContain('edit-3'); // the tip's snapshot
     expect(wrapper.findAll('[data-testid="chain-member"]')).toHaveLength(0);
-
-    await fold.trigger('click');
-    const members = wrapper.findAll('[data-testid="chain-member"]');
-    expect(members).toHaveLength(2); // the pre-tip revisions, oldest first
-    expect(members[0].text()).toContain('edit-1');
   });
 
   test('keys are the first member seq and survive a fold move (append-only, never reorder)', async () => {
@@ -381,17 +354,14 @@ describe('rendering', () => {
     expect(moved.text()).toContain('edit-3');
   });
 
-  test('a renamed marker row is dismissable via its header (not an immortal row)', async () => {
+  // renamed is a path event, not a dismissable marker — it renders as a normal,
+  // neutral-railed row with its own word.
+  test('a renamed entry renders as a normal, neutral row', () => {
     const { wrapper } = mountView([hunk(1, { kind: 'renamed' })]);
     const entry = wrapper.get('[data-testid="journal-entry"]');
-    expect(entry.find('.clamp').classes()).not.toContain('closed');
-    expect(entry.get('.entry-header').classes()).toContain('clickable');
-
-    await entry.get('.entry-header').trigger('click');
-    expect(entry.find('.clamp').classes()).toContain('closed');
-
-    await entry.get('.entry-header').trigger('click');
-    expect(entry.find('.clamp').classes()).not.toContain('closed');
+    expect(entry.attributes('data-kind')).toBe('renamed');
+    expect(entry.get('.entry-header').classes()).not.toContain('clickable');
+    expect(entry.get('[data-testid="kind-badge"]').text()).toBe('renamed');
   });
 
   test('a huge blurb (>800 changed lines) collapses behind a show row', async () => {
@@ -415,26 +385,16 @@ describe('rendering', () => {
 });
 
 describe('epoch reset', () => {
-  test('a journalEpoch change clears session-local expansion state', async () => {
+  test('a journalEpoch change clears session-local state (a folded commit)', async () => {
     useRepoStore().journalEpoch = 'epoch-1';
-    // Split children keep the parent visible as an outdated stub.
-    const { wrapper, repo } = mountView([
-      hunk(1),
-      hunk(2, { supersedes: [1], siblings: 2 }),
-      hunk(3, { supersedes: [1], siblings: 2 }),
-    ]);
-    // Newest-first: the stale parent (seq 1) renders last.
-    const stale = wrapper.findAll('[data-testid="journal-entry"]')[2];
-    await stale.get('.entry-header').trigger('click');
-    expect(stale.find('.clamp').classes()).not.toContain('closed');
+    const { wrapper, repo } = mountView([hunk(1), boundary(2, { resolves: [1] })]);
+    await wrapper.get('[data-testid="journal-boundary"]').trigger('click');
+    expect(wrapper.findAll('[data-testid="journal-entry"]')).toHaveLength(0); // folded
 
-    // Daemon reset: same seqs reappear in a NEW log — the old
-    // re-expansion must not leak onto them.
+    // Daemon reset: same seqs reappear in a NEW log — the fold must not leak.
     repo.journalEpoch = 'epoch-2';
     await flushPromises();
-    expect(
-      wrapper.findAll('[data-testid="journal-entry"]')[2].find('.clamp').classes()
-    ).toContain('closed');
+    expect(wrapper.findAll('[data-testid="journal-entry"]')).toHaveLength(1); // unfolded
   });
 
   test('an epoch reset clears a stale mount-time load error', async () => {
@@ -453,17 +413,13 @@ describe('epoch reset', () => {
   });
 
   test('the first load (null -> epoch) does not reset anything', async () => {
-    const { wrapper, repo } = mountView([
-      hunk(1),
-      hunk(2, { supersedes: [1], siblings: 2 }),
-      hunk(3, { supersedes: [1], siblings: 2 }),
-    ]);
-    const stale = wrapper.findAll('[data-testid="journal-entry"]')[2];
-    await stale.get('.entry-header').trigger('click');
+    const { wrapper, repo } = mountView([hunk(1), boundary(2, { resolves: [1] })]);
+    await wrapper.get('[data-testid="journal-boundary"]').trigger('click');
+    expect(wrapper.findAll('[data-testid="journal-entry"]')).toHaveLength(0); // folded
 
-    repo.journalEpoch = 'epoch-1'; // the lazy load landing
+    repo.journalEpoch = 'epoch-1'; // the lazy load landing (null -> first epoch)
     await flushPromises();
-    expect(stale.find('.clamp').classes()).not.toContain('closed');
+    expect(wrapper.findAll('[data-testid="journal-entry"]')).toHaveLength(0); // still folded
   });
 });
 

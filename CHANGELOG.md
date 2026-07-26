@@ -52,7 +52,14 @@ repo gained public-project governance, and the web UI got a round of polish.
   to collapse the entries it committed into its one line, click to re-expand.
   And "created" now reads as "new file" only for a genuinely new file — a new
   change region in an existing file reads as "edited" (coloured modified),
-  which is what it actually is. Fixed selection-vs-hover across every list (a selected row was
+  which is what it actually is.
+- Journal, restraint pass: pared back to a calm second-screen viewer of your
+  uncommitted work. Dropped the outdated-stub resurrection, the "seeded" tag,
+  the kind-help hover glossary, per-entry copy-path, and the fold-chain
+  drill-in (the ×N is now a static churn marker); `expanded`/`shrunk` fold into
+  `edited` and `renamed` renders neutral, so the kind vocabulary is just
+  new-file / edited / reverted; relative times freeze to a wall-clock HH:MM
+  past an hour so the column stops perpetually re-ticking. Fixed selection-vs-hover across every list (a selected row was
   indistinguishable from a hovered one), added focus-visible rings, and gave the
   stage/unstage buttons semantic hover colors.
 - README leads with the web UI, with light and dark screenshots.

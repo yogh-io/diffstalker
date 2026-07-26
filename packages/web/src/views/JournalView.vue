@@ -27,61 +27,39 @@ export function buildSupersededAt(entries: readonly JournalEntry[]): Map<number,
 
 <script setup lang="ts">
 /**
- * Journal view: the chronological, append-only, per-hunk log of diff
- * blurbs — ONE scroller, NEWEST at the top, growing downward into the
- * past, keyed by seq (append-only, so keys never reorder). The store,
- * foldEntries, and every piece of seq bookkeeping stay oldest-first
- * (tailSeq still means highest seq); displayRows reverses for render
- * only, so the fold/supersede logic never learns about the flip.
+ * Journal view: a calm second-screen VIEWER of your UNCOMMITTED work — the
+ * chronological, per-hunk log of your own edits since the last commit. ONE
+ * scroller, NEWEST at the top, growing downward into the past, keyed by seq.
+ * It SHOWS; it is not operated — no selection, keyboard-driving, filter, or
+ * per-entry actions (those live in the shell / terminal UI, inches away). A
+ * commit resets the timeline; recently-committed work lingers, collapsed under
+ * a foldable boundary, until it ages out of the window.
  *
- * Rows come from foldEntries() over repo.journalEntries (the phase-4
- * store slice). Each hunk group renders a compact header (relative
- * time, path, "lines a–b", kind badge, +n −m, a "×N" affordance when
- * folded) over a reused DiffView fed the tip's single-hunk DiffResult;
- * a null diff (reverted tombstone, oversize, pruned) falls into
- * DiffView's no-hunk note. Boundary entries render as slim dividers;
- * seeded entries render muted. An entry superseded by a later one
- * (derived, never stored) collapses to a one-line stub with an
- * "outdated HH:MM" badge; clicking re-expands the stale snapshot.
+ * Rows come from foldEntries() over repo.journalEntries. Each hunk group is a
+ * one-line header — a kind word on a kind-coloured rail, the path (bold file +
+ * muted dir), a static "×N" churn marker when rapid saves folded, ±stats, and
+ * a relative time that freezes to a wall-clock HH:MM past an hour — over a
+ * reused DiffView fed the tip's single-hunk diff (a null diff falls into
+ * DiffView's no-hunk note). Boundaries are slim dividers; a commit boundary is
+ * clickable to fold its whole section. The store, foldEntries, and all seq
+ * bookkeeping stay oldest-first; displayRows reverses for render only.
  *
- * Off-screen cost: each blurb body carries content-visibility: auto
- * with a contain-intrinsic-size derived from the entry's line count —
- * fixed at append (entries are immutable), so the estimate never goes
- * stale; no live probe needed.
+ * Off-screen cost: each blurb body carries content-visibility: auto with a
+ * contain-intrinsic-size fixed at append (entries are immutable) — no live probe.
  *
- * Collapse transitions (design §5, verbatim): a collapse AT or BELOW
- * the viewport top animates (grid-template-rows 1fr → 0fr, ~200ms, off
- * under prefers-reduced-motion); a collapse ENTIRELY ABOVE the viewport
- * snaps inside one Vue flush and is compensated by a useScrollAnchor
- * pre/post sandwich (candidates = entry elements keyed by seq), so
- * nothing the user is reading moves. The sandwich is the ONLY scrollTop
- * compensation path — there is no ResizeObserver here at all, so the
- * RO -> scroll -> layout feedback loop (the historic freeze) is
- * unreachable by construction.
+ * Head-pin: within ~40px of the top the view follows appends — a fresh entry
+ * PREPENDS above and the view scrolls back to 0. Further down, an "N new ↑"
+ * pill counts DISPLAYED rows the user has not seen and jumps back to the top. A
+ * genuine append entering while head-pinned animates open (grid-rows 0fr → 1fr,
+ * pure CSS, off under prefers-reduced-motion). ANY DOM change above the
+ * viewport (an append, or a commit-fold hide/show) is compensated by a single
+ * useScrollAnchor pre/post sandwich — the ONLY scrollTop writer; there is no
+ * ResizeObserver and no JS height measurement, so the historic RO -> scroll ->
+ * layout freeze is unreachable by construction.
  *
- * Head-pin: within ~40px of the top the view follows appends — a fresh
- * entry PREPENDS above and the view scrolls back to 0 so it is in view.
- * Further down, an "N new ↑" pill counts DISPLAYED rows (post-fold)
- * whose content the user has not seen — a burst of autosave
- * supersessions that folds into one row is "1 new", not N — and jumps
- * back to the top. An append while scrolled down inserts ABOVE the
- * viewport; the same anchor sandwich that covers collapses compensates
- * the insert (entering rows ride changedEls), so nothing the user is
- * reading moves.
- *
- * Enter reveal: a genuine append entering while head-pinned animates
- * open (grid-template-rows 0fr → 1fr, ~200ms, off under
- * prefers-reduced-motion) — a pure-CSS keyframe on mount, no
- * ResizeObserver, no JS height measurement. When the user is scrolled
- * down the entering row SNAPS in at full height instead and the anchor
- * compensates it in one shot — a continuously-growing row would outrun
- * the one-shot pre/post measurement. The collapse policy, mirrored.
- *
- * Epoch reset: when the store's journalEpoch changes (daemon restart,
- * prune reset, repo switch), all session-local view state — expanded
- * stale stubs, opened chains, dismissed markers, huge-blurb expansions,
- * enter-reveal keys, the head-pin marker — is cleared; keys are seqs
- * from the OLD log and would otherwise leak onto unrelated new rows.
+ * Epoch reset: when journalEpoch changes (daemon restart, prune, repo switch),
+ * session-local view state — folded commits, huge-blurb expansions, enter-reveal
+ * keys, the head-pin marker — is cleared; its keys are seqs from the OLD log.
  */
 
 import {
@@ -129,55 +107,19 @@ const supersededAt = computed(() => buildSupersededAt(entries.value));
  */
 const displayRows = computed(() => [...rows.value].reverse());
 
-// --- Outdated stubs and fold-chain expansion (session-local) ---
+// --- Session-local view state ---
 
-/** Stale snapshots the user re-expanded, by row key. */
-const expandedStale = reactive(new Set<number>());
-/** Fold chains opened via the ×N affordance, by row key. */
-const expandedChains = reactive(new Set<number>());
-/** Marker rows (renamed) the user dismissed, by row key. */
-const dismissedMarkers = reactive(new Set<number>());
 /** Commit/boundary rows folded shut, by boundary seq — hides the entries the
  *  boundary retired (its `resolves`) so a committed batch collapses to one
- *  line, click to re-expand. */
+ *  line; click to re-expand. Recently-committed work lingers here, collapsed,
+ *  until it ages out of the window. */
 const foldedCommits = reactive(new Set<number>());
 
+/** Superseded (re-edited) — kept ONLY to fold dead rows into a folded commit's
+ *  section (see hiddenKeys). It carries no UI of its own: a superseded row just
+ *  renders as a normal past entry and scrolls away. */
 function isOutdated(row: JournalHunkRow): boolean {
   return supersededAt.value.has(row.tip.seq);
-}
-
-function outdatedAtOf(row: JournalHunkRow): number | undefined {
-  return supersededAt.value.get(row.tip.seq);
-}
-
-/** A marker row: informational (renamed), never superseded by content. */
-function isMarker(row: JournalHunkRow): boolean {
-  return row.kind === 'renamed';
-}
-
-/** The header toggles collapse for outdated stubs AND dismissable markers. */
-function isCollapsible(row: JournalHunkRow): boolean {
-  return isOutdated(row) || isMarker(row);
-}
-
-function isCollapsed(row: JournalHunkRow): boolean {
-  if (isOutdated(row)) return !expandedStale.has(row.key);
-  return isMarker(row) && dismissedMarkers.has(row.key);
-}
-
-function toggleStale(key: number): void {
-  if (expandedStale.has(key)) expandedStale.delete(key);
-  else expandedStale.add(key);
-}
-
-function toggleChain(key: number): void {
-  if (expandedChains.has(key)) expandedChains.delete(key);
-  else expandedChains.add(key);
-}
-
-function toggleDismissed(key: number): void {
-  if (dismissedMarkers.has(key)) dismissedMarkers.delete(key);
-  else dismissedMarkers.add(key);
 }
 
 /** A boundary is foldable when it retired entries (commit / checkout / stash /
@@ -189,17 +131,6 @@ function isFoldable(row: JournalBoundaryRow): boolean {
 function toggleCommitFold(key: number): void {
   if (foldedCommits.has(key)) foldedCommits.delete(key);
   else foldedCommits.add(key);
-}
-
-function onHeaderClick(row: JournalHunkRow): void {
-  if (isOutdated(row)) toggleStale(row.key);
-  else if (isMarker(row)) toggleDismissed(row.key);
-}
-
-function headerTitle(row: JournalHunkRow): string | undefined {
-  if (isOutdated(row)) return 'Show the stale snapshot';
-  if (isMarker(row)) return dismissedMarkers.has(row.key) ? 'Show the marker' : 'Dismiss the marker';
-  return undefined;
 }
 
 // --- Header formatting ---
@@ -234,7 +165,10 @@ function restartTicker(): void {
   tick();
 }
 
+/** Past an hour old, freeze to a static wall-clock HH:MM so the column isn't
+ *  perpetually re-ticking — only the freshest rows count up live. */
 function relTime(ts: number): string {
+  if (now.value - ts > 3_600_000) return clock(ts);
   return formatRelativeTime(ts, now.value);
 }
 
@@ -261,38 +195,7 @@ function fileDir(path: string): string {
   return i === -1 ? '' : path.slice(0, i + 1);
 }
 
-// --- Copy the full path ---
-
-/** Row key whose path was just copied — drives the transient "copied" label. */
-const copiedKey = ref<number | null>(null);
-let copyTimer: ReturnType<typeof setTimeout> | null = null;
-
-async function copyPath(row: JournalHunkRow): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(row.tip.path);
-    copiedKey.value = row.key;
-    if (copyTimer !== null) clearTimeout(copyTimer);
-    copyTimer = setTimeout(() => {
-      copiedKey.value = null;
-      copyTimer = null;
-    }, 1200);
-  } catch {
-    // Clipboard unavailable / blocked (non-secure context, denied): best
-    // effort — the path is still visible and title-hoverable.
-  }
-}
-
-// --- Badge explanations (hover titles) ---
-
-/** What each hunk kind means — surfaced as the kind badge's hover title. */
-const KIND_HELP: Record<string, string> = {
-  created: 'First time this change was recorded — a new edit region (or a new file).',
-  edited: 'This change was edited in place — about the same size as before.',
-  expanded: 'This change grew — more lines than the last time it was recorded.',
-  shrunk: 'This change shrank — fewer lines than the last time it was recorded.',
-  reverted: 'This change was undone — the lines are back to the committed version.',
-  renamed: 'The file was renamed.',
-};
+// --- Kind labelling ---
 
 /**
  * A brand-new FILE, vs a new change-region in an existing file. The 'created'
@@ -307,13 +210,17 @@ function isNewFile(entry: JournalHunkEntry): boolean {
 }
 
 /**
- * The kind used for COLOUR (the rail + the word): a 'created' hunk in an
- * existing file is really an edit, so it colours as modified (amber), not
- * added (green) — only a genuinely new file stays 'created'/green.
+ * The kind reduced to what a glance needs, three colours: created (a genuinely
+ * new file, green), edited (any in-place change — a 'created' region in an
+ * existing file, plus expanded/shrunk, since the ±stats already say grew or
+ * shrank; amber), and reverted (red). renamed keeps its own value but renders
+ * neutral (a path event, not a content change). Drives both the rail and word.
  */
 function displayKind(row: JournalHunkRow): JournalHunkKind {
-  if (row.kind === 'created' && !isNewFile(row.tip)) return 'edited';
-  return row.kind;
+  const k = row.kind;
+  if (k === 'created') return isNewFile(row.tip) ? 'created' : 'edited';
+  if (k === 'expanded' || k === 'shrunk') return 'edited';
+  return k;
 }
 
 /** The WORD shown: 'created' reads as "new file" only when it truly is one. */
@@ -321,21 +228,6 @@ function kindLabel(row: JournalHunkRow): string {
   const k = displayKind(row);
   return k === 'created' ? 'new file' : k;
 }
-
-/** Hover title matching the shown label (the two faces of 'created' differ). */
-function kindTitle(row: JournalHunkRow): string {
-  if (row.kind === 'created') {
-    return isNewFile(row.tip)
-      ? 'A new file — its first change recorded in the Journal.'
-      : 'A new edit region in an existing file — recorded here for the first time.';
-  }
-  return KIND_HELP[row.kind] ?? '';
-}
-
-/** Why a change shows as "seeded" — the seeded note's hover title. */
-const SEEDED_HELP =
-  'This change was already in your working tree when the Journal started watching this repo. ' +
-  'It was reconstructed from the initial diff, not seen as a live edit.';
 
 function boundaryText(entry: JournalBoundaryEntry): string {
   const n = entry.resolves.length;
@@ -405,9 +297,6 @@ function setEntryEl(key: number, el: Element | ComponentPublicInstance | null): 
 /** The rows the CURRENT DOM was rendered from; updated post-flush. */
 let committedRows: JournalRow[] = rows.value;
 
-/** Rows snapping (not animating) their collapse in the current commit. */
-const snapKeys = reactive(new Set<number>());
-
 /**
  * Rows that entered while head-pinned — they animate open on mount
  * (the .reveal enter keyframe). Never pruned: keys are append-only
@@ -435,15 +324,6 @@ function anchorCandidates(): AnchorCandidate[] {
 const anchor = useScrollAnchor(scrollerEl, {
   candidates: anchorCandidates,
   resolve: (key) => entryEls.get(Number(key)) ?? null,
-});
-
-/** Keys collapsed in the NEXT render (outdated and not re-expanded). */
-const collapsedKeys = computed(() => {
-  const set = new Set<number>();
-  for (const row of rows.value) {
-    if (row.type === 'hunk-group' && isCollapsed(row)) set.add(row.key);
-  }
-  return set;
 });
 
 /**
@@ -502,33 +382,6 @@ const hiddenKeys = computed(() => {
 const visibleDisplayRows = computed(() =>
   displayRows.value.filter((row) => !hiddenKeys.value.has(row.key))
 );
-
-/**
- * Elements whose collapse state flips in this commit. Side effect: a
- * collapse whose element sits ENTIRELY ABOVE the viewport is marked in
- * snapKeys — it snaps (transition off) and the anchor compensates; at
- * or below the viewport top it animates instead.
- */
-function collapseChangeEls(
-  nextCollapsed: Set<number>,
-  prevCollapsed: Set<number>
-): (HTMLElement | null)[] {
-  const els: (HTMLElement | null)[] = [];
-  const scroller = scrollerEl.value;
-  const viewTop = scroller?.getBoundingClientRect().top ?? 0;
-  for (const key of nextCollapsed) {
-    if (prevCollapsed.has(key)) continue;
-    const el = entryEls.get(key) ?? null;
-    els.push(el);
-    if (scroller && el && el.getBoundingClientRect().bottom <= viewTop) {
-      snapKeys.add(key);
-    }
-  }
-  for (const key of prevCollapsed) {
-    if (!nextCollapsed.has(key)) els.push(entryEls.get(key) ?? null);
-  }
-  return els;
-}
 
 /** Elements of rows entering, leaving, or moving (a fold absorbed the tip). */
 function rowChangeEls(nextRows: JournalRow[], prevRows: JournalRow[]): (HTMLElement | null)[] {
@@ -595,16 +448,13 @@ function foldChangeEls(nextHidden: Set<number>, prevHidden: Set<number>): (HTMLE
   return els;
 }
 
-// Pre-flush: DOM still old. Classify each NEW collapse (snap vs
-// animate) and each entering row (animate vs snap, same policy), then
-// pick and measure the anchor.
+// Pre-flush: DOM still old. Classify each entering row and each commit-fold
+// hide/show, then pick and measure the anchor.
 watch(
-  [rows, collapsedKeys, hiddenKeys],
-  ([nextRows, nextCollapsed, nextHidden], [prevRows, prevCollapsed, prevHidden]) => {
-    snapKeys.clear();
+  [rows, hiddenKeys],
+  ([nextRows, nextHidden], [prevRows, prevHidden]) => {
     markEnteringRows(nextRows, prevRows);
     const changedEls = [
-      ...collapseChangeEls(nextCollapsed, prevCollapsed),
       ...rowChangeEls(nextRows, prevRows),
       ...foldChangeEls(nextHidden, prevHidden),
     ];
@@ -623,14 +473,10 @@ watch(
 
 // Post-flush: DOM patched, same task, before paint — compensate.
 watch(
-  [rows, collapsedKeys, hiddenKeys],
+  [rows, hiddenKeys],
   ([nextRows]) => {
     anchor.restore();
     committedRows = nextRows;
-    // Drop the snap markers once the collapsed state is committed: the
-    // clamp is already at 0fr, so re-enabling the transition animates
-    // nothing — but a later user re-expand animates again.
-    void nextTick(() => snapKeys.clear());
   },
   { flush: 'post' }
 );
@@ -721,9 +567,6 @@ watch(
   () => repo.journalEpoch,
   (_next, prev) => {
     if (prev === null) return; // first load — nothing local to reset
-    expandedStale.clear();
-    expandedChains.clear();
-    dismissedMarkers.clear();
     expandedHuge.clear();
     enterKeys.clear();
     foldedCommits.clear();
@@ -769,10 +612,6 @@ onBeforeUnmount(() => {
   if (ticker !== null) {
     clearTimeout(ticker);
     ticker = null;
-  }
-  if (copyTimer !== null) {
-    clearTimeout(copyTimer);
-    copyTimer = null;
   }
 });
 </script>
@@ -831,31 +670,16 @@ onBeforeUnmount(() => {
           <article
             :ref="(el) => setEntryEl(row.key, el)"
             class="entry"
-            :class="{
-              outdated: isOutdated(row),
-              seeded: row.tip.seeded,
-              snap: snapKeys.has(row.key),
-            }"
             :data-kind="displayKind(row)"
             :data-seq="row.key"
             data-testid="journal-entry"
           >
-            <header
-              class="entry-header mono"
-              :class="{ clickable: isCollapsible(row) }"
-              :title="headerTitle(row)"
-              @click="onHeaderClick(row)"
-            >
+            <header class="entry-header mono">
               <!-- Kind as a colour-coded word — the site's status idiom
-                   (colored text keyed by data-*, no pill), which also tells
-                   the amber trio (edited/expanded/shrunk) apart by word. -->
-              <span
-                class="kind"
-                :data-kind="displayKind(row)"
-                :title="kindTitle(row)"
-                data-testid="kind-badge"
-                >{{ kindLabel(row) }}</span
-              >
+                   (created green / edited amber / reverted red; renamed neutral). -->
+              <span class="kind" :data-kind="displayKind(row)" data-testid="kind-badge">{{
+                kindLabel(row)
+              }}</span>
 
               <!-- The filename stays bold; the directory ellipsises before it. -->
               <span class="path" :title="row.tip.path"
@@ -864,118 +688,43 @@ onBeforeUnmount(() => {
                 }}</span
                 ><span class="path-name">{{ fileName(row.tip.path) }}</span></span
               >
-              <button
-                class="copy-path"
-                :class="{ copied: copiedKey === row.key }"
-                data-testid="copy-path"
-                :title="copiedKey === row.key ? 'Copied' : 'Copy full path'"
-                @click.stop="copyPath(row)"
-              >
-                {{ copiedKey === row.key ? 'copied' : 'copy' }}
-              </button>
 
-              <!-- fold ×N is part of file identity, so it rides beside the
-                   path, not in the trailing cluster. -->
-              <button
-                v-if="row.members.length > 1"
-                class="fold-count"
-                data-testid="fold-count"
-                :aria-expanded="expandedChains.has(row.key)"
-                :title="`${row.members.length} folded revisions`"
-                @click.stop="toggleChain(row.key)"
-              >
-                ×{{ row.members.length }}
-              </button>
-
-              <!-- seeded: compressed from the full sentence to a muted tag;
-                   the sentence survives on the hover title. -->
-              <span
-                v-if="row.tip.seeded"
-                class="seeded-note"
-                data-testid="seeded-note"
-                :title="SEEDED_HELP"
-                >seeded</span
+              <!-- ×N: a static marker of how many rapid saves folded into this
+                   row — a count, not a button (walking the chain is forensics). -->
+              <span v-if="row.members.length > 1" class="fold-count" data-testid="fold-count"
+                >×{{ row.members.length }}</span
               >
 
-              <!-- Ragged right cluster: read on a stop, never scanned as a
-                   column. Stats, then the outdated stamp, then the time. -->
+              <!-- Ragged right cluster: stats, then the time. -->
               <span class="trailer">
                 <span class="stats">
                   <span v-if="row.tip.stats.insertions" class="count-add"
                     >+{{ row.tip.stats.insertions }}</span
-                  >
-                  <span v-if="row.tip.stats.deletions" class="count-del"
+                  ><span v-if="row.tip.stats.deletions" class="count-del"
                     >&minus;{{ row.tip.stats.deletions }}</span
                   >
                 </span>
-                <span v-if="isOutdated(row)" class="outdated-badge" data-testid="outdated-badge"
-                  >outdated {{ clock(outdatedAtOf(row)!) }}</span
-                >
                 <time class="time" :title="absTime(row.tip.ts)">{{ relTime(row.tip.ts) }}</time>
               </span>
             </header>
 
-            <div class="clamp" :class="{ closed: isCollapsed(row) }">
-              <div class="clamp-inner">
-                <!-- The ×N chain, oldest first, above the tip — stale
-                     revisions of the same hunk, muted. -->
-                <template v-if="expandedChains.has(row.key)">
-                  <div
-                    v-for="member in row.members.slice(0, -1)"
-                    :key="member.seq"
-                    class="chain-member"
-                    data-testid="chain-member"
-                  >
-                    <div class="chain-head mono">
-                      <span class="time" :title="absTime(member.ts)">{{ relTime(member.ts) }}</span>
-                      <span class="kind" :data-kind="member.kind">{{ member.kind }}</span>
-                      <span class="stats">
-                        <span v-if="member.stats.insertions" class="count-add"
-                          >+{{ member.stats.insertions }}</span
-                        >
-                        <span v-if="member.stats.deletions" class="count-del"
-                          >&minus;{{ member.stats.deletions }}</span
-                        >
-                      </span>
-                    </div>
-                    <button
-                      v-if="isHugeCollapsed(member)"
-                      class="huge-row mono"
-                      data-testid="huge-collapsed"
-                      @click="expandedHuge.add(member.seq)"
-                    >
-                      {{ changedLines(member) }} lines changed — show
-                    </button>
-                    <div v-else class="entry-body" :style="bodyStyle(member)">
-                      <DiffView
-                        :diff="member.diff"
-                        :file-path="member.path"
-                        :syntax="ui.diffSyntaxEnabled"
-                        :mode="ui.diffMode"
-                      />
-                    </div>
-                  </div>
-                </template>
-
-                <!-- A post-formatter full-file snapshot is unreadable as a
-                     blurb: collapse it behind a file-level show row. -->
-                <button
-                  v-if="isHugeCollapsed(row.tip)"
-                  class="huge-row mono"
-                  data-testid="huge-collapsed"
-                  @click="expandedHuge.add(row.tip.seq)"
-                >
-                  {{ changedLines(row.tip) }} lines changed — show
-                </button>
-                <div v-else class="entry-body" :style="bodyStyle(row.tip)" data-testid="entry-body">
-                  <DiffView
-                    :diff="row.tip.diff"
-                    :file-path="row.tip.path"
-                    :syntax="ui.diffSyntaxEnabled"
-                    :mode="ui.diffMode"
-                  />
-                </div>
-              </div>
+            <!-- A post-formatter full-file snapshot is unreadable as a blurb:
+                 collapse it behind a file-level show row. -->
+            <button
+              v-if="isHugeCollapsed(row.tip)"
+              class="huge-row mono"
+              data-testid="huge-collapsed"
+              @click="expandedHuge.add(row.tip.seq)"
+            >
+              {{ changedLines(row.tip) }} lines changed — show
+            </button>
+            <div v-else class="entry-body" :style="bodyStyle(row.tip)" data-testid="entry-body">
+              <DiffView
+                :diff="row.tip.diff"
+                :file-path="row.tip.path"
+                :syntax="ui.diffSyntaxEnabled"
+                :mode="ui.diffMode"
+              />
             </div>
           </article>
         </div>
@@ -1069,22 +818,22 @@ onBeforeUnmount(() => {
      for the kind colour (the rail; the kind word matches it). */
   margin: 0.5rem 0;
   border-left: 2px solid var(--rail, var(--border));
-  overflow: hidden; /* keeps the clamp animation and the rail crisp */
+  overflow: hidden; /* keeps the enter-reveal and the rail crisp */
 }
 
 .entry[data-kind='created'] {
   --rail: var(--status-added);
 }
-.entry[data-kind='edited'],
-.entry[data-kind='expanded'],
-.entry[data-kind='shrunk'] {
+.entry[data-kind='edited'] {
   --rail: var(--status-modified);
 }
 .entry[data-kind='reverted'] {
   --rail: var(--status-deleted);
 }
+/* renamed is a path event, not a content change — a neutral rail, not a
+   fourth status colour competing with real edits. */
 .entry[data-kind='renamed'] {
-  --rail: var(--status-renamed);
+  --rail: var(--text-dim);
 }
 
 /* The header strip matches the rest of the site (DiffStack / History / the
@@ -1103,15 +852,8 @@ onBeforeUnmount(() => {
   font-size: var(--fs-base);
 }
 
-.entry-header.clickable {
-  cursor: pointer;
-}
-
 /* Kind: a colour-coded word — the site's status idiom (colored text keyed by
-   an attribute, no pill). It leads the line; the colour matches the rail. A
-   word, not a glyph, keeps edited / expanded / shrunk legible even though they
-   share the modified colour. The colours are defined once here and reused by
-   the fold-chain heads below. */
+   an attribute, no pill). It leads the line; the colour matches the rail. */
 .entry-header .kind {
   flex: none;
   font-weight: 600;
@@ -1120,16 +862,14 @@ onBeforeUnmount(() => {
 .kind[data-kind='created'] {
   color: var(--status-added);
 }
-.kind[data-kind='edited'],
-.kind[data-kind='expanded'],
-.kind[data-kind='shrunk'] {
+.kind[data-kind='edited'] {
   color: var(--status-modified);
 }
 .kind[data-kind='reverted'] {
   color: var(--status-deleted);
 }
 .kind[data-kind='renamed'] {
-  color: var(--status-renamed);
+  color: var(--text-dim);
 }
 
 /* The anchor: a flex row of dir + name. The directory shrinks and ellipses at
@@ -1159,56 +899,13 @@ onBeforeUnmount(() => {
   font-size: var(--fs-content); /* the filename is readable content, not chrome */
 }
 
-.copy-path {
-  flex: none;
-  padding: 0 0.3125rem;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: var(--surface-raised);
-  color: var(--text-dim);
-  font-size: var(--fs-micro);
-  cursor: pointer;
-  /* Quiet by default — the copy chip only appears when you hover the entry
-     (or focus/just-copied it), so a long timeline is not peppered with it. */
-  opacity: 0;
-  transition: opacity 120ms;
-}
-
-.entry-header:hover .copy-path,
-.copy-path:focus-visible,
-.copy-path.copied {
-  opacity: 1;
-}
-
-.copy-path:hover {
-  color: var(--text);
-  border-color: var(--text-dim);
-}
-
-/* fold ×N is part of file identity, so it rides beside the path — borderless,
-   the pill treatment is gone. */
+/* ×N: a static, muted marker of how many rapid saves folded into this row —
+   a count, not a control. */
 .fold-count {
   flex: none;
   padding: 0 0.25rem;
-  border: none;
-  background: none;
   color: var(--text-dim);
   font-size: var(--fs-micro);
-  cursor: pointer;
-}
-
-.fold-count:hover {
-  color: var(--text);
-  text-decoration: underline;
-}
-
-/* seeded: compressed from the full sentence to a muted tag; the sentence
-   survives on the hover title. */
-.seeded-note {
-  flex: none;
-  color: var(--text-dim);
-  font-size: var(--fs-micro);
-  font-style: italic;
 }
 
 /* The ragged right cluster — read on a stop, never scanned as a column.
@@ -1231,64 +928,6 @@ onBeforeUnmount(() => {
 
 .trailer .time {
   white-space: nowrap;
-}
-
-.outdated-badge {
-  flex: none;
-  color: var(--text-dim);
-}
-
-/* Seeded entries: reconstructed, not seen live — muted. */
-.entry.seeded {
-  opacity: 0.75;
-}
-
-/* Outdated collapsed = the header IS the one-line stub. Recede the rail
-   (dashed + neutral) and dim the identity — no separate stub layout needed. */
-.entry.outdated {
-  --rail: var(--text-dim);
-  border-left-style: dashed;
-  opacity: 0.72;
-}
-
-.entry.outdated .path-name {
-  color: var(--text-dim);
-  font-weight: 500;
-}
-
-/* Chain-head kind: same coloured word, smaller (the .kind[data-kind] colours
-   above apply here too). */
-.chain-head .kind {
-  flex: none;
-  font-size: var(--fs-micro);
-}
-
-/* --- Collapse clamp (grid-rows 1fr -> 0fr) --- */
-
-.clamp {
-  display: grid;
-  grid-template-rows: 1fr;
-  transition: grid-template-rows 200ms ease;
-}
-
-.clamp.closed {
-  grid-template-rows: 0fr;
-}
-
-/* Entirely-above-viewport collapses snap; the anchor compensates. */
-.entry.snap .clamp {
-  transition: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .clamp {
-    transition: none;
-  }
-}
-
-.clamp-inner {
-  min-height: 0;
-  overflow: hidden;
 }
 
 /* --- Enter reveal (a fresh append opening at the top) --- */
@@ -1352,28 +991,6 @@ onBeforeUnmount(() => {
 
 .huge-row:hover {
   color: var(--text);
-}
-
-/* --- Fold-chain members (stale revisions above the tip) --- */
-
-.chain-member {
-  opacity: 0.65;
-}
-
-.chain-head {
-  display: flex;
-  align-items: baseline;
-  gap: 0.625rem;
-  padding: 0.1875rem 0.625rem;
-  border-top: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: var(--fs-micro);
-}
-
-.chain-head .stats {
-  margin-left: auto;
-  display: inline-flex;
-  gap: 0.375rem;
 }
 
 /* --- New-entries pill --- */
