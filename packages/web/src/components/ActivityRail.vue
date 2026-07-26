@@ -5,65 +5,23 @@
  * entry carries the add-green indicator bar: the diff palette speaking
  * in the chrome. Collapses to icons on narrow screens.
  *
- * Portrait: the rail rotates into a full-width horizontal tab band
- * under the header (grid-area railband). The band is ONE flex row: the
- * tabs LEFT-aligned (justify-content: flex-start), then the
- * #view-toolbar-slot Teleport target as a right-aligned flex sibling
- * (margin-left auto) — never absolutely positioned, so lifted controls
- * (Explorer's filters, Compare's base picker) share the row with the
- * tabs instead of overlapping them; on narrow widths the row wraps and
- * the controls drop to their own line. The tabs stay left-aligned on
- * every view, toolbar or not. The slot is display:none in landscape —
- * views keep their toolbars inline (Teleport disabled), so the landscape
- * layout is untouched.
+ * The band is ONE flex row: the tabs LEFT-aligned
+ * (justify-content: flex-start), then the global display toggles as a
+ * right-aligned flex group (.band-right, margin-left auto). The tabs stay
+ * left-aligned on every view. On narrow widths the toggle group wraps to
+ * its own line.
  *
- * The slot element itself lives OUT of the Vue tree (a static div in
- * index.html): a Vue-rendered Teleport target can be missing from the
- * document at the moment a teleporting view mounts (HMR remounts,
- * first-patch mounts) — the children then mount nowhere and every
- * later patch crashes on null els. The rail ADOPTS the element into
- * the band on mount and parks it back on <body> on unmount; moving a
- * DOM node keeps any teleported children alive, so views never notice.
+ * The active view's lifted per-view toolbar (Compare's base picker,
+ * Explorer's filters) does NOT live here — it goes in ViewToolbarStrip, a
+ * dedicated full-width row under this rail — so view-specific controls
+ * never share the row with the global toggles.
  */
 
-import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { useUiStore, VIEWS } from '../stores/ui';
 import HeaderToggles from './HeaderToggles.vue';
 import type { ViewName } from '../prefs';
 
 const ui = useUiStore();
-
-/** The band's right group: [view-toolbar slot][global display toggles]. */
-const bandRightEl = ref<HTMLElement | null>(null);
-
-/** The adopted #view-toolbar-slot element (see the header comment). */
-let slotEl: HTMLElement | null = null;
-
-onMounted(() => {
-  const bandRight = bandRightEl.value;
-  if (!bandRight) return;
-  let slot = document.getElementById('view-toolbar-slot');
-  if (!slot) {
-    // No index.html in this document (tests mounting the rail alone).
-    slot = document.createElement('div');
-    slot.id = 'view-toolbar-slot';
-  }
-  slot.classList.add('toolbar-slot');
-  // Insert the view toolbar to the LEFT of the global toggles (which are
-  // the last child of bandRight), so the toggles stay pinned far-right.
-  bandRight.insertBefore(slot, bandRight.firstChild);
-  slotEl = slot;
-});
-
-onBeforeUnmount(() => {
-  // Park the slot back on <body> so it stays in the document for the
-  // next rail instance (and for teleports that outlive this one). Only
-  // when actually in the document — detached test mounts just drop it.
-  if (slotEl?.isConnected && bandRightEl.value?.contains(slotEl)) {
-    document.body.appendChild(slotEl);
-  }
-  slotEl = null;
-});
 
 /** Minimal 16x16 stroke icons, one per view. */
 const ICON_PATHS: Record<ViewName, string> = {
@@ -99,10 +57,9 @@ const ICON_PATHS: Record<ViewName, string> = {
       <span class="rail-label">{{ view.label }}</span>
     </button>
 
-    <!-- Right group, pinned to the band's right edge: the active view's
-         Teleported toolbar (#view-toolbar-slot, adopted onMounted as the
-         FIRST child here) then the always-present global display toggles. -->
-    <div ref="bandRightEl" class="band-right">
+    <!-- Right group, pinned to the band's right edge: the global display
+         toggles. (Per-view toolbars live in ViewToolbarStrip, their own row.) -->
+    <div class="band-right">
       <HeaderToggles />
     </div>
   </nav>
@@ -192,39 +149,3 @@ const ICON_PATHS: Record<ViewName, string> = {
 }
 </style>
 
-<!-- The slot element is adopted from index.html (see the script), so it
-     never carries this component's scope attribute — its rules must be
-     UNSCOPED. The .toolbar-slot class is only ever on that one element. -->
-<style>
-/* Landscape: the slot is inert — views render their toolbars inline. */
-.toolbar-slot {
-  display: none;
-}
-
-/* Parked on <body> (rail not mounted, e.g. mid-HMR): never render. */
-body > .toolbar-slot {
-  display: none;
-}
-
-@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px) {
-  /* The active view's lifted controls, inside .band-right and to the LEFT
-     of the global toggles (never absolutely positioned, so they cannot
-     overlap the tabs). .band-right's margin-left:auto right-aligns the
-     whole group; when the band runs out of width the row wraps and the
-     group drops to its own line. The controls themselves may wrap too. */
-  .band-right > .toolbar-slot {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.625rem;
-    min-width: 0;
-  }
-
-  /* Nothing teleported (Changes/History): drop the empty slot from flow so
-     the toggles sit flush at the right; the tabs stay left-aligned. */
-  .band-right > .toolbar-slot:empty {
-    display: none;
-  }
-}
-</style>

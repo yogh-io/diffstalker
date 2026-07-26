@@ -50,8 +50,8 @@ describe('tabs', () => {
   });
 });
 
-describe('band right group (view toolbar + display toggles)', () => {
-  test('the toolbar slot lives in .band-right, a flex sibling of the tabs', () => {
+describe('band right group (global display toggles)', () => {
+  test('the right group holds the global toggles, right-pinned, and NOT the view-toolbar slot', () => {
     const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
     const band = wrapper.find('nav.rail').element;
 
@@ -64,24 +64,15 @@ describe('band right group (view toolbar + display toggles)', () => {
     expect(bandRight).toBeDefined();
     expect(bandRight!.parentElement).toBe(tabs[0].parentElement);
 
-    // The view-toolbar slot is adopted INTO the right group (to the left of
-    // the global toggles), not left absolutely positioned over the tabs.
-    const slot = bandRight!.querySelector('#view-toolbar-slot');
-    expect(slot).not.toBeNull();
-    // The toggles render there too (the follow one is conditional).
+    // The global toggles render there (the follow one is conditional).
     expect(bandRight!.querySelector('[data-testid="auto-toggle"]')).not.toBeNull();
+    // The per-view toolbar slot does NOT live in the rail any more — it moved
+    // to ViewToolbarStrip so it gets its own row, not this toggles group.
+    expect(bandRight!.querySelector('#view-toolbar-slot')).toBeNull();
+    expect(railSource).not.toContain('view-toolbar-slot');
   });
 
-  test('the slot is never absolutely positioned; the right group is in-flow, right-aligned', () => {
-    // No .toolbar-slot rule may take the slot out of flow (that is what made
-    // it overlap the tab labels).
-    const slotRules = railSource.match(/\.toolbar-slot[^{]*\{[^}]*\}/g) ?? [];
-    expect(slotRules.length).toBeGreaterThan(0);
-    for (const rule of slotRules) {
-      expect(rule).not.toMatch(/position\s*:\s*absolute/);
-    }
-    // The right group is pushed to the edge as a flex item (margin-left
-    // auto), not positioned out of flow.
+  test('the right group is in-flow and right-aligned (margin-left auto, not absolute)', () => {
     const bandRightRule = railSource.match(/\.band-right\s*\{[^}]*\}/)?.[0] ?? '';
     expect(bandRightRule).toMatch(/margin-left\s*:\s*auto/);
     expect(bandRightRule).not.toMatch(/position\s*:\s*absolute/);

@@ -538,10 +538,13 @@ describe('live readouts', () => {
   });
 });
 
-describe('portrait toolbar slot', () => {
-  test('the rail hosts the Teleport target for lifted view toolbars', async () => {
+describe('view toolbar slot', () => {
+  test('the toolbar strip (its own row, not the rail) hosts the Teleport target', async () => {
     const wrapper = await mountWithRepos([]);
-    expect(wrapper.find('nav[aria-label="Views"] #view-toolbar-slot').exists()).toBe(true);
+    // The lifted per-view toolbars land in ViewToolbarStrip, a dedicated
+    // row under the rail — NOT in the rail beside the global toggles.
+    expect(wrapper.find('.view-toolbar-strip #view-toolbar-slot').exists()).toBe(true);
+    expect(wrapper.find('nav[aria-label="Views"] #view-toolbar-slot').exists()).toBe(false);
     wrapper.unmount();
   });
 });

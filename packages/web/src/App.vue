@@ -30,6 +30,7 @@ import { useAutoMode } from './composables/useAutoMode';
 import { useUrlSync } from './composables/useUrlSync';
 import AppHeader from './components/AppHeader.vue';
 import ActivityRail from './components/ActivityRail.vue';
+import ViewToolbarStrip from './components/ViewToolbarStrip.vue';
 import StatusBar from './components/StatusBar.vue';
 import RepoEmptyState from './components/RepoEmptyState.vue';
 import FinderOverlay from './components/FinderOverlay.vue';
@@ -192,6 +193,7 @@ onUnmounted(() => {
   <div class="shell">
     <AppHeader />
     <ActivityRail />
+    <ViewToolbarStrip />
     <main class="workspace">
       <RepoEmptyState v-if="!hasActiveRepo" />
       <!-- Keyed on the active repo: a repo switch (switcher or follow
@@ -223,6 +225,7 @@ onUnmounted(() => {
   grid-template:
     'header' auto
     'railband' auto
+    'viewtoolbar' auto
     'main' 1fr
     'status' auto
     / minmax(0, 1fr);
