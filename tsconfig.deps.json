@@ -1,0 +1,15 @@
+{
+  "//": "Resolution-only tsconfig for the workspace-wide dependency-cruiser check (bun run deps:workspace). It maps the @diffstalker/* subpath imports to each package's SOURCE so the cross-package graph resolves to real files instead of the built dist under node_modules. Not used for compilation.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@diffstalker/core": ["packages/core/src/index.ts"],
+      "@diffstalker/core/*": ["packages/core/src/*"],
+      "@diffstalker/client": ["packages/client/src/index.ts"],
+      "@diffstalker/client/*": ["packages/client/src/*"],
+      "@diffstalker/web": ["packages/web/src/index.ts"],
+      "@diffstalker/web/*": ["packages/web/src/*"]
+    }
+  }
+}

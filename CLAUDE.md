@@ -279,7 +279,14 @@ managers/
 git/  utils/  services/  types/
 ```
 
-Circular dependencies are forbidden. Run `bun run deps` to check (covers all five packages).
+Circular dependencies are forbidden (`no-circular`, severity `error`, in every
+package's config). Each per-package `depcruise` scans only that package's `src/`,
+so a cycle that spans packages would slip past all of them; a **root
+`.dependency-cruiser.cjs`** closes that gap by scanning the workspace together and
+resolving `@diffstalker/*` imports to source (via `tsconfig.deps.json`). Run
+`bun run deps` (per-package + workspace) or `bun run deps:workspace` (cross-package
+only) to check; both are part of `bun run lint`, so the pre-commit hook and CI
+enforce them.
 
 ## Interactive Testing with tmux
 

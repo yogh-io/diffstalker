@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "diffstalker-monorepo",
+      "devDependencies": {
+        "dependency-cruiser": "^17.3.7",
+      },
     },
     "packages/cli": {
       "name": "diffstalker",

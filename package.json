@@ -19,15 +19,19 @@
     "start": "cd packages/cli && bun run start",
     "test": "cd packages/core && bun test src/*.test.ts src/**/*.test.ts && cd ../cli && bun test src/*.test.ts src/**/*.test.ts && cd ../daemon && bun test src/*.test.ts src/**/*.test.ts && cd ../client && bun test src/*.test.ts src/**/*.test.ts && cd ../web && bun run test",
     "test:watch": "cd packages/cli && bun test --watch src/*.test.ts src/**/*.test.ts",
-    "lint": "cd packages/core && bun run lint && cd ../cli && bun run lint && cd ../daemon && bun run lint && cd ../client && bun run lint && cd ../web && bun run lint",
+    "lint": "cd packages/core && bun run lint && cd ../cli && bun run lint && cd ../daemon && bun run lint && cd ../client && bun run lint && cd ../web && bun run lint && cd ../.. && bun run deps:workspace",
     "lint:fix": "cd packages/core && bun run lint:fix && cd ../cli && bun run lint:fix && cd ../daemon && bun run lint:fix && cd ../client && bun run lint:fix && cd ../web && bun run lint:fix",
     "format": "cd packages/core && bun run format && cd ../cli && bun run format && cd ../daemon && bun run format && cd ../client && bun run format && cd ../web && bun run format",
     "format:check": "cd packages/core && bun run format:check && cd ../cli && bun run format:check && cd ../daemon && bun run format:check && cd ../client && bun run format:check && cd ../web && bun run format:check",
-    "deps": "cd packages/core && bun run deps && cd ../cli && bun run deps && cd ../daemon && bun run deps && cd ../client && bun run deps && cd ../web && bun run deps",
+    "deps": "cd packages/core && bun run deps && cd ../cli && bun run deps && cd ../daemon && bun run deps && cd ../client && bun run deps && cd ../web && bun run deps && cd ../.. && bun run deps:workspace",
+    "deps:workspace": "depcruise packages/core/src packages/client/src packages/daemon/src packages/cli/src --config .dependency-cruiser.cjs",
     "metrics": "bun scripts/collect-metrics.ts",
     "metrics:snapshot": "bun scripts/collect-metrics.ts --save",
     "release": "scripts/release.sh",
     "release:minor": "scripts/release.sh minor",
     "release:major": "scripts/release.sh major"
+  },
+  "devDependencies": {
+    "dependency-cruiser": "^17.3.7"
   }
 }
