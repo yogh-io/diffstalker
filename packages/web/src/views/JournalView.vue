@@ -447,23 +447,53 @@ const collapsedKeys = computed(() => {
 });
 
 /**
- * Hunk-group row keys hidden because their commit boundary is folded. A group
- * belongs to a boundary iff its LIVE (tip) seq is in that boundary's
- * `resolves` — matching the tip (not every member) is what survives partial
- * commits and folded chains (superseded members never appear in `resolves`).
+ * Hunk-group row keys hidden because their commit boundary is folded. Folding
+ * a commit collapses its whole SECTION — every entry between it and the
+ * previous boundary — to the one divider line, EXCEPT genuine live survivors
+ * (a partial commit's still-dirty hunks, which belong to a future commit).
+ *
+ * So a row in a folded section hides when it is either:
+ *   - resolved by the commit (its live/tip seq is in `resolves`), or
+ *   - dead: an outdated stub, superseded before the commit and so absent from
+ *     `resolves`. The client's 15s fold window is coarser than the daemon's
+ *     component merge, so a slow supersession leaves such a stub behind — this
+ *     is what made a lone entry survive an otherwise-clean fold.
+ * A row that is live AND unresolved is the survivor and stays visible.
  */
+/** The folded boundaries' resolved tip seqs + their section ranges (lo,hi). */
+function foldedSectionsAndTips(): {
+  resolvedTips: Set<number>;
+  sections: { lo: number; hi: number }[];
+} {
+  const sectionStart = new Map<number, number>();
+  let prevBoundarySeq = 0;
+  for (const row of rows.value) {
+    if (row.type !== 'boundary') continue;
+    sectionStart.set(row.key, prevBoundarySeq);
+    prevBoundarySeq = row.key;
+  }
+  const resolvedTips = new Set<number>();
+  const sections: { lo: number; hi: number }[] = [];
+  for (const row of rows.value) {
+    if (row.type !== 'boundary' || !foldedCommits.has(row.key)) continue;
+    for (const seq of row.entry.resolves) resolvedTips.add(seq);
+    sections.push({ lo: sectionStart.get(row.key) ?? 0, hi: row.key });
+  }
+  return { resolvedTips, sections };
+}
+
 const hiddenKeys = computed(() => {
   const hidden = new Set<number>();
   if (foldedCommits.size === 0) return hidden;
-  const foldedResolves = new Set<number>();
+  const { resolvedTips, sections } = foldedSectionsAndTips();
+  if (sections.length === 0) return hidden;
+  const inSection = (seq: number): boolean => sections.some((s) => seq > s.lo && seq < s.hi);
   for (const row of rows.value) {
-    if (row.type === 'boundary' && foldedCommits.has(row.key)) {
-      for (const seq of row.entry.resolves) foldedResolves.add(seq);
+    if (row.type !== 'hunk-group') continue;
+    // Resolved by the commit, or a dead stub in its section — hide either way.
+    if (resolvedTips.has(row.tip.seq) || (isOutdated(row) && inSection(row.tip.seq))) {
+      hidden.add(row.key);
     }
-  }
-  if (foldedResolves.size === 0) return hidden;
-  for (const row of rows.value) {
-    if (row.type === 'hunk-group' && foldedResolves.has(row.tip.seq)) hidden.add(row.key);
   }
   return hidden;
 });

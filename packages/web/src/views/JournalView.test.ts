@@ -275,6 +275,23 @@ describe('rendering', () => {
     expect(seqs()).toEqual(['2']);
   });
 
+  test('folding a commit also hides the dead (outdated) stubs in its section', async () => {
+    // seq 20 supersedes seq 1 across the 15s fold window, so seq 1 stays a
+    // separate OUTDATED stub (not folded into seq 20). The commit resolves
+    // only the live tip (20); the stub (1) is dead but sits in the section.
+    const { wrapper } = mountView([
+      hunk(1),
+      hunk(20, { supersedes: [1] }),
+      boundary(21, { resolves: [20] }),
+    ]);
+    const entries = () => wrapper.findAll('[data-testid="journal-entry"]');
+    expect(entries()).toHaveLength(2); // live tip 20 + outdated stub 1
+
+    await wrapper.get('[data-testid="journal-boundary"]').trigger('click');
+    // BOTH hide — the whole section collapses, no lone stub left behind.
+    expect(entries()).toHaveLength(0);
+  });
+
   test('a boundary that resolved nothing is not foldable', () => {
     const { wrapper } = mountView([hunk(1), boundary(2, { kind: 'journal-start', label: '', resolves: [] })]);
     const boundaryEl = wrapper.get('[data-testid="journal-boundary"]');
