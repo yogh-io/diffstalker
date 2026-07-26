@@ -279,31 +279,6 @@ const SEEDED_HELP =
   'This change was already in your working tree when the Journal started watching this repo. ' +
   'It was reconstructed from the initial diff, not seen as a live edit.';
 
-/**
- * The line-range to display: the NEW side of the entry's @@ header, so
- * the label matches the editor's line numbers (the HEAD pre-image span
- * reads "lines 0–1" at top-of-file and drifts as edits above land).
- * Falls back to the span when there is no diff (reverted/oversize).
- */
-function newSideSpan(entry: JournalHunkEntry): { start: number; count: number } {
-  const header = entry.diff?.lines.find((line) => line.type === 'hunk');
-  const match = header?.content.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
-  if (!match) return entry.span;
-  return {
-    start: parseInt(match[1], 10),
-    count: match[2] !== undefined ? parseInt(match[2], 10) : 1,
-  };
-}
-
-/** "lines 10–14" from the new-side @@ range (span fallback, see above). */
-function lineLabel(entry: JournalHunkEntry): string {
-  const { start, count } = newSideSpan(entry);
-  if (count > 1) return `lines ${start}–${start + count - 1}`;
-  // count 0 is a pure deletion: the new side has no lines, so name the
-  // line the deletion sits after (clamped — "line 0" helps nobody).
-  return `line ${Math.max(start, 1)}`;
-}
-
 function boundaryText(entry: JournalBoundaryEntry): string {
   const n = entry.resolves.length;
   switch (entry.kind) {
@@ -715,6 +690,7 @@ onBeforeUnmount(() => {
               seeded: row.tip.seeded,
               snap: snapKeys.has(row.key),
             }"
+            :data-kind="row.kind"
             :data-seq="row.key"
             data-testid="journal-entry"
           >
@@ -724,65 +700,73 @@ onBeforeUnmount(() => {
               :title="headerTitle(row)"
               @click="onHeaderClick(row)"
             >
-              <span class="time" :title="absTime(row.tip.ts)">{{ relTime(row.tip.ts) }}</span>
-              <div class="path-cell">
-                <span class="path" :title="row.tip.path"
-                  ><span v-if="fileDir(row.tip.path)" class="path-dir">{{
-                    fileDir(row.tip.path)
-                  }}</span
-                  ><span class="path-name">{{ fileName(row.tip.path) }}</span></span
-                >
-                <button
-                  class="copy-path"
-                  :class="{ copied: copiedKey === row.key }"
-                  data-testid="copy-path"
-                  :title="copiedKey === row.key ? 'Copied' : 'Copy full path'"
-                  @click.stop="copyPath(row)"
-                >
-                  {{ copiedKey === row.key ? 'copied' : 'copy' }}
-                </button>
-              </div>
-              <!-- meta (fold ×N / outdated) sits LEFT of the fixed data
-                   cluster; its DOM position must match its column order (3)
-                   or grid's sparse auto-placement wraps the row. -->
-              <div class="entry-meta">
-                <button
-                  v-if="row.members.length > 1"
-                  class="fold-count"
-                  data-testid="fold-count"
-                  :aria-expanded="expandedChains.has(row.key)"
-                  :title="`${row.members.length} folded revisions`"
-                  @click.stop="toggleChain(row.key)"
-                >
-                  ×{{ row.members.length }}
-                </button>
-                <span v-if="isOutdated(row)" class="outdated-badge" data-testid="outdated-badge"
-                  >outdated {{ clock(outdatedAtOf(row)!) }}</span
-                >
-              </div>
-              <span class="lines">{{ lineLabel(row.tip) }}</span>
+              <!-- The one aligned column: the kind glyph (git's status
+                   gutter). Colour + glyph carry the kind; the word lives in
+                   the hover title. Text is a ::before, so the box is empty. -->
               <span
-                class="kind"
-                :data-kind="row.kind"
+                class="sigil"
                 :title="kindHelp(row.kind)"
+                :aria-label="row.kind"
                 data-testid="kind-badge"
-                >{{ row.kind }}</span
+              ></span>
+
+              <!-- The anchor: the filename never shrinks; the directory
+                   ellipsises before it does. -->
+              <span class="path" :title="row.tip.path"
+                ><span v-if="fileDir(row.tip.path)" class="path-dir">{{
+                  fileDir(row.tip.path)
+                }}</span
+                ><span class="path-name">{{ fileName(row.tip.path) }}</span></span
               >
-              <span class="stats">
-                <span v-if="row.tip.stats.insertions" class="count-add"
-                  >+{{ row.tip.stats.insertions }}</span
-                >
-                <span v-if="row.tip.stats.deletions" class="count-del"
-                  >&minus;{{ row.tip.stats.deletions }}</span
-                >
-              </span>
+              <button
+                class="copy-path"
+                :class="{ copied: copiedKey === row.key }"
+                data-testid="copy-path"
+                :title="copiedKey === row.key ? 'Copied' : 'Copy full path'"
+                @click.stop="copyPath(row)"
+              >
+                {{ copiedKey === row.key ? 'copied' : 'copy' }}
+              </button>
+
+              <!-- fold ×N is part of file identity, so it rides beside the
+                   path, not in the trailing cluster. -->
+              <button
+                v-if="row.members.length > 1"
+                class="fold-count"
+                data-testid="fold-count"
+                :aria-expanded="expandedChains.has(row.key)"
+                :title="`${row.members.length} folded revisions`"
+                @click.stop="toggleChain(row.key)"
+              >
+                ×{{ row.members.length }}
+              </button>
+
+              <!-- seeded: compressed from the full sentence to a muted tag;
+                   the sentence survives on the hover title. -->
               <span
                 v-if="row.tip.seeded"
                 class="seeded-note"
                 data-testid="seeded-note"
                 :title="SEEDED_HELP"
-                >changed before the Journal started</span
+                >seeded</span
               >
+
+              <!-- Ragged right cluster: read on a stop, never scanned as a
+                   column. Stats, then the outdated stamp, then the time. -->
+              <span class="trailer">
+                <span class="stats">
+                  <span v-if="row.tip.stats.insertions" class="count-add"
+                    >+{{ row.tip.stats.insertions }}</span
+                  >
+                  <span v-if="row.tip.stats.deletions" class="count-del"
+                    >&minus;{{ row.tip.stats.deletions }}</span
+                  >
+                </span>
+                <span v-if="isOutdated(row)" class="outdated-badge" data-testid="outdated-badge"
+                  >outdated {{ clock(outdatedAtOf(row)!) }}</span
+                >
+                <time class="time" :title="absTime(row.tip.ts)">{{ relTime(row.tip.ts) }}</time>
+              </span>
             </header>
 
             <div class="clamp" :class="{ closed: isCollapsed(row) }">
@@ -918,38 +902,38 @@ onBeforeUnmount(() => {
 /* --- Hunk-group entries --- */
 
 .entry {
-  margin: 0.375rem 0;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface);
-  overflow: hidden;
+  /* No card. A kind-coloured left rail brackets the header + its diff, so the
+     diff sits on the page as the real content, not inside a competing frame.
+     --rail is the single source of truth for the kind colour (rail + sigil). */
+  margin: 0.5rem 0;
+  border-left: 2px solid var(--rail, var(--border));
+  overflow: hidden; /* keeps the clamp animation and the rail crisp */
 }
 
+.entry[data-kind='created'] {
+  --rail: var(--status-added);
+}
+.entry[data-kind='edited'],
+.entry[data-kind='expanded'],
+.entry[data-kind='shrunk'] {
+  --rail: var(--status-modified);
+}
+.entry[data-kind='reverted'] {
+  --rail: var(--status-deleted);
+}
+.entry[data-kind='renamed'] {
+  --rail: var(--status-renamed);
+}
+
+/* One flex line — NO grid, so nothing is forced to align across entries. The
+   filename parks at a stable x behind the one fixed element (the sigil);
+   everything else runs ragged and recedes. */
 .entry-header {
-  display: grid;
-  /* A columnar layout. Each .entry-header is its OWN grid, so `max-content`
-     can't align a column across rows — only FIXED widths lay out identically
-     in every independent grid. So the right-hand data cluster (lines / kind /
-     +add / −del) gets fixed track widths and the path column (minmax(0,1fr))
-     eats the slack, which right-anchors that cluster to the same x on every
-     row. Content aligns within each track: lines/counts right-align (numbers
-     stack), the kind badge left-aligns (its "type-box" starts at one x). The
-     meta badge (outdated / ×N fold — usually absent) sits in a max-content
-     track LEFT of the cluster, so it never wastes a fixed column nor shifts
-     the cluster; a long seeded-note drops to its own full-width sub-line. */
-  grid-template-columns:
-    [time] max-content
-    [path] minmax(0, 1fr)
-    [meta] max-content
-    [lines] 7rem
-    [kind] 5.5rem
-    [add] 2.5rem
-    [del] 2.5rem;
+  display: flex;
   align-items: baseline;
-  column-gap: 0.75rem;
-  row-gap: 0.125rem;
+  gap: 0 0.5rem;
   min-width: 0;
-  padding: 0.3125rem 0.625rem;
+  padding: 0.25rem 0.625rem 0.25rem 0.5rem;
   font-size: var(--fs-small);
 }
 
@@ -957,48 +941,48 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-/* The path column: filename + hover copy button, sharing one grid cell. */
-.path-cell {
+/* The ONE aligned column: a fixed-width kind glyph — git's status gutter.
+   The box is empty; the glyph is a ::before so the text node stays clean and
+   the kind word lives only on the hover title / aria-label. */
+.sigil {
+  flex: none;
+  width: 1.5rem;
+  text-align: center;
+  color: var(--rail);
+  font-size: var(--fs-content);
+  line-height: 1;
+}
+.entry[data-kind='created'] .sigil::before {
+  content: '+';
+}
+.entry[data-kind='edited'] .sigil::before {
+  content: '≈';
+}
+.entry[data-kind='expanded'] .sigil::before {
+  content: '↑';
+}
+.entry[data-kind='shrunk'] .sigil::before {
+  content: '↓';
+}
+.entry[data-kind='reverted'] .sigil::before {
+  content: '⤺';
+}
+.entry[data-kind='renamed'] .sigil::before {
+  content: '→';
+}
+
+/* The anchor: a flex row of dir + name. The directory shrinks and ellipses at
+   ITS end; the file name never shrinks — so the useful part stays visible on a
+   long path (…dir/name). Full path is on the title. */
+.path {
   display: flex;
   align-items: baseline;
-  gap: 0.375rem;
   min-width: 0;
   overflow: hidden;
+  flex: 0 1 auto;
 }
 
-/* The optional badges (fold ×N, outdated) share one cell so they occupy a
-   single, alignable column regardless of how many are present. */
-.entry-meta {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-}
-
-.entry-header .time {
-  grid-column: time;
-  color: var(--text-dim);
-}
-
-.entry-header .path-cell {
-  grid-column: path;
-}
-
-.entry-header .entry-meta {
-  grid-column: meta;
-}
-
-/* The path is a flex row of dir + name: the directory shrinks and
-   ellipses at ITS end, but the file name never shrinks — so the most
-   useful part (the name) stays visible on a long path, with the ellipsis
-   landing in the middle (…dir/name). Full path is on the title. */
-.entry-header .path {
-  display: flex;
-  align-items: baseline;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.entry-header .path-dir {
+.path-dir {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1006,10 +990,12 @@ onBeforeUnmount(() => {
   color: var(--text-dim);
 }
 
-.entry-header .path-name {
+.path-name {
   flex: none;
   white-space: nowrap;
   font-weight: 600;
+  color: var(--text);
+  font-size: var(--fs-content); /* the filename is readable content, not chrome */
 }
 
 .copy-path {
@@ -1038,146 +1024,97 @@ onBeforeUnmount(() => {
   border-color: var(--text-dim);
 }
 
-.entry-header .lines {
-  /* Right-align in the fixed track so the range's closing number stacks into
-     a column down the page ("…1105" / "…970" / "…15" line up), rather than
-     the numbers going ragged behind a left-aligned "lines" prefix. */
-  grid-column: lines;
-  justify-self: end;
-  color: var(--text-dim);
-}
-
-/* Left-align in the fixed track so the badge box starts at one x down the
-   page (its "type-box" left edge lines up), regardless of the word's width. */
-.entry-header .kind {
-  grid-column: kind;
-  justify-self: start;
-}
-
-.kind {
-  flex: none;
-  padding: 0 0.3125rem;
-  border: 1px solid var(--text-dim);
-  border-radius: 3px;
-  color: var(--text-dim);
-  font-size: var(--fs-micro);
-}
-
-.kind[data-kind='created'] {
-  border-color: var(--status-added);
-  color: var(--status-added);
-}
-
-.kind[data-kind='edited'],
-.kind[data-kind='expanded'],
-.kind[data-kind='shrunk'] {
-  border-color: var(--status-modified);
-  color: var(--status-modified);
-}
-
-.kind[data-kind='reverted'] {
-  border-color: var(--status-deleted);
-  color: var(--status-deleted);
-}
-
-.kind[data-kind='renamed'] {
-  border-color: var(--status-renamed);
-  color: var(--status-renamed);
-}
-
-/* A directional glyph in front of the kind word, so edited / expanded /
-   shrunk (which all share the modified color) still read apart at a glance.
-   CSS-only — the badge text node stays exactly the kind word. */
-.kind[data-kind='created']::before {
-  content: '+ ';
-}
-.kind[data-kind='edited']::before {
-  content: '≈ ';
-}
-.kind[data-kind='expanded']::before {
-  content: '↑ ';
-}
-.kind[data-kind='shrunk']::before {
-  content: '↓ ';
-}
-.kind[data-kind='reverted']::before {
-  content: '⤺ ';
-}
-.kind[data-kind='renamed']::before {
-  content: '→ ';
-}
-
+/* fold ×N is part of file identity, so it rides beside the path — borderless,
+   the pill treatment is gone. */
 .fold-count {
   flex: none;
-  padding: 0 0.3125rem;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: var(--surface-raised);
-  color: var(--text);
+  padding: 0 0.25rem;
+  border: none;
+  background: none;
+  color: var(--text-dim);
   font-size: var(--fs-micro);
   cursor: pointer;
 }
 
 .fold-count:hover {
-  border-color: var(--selection);
+  color: var(--text);
+  text-decoration: underline;
 }
 
-/* The long "changed before the Journal started" note is the one variable-
-   width outlier, so it drops to its own full-width sub-line under the row
-   (aligned under the path column) instead of stretching the grid columns. */
+/* seeded: compressed from the full sentence to a muted tag; the sentence
+   survives on the hover title. */
 .seeded-note {
-  grid-column: 1 / -1;
-  margin-left: 1.25rem;
+  flex: none;
   color: var(--text-dim);
   font-size: var(--fs-micro);
   font-style: italic;
 }
 
-.outdated-badge {
+/* The ragged right cluster — read on a stop, never scanned as a column.
+   margin-left:auto shoves it to the trailing edge; muted + micro. */
+.trailer {
   flex: none;
-  padding: 0 0.3125rem;
-  border-radius: 3px;
-  background: var(--surface-raised);
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0 0.625rem;
   color: var(--text-dim);
   font-size: var(--fs-micro);
 }
 
-/* Stats become two right-aligned columns (adds, dels) so +n and −m line up
-   vertically down the page, each independent of the other's width. The
-   .stats wrapper dissolves (display: contents) so its two counts become
-   direct grid items in the [add] / [del] columns; an absent count (v-if on a
-   zero) just leaves its column empty for that row — the column stays
-   reserved by the other rows, so alignment holds. */
-.entry-header .stats {
-  display: contents;
+.trailer .stats {
+  display: inline-flex;
+  gap: 0 0.375rem;
+  font-variant-numeric: tabular-nums;
 }
 
-.entry-header .count-add {
-  grid-column: add;
-  justify-self: end;
+.trailer .time {
+  white-space: nowrap;
 }
 
-.entry-header .count-del {
-  grid-column: del;
-  justify-self: end;
+.outdated-badge {
+  flex: none;
+  color: var(--text-dim);
 }
 
-/* Seeded entries: present before the journal watched anything — muted. */
+/* Seeded entries: reconstructed, not seen live — muted. */
 .entry.seeded {
   opacity: 0.75;
 }
 
-/* Outdated: the header IS the one-line stub while collapsed. Recede it —
-   a dashed, page-toned card reads as superseded history, secondary to the
-   live entries. */
+/* Outdated collapsed = the header IS the one-line stub. Recede the rail
+   (dashed + neutral) and dim the identity — no separate stub layout needed. */
 .entry.outdated {
-  background: var(--bg);
-  border-style: dashed;
+  --rail: var(--text-dim);
+  border-left-style: dashed;
+  opacity: 0.72;
 }
 
-.entry.outdated .entry-header .path,
-.entry.outdated .entry-header .time {
+.entry.outdated .path-name {
   color: var(--text-dim);
+  font-weight: 500;
+}
+
+/* The kind WORD survives only inside expanded fold-chain heads now (no pill,
+   no glyph — just coloured text). */
+.chain-head .kind {
+  flex: none;
+  color: var(--text-dim);
+  font-size: var(--fs-micro);
+}
+.chain-head .kind[data-kind='created'] {
+  color: var(--status-added);
+}
+.chain-head .kind[data-kind='edited'],
+.chain-head .kind[data-kind='expanded'],
+.chain-head .kind[data-kind='shrunk'] {
+  color: var(--status-modified);
+}
+.chain-head .kind[data-kind='reverted'] {
+  color: var(--status-deleted);
+}
+.chain-head .kind[data-kind='renamed'] {
+  color: var(--status-renamed);
 }
 
 /* --- Collapse clamp (grid-rows 1fr -> 0fr) --- */
@@ -1220,7 +1157,7 @@ onBeforeUnmount(() => {
 .reveal.enter {
   display: grid;
   overflow: hidden;
-  margin: 0.375rem 0;
+  margin: 0.5rem 0;
   animation: journal-enter 200ms ease;
 }
 

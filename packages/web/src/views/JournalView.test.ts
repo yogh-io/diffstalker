@@ -149,14 +149,14 @@ describe('rendering', () => {
     expect(wrapper.find('[data-testid="journal-empty"]').exists()).toBe(true);
   });
 
-  test('a hunk group renders header (path, lines, kind, stats) over a DiffView body', () => {
+  test('a hunk group renders header (path, kind, stats) over a DiffView body', () => {
     const { wrapper } = mountView([hunk(1, { kind: 'created' })]);
     const entry = wrapper.get('[data-testid="journal-entry"]');
     expect(entry.text()).toContain('src/a.ts');
-    // From the NEW side of the @@ header (+10,6) — editor coordinates —
-    // not the HEAD pre-image span ({10,5} would read 10–14).
-    expect(entry.text()).toContain('lines 10–15');
-    expect(entry.get('[data-testid="kind-badge"]').text()).toBe('created');
+    // The kind is glyph-only (git's status gutter): the word is on aria-label,
+    // not the text node. The line range is NOT duplicated in the header — it
+    // lives in the diff's own @@ hunk header below.
+    expect(entry.get('[data-testid="kind-badge"]').attributes('aria-label')).toBe('created');
     expect(entry.text()).toContain('+2');
     expect(entry.text()).toContain('−1');
     // The reused DiffView renders the single-hunk snapshot.
@@ -207,24 +207,6 @@ describe('rendering', () => {
     expect(entry.find('[data-testid="diff-empty"]').exists()).toBe(true);
   });
 
-  test('a null diff falls back to the HEAD span for the line label', () => {
-    const { wrapper } = mountView([hunk(1, { kind: 'reverted', diff: null })]);
-    expect(wrapper.get('[data-testid="journal-entry"]').text()).toContain('lines 10–14');
-  });
-
-  test('a pure deletion (+N,0 new side) labels the single surviving line', () => {
-    const diff: DiffResult = {
-      raw: '',
-      lines: [
-        { type: 'header', content: 'diff --git a/src/a.ts b/src/a.ts' },
-        { type: 'hunk', content: '@@ -10,3 +9,0 @@' },
-        { type: 'deletion', content: '-gone', oldLineNum: 10 },
-      ],
-    };
-    const { wrapper } = mountView([hunk(1, { kind: 'shrunk', diff })]);
-    expect(wrapper.get('[data-testid="journal-entry"]').text()).toContain('line 9');
-  });
-
   test('the newest entry renders FIRST — above older ones', async () => {
     const { wrapper, repo } = mountView([hunk(1), hunk(2, { path: 'src/b.ts' })]);
     const seqOrder = () =>
@@ -260,8 +242,8 @@ describe('rendering', () => {
     const entry = wrapper.get('[data-testid="journal-entry"]');
     expect(entry.classes()).toContain('seeded');
     const note = entry.get('[data-testid="seeded-note"]');
-    expect(note.text()).toBe('changed before the Journal started');
-    // The full meaning is spelled out in a hover title.
+    // Compressed to a muted tag; the full sentence survives on the hover title.
+    expect(note.text()).toBe('seeded');
     expect(note.attributes('title')).toContain('already in your working tree');
   });
 
