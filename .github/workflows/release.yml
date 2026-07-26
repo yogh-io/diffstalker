@@ -26,7 +26,7 @@ jobs:
   build-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
 
@@ -110,7 +110,7 @@ jobs:
       id-token: write   # OIDC trusted publishing (npm) + provenance
       contents: write   # metrics-snapshot commit + GitHub release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
 
