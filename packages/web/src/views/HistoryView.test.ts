@@ -31,7 +31,7 @@ function commit(overrides: Partial<CommitInfo> = {}): CommitInfo {
     hash,
     shortHash: hash.slice(0, 7),
     message: 'Fix the thing',
-    author: 'Jorn',
+    author: 'yogh-io',
     date: new Date(Date.now() - 2 * 86_400_000),
     refs: '',
     ...overrides,
