@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-26
+
+A security-hardening and web-UI-polish release. The daemon is now
+loopback-only with an origin guard and a least-privilege API surface, the
+repo gained public-project governance, and the web UI got a round of polish.
+
+### Security
+
+- **The daemon binds loopback only.** Removed the `--host` flag — there is no
+  option to bind a routable interface (it has no authentication). Reach it from
+  another machine over an SSH tunnel (`ssh -L 7337:localhost:7337 …`).
+- **Origin guard on a bound `--port`.** A `Host` allow-list blocks DNS-rebinding
+  (421) and cross-site requests are rejected (CSRF, 403); non-browser clients
+  (the CLI, `curl`) pass untouched. Every response also carries hardening headers
+  (`X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`) and a
+  strict `Content-Security-Policy` for the served SPA.
+- **Least-privilege REST surface on a port.** A `--port` (web) daemon routes only
+  what the web UI uses — reads, repo open/release, and file-level stage/unstage.
+  Every CLI-only mutation (commit, discard, hunk staging, remote/branch
+  operations, persisted compare base) returns `404`; the full API stays on the
+  CLI's unix socket.
+- Hardened the untracked-file diff (realpath containment against symlink escapes
+  + a read cap) and bounded the history `count` parameter.
+
+### Added
+
+- Public-project governance: `SECURITY.md`, `CONTRIBUTING.md`, `CODEOWNERS`,
+  Dependabot, CodeQL, and continuous CI (build + lint + full test suite on every
+  push and pull request).
+- A workspace-wide circular-dependency check that catches cross-package cycles
+  the per-package checks miss.
+
+### Changed
+
+- **Web UI polish.** Per-view toolbars now get their own row instead of crowding
+  the global toggles; Compare shows the `branch → base` direction and reload
+  feedback; stacked diffs pin the hunk header below the file header; the Journal
+  gained a columnar entry header, directional kind glyphs, and a hover-reveal
+  copy button. Fixed selection-vs-hover across every list (a selected row was
+  indistinguishable from a hovered one), added focus-visible rings, and gave the
+  stage/unstage buttons semantic hover colors.
+- README leads with the web UI, with light and dark screenshots.
+
+### Internal
+
+- Dependency refresh: eslint 10, TypeScript 6.0, chokidar 5, and the GitHub
+  Actions majors. `engines.node` raised to `>=20.19.0` (chokidar 5's floor).
+
 ## [0.7.1] - 2026-07-23
 
 ### Changed

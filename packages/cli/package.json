@@ -24,6 +24,9 @@
     "LICENSE",
     "CHANGELOG.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "build": "rm -rf dist && tsc -b",
@@ -50,7 +53,7 @@
     "cli"
   ],
   "engines": {
-    "node": ">=20.10.0"
+    "node": ">=20.19.0"
   },
   "dependencies": {
     "diffstalkerd": "workspace:*",

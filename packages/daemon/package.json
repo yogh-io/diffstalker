@@ -21,7 +21,8 @@
     "dist/web",
     "bin",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "publishConfig": {
     "access": "public"
@@ -40,8 +41,8 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "prepublishOnly": "bun run build:prod",
-    "prepack": "cp ../../LICENSE .",
-    "postpack": "rm -f LICENSE"
+    "prepack": "cp ../../LICENSE ../../CHANGELOG.md .",
+    "postpack": "rm -f LICENSE CHANGELOG.md"
   },
   "keywords": [
     "git",
@@ -50,7 +51,7 @@
     "diffstalker"
   ],
   "engines": {
-    "node": ">=20.10.0"
+    "node": ">=20.19.0"
   },
   "dependencies": {
     "chokidar": "^5.0.0",

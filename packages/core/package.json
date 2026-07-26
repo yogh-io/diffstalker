@@ -20,7 +20,7 @@
     "format:check": "prettier --check src/"
   },
   "engines": {
-    "node": ">=20.10.0"
+    "node": ">=20.19.0"
   },
   "dependencies": {
     "chokidar": "^5.0.0",

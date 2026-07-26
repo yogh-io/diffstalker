@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 diffstalker is a terminal UI for interactive git staging and committing, built with TypeScript and neo-blessed.
 
-The git state engine now lives in a **daemon** (`diffstalkerd`): a Node http server exposing `@diffstalker/core` over REST + Server-Sent Events. The terminal UI is a **client** of that daemon — it holds no in-process git. On launch the CLI attaches to a running daemon or spawns one on a unix socket, opens repos over REST, and follows live state over SSE. The daemon owns follow mode: it watches ONE hook file external tools append repo/file paths to, and broadcasts `follow-change` so clients can switch focus. The same daemon can back other clients (a web UI is planned).
+The git state engine now lives in a **daemon** (`diffstalkerd`): a Node http server exposing `@diffstalker/core` over REST + Server-Sent Events. The terminal UI is a **client** of that daemon — it holds no in-process git. On launch the CLI attaches to a running daemon or spawns one on a unix socket, opens repos over REST, and follows live state over SSE. The daemon owns follow mode: it watches ONE hook file external tools append repo/file paths to, and broadcasts `follow-change` so clients can switch focus. The same daemon backs other clients: a web UI ships too (served at GET /).
 
 ## Feature Documentation
 
@@ -15,6 +15,13 @@ The git state engine now lives in a **daemon** (`diffstalkerd`): a Node http ser
 ## Tech Stack
 
 - **TypeScript** with ESM modules, compiled with `tsc`, run with **bun** in development
+  - On **TS 6.0** (the deprecation-bridge before the native 7.0). We can't go to
+    7.0 yet: 7.0 shipped with no programmatic compiler API, so the tools that embed
+    it — `typescript-eslint` (lint) and Volar/`vue-tsc` (web type-check) — are hard-
+    blocked until TS **7.1**. The 6.0 migration already cleared the 5→7 gotchas
+    (`types: ["node"]` in `tsconfig.base.json`; `rootDir` set explicitly), so when
+    7.1 lands it's a one-line bump for the whole repo. Do NOT split-toolchain a
+    7.0-tsc-for-CLI hack — the build is sub-2s, so the gain is nil.
 - **Node `http`** for the daemon (REST + SSE over `@diffstalker/core`, no framework)
 - **simple-git** for git operations — **core/daemon only** (the CLI never runs git in-process)
 - **chokidar** for file watching (follow hook file, git dir, working tree) — **core/daemon only**
@@ -73,7 +80,7 @@ The repo is a bun workspace with five packages:
 - **`@diffstalker/daemon`** — diffstalkerd, published to npm as a bin-only package (an executable, not an importable API): Node http REST + SSE over core. Owns git state and follow mode, and serves the web UI at `GET /`.
 - **`@diffstalker/client`** — a typed REST + SSE client for the daemon. Private; consumed by the CLI (and, later, a web client).
 - **`diffstalker`** (`packages/cli`) — the terminal UI, published to npm. A pure daemon client: `RepoSession` fed by REST + SSE, `DaemonLifecycle` to attach/spawn.
-- **`@diffstalker/web`** — the browser UI (Vue 3 + Vite + Pinia): a pure daemon client over the same REST + SSE. Private; its built assets are bundled INTO the `diffstalkerd` tarball and served same-origin (not a separately published package). Phase 5, in progress.
+- **`@diffstalker/web`** — the browser UI (Vue 3 + Vite + Pinia): a pure daemon client over the same REST + SSE. Private; its built assets are bundled INTO the `diffstalkerd` tarball and served same-origin (not a separately published package). Shipped in v0.6.0.
 
 The two **published** packages are `diffstalker` and `diffstalkerd`; the other three are private and bundled. See Releasing for the single-source version model.
 
@@ -107,7 +114,7 @@ packages/core/src/
 ```
 
 `view/` holds framework-agnostic presentation logic (diff/explorer row models, word diff, file-tree
-building, formatters, language detection) extracted from the CLI so the CLI and the coming web client
+building, formatters, language detection) extracted from the CLI so the CLI and the web client
 share one copy. It imports git/ and utils/ **types only** (a runtime import would drag node-only code
 into a browser bundle — a dependency-cruiser rule enforces this). Its ANSI counterpart (emphasize
 highlighting) stays in `packages/cli/src/utils/syntaxHighlight.ts`; the row builders that bake ANSI in
