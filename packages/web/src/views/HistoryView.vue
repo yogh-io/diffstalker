@@ -338,13 +338,20 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   font-size: var(--fs-base);
 }
 
-.commit-row:hover {
+.commit-row:hover:not(.selected) {
   background: var(--surface-raised);
 }
 
 .commit-row.selected {
-  background: var(--surface-raised);
+  background: var(--row-selected-bg);
   border-left-color: var(--selection);
+}
+
+/* Keyboard focus ring, distinct from selection. Inset so it is not clipped
+   by the scroll container's overflow. */
+.commit-row:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: -2px;
 }
 
 .row-top {

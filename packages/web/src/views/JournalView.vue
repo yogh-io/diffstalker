@@ -733,6 +733,7 @@ onBeforeUnmount(() => {
               >
               <button
                 class="copy-path"
+                :class="{ copied: copiedKey === row.key }"
                 data-testid="copy-path"
                 :title="copiedKey === row.key ? 'Copied' : 'Copy full path'"
                 @click.stop="copyPath(row)"
@@ -969,11 +970,21 @@ onBeforeUnmount(() => {
   color: var(--text-dim);
   font-size: var(--fs-micro);
   cursor: pointer;
+  /* Quiet by default — the copy chip only appears when you hover the entry
+     (or focus/just-copied it), so a long timeline is not peppered with it. */
+  opacity: 0;
+  transition: opacity 120ms;
+}
+
+.entry-header:hover .copy-path,
+.copy-path:focus-visible,
+.copy-path.copied {
+  opacity: 1;
 }
 
 .copy-path:hover {
   color: var(--text);
-  border-color: var(--selection);
+  border-color: var(--text-dim);
 }
 
 .entry-header .lines {
@@ -1010,6 +1021,28 @@ onBeforeUnmount(() => {
 .kind[data-kind='renamed'] {
   border-color: var(--status-renamed);
   color: var(--status-renamed);
+}
+
+/* A directional glyph in front of the kind word, so edited / expanded /
+   shrunk (which all share the modified color) still read apart at a glance.
+   CSS-only — the badge text node stays exactly the kind word. */
+.kind[data-kind='created']::before {
+  content: '+ ';
+}
+.kind[data-kind='edited']::before {
+  content: '≈ ';
+}
+.kind[data-kind='expanded']::before {
+  content: '↑ ';
+}
+.kind[data-kind='shrunk']::before {
+  content: '↓ ';
+}
+.kind[data-kind='reverted']::before {
+  content: '⤺ ';
+}
+.kind[data-kind='renamed']::before {
+  content: '→ ';
 }
 
 .fold-count {
@@ -1055,7 +1088,14 @@ onBeforeUnmount(() => {
   opacity: 0.75;
 }
 
-/* Outdated: the header IS the one-line stub while collapsed. */
+/* Outdated: the header IS the one-line stub while collapsed. Recede it —
+   a dashed, page-toned card reads as superseded history, secondary to the
+   live entries. */
+.entry.outdated {
+  background: var(--bg);
+  border-style: dashed;
+}
+
 .entry.outdated .entry-header .path,
 .entry.outdated .entry-header .time {
   color: var(--text-dim);

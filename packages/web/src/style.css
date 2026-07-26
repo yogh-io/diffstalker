@@ -17,6 +17,13 @@
   --fs-content: 0.875rem; /* 14px: readouts, inputs */
   --fs-title: 1rem; /* 16px: panel titles */
   --fs-display: 1.375rem; /* 22px: empty-state heading */
+
+  /* The one selected-row background, used by every list (Changes, Compare,
+     History, Explorer, the fuzzy finder). Deliberately a selection tint,
+     NOT --surface-raised — that is the hover color, so a selected row must
+     read differently from a merely-hovered one. Resolves per-theme (the
+     color-mix reads the active theme's --selection/--surface at use). */
+  --row-selected-bg: color-mix(in srgb, var(--selection) 18%, var(--surface));
 }
 
 * {
@@ -70,6 +77,9 @@ button {
 
 button:disabled {
   cursor: default;
+  /* One disabled affordance for every button (load-more, refresh, open,
+     the toggles) — dimmed so "can't click this now" reads consistently. */
+  opacity: 0.5;
 }
 
 /* Decorative icons never swallow the pointer — the <button> stays the

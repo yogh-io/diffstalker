@@ -482,13 +482,20 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
   color: var(--text);
 }
 
-.tree-row:hover {
+.tree-row:hover:not(.selected) {
   background: var(--surface-raised);
 }
 
 .tree-row.selected {
-  background: var(--surface-raised);
+  background: var(--row-selected-bg);
   border-left-color: var(--selection);
+}
+
+/* Keyboard focus ring, distinct from selection. Inset so it is not clipped
+   by the scroll container's overflow. */
+.tree-row:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: -2px;
 }
 
 .tree-row.selected .name {

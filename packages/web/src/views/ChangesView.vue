@@ -591,7 +591,7 @@ const rootStyle = computed(() => ({
   cursor: pointer; /* was a <button>; the option div keeps the affordance */
 }
 
-.file-row:hover {
+.file-row:hover:not(.selected) {
   background: var(--surface-raised);
 }
 
@@ -599,7 +599,7 @@ const rootStyle = computed(() => ({
    into view. A selection-tinted row, clearly stronger than the
    surface-raised hover, plus the accent bar and accent-colored name. */
 .file-row.selected {
-  background: color-mix(in srgb, var(--selection) 18%, var(--surface));
+  background: var(--row-selected-bg);
   border-left-color: var(--selection);
 }
 
@@ -702,9 +702,10 @@ const rootStyle = computed(() => ({
   margin-left: 0;
 }
 
-/* Stage (+) / unstage (−) affordance at the row's end. Always shown but
+/* Stage (+) / unstage (−) affordance at the row's start. Always shown but
    dim, brightening on hover, so it reads as an action without competing
-   with the file name. */
+   with the file name. Hover carries the semantic: staging goes add-green,
+   unstaging goes deleted-red, so the direction is obvious before clicking. */
 .stage-btn {
   flex: none;
   align-self: center;
@@ -721,8 +722,19 @@ const rootStyle = computed(() => ({
 
 .stage-btn:hover {
   color: var(--text);
-  border-color: var(--selection);
+  border-color: var(--text-dim);
   background: var(--surface-raised);
+}
+
+.stage-btn[data-testid='stage-file']:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.stage-btn[data-testid='unstage-file']:hover {
+  color: var(--status-deleted);
+  border-color: var(--status-deleted);
 }
 
 /* --- Resizer --- */

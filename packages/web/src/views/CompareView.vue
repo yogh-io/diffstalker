@@ -789,7 +789,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   cursor: pointer;
 }
 
-.file-row:hover {
+.file-row:hover:not(.selected) {
   background: var(--surface-raised);
 }
 
@@ -797,7 +797,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
    into view. A selection-tinted row, clearly stronger than the
    surface-raised hover, plus the accent bar and accent-colored name. */
 .file-row.selected {
-  background: color-mix(in srgb, var(--selection) 18%, var(--surface));
+  background: var(--row-selected-bg);
   border-left-color: var(--selection);
 }
 

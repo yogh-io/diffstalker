@@ -285,9 +285,13 @@ function onInputKeydown(event: KeyboardEvent): void {
   font-size: var(--fs-content);
 }
 
-.finder-input:focus,
+/* Keyboard focus reads as an accent underline (matching the input's own
+   bottom-border language), rather than nothing. */
 .finder-input:focus-visible {
   outline: none;
+  border-bottom-color: var(--accent);
+  border-bottom-width: 2px;
+  padding-bottom: calc(0.75rem - 1px);
 }
 
 .finder-note {
@@ -321,7 +325,7 @@ function onInputKeydown(event: KeyboardEvent): void {
 }
 
 .finder-option.selected {
-  background: var(--surface-raised);
+  background: var(--row-selected-bg);
   border-left-color: var(--selection);
   color: var(--text);
 }

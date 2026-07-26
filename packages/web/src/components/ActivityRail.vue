@@ -134,6 +134,10 @@ const ICON_PATHS: Record<ViewName, string> = {
   gap: 0.625rem;
   min-width: 0;
   margin-left: auto;
+  /* A hairline separates the global display toggles from the view tabs, so
+     the two groups read as distinct zones of the band. */
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--border);
 }
 
 /* Cramped band: drop the labels to icon-only tabs so all five fit
@@ -145,6 +149,12 @@ const ICON_PATHS: Record<ViewName, string> = {
 
   .rail-label {
     display: none;
+  }
+
+  /* Cramped: drop the divider so the icon tabs and toggles sit flush. */
+  .band-right {
+    padding-left: 0;
+    border-left: none;
   }
 }
 </style>
