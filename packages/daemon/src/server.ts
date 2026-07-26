@@ -72,6 +72,19 @@ export interface DaemonOptions {
    * assets are missing.
    */
   webRoot?: string;
+  /**
+   * Which slice of the REST API to expose (least privilege):
+   *  - 'full' (default): every endpoint, including commit/discard/hunk
+   *    staging and all remote/branch operations. This is the CLI's socket.
+   *  - 'web': reads + repo open/release + file-level stage/unstage ONLY —
+   *    exactly what the web UI uses. The destructive mutations the web
+   *    never calls (commit, discard, hunk staging, push/fetch/pull/stash/
+   *    branch/reset/cherry-pick/revert/abort/rebase, persisted compare
+   *    base) are not routed at all, so a bound port cannot be driven to
+   *    run them even if the origin guard were somehow bypassed.
+   * The CLI entry point selects 'web' for a --port bind, 'full' otherwise.
+   */
+  apiMode?: 'full' | 'web';
 }
 
 /** True when something accepts connections on the unix socket path. */
@@ -115,13 +128,18 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
     : null;
   const router = new Router();
 
-  const deps: RouteDeps = { registry, sse, daemonEvents, follow };
+  const apiMode = options.apiMode ?? 'full';
+  const deps: RouteDeps = { registry, sse, daemonEvents, follow, apiMode };
   registerHealthRoutes(router);
   registerRepoRoutes(router, deps);
   registerWorkingTreeRoutes(router, deps);
   registerHistoryCompareRoutes(router, deps);
   registerJournalRoutes(router, deps);
-  registerRemoteRoutes(router, deps);
+  // Remote/branch operations are CLI-only: the web UI never calls them, so
+  // a 'web' daemon does not route them at all (least privilege).
+  if (apiMode === 'full') {
+    registerRemoteRoutes(router, deps);
+  }
   registerExplorerRoutes(router, deps);
   registerDaemonRoutes(router, deps);
 

@@ -95,6 +95,22 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
     await runStagingMutation(workingTree, res, () => workingTree.unstage(entry));
   });
 
+  router.get('/repos/:id/events', ({ params, req, res }) => {
+    const handle = requireRepo(registry, params.id);
+    sse.subscribe(params.id, handle.manager, req, res);
+  });
+
+  // CLI-only working-tree mutations: the web UI never bulk-stages, discards,
+  // commits, or stages hunks, so a 'web' daemon does not route them at all.
+  if (deps.apiMode === 'full') {
+    registerWorkingTreeMutations(router, deps);
+  }
+}
+
+/** The destructive working-tree routes, registered only for the full API. */
+function registerWorkingTreeMutations(router: Router, deps: RouteDeps): void {
+  const { registry } = deps;
+
   router.post('/repos/:id/stage-all', async ({ params, res }) => {
     const handle = requireRepo(registry, params.id);
     const workingTree = handle.manager.workingTree;
@@ -155,10 +171,5 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
     const patch = requireStringField(body, 'patch');
     const workingTree = handle.manager.workingTree;
     await runStagingMutation(workingTree, res, () => workingTree.unstageHunk(patch));
-  });
-
-  router.get('/repos/:id/events', ({ params, req, res }) => {
-    const handle = requireRepo(registry, params.id);
-    sse.subscribe(params.id, handle.manager, req, res);
   });
 }

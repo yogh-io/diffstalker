@@ -15,6 +15,14 @@ authentication**. Its security rests entirely on being reachable only by you:
   interface. While it runs, the daemon applies an origin guard (a `Host`
   allow-list and cross-site request blocking) so a web page you visit in another
   tab cannot drive it or read your code via CSRF or DNS rebinding.
+- **The port exposes a reduced API (least privilege).** A `--port` daemon
+  routes only what the web UI uses — reads, opening/releasing a repo, and
+  file-level stage/unstage. The destructive operations the web never calls
+  (commit, discard, hunk staging, and every remote/branch operation:
+  push, fetch, pull, stash, branch switch, reset, cherry-pick, revert,
+  abort, rebase) are **not routed at all** on a port, so even a request that
+  slipped past the origin guard could not invoke them. The full API is only
+  available over the CLI's unix socket.
 - **There is no supported way to expose diffstalkerd to a network.** To reach it
   from another machine, forward the loopback port over SSH — e.g.
   `ssh -L 7337:localhost:7337 you@host`, then open `http://localhost:7337` on

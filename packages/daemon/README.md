@@ -74,6 +74,13 @@ headers (`X-Content-Type-Options`, `X-Frame-Options: DENY`,
 SPA). To reach the daemon from another machine, forward the port over SSH
 (`ssh -L`). See `SECURITY.md` at the repo root.
 
+A `--port` daemon also exposes a **reduced API** (least privilege): only the
+endpoints the web UI uses — reads, `POST`/`DELETE /repos`, and
+`POST /repos/:id/stage`/`unstage`. The CLI-only mutations (commit, discard,
+hunk staging, `PUT /compare/base`, and every remote/branch operation) are
+not routed on a port; they exist only over the unix socket. Requesting one
+on a port returns `404 Unknown route`.
+
 ## Environment
 
 - `XDG_RUNTIME_DIR` — base for the default socket path. Required when no

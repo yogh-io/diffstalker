@@ -24,6 +24,12 @@ export interface RouteDeps {
   daemonEvents: DaemonEventHub;
   /** Null when follow mode is disabled (--no-follow). */
   follow: FollowController | null;
+  /**
+   * REST surface to expose. 'web' registers only what the web UI uses
+   * (reads + repo open/release + file stage/unstage); 'full' adds the
+   * CLI-only mutations. See DaemonOptions.apiMode.
+   */
+  apiMode: 'full' | 'web';
 }
 
 /** Resolve a repo id to its handle or 404. */

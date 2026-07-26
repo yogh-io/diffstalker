@@ -767,4 +767,10 @@ git operations.
 
 - The web build ships inside the published `diffstalkerd` tarball (it is not a
   separately published package).
-- No authentication yet; the daemon binds `127.0.0.1` — keep it on localhost.
+- No authentication; the daemon binds loopback only (unix socket, or `--port`
+  on `127.0.0.1` — there is no routable-bind option). On a port it runs an
+  origin guard (Host allow-list + cross-site/CSRF rejection) and serves a
+  **reduced REST surface**: only the endpoints the web UI uses (reads, repo
+  open/release, file stage/unstage). The CLI-only mutations (commit, discard,
+  hunk staging, remote/branch ops, persisted compare base) are not routed on a
+  port at all. See `SECURITY.md`.

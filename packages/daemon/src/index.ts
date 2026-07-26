@@ -172,7 +172,13 @@ async function main(): Promise<void> {
 
   const webRoot = resolveWebRoot(options.webRoot);
 
-  const daemon = createDaemon({ followFile, webRoot });
+  // Least privilege: a TCP port is the web UI's transport, so it exposes only
+  // the web-supported REST surface (reads + repo open/release + file stage/
+  // unstage). A unix socket / inherited fd is the CLI's transport and gets
+  // the full API (commit, discard, hunk staging, remote/branch ops).
+  const apiMode = options.port !== undefined ? 'web' : 'full';
+
+  const daemon = createDaemon({ followFile, webRoot, apiMode });
   await daemon.listen(options);
   // Status lines go to stderr: stdout stays clean for piping, and journald
   // captures stderr just the same.

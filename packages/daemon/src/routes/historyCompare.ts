@@ -105,17 +105,21 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     sendJson(res, 200, { base: await resolveEffectiveBaseBranch(handle.path) });
   });
 
-  router.put('/repos/:id/compare/base', async ({ params, body, res }) => {
-    const handle = requireRepo(registry, params.id);
-    const branch = requireRefField(body, 'branch');
-    // Validate before persisting: the cache is shared repo-level state
-    // (the TUI's compare tab reads it too), so garbage must never land.
-    if (!(await commitExists(handle.path, branch))) {
-      throw new HttpError(400, `Not a valid base ref: ${branch}`);
-    }
-    setCachedBaseBranch(handle.path, branch);
-    sendJson(res, 200, { base: branch });
-  });
+  // Persisting a base selection is CLI-only (the web reads the effective
+  // base via GET above and passes its pick per-request as ?base=).
+  if (deps.apiMode === 'full') {
+    router.put('/repos/:id/compare/base', async ({ params, body, res }) => {
+      const handle = requireRepo(registry, params.id);
+      const branch = requireRefField(body, 'branch');
+      // Validate before persisting: the cache is shared repo-level state
+      // (the TUI's compare tab reads it too), so garbage must never land.
+      if (!(await commitExists(handle.path, branch))) {
+        throw new HttpError(400, `Not a valid base ref: ${branch}`);
+      }
+      setCachedBaseBranch(handle.path, branch);
+      sendJson(res, 200, { base: branch });
+    });
+  }
 
   router.get('/repos/:id/compare', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
