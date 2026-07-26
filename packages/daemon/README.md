@@ -31,8 +31,7 @@ Options:
 ```
 --socket PATH        Bind a unix socket at PATH
                      (default: $XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock)
---port N             Bind TCP port N instead of a unix socket
---host H             Host to bind with --port (default: 127.0.0.1)
+--port N             Bind TCP port N (loopback only) instead of a unix socket
 --follow-file PATH   Hook file to follow (created when missing)
                      (default: ~/.cache/diffstalker/target)
 --no-follow          Disable follow mode (no hook-file watcher)
@@ -63,17 +62,17 @@ socket file (nothing listening) is removed and reused.
 There is no authentication yet. Keep the daemon on a unix socket or
 localhost; a bearer-token check is planned before it may bind further.
 
-When bound to loopback (the default and safe posture), an origin guard
-runs: a `Host` allow-list rejects rebound hostnames (DNS-rebinding
-defense, 421), and state-changing requests with a cross-site
+The daemon binds **loopback only** — a unix socket, or `--port` on
+`127.0.0.1`. There is no option to bind a routable interface. On a port an
+origin guard runs: a `Host` allow-list rejects rebound hostnames
+(DNS-rebinding defense, 421), and state-changing requests with a cross-site
 `Sec-Fetch-Site` or a non-loopback `Origin` are rejected (CSRF defense,
 403). Non-browser clients (the CLI, `curl`) send neither header and a
 loopback `Host`, so they pass. Every response also carries hardening
 headers (`X-Content-Type-Options`, `X-Frame-Options: DENY`,
 `Referrer-Policy`, and a strict `Content-Security-Policy` for the served
-SPA). The guard does NOT run when you bind a routable interface with
-`--host` — that is an operator-exposed, unauthenticated deployment and the
-daemon prints a warning. See `SECURITY.md` at the repo root.
+SPA). To reach the daemon from another machine, forward the port over SSH
+(`ssh -L`). See `SECURITY.md` at the repo root.
 
 ## Environment
 

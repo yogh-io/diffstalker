@@ -72,9 +72,15 @@ describe('parseArgs error branches (exit 2 + message + usage)', () => {
   });
 
   test('flag whose "value" is the next flag', () => {
-    const result = runDaemon(['--host', '--port']);
+    const result = runDaemon(['--follow-file', '--port']);
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain('--host requires a value');
+    expect(result.stderr).toContain('--follow-file requires a value');
+  });
+
+  test('--host is no longer accepted (loopback-only, no routable bind)', () => {
+    const result = runDaemon(['--host', '0.0.0.0']);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Unknown argument: --host');
   });
 
   test('--follow-file missing its value', () => {

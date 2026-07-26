@@ -15,11 +15,11 @@
  *    loopback `Host` allow-list — a rebound request still carries
  *    `Host: evil.com`.
  *
- * The guard runs ONLY when the daemon is bound to a loopback address (the
- * default and only safe posture). When an operator deliberately binds a
- * routable interface (`--host`), they have left this threat model and get
- * a loud warning instead (index.ts); we cannot know the valid host names
- * there, so the guard would only produce false rejections.
+ * The guard runs whenever the daemon is bound to a loopback address — which
+ * is the only thing the CLI can produce (a unix socket, or `--port` on
+ * 127.0.0.1; there is no host option). The non-loopback branch below is
+ * defence for a library embedder that binds a routable address through the
+ * createDaemon API directly; the shipped binary never does.
  *
  * Non-browser clients (the CLI over @diffstalker/client, `curl`) send no
  * `Origin`/`Sec-Fetch-Site` and a loopback `Host`, so they pass untouched.

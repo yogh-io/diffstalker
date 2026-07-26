@@ -1,0 +1,24 @@
+version: 2
+updates:
+  # npm workspace (root drives all packages/*).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      # One PR per week for the routine dev-tooling bumps (eslint, tsc,
+      # prettier, types) — runtime deps still come as individual PRs so a
+      # supply-chain-sensitive bump (simple-git, chokidar, neo-blessed) is
+      # reviewed on its own.
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Keep the Actions used by the CI / release / CodeQL workflows current.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

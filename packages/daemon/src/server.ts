@@ -5,10 +5,10 @@
  * Handlers live in src/routes/ (one module per endpoint family); this file
  * only wires them to the http server and manages the listening socket.
  *
- * Binds a unix socket by default, or a TCP port (localhost only unless a
- * host is given).
+ * Binds a unix socket by default, or a TCP port bound to loopback
+ * (127.0.0.1) — there is no option to bind a routable interface.
  *
- * TODO: bearer-token auth before this ever binds beyond localhost.
+ * TODO: bearer-token auth before this could ever bind beyond localhost.
  */
 
 import * as http from 'node:http';
@@ -33,8 +33,10 @@ import { registerDaemonRoutes } from './routes/daemon.js';
 
 export interface ListenOptions {
   socketPath?: string;
+  /** TCP port to bind. Always bound to loopback (127.0.0.1) — there is
+   *  deliberately no host option, so the daemon can never be bound to a
+   *  routable interface (it has no authentication; see security.ts). */
   port?: number;
-  host?: string;
   /** Inherited listening fd (systemd socket activation). The daemon does
    *  not create, chmod, or unlink anything for an inherited socket. */
   fd?: number;
@@ -200,7 +202,7 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
           process.umask(0o077);
           server.listen(options.socketPath, onListening);
         } else if (options.port !== undefined) {
-          server.listen(options.port, options.host ?? '127.0.0.1', onListening);
+          server.listen(options.port, '127.0.0.1', onListening);
         } else {
           reject(new Error('listen() requires a socketPath, a port, or an fd'));
         }

@@ -10,18 +10,18 @@ authentication**. Its security rests entirely on being reachable only by you:
 - **By default the daemon binds an owner-only unix socket** (directory `0700`,
   socket `0600`). No network port is opened. This is the safe, recommended mode
   and the one the terminal UI uses.
-- **The web UI needs a TCP port** (`diffstalkerd --port N`). The port is bound
-  to `127.0.0.1` (loopback) unless you override it. While it runs, the daemon
-  applies a loopback origin guard (a `Host` allow-list and cross-site request
-  blocking) so a web page you visit in another tab cannot drive it or read your
-  code via CSRF or DNS rebinding.
-- **Do not pass `--host` to bind a routable interface.** That exposes an
-  unauthenticated service — anyone who can reach the address can read your
-  source and run git operations. The origin guard does not apply off loopback,
-  and the daemon prints a warning if you do this. There is no supported way to
-  expose diffstalkerd to a network safely today.
+- **The web UI needs a TCP port** (`diffstalkerd --port N`). The port is **always
+  bound to `127.0.0.1` (loopback)** — there is no option to bind a routable
+  interface. While it runs, the daemon applies an origin guard (a `Host`
+  allow-list and cross-site request blocking) so a web page you visit in another
+  tab cannot drive it or read your code via CSRF or DNS rebinding.
+- **There is no supported way to expose diffstalkerd to a network.** To reach it
+  from another machine, forward the loopback port over SSH — e.g.
+  `ssh -L 7337:localhost:7337 you@host`, then open `http://localhost:7337` on
+  your side. Do not put it behind a reverse proxy on an untrusted network
+  without adding your own authentication in front; the daemon has none.
 
-In short: **run it on localhost**. Treat the machine's own trust boundary as
+In short: **it runs on localhost**. Treat the machine's own trust boundary as
 the security boundary.
 
 ## Supported versions

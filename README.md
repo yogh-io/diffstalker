@@ -62,7 +62,7 @@ Plus, everywhere: word-level diff highlighting, an app-wide **unified / split** 
 
 The web UI is a viewer with one write: file-level stage / unstage from the Changes list. Commit, discard, hunk-level staging, and remote/branch operations live in the terminal UI. See the [Web UI section of FEATURES.md](FEATURES.md#web-ui-browser-client) for the full list.
 
-> **Security:** the daemon has no authentication. `--port` binds `127.0.0.1` (loopback) by default, and while bound to loopback an origin guard protects it from the browser: a `Host` allow-list blocks DNS-rebinding and cross-site requests are rejected (CSRF), plus a strict CSP and hardening headers on every response. Do **not** pass `--host` to bind a routable interface — that exposes an unauthenticated service (the daemon warns you). See [SECURITY.md](SECURITY.md).
+> **Security:** the daemon has no authentication, so it binds **loopback only** — a unix socket, or `--port` on `127.0.0.1` (there is no option to bind a routable interface). While on a port it also runs an origin guard: a `Host` allow-list blocks DNS-rebinding and cross-site requests are rejected (CSRF), plus a strict CSP and hardening headers on every response. To reach it from another machine, use an SSH tunnel (`ssh -L 7337:localhost:7337 …`). See [SECURITY.md](SECURITY.md).
 
 ## The terminal UI
 
@@ -217,8 +217,7 @@ Terminal UI config: `~/.config/diffstalker/config.json`
 
 **Daemon** — `diffstalkerd [options]`:
 ```
-  --port N             Bind TCP port N and serve the web UI at GET /
-  --host H             Host to bind with --port (default: 127.0.0.1)
+  --port N             Bind TCP port N (loopback only) and serve the web UI at GET /
   --socket PATH        Bind a unix socket instead of a port
   --no-follow          Disable follow mode
   --follow-file PATH   Hook file to watch (default: ~/.cache/diffstalker/target)
