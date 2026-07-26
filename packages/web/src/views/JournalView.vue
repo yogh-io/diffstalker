@@ -742,14 +742,9 @@ onBeforeUnmount(() => {
                   {{ copiedKey === row.key ? 'copied' : 'copy' }}
                 </button>
               </div>
-              <span class="lines">{{ lineLabel(row.tip) }}</span>
-              <span
-                class="kind"
-                :data-kind="row.kind"
-                :title="kindHelp(row.kind)"
-                data-testid="kind-badge"
-                >{{ row.kind }}</span
-              >
+              <!-- meta (fold ×N / outdated) sits LEFT of the fixed data
+                   cluster; its DOM position must match its column order (3)
+                   or grid's sparse auto-placement wraps the row. -->
               <div class="entry-meta">
                 <button
                   v-if="row.members.length > 1"
@@ -765,6 +760,14 @@ onBeforeUnmount(() => {
                   >outdated {{ clock(outdatedAtOf(row)!) }}</span
                 >
               </div>
+              <span class="lines">{{ lineLabel(row.tip) }}</span>
+              <span
+                class="kind"
+                :data-kind="row.kind"
+                :title="kindHelp(row.kind)"
+                data-testid="kind-badge"
+                >{{ row.kind }}</span
+              >
               <span class="stats">
                 <span v-if="row.tip.stats.insertions" class="count-add"
                   >+{{ row.tip.stats.insertions }}</span
@@ -924,18 +927,24 @@ onBeforeUnmount(() => {
 
 .entry-header {
   display: grid;
-  /* A columnar layout: each column auto-sizes to the widest cell across ALL
-     rows (what flex can't do), so time / lines / kind / stats line up as
-     columns down the page — the kind "type-boxes" in particular. The path
-     column (minmax(0,1fr)) absorbs the slack; a long seeded-note drops to
-     its own full-width sub-line so it can't blow a column out. */
+  /* A columnar layout. Each .entry-header is its OWN grid, so `max-content`
+     can't align a column across rows — only FIXED widths lay out identically
+     in every independent grid. So the right-hand data cluster (lines / kind /
+     +add / −del) gets fixed track widths and the path column (minmax(0,1fr))
+     eats the slack, which right-anchors that cluster to the same x on every
+     row. Content aligns within each track: lines/counts right-align (numbers
+     stack), the kind badge left-aligns (its "type-box" starts at one x). The
+     meta badge (outdated / ×N fold — usually absent) sits in a max-content
+     track LEFT of the cluster, so it never wastes a fixed column nor shifts
+     the cluster; a long seeded-note drops to its own full-width sub-line. */
   grid-template-columns:
     [time] max-content
     [path] minmax(0, 1fr)
-    [lines] max-content
-    [kind] max-content
     [meta] max-content
-    [stats] max-content;
+    [lines] 7rem
+    [kind] 5.5rem
+    [add] 2.5rem
+    [del] 2.5rem;
   align-items: baseline;
   column-gap: 0.75rem;
   row-gap: 0.125rem;
@@ -966,8 +975,16 @@ onBeforeUnmount(() => {
 }
 
 .entry-header .time {
-  flex: none;
+  grid-column: time;
   color: var(--text-dim);
+}
+
+.entry-header .path-cell {
+  grid-column: path;
+}
+
+.entry-header .entry-meta {
+  grid-column: meta;
 }
 
 /* The path is a flex row of dir + name: the directory shrinks and
@@ -1022,8 +1039,19 @@ onBeforeUnmount(() => {
 }
 
 .entry-header .lines {
-  flex: none;
+  /* Right-align in the fixed track so the range's closing number stacks into
+     a column down the page ("…1105" / "…970" / "…15" line up), rather than
+     the numbers going ragged behind a left-aligned "lines" prefix. */
+  grid-column: lines;
+  justify-self: end;
   color: var(--text-dim);
+}
+
+/* Left-align in the fixed track so the badge box starts at one x down the
+   page (its "type-box" left edge lines up), regardless of the word's width. */
+.entry-header .kind {
+  grid-column: kind;
+  justify-self: start;
 }
 
 .kind {
@@ -1114,11 +1142,24 @@ onBeforeUnmount(() => {
   font-size: var(--fs-micro);
 }
 
+/* Stats become two right-aligned columns (adds, dels) so +n and −m line up
+   vertically down the page, each independent of the other's width. The
+   .stats wrapper dissolves (display: contents) so its two counts become
+   direct grid items in the [add] / [del] columns; an absent count (v-if on a
+   zero) just leaves its column empty for that row — the column stays
+   reserved by the other rows, so alignment holds. */
 .entry-header .stats {
-  /* Rightmost grid column; the +/- counts right-align so the numbers stack. */
+  display: contents;
+}
+
+.entry-header .count-add {
+  grid-column: add;
   justify-self: end;
-  display: inline-flex;
-  gap: 0.375rem;
+}
+
+.entry-header .count-del {
+  grid-column: del;
+  justify-self: end;
 }
 
 /* Seeded entries: present before the journal watched anything — muted. */
