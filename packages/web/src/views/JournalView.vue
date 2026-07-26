@@ -725,21 +725,23 @@ onBeforeUnmount(() => {
               @click="onHeaderClick(row)"
             >
               <span class="time" :title="absTime(row.tip.ts)">{{ relTime(row.tip.ts) }}</span>
-              <span class="path" :title="row.tip.path"
-                ><span v-if="fileDir(row.tip.path)" class="path-dir">{{
-                  fileDir(row.tip.path)
-                }}</span
-                ><span class="path-name">{{ fileName(row.tip.path) }}</span></span
-              >
-              <button
-                class="copy-path"
-                :class="{ copied: copiedKey === row.key }"
-                data-testid="copy-path"
-                :title="copiedKey === row.key ? 'Copied' : 'Copy full path'"
-                @click.stop="copyPath(row)"
-              >
-                {{ copiedKey === row.key ? 'copied' : 'copy' }}
-              </button>
+              <div class="path-cell">
+                <span class="path" :title="row.tip.path"
+                  ><span v-if="fileDir(row.tip.path)" class="path-dir">{{
+                    fileDir(row.tip.path)
+                  }}</span
+                  ><span class="path-name">{{ fileName(row.tip.path) }}</span></span
+                >
+                <button
+                  class="copy-path"
+                  :class="{ copied: copiedKey === row.key }"
+                  data-testid="copy-path"
+                  :title="copiedKey === row.key ? 'Copied' : 'Copy full path'"
+                  @click.stop="copyPath(row)"
+                >
+                  {{ copiedKey === row.key ? 'copied' : 'copy' }}
+                </button>
+              </div>
               <span class="lines">{{ lineLabel(row.tip) }}</span>
               <span
                 class="kind"
@@ -748,26 +750,21 @@ onBeforeUnmount(() => {
                 data-testid="kind-badge"
                 >{{ row.kind }}</span
               >
-              <button
-                v-if="row.members.length > 1"
-                class="fold-count"
-                data-testid="fold-count"
-                :aria-expanded="expandedChains.has(row.key)"
-                :title="`${row.members.length} folded revisions`"
-                @click.stop="toggleChain(row.key)"
-              >
-                ×{{ row.members.length }}
-              </button>
-              <span
-                v-if="row.tip.seeded"
-                class="seeded-note"
-                data-testid="seeded-note"
-                :title="SEEDED_HELP"
-                >changed before the Journal started</span
-              >
-              <span v-if="isOutdated(row)" class="outdated-badge" data-testid="outdated-badge"
-                >outdated {{ clock(outdatedAtOf(row)!) }}</span
-              >
+              <div class="entry-meta">
+                <button
+                  v-if="row.members.length > 1"
+                  class="fold-count"
+                  data-testid="fold-count"
+                  :aria-expanded="expandedChains.has(row.key)"
+                  :title="`${row.members.length} folded revisions`"
+                  @click.stop="toggleChain(row.key)"
+                >
+                  ×{{ row.members.length }}
+                </button>
+                <span v-if="isOutdated(row)" class="outdated-badge" data-testid="outdated-badge"
+                  >outdated {{ clock(outdatedAtOf(row)!) }}</span
+                >
+              </div>
               <span class="stats">
                 <span v-if="row.tip.stats.insertions" class="count-add"
                   >+{{ row.tip.stats.insertions }}</span
@@ -776,6 +773,13 @@ onBeforeUnmount(() => {
                   >&minus;{{ row.tip.stats.deletions }}</span
                 >
               </span>
+              <span
+                v-if="row.tip.seeded"
+                class="seeded-note"
+                data-testid="seeded-note"
+                :title="SEEDED_HELP"
+                >changed before the Journal started</span
+              >
             </header>
 
             <div class="clamp" :class="{ closed: isCollapsed(row) }">
@@ -919,9 +923,22 @@ onBeforeUnmount(() => {
 }
 
 .entry-header {
-  display: flex;
+  display: grid;
+  /* A columnar layout: each column auto-sizes to the widest cell across ALL
+     rows (what flex can't do), so time / lines / kind / stats line up as
+     columns down the page — the kind "type-boxes" in particular. The path
+     column (minmax(0,1fr)) absorbs the slack; a long seeded-note drops to
+     its own full-width sub-line so it can't blow a column out. */
+  grid-template-columns:
+    [time] max-content
+    [path] minmax(0, 1fr)
+    [lines] max-content
+    [kind] max-content
+    [meta] max-content
+    [stats] max-content;
   align-items: baseline;
-  gap: 0.625rem;
+  column-gap: 0.75rem;
+  row-gap: 0.125rem;
   min-width: 0;
   padding: 0.3125rem 0.625rem;
   font-size: var(--fs-small);
@@ -929,6 +946,23 @@ onBeforeUnmount(() => {
 
 .entry-header.clickable {
   cursor: pointer;
+}
+
+/* The path column: filename + hover copy button, sharing one grid cell. */
+.path-cell {
+  display: flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* The optional badges (fold ×N, outdated) share one cell so they occupy a
+   single, alignable column regardless of how many are present. */
+.entry-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
 }
 
 .entry-header .time {
@@ -1060,8 +1094,12 @@ onBeforeUnmount(() => {
   border-color: var(--selection);
 }
 
+/* The long "changed before the Journal started" note is the one variable-
+   width outlier, so it drops to its own full-width sub-line under the row
+   (aligned under the path column) instead of stretching the grid columns. */
 .seeded-note {
-  flex: none;
+  grid-column: 1 / -1;
+  margin-left: 1.25rem;
   color: var(--text-dim);
   font-size: var(--fs-micro);
   font-style: italic;
@@ -1077,8 +1115,8 @@ onBeforeUnmount(() => {
 }
 
 .entry-header .stats {
-  flex: none;
-  margin-left: auto;
+  /* Rightmost grid column; the +/- counts right-align so the numbers stack. */
+  justify-self: end;
   display: inline-flex;
   gap: 0.375rem;
 }
