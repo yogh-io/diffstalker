@@ -66,6 +66,17 @@ const props = defineProps<{
    * the pane chrome above the diff already names the file.
    */
   showFileHeaders?: boolean;
+  /**
+   * Rendered inside DiffStack (Compare/Changes): the OUTER .stack-scroller
+   * owns vertical scroll, so this DiffView must NOT be its own scroll
+   * container — otherwise its sticky hunk headers pin to it (which never
+   * scrolls, being exact-height) and scroll away under the stack's pinned
+   * file header. Embedded, .diff-scroll is overflow:visible so hunk headers
+   * pin to the stack scroller instead (below the file header, via
+   * --stack-header-h), and long lines scroll the stack horizontally.
+   * Unified only — split panes keep their own horizontal scrollers.
+   */
+  embedded?: boolean;
 }>();
 
 /**
@@ -227,7 +238,7 @@ onBeforeUnmount(() => {
     v-else
     ref="rootEl"
     class="diff-scroll mono"
-    :class="{ 'with-file-headers': showHeaders, split: isSplit }"
+    :class="{ 'with-file-headers': showHeaders, split: isSplit, embedded }"
     data-testid="diff-view"
     :style="{ '--ln-w': `${model.lineNumWidth}ch` }"
   >
@@ -350,6 +361,25 @@ onBeforeUnmount(() => {
    Hide it. (Unified keeps the track for the exact-height model.) */
 .diff-scroll.split {
   overflow-x: hidden;
+}
+
+/* Embedded in DiffStack: NOT a scroll container, so the sticky hunk headers
+   escape to the outer .stack-scroller and pin below its file header
+   (--stack-header-h) instead of pinning to this exact-height box and
+   scrolling away under the file header. Unified: long lines then scroll the
+   stack horizontally. Split: the two panes keep their own horizontal
+   scrollers (they clip, so nothing escapes to the stack). Placed after
+   .split so it wins on equal specificity. */
+.diff-scroll.embedded {
+  height: auto;
+  overflow: visible;
+}
+
+.diff-scroll.embedded .hunk-header {
+  /* Pin below the stack's sticky file header. The fallback (~its height)
+     keeps the header clear of the file header before the exact measurement
+     (--stack-header-h) lands. */
+  top: var(--stack-header-h, 2rem);
 }
 
 /* Sections span the full horizontal scroll width so header/hunk

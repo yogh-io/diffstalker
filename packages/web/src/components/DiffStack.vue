@@ -395,7 +395,10 @@ function measureProbe(): void {
   // Fresh constants resize every computed body: the spy/tween offset
   // cache is stale the moment they land.
   stackScroll.invalidateOffsets();
-  void nextTick(() => anchor.restore());
+  void nextTick(() => {
+    anchor.restore();
+    publishStackHeaderH();
+  });
 }
 
 /**
@@ -426,9 +429,10 @@ function exactBodyHeight(item: StackFile): number | null {
   const model = modelFor(item.diff, item.staged ?? false);
   if (model.rowCount === 0) return null;
   const withHeaders = model.sections.filter((s) => s.filePath !== null).length > 1;
-  // Every rendered body carries .diff-scroll's always-on horizontal
-  // track (overflow-x: scroll — deterministic, see ProbeSizes).
-  let height = sizes.scrollbarH;
+  // Split bodies keep .diff-scroll's always-on horizontal track (their
+  // panes scroll on their own); a unified embedded body is overflow:visible
+  // (no track — long lines scroll the stack), so it adds no scrollbar height.
+  let height = props.mode === 'split' ? sizes.scrollbarH : 0;
   model.sections.forEach((section, i) => {
     if (i > 0) height += sizes.sectionGap;
     if (withHeaders && section.filePath !== null) height += sizes.fileHeaderH;
@@ -489,6 +493,20 @@ function chromeHeaderH(): number | null {
     }
   }
   return stackChrome.headerH ?? null;
+}
+
+/**
+ * Publish the sticky file-header height as --stack-header-h on the scroller,
+ * so each embedded DiffView pins its sticky hunk headers just BELOW the file
+ * header instead of behind it. Called on mount and whenever the font metrics
+ * change (measureProbe) — the header height rides the same metrics.
+ */
+function publishStackHeaderH(): void {
+  const scroller = scrollerEl.value;
+  const h = chromeHeaderH();
+  if (scroller && h !== null) {
+    scroller.style.setProperty('--stack-header-h', `${h}px`);
+  }
 }
 
 /** The `.file-diff + .file-diff` margin; 0 when there is one section. */
@@ -836,6 +854,7 @@ function assertBodyHeights(): void {
 
 onMounted(() => {
   measureProbe();
+  void nextTick(() => publishStackHeaderH());
   // Re-probe when the sample's metrics change (font load, zoom — page
   // zoom also fires window resize; the RO covers in-place font swaps).
   const probeRow = probeEl.value?.querySelector<HTMLElement>('.row');
@@ -1033,6 +1052,7 @@ defineExpose({
           :file-path="item.path"
           :syntax="props.syntax"
           :mode="props.mode"
+          embedded
         />
         <div
           v-else
@@ -1051,6 +1071,10 @@ defineExpose({
      (scrollToFile depends on it). */
   position: relative;
   overflow-y: auto;
+  /* Long unified lines scroll here now (the embedded DiffViews are no longer
+     their own scroll containers, so their sticky hunk headers can pin to
+     this scroller). Split bodies still scroll their panes internally. */
+  overflow-x: auto;
   /* Native scroll anchoring off: Safari has none, sticky headers
      suppress it elsewhere, and it would double-correct against the
      useScrollAnchor sandwich — which is the ONE compensation path. */
@@ -1099,6 +1123,9 @@ defineExpose({
 .file-diff-header {
   position: sticky;
   top: 0;
+  /* Also pin to the left edge so the header stays readable when the stack is
+     scrolled horizontally (long unified lines). */
+  left: 0;
   z-index: 4;
   display: flex;
   align-items: baseline;
@@ -1108,6 +1135,9 @@ defineExpose({
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   font-size: var(--fs-base);
+  /* Stays viewport-width while pinned left, rather than stretching to the
+     widest line (which would push its content off-screen and leave a gap). */
+  width: 100%;
 }
 
 .file-diff-header .path {
