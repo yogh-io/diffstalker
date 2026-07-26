@@ -153,10 +153,9 @@ describe('rendering', () => {
     const { wrapper } = mountView([hunk(1, { kind: 'created' })]);
     const entry = wrapper.get('[data-testid="journal-entry"]');
     expect(entry.text()).toContain('src/a.ts');
-    // The kind is glyph-only (git's status gutter): the word is on aria-label,
-    // not the text node. The line range is NOT duplicated in the header — it
-    // lives in the diff's own @@ hunk header below.
-    expect(entry.get('[data-testid="kind-badge"]').attributes('aria-label')).toBe('created');
+    // Kind is a colour-coded word (the site's status idiom). The line range is
+    // NOT duplicated in the header — it lives in the diff's own @@ hunk header.
+    expect(entry.get('[data-testid="kind-badge"]').text()).toBe('created');
     expect(entry.text()).toContain('+2');
     expect(entry.text()).toContain('−1');
     // The reused DiffView renders the single-hunk snapshot.

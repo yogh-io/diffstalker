@@ -44,9 +44,10 @@ repo gained public-project governance, and the web UI got a round of polish.
 - **Web UI polish.** Per-view toolbars now get their own row instead of crowding
   the global toggles; Compare shows the `branch → base` direction and reload
   feedback; stacked diffs pin the hunk header below the file header; the Journal
-  entry header was redesigned around a kind-coloured left rail + glyph gutter
-  with the filename as the anchor — dropping the card frame, the bordered kind
-  pill, and the line range that just duplicated the diff's own @@ header. Fixed selection-vs-hover across every list (a selected row was
+  entry header was redesigned to match the rest of the site — a `--surface`
+  strip with a kind-coloured left rail, the kind shown as colour-coded text
+  (the site's status idiom) and a bold filename — dropping the bordered kind
+  pill and the line range that just duplicated the diff's own @@ header. Fixed selection-vs-hover across every list (a selected row was
   indistinguishable from a hovered one), added focus-visible rings, and gave the
   stage/unstage buttons semantic hover colors.
 - README leads with the web UI, with light and dark screenshots.

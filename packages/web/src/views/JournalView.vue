@@ -700,18 +700,18 @@ onBeforeUnmount(() => {
               :title="headerTitle(row)"
               @click="onHeaderClick(row)"
             >
-              <!-- The one aligned column: the kind glyph (git's status
-                   gutter). Colour + glyph carry the kind; the word lives in
-                   the hover title. Text is a ::before, so the box is empty. -->
+              <!-- Kind as a colour-coded word — the site's status idiom
+                   (colored text keyed by data-*, no pill), which also tells
+                   the amber trio (edited/expanded/shrunk) apart by word. -->
               <span
-                class="sigil"
+                class="kind"
+                :data-kind="row.kind"
                 :title="kindHelp(row.kind)"
-                :aria-label="row.kind"
                 data-testid="kind-badge"
-              ></span>
+                >{{ row.kind }}</span
+              >
 
-              <!-- The anchor: the filename never shrinks; the directory
-                   ellipsises before it does. -->
+              <!-- The filename stays bold; the directory ellipsises before it. -->
               <span class="path" :title="row.tip.path"
                 ><span v-if="fileDir(row.tip.path)" class="path-dir">{{
                   fileDir(row.tip.path)
@@ -902,9 +902,9 @@ onBeforeUnmount(() => {
 /* --- Hunk-group entries --- */
 
 .entry {
-  /* No card. A kind-coloured left rail brackets the header + its diff, so the
-     diff sits on the page as the real content, not inside a competing frame.
-     --rail is the single source of truth for the kind colour (rail + sigil). */
+  /* No card frame (the site uses none): a 2px kind-coloured left rail brackets
+     the --surface header + its flat diff. --rail is the single source of truth
+     for the kind colour (the rail; the kind word matches it). */
   margin: 0.5rem 0;
   border-left: 2px solid var(--rail, var(--border));
   overflow: hidden; /* keeps the clamp animation and the rail crisp */
@@ -925,50 +925,49 @@ onBeforeUnmount(() => {
   --rail: var(--status-renamed);
 }
 
-/* One flex line — NO grid, so nothing is forced to align across entries. The
-   filename parks at a stable x behind the one fixed element (the sigil);
-   everything else runs ragged and recedes. */
+/* The header strip matches the rest of the site (DiffStack / History / the
+   diff file headers): flat --surface with hairline top+bottom borders, mono,
+   the house padding + gap. One ragged flex line — nothing is forced to align
+   across entries; kind + path lead, the trailing cluster recedes right. */
 .entry-header {
   display: flex;
   align-items: baseline;
-  gap: 0 0.5rem;
+  gap: 0 0.625rem;
   min-width: 0;
-  padding: 0.25rem 0.625rem 0.25rem 0.5rem;
-  font-size: var(--fs-small);
+  padding: 0.375rem 0.75rem;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: var(--fs-base);
 }
 
 .entry-header.clickable {
   cursor: pointer;
 }
 
-/* The ONE aligned column: a fixed-width kind glyph — git's status gutter.
-   The box is empty; the glyph is a ::before so the text node stays clean and
-   the kind word lives only on the hover title / aria-label. */
-.sigil {
+/* Kind: a colour-coded word — the site's status idiom (colored text keyed by
+   an attribute, no pill). It leads the line; the colour matches the rail. A
+   word, not a glyph, keeps edited / expanded / shrunk legible even though they
+   share the modified colour. The colours are defined once here and reused by
+   the fold-chain heads below. */
+.entry-header .kind {
   flex: none;
-  width: 1.5rem;
-  text-align: center;
-  color: var(--rail);
-  font-size: var(--fs-content);
-  line-height: 1;
+  font-weight: 600;
 }
-.entry[data-kind='created'] .sigil::before {
-  content: '+';
+
+.kind[data-kind='created'] {
+  color: var(--status-added);
 }
-.entry[data-kind='edited'] .sigil::before {
-  content: '≈';
+.kind[data-kind='edited'],
+.kind[data-kind='expanded'],
+.kind[data-kind='shrunk'] {
+  color: var(--status-modified);
 }
-.entry[data-kind='expanded'] .sigil::before {
-  content: '↑';
+.kind[data-kind='reverted'] {
+  color: var(--status-deleted);
 }
-.entry[data-kind='shrunk'] .sigil::before {
-  content: '↓';
-}
-.entry[data-kind='reverted'] .sigil::before {
-  content: '⤺';
-}
-.entry[data-kind='renamed'] .sigil::before {
-  content: '→';
+.kind[data-kind='renamed'] {
+  color: var(--status-renamed);
 }
 
 /* The anchor: a flex row of dir + name. The directory shrinks and ellipses at
@@ -1095,26 +1094,11 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-/* The kind WORD survives only inside expanded fold-chain heads now (no pill,
-   no glyph — just coloured text). */
+/* Chain-head kind: same coloured word, smaller (the .kind[data-kind] colours
+   above apply here too). */
 .chain-head .kind {
   flex: none;
-  color: var(--text-dim);
   font-size: var(--fs-micro);
-}
-.chain-head .kind[data-kind='created'] {
-  color: var(--status-added);
-}
-.chain-head .kind[data-kind='edited'],
-.chain-head .kind[data-kind='expanded'],
-.chain-head .kind[data-kind='shrunk'] {
-  color: var(--status-modified);
-}
-.chain-head .kind[data-kind='reverted'] {
-  color: var(--status-deleted);
-}
-.chain-head .kind[data-kind='renamed'] {
-  color: var(--status-renamed);
 }
 
 /* --- Collapse clamp (grid-rows 1fr -> 0fr) --- */
@@ -1183,10 +1167,11 @@ onBeforeUnmount(() => {
 }
 
 /* Skip layout+paint for far-away blurbs; the intrinsic size comes from
-   the entry's line count, fixed at append (entries are immutable). */
+   the entry's line count, fixed at append (entries are immutable). The diff
+   sits flat on --bg below the --surface header; the header's border-bottom is
+   the divider, so the body needs no border of its own. */
 .entry-body {
   content-visibility: auto;
-  border-top: 1px solid var(--border);
 }
 
 /* Huge blurb collapsed behind a file-level show row (formatter sweep). */
