@@ -33,7 +33,7 @@
     "dependency-cruiser": "^17.3.7",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-sonarjs": "^3.0.6",
+    "eslint-plugin-sonarjs": "^4.2.0",
     "prettier": "^3.8.0",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.53.1"
