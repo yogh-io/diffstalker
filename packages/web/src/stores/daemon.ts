@@ -26,7 +26,7 @@ import type {
   FollowState,
   RepoRef,
   RepoSummary,
-  WorktreeInfo,
+  VersionState,
 } from '@diffstalker/client';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
@@ -75,10 +75,10 @@ export const useDaemonStore = defineStore('daemon', () => {
    * reproducible. Cleared after that one seeded change; live follow resumes. */
   const skipInitialFollow = shallowRef(false);
   const activeRepoId = shallowRef<string | null>(null);
-  /** Working trees of the active repo (bare entry filtered out), for the
-   * worktree switcher and the repo picker's project name. Refreshed on
-   * every repo switch. */
-  const worktrees = shallowRef<WorktreeInfo[]>([]);
+  /** Running daemon version vs the latest on npm (GET /version), for the
+   * status bar. Null until the first load; stays null when the daemon
+   * cannot answer (the indicator then hides). */
+  const version = shallowRef<VersionState | null>(null);
   const error = shallowRef<string | null>(null);
 
   let subscription: SseHandle | null = null;
@@ -115,6 +115,10 @@ export const useDaemonStore = defineStore('daemon', () => {
         // The snapshot has no branches; the REST list does. Fire-and-forget.
         void refreshRepos();
         void loadFollow();
+        // Re-pulled on every (re)connect: a reconnect can mean the daemon
+        // was restarted on a different version. The daemon caches the npm
+        // lookup, so this costs one local request.
+        void loadVersion();
       },
       onRepoOpened: (repo) => upsertRepo(repo),
       onRepoClosed: ({ id }) => {
@@ -161,6 +165,20 @@ export const useDaemonStore = defineStore('daemon', () => {
     } catch {
       // Unreachable daemon: the SSE error handler owns the status line.
       connection.value = 'disconnected';
+    }
+  }
+
+  /**
+   * Pull the version state (GET /version). Best-effort and silent: this
+   * only feeds a status-bar hint, so a failure leaves the last known
+   * state (or null) and never touches the connection status — the SSE
+   * stream owns that.
+   */
+  async function loadVersion(): Promise<void> {
+    try {
+      version.value = await client.version();
+    } catch {
+      // Nothing to say: the indicator keeps showing what it had.
     }
   }
 
@@ -246,21 +264,6 @@ export const useDaemonStore = defineStore('daemon', () => {
     upsertRepo(ref);
     activeRepoId.value = ref.id;
     error.value = null;
-    void refreshWorktrees(ref.id);
-  }
-
-  /**
-   * Pull the active repo's worktrees (GET /repos/:id/worktrees), dropping
-   * the bare entry. Best-effort: a failure just empties the list (the
-   * switcher hides). Stale-guarded against a newer switch.
-   */
-  async function refreshWorktrees(id: string): Promise<void> {
-    try {
-      const list = await client.worktrees(id);
-      if (activeRepoId.value === id) worktrees.value = list.filter((w) => !w.isBare);
-    } catch {
-      if (activeRepoId.value === id) worktrees.value = [];
-    }
   }
 
   /** Release a repo (refcounted daemon-side) and drop it locally. */
@@ -274,7 +277,6 @@ export const useDaemonStore = defineStore('daemon', () => {
     repos.value = repos.value.filter((repo) => repo.id !== id);
     if (activeRepoId.value === id) {
       activeRepoId.value = null;
-      worktrees.value = [];
     }
   }
 
@@ -292,13 +294,14 @@ export const useDaemonStore = defineStore('daemon', () => {
     lastFollowChange,
     skipInitialFollow,
     activeRepoId,
-    worktrees,
+    version,
     error,
     // actions
     connect,
     disconnect,
     refreshRepos,
     loadFollow,
+    loadVersion,
     trackActive,
     closeRepo,
     toggleFollow,

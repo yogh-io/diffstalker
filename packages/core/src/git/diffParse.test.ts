@@ -6,6 +6,13 @@ import {
   countHunks,
   countHunksPerFile,
   extractHunkPatch,
+  capLargeFileDiffs,
+  isLargeFileDiff,
+  largeDiffNotice,
+  LARGE_DIFF_NOTICE_PREFIX,
+  MAX_FILE_DIFF_BYTES,
+  MAX_FILE_DIFF_LINES,
+  rawFromLines,
 } from './diffParse.js';
 
 describe('parseDiffLine', () => {
@@ -104,9 +111,12 @@ describe('parseHunkHeader', () => {
 });
 
 describe('parseDiffWithLineNumbers', () => {
-  it('parses empty diff', () => {
+  it('parses an empty diff to NO lines', () => {
+    // Not one phantom empty context line: lines are now the diff's only
+    // representation, so an empty diff must round-trip back to ''.
     const result = parseDiffWithLineNumbers('');
-    expect(result).toHaveLength(1); // Single empty context line
+    expect(result).toHaveLength(0);
+    expect(rawFromLines(result)).toBe('');
   });
 
   it('parses simple diff with line numbers', () => {
@@ -485,5 +495,68 @@ index 0000000..3333333
 +hello
 `);
     });
+  });
+});
+
+describe('capLargeFileDiffs', () => {
+  /** A one-file chunk with `lineCount` addition lines. */
+  function chunk(path: string, lineCount: number, lineText = '+x'): string {
+    const body = Array.from({ length: lineCount }, () => lineText).join('\n');
+    return `diff --git a/${path} b/${path}\nindex 111..222 100644\n--- a/${path}\n+++ b/${path}\n@@ -0,0 +1,${lineCount} @@\n${body}\n`;
+  }
+
+  it('returns the input unchanged (same identity) when every file fits', () => {
+    const raw = chunk('small.ts', 10);
+    expect(capLargeFileDiffs(raw)).toBe(raw);
+  });
+
+  it('replaces a file over the line cap with its headers plus the notice', () => {
+    const capped = capLargeFileDiffs(chunk('big.gml', MAX_FILE_DIFF_LINES + 1));
+
+    expect(capped).toContain('diff --git a/big.gml b/big.gml');
+    expect(capped).toContain('+++ b/big.gml');
+    expect(capped).toContain(LARGE_DIFF_NOTICE_PREFIX);
+    // The body is gone: no hunk header, no content lines.
+    expect(capped).not.toContain('@@');
+    expect(capped).not.toContain('+x');
+  });
+
+  it('replaces a file over the byte cap even when its line count is small', () => {
+    const huge = chunk('one-liner.min.js', 2, '+' + 'x'.repeat(MAX_FILE_DIFF_BYTES));
+    const capped = capLargeFileDiffs(huge);
+
+    expect(capped).toContain(LARGE_DIFF_NOTICE_PREFIX);
+    expect(capped.length).toBeLessThan(1000);
+  });
+
+  it('caps per file: an oversized file does not take its neighbours with it', () => {
+    const capped = capLargeFileDiffs(
+      chunk('small-a.ts', 3) + chunk('big.gml', MAX_FILE_DIFF_LINES + 1) + chunk('small-b.ts', 3)
+    );
+
+    expect(capped).toContain('@@ -0,0 +1,3 @@'); // both small files keep their bodies
+    expect(capped.match(/@@ -0,0 \+1,3 @@/g)).toHaveLength(2);
+    expect(capped).toContain(LARGE_DIFF_NOTICE_PREFIX);
+    expect(capped).not.toContain(`@@ -0,0 +1,${MAX_FILE_DIFF_LINES + 1} @@`);
+  });
+
+  it('parses the notice as a header line, like git’s binary marker', () => {
+    const lines = parseDiffWithLineNumbers(capLargeFileDiffs(chunk('big.gml', MAX_FILE_DIFF_LINES + 1)));
+    const notice = lines.find((l) => l.content.startsWith(LARGE_DIFF_NOTICE_PREFIX));
+
+    expect(notice?.type).toBe('header');
+    expect(isLargeFileDiff({ raw: '', lines })).toBe(true);
+  });
+
+  it('reports the withheld size in the notice', () => {
+    expect(largeDiffNotice(19_188_477, 121285)).toBe(
+      'Large file — diff not shown (18.3 MB, 121,285 lines)'
+    );
+    // No line count when the content was never read (untracked, too big).
+    expect(largeDiffNotice(2_097_152)).toBe('Large file — diff not shown (2.0 MB)');
+  });
+
+  it('leaves an empty diff alone', () => {
+    expect(capLargeFileDiffs('')).toBe('');
   });
 });

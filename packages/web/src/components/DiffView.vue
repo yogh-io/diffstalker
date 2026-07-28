@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-if="model.rowCount === 0" class="diff-empty" data-testid="diff-empty">
-    <p v-if="model.isBinary">Binary file — no text diff to show.</p>
+    <p v-if="model.notShown" data-testid="not-shown-note">{{ model.notShown.note }}</p>
     <template v-else-if="hasNotes">
       <p
         v-for="(note, i) in model.sections.flatMap((s) => s.notes)"

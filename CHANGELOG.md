@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Project identity now comes from git, not from path shape.** Worktrees
+  were grouped by their deepest common parent directory, which assumed a
+  layout: worktrees parked as SIBLINGS of the repo (`…/proj` +
+  `…/proj-fix`) share only their parent, so the project was named after
+  whatever directory the user happens to keep repos in. Grouping is now
+  the repository's MAIN worktree (`git worktree list` reports it first,
+  exposed as `isMain` on `WorktreeInfo`), which exists in every layout —
+  nested under the repo, sibling, bare-with-worktrees, scattered across
+  unrelated directories, or no worktrees at all. A bare main names the
+  project from its directory (`…/proj/.bare` → `proj`, `…/proj.git` →
+  `proj`). One test per layout.
+- **The repo picker no longer forgets recent repos.** Opening or closing a
+  repo — which every repo switch does — cleared the whole worktree cache,
+  and recents deliberately do not render until resolved, so the Recent
+  list emptied on every switch and re-resolved from scratch. Cache entries
+  are now marked stale instead of dropped: the last good answer keeps
+  rendering while a re-read runs in the background.
+- **The repo and worktree switchers no longer disagree, and the picker no
+  longer depends on when it was opened.** The header could show one
+  project's name next to another repo's worktree name, and the panel's
+  rows could be populated differently from one opening to the next.
+  Three separate caches were answering the same question — the active
+  repo's worktrees (a bare list in the daemon store, replaced only when a
+  fetch happened to land), the picker's per-repo-id project map, and the
+  recents' per-path map — over two endpoints, with three lifetimes and no
+  sharing. They are replaced by one `worktrees` store keyed by filesystem
+  path, with explicit per-entry state (pending / ready / absent /
+  failed), in-flight dedup, and invalidation when the open-repo set
+  changes. Every surface derives from the ACTIVE PATH, so a switch of any
+  kind — picker, worktree dropdown, follow mode, URL, SSE reconnect —
+  cannot leave the previous repo's data on screen, and a failed or
+  out-of-order lookup can never be attributed to the wrong repo. Opening
+  the worktree dropdown now re-reads its "edited N ago" / commits-ahead
+  data without blanking the list while it does.
+
+### Changed
+
+- **Compare's diffs follow the tree order.** The file tree groups a
+  directory's sub-directories before its loose files; the diff stack below
+  kept the daemon's flat path sort, so the two read in different orders as
+  soon as a directory held both. The stack now renders in tree order, so
+  scrolling the diffs walks the tree. Collapsing a directory is a tree
+  affordance only — it never reorders the diffs or drops one.
+- **Diffs are no longer sent twice.** Every diff carried both its raw text
+  and the parsed lines that text produces — the raw was a third of every
+  diff response, and doubled what the journal retains in memory. `lines`
+  is now the only representation; the raw text is derived where it is
+  actually needed (hunk staging, hunk counting, per-file splitting) via
+  `rawFromLines`. Combined with the size cap below, a large branch compare
+  went from 53 MB to 7.2 MB. An empty diff now parses to NO lines rather
+  than one phantom blank line, so the round-trip is exact.
+- **Oversized file diffs are announced, not sent.** A single file's diff
+  over 256 KB or 5,000 lines is no longer transferred or rendered: the
+  file keeps its header, stats, and place in the list, and its body is one
+  line — `Large file — diff not shown (5.7 MB, 121,235 lines)`. This is
+  the same shape git already uses for binary files, so both cases now
+  render through one placeholder everywhere (Changes, Compare, History,
+  Journal, Explorer diffs). The cap is applied in core, so every diff the
+  daemon serves gets it. On a real branch compare (841 files) this took
+  the response from 53 MB to 10.6 MB, withholding six files. The two
+  limits are `MAX_FILE_DIFF_BYTES` / `MAX_FILE_DIFF_LINES` in
+  `core/git/diffParse`; the byte cap is the one that catches long-line
+  files (minified bundles, exported SVGs) that the line cap misses.
+- An untracked file too big to read now gets that same notice instead of
+  an empty diff, which used to read as "no changes".
+
+### Added
+
+- **Version indicator in the web UI's status bar.** The far right of the
+  status bar shows the running version and whether it matches what npm
+  publishes: dim `v0.8.1` when it matches, `v0.8.1 → 0.9.0` in the warn
+  color when a newer version is out, the accent color for a local build
+  ahead of npm. New daemon endpoint `GET /version` backs it — it reads the
+  running version from the daemon's own package manifest and compares it
+  with npm's `latest` dist-tag, cached six hours (five minutes after a
+  failed lookup) and fetched only when a client asks. The new
+  `--no-update-check` flag turns the npm lookup off entirely; offline or
+  opted out, the running version still shows and the comparison reads
+  unknown.
+
 ## [0.8.1] - 2026-07-28
 
 ### Added

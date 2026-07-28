@@ -29,6 +29,7 @@ import type {
   RepoOpenedEvent,
   RepoRef,
   RepoSummary,
+  VersionState,
   WireCommitInfo,
   WireCompareDiff,
   WireSharedState,
@@ -83,6 +84,10 @@ export class DiffstalkerClient {
 
   health(): Promise<HealthState> {
     return request('GET', '/health');
+  }
+
+  version(): Promise<VersionState> {
+    return request('GET', '/version');
   }
 
   getFollow(): Promise<FollowState> {

@@ -19,6 +19,13 @@ import { setCachedBaseBranch } from '@diffstalker/core/utils/baseBranchCache';
 import { createDaemon, Daemon } from './server.js';
 import { createFixtureRepo, removeFixtureRepo, writeFixtureFile, gitExec } from './test-helpers.js';
 
+/** The diff text of a wire diff — the wire carries lines only. */
+function wireDiffText(diff: { lines: { content: string }[] }): string {
+  return diff.lines.map((l) => l.content).join('\n') + '\n';
+}
+
+
+
 const FIXTURE = 'daemon-history-compare';
 const FIXTURE_NO_BASE = 'daemon-history-compare-nobase';
 const FIXTURE_MERGE = 'daemon-history-compare-merge';
@@ -196,8 +203,8 @@ describe('history endpoints', () => {
     ).json()) as WireCommit[];
     const res = await request(`/repos/${repoId}/commits/${history[0].hash}/diff`);
     expect(res.status).toBe(200);
-    const diff = (await res.json()) as { raw: string; lines: unknown[] };
-    expect(diff.raw).toContain('+feature line');
+    const diff = (await res.json()) as { lines: { content: string }[] };
+    expect(wireDiffText(diff)).toContain('+feature line');
     expect(diff.lines.length).toBeGreaterThan(0);
   });
 
@@ -218,17 +225,17 @@ describe('history endpoints', () => {
   test('GET /commits/:hash/diff on an --allow-empty commit is 200 with an empty diff', async () => {
     const res = await request(`/repos/${mergeRepoId}/commits/${emptyCommitHash}/diff`);
     expect(res.status).toBe(200);
-    const diff = (await res.json()) as { raw: string };
-    expect(diff.raw).toBe('');
+    const diff = (await res.json()) as { lines: { content: string }[] };
+    expect(diff.lines).toEqual([]);
   });
 
   test('GET /commits/:hash/diff on a merge commit is 200 (empty, CLI parity), not 404', async () => {
     const res = await request(`/repos/${mergeRepoId}/commits/${mergeCommitHash}/diff`);
     expect(res.status).toBe(200);
-    const diff = (await res.json()) as { raw: string };
+    const diff = (await res.json()) as { lines: { content: string }[] };
     // git show <merge> --format= without --cc/-m prints no diff; the
     // commit still exists and must not be reported "Unknown".
-    expect(typeof diff.raw).toBe('string');
+    expect(typeof wireDiffText(diff)).toBe('string');
   });
 });
 
@@ -320,7 +327,7 @@ describe('compare endpoints', () => {
     expect(diff.baseBranch).toBe('main');
     expect(diff.files.map((f) => f.path)).toEqual(['feature.txt']);
     expect(diff.files[0].status).toBe('added');
-    expect(diff.files[0].diff.raw).toContain('+feature line');
+    expect(wireDiffText(diff.files[0].diff)).toContain('+feature line');
     expect(diff.commits).toHaveLength(1);
     expect(diff.commits[0].message).toBe('feature commit');
     expect(typeof diff.commits[0].date).toBe('string');
@@ -342,7 +349,7 @@ describe('compare endpoints', () => {
     const diff = (await res.json()) as WireCompareDiff;
     const uncommitted = diff.files.filter((f) => f.isUncommitted);
     expect(uncommitted.map((f) => f.path)).toEqual(['base.txt']);
-    expect(uncommitted[0].diff.raw).toContain('+uncommitted line');
+    expect(wireDiffText(uncommitted[0].diff)).toContain('+uncommitted line');
     // The committed side is still there too.
     expect(diff.files.some((f) => f.path === 'feature.txt' && !f.isUncommitted)).toBe(true);
   });

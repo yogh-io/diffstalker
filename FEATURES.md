@@ -147,7 +147,8 @@ Every feature below is preserved; only the plumbing moved. The git state engine 
 **Bottom Pane: File Content**
 - Syntax-highlighted file preview
 - Line numbers (gray)
-- Binary files show "Binary file" message
+- Binary files, and files over the per-file diff cap, show a one-line
+  notice instead of a body (see Edge Cases → Large Files)
 - Large files truncated with "File truncated..." message
 
 **File Finder Modal**
@@ -480,11 +481,24 @@ The app uses a **focus zone** system for full keyboard-only navigation with `Tab
 
 ### Binary Files
 
-- Diff view shows "Binary file differs" or similar
+- Diff view shows "Binary file — no text diff to show." in place of a body
 - Explorer shows "Binary file" message instead of content
 
 ### Large Files
 
+- **Per-file diff cap (all diff surfaces).** A file whose diff exceeds
+  `MAX_FILE_DIFF_BYTES` (256 KB) or `MAX_FILE_DIFF_LINES` (5,000) is not
+  sent at all. The file keeps its header, status letter, and +/− stats;
+  its body is the single line `Large file — diff not shown (5.7 MB,
+  121,235 lines)`. Applied in `core/git/diffParse` where diffs are built,
+  so it covers every path — working tree, compare, commit diffs, journal,
+  untracked files — and both the web UI and the CLI. Binary files and
+  over-cap files render through the *same* placeholder: the two reasons a
+  diff is deliberately withheld, always stated rather than shown as an
+  empty diff. The byte cap is what catches long-line files (minified
+  bundles, single-line exported SVGs) that the line cap misses.
+- An untracked file over the byte cap is never read; it gets the same
+  notice (byte size only — its line count is unknown).
 - Explorer truncates file content at ~1MB
 - Shows "File truncated at 1MB for performance..." message
 
@@ -721,6 +735,38 @@ git operations.
   clutter) while the open list sorts worktrees most-recently-edited first,
   each on two lines: the name, then commits-ahead-of-base and a relative
   "edited N ago" time in smaller, dimmer text.
+- **One worktree source (`stores/worktrees`).** The trigger label, the
+  worktree dropdown, the "Open on daemon" rows, and the "Recent" rows all
+  read worktree knowledge from a single store keyed by filesystem PATH
+  (`GET /worktrees?path=`), with per-entry state (pending / ready /
+  absent / failed), one shared request per path in flight, and
+  stale-while-revalidate refresh when the open-repo set changes (entries
+  are never dropped, so a repo switch cannot empty the Recent list). Because every surface
+  derives from the ACTIVE PATH rather than from a list that a fetch
+  happens to overwrite, a repo switch of any kind — picker, worktree
+  dropdown, follow mode, URL, an SSE reconnect — can never leave the
+  previous repo's project on screen, and a slow or failed lookup cannot
+  be attributed to the wrong repo.
+- **Layout-indifferent project identity.** A project is identified by its
+  MAIN worktree (`git worktree list` reports it first; `isMain` on
+  `WorktreeInfo`), never by path shape. Every layout groups and names the
+  same way: worktrees nested under the repo, parked as siblings
+  (`…/proj` + `…/proj-fix`), a bare repo with worktrees around it
+  (`…/proj/.bare` → `proj`, `…/proj.git` → `proj`), scattered across
+  unrelated directories, or a plain repo with no worktrees at all. A recent path renders only once
+  resolved (unresolved worktree siblings would each draw a stray row that
+  then folds away); one the daemon reports as no longer a worktree is
+  dropped; one it could not answer for still renders by its own path and
+  is retried, since an unreachable daemon is not evidence the path is bad.
+- **Version indicator** (status bar, far right): the running daemon's version
+  (`v0.8.1`), colored only when it is stale — an older version reads
+  `v0.8.1 → 0.9.0` in the warn color, a local build ahead of npm shows in the
+  accent color, a match stays dim. The daemon answers `GET /version`: it reads
+  its own version from its package manifest and compares it with npm's `latest`
+  dist-tag, cached for six hours (five minutes after a failed lookup) and only
+  ever fetched when a client asks. Offline, or with `--no-update-check`, the
+  running version still shows and the comparison reads "unknown"; the indicator
+  hides entirely when the daemon cannot read its own version.
 - **Auto mode** (header toggle or `a`, persisted): read-only auto-following of
   the newest change — the web port of the CLI's auto mode. When a file's
   content changes on disk, it is auto-selected and its row flashes briefly;
@@ -782,6 +828,11 @@ git operations.
   separately.
 - Compare's top file band is a jump-index: clicking a file anchor-scrolls the
   stacked diffs to that file's sticky header (never filters to one file).
+- Compare's stacked diffs render in the FILE TREE's order — same sequence,
+  same directory grouping — so scrolling the diffs walks the tree. (The
+  daemon returns git's flat path sort, which differs the moment a
+  directory holds both sub-directories and loose files.) Collapsing a
+  directory affects the tree only; the diffs never reorder or disappear.
 - Portrait keys: j/k move the band selection; Enter selects and focuses the
   payload pane (Tab also reaches it); j/k scroll the focused payload.
 

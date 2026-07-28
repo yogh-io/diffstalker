@@ -8,6 +8,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+import { rawFromLines } from '../git/diffParse.js';
 import { parseDiffWithLineNumbers } from '../git/diffParse.js';
 import type { DiffLine, DiffResult } from '../git/diffParse.js';
 import { hashHunkBody } from '../git/hunkTimes.js';
@@ -218,9 +219,9 @@ describe('extractFileHunks', () => {
     expect(hunks).toHaveLength(2);
     const first = hunks[0].diff!;
     expect(first.lines.filter((l) => l.type === 'hunk')).toHaveLength(1);
-    expect(first.raw).toContain('diff --git a/f.txt b/f.txt');
-    expect(first.raw).toContain('@@ -2 +2 @@');
-    expect(first.raw).not.toContain('@@ -9 +9 @@');
+    expect(rawFromLines(first.lines)).toContain('diff --git a/f.txt b/f.txt');
+    expect(rawFromLines(first.lines)).toContain('@@ -2 +2 @@');
+    expect(rawFromLines(first.lines)).not.toContain('@@ -9 +9 @@');
   });
 
   test('ins/del/bodyHash classify body lines by raw first char, not DiffLine.type', () => {
@@ -995,7 +996,7 @@ describe('JournalManager', () => {
 // --- Pruning (design decision 8) --------------------------------------------
 
 /** Push synthetic non-live hunk entries straight into the store. */
-function pushOutdated(store: JournalStore, count: number, rawSize = 1): number[] {
+function pushOutdated(store: JournalStore, count: number, bodySize = 1): number[] {
   const seqs: number[] = [];
   for (let i = 0; i < count; i++) {
     const seq = store.nextSeq++;
@@ -1009,7 +1010,9 @@ function pushOutdated(store: JournalStore, count: number, rawSize = 1): number[]
       kind: 'edited',
       span: { start: 1, count: 1 },
       stats: { insertions: 1, deletions: 0 },
-      diff: { raw: 'x'.repeat(rawSize), lines: [] },
+      // Body size is measured from the LINES (the diff's only
+      // representation), so the filler has to live there.
+      diff: { lines: [{ type: 'context', content: 'x'.repeat(bodySize - 1) }] },
       supersedes: [],
       siblings: 1,
       seeded: false,
@@ -1103,7 +1106,7 @@ describe('JournalManager pruning', () => {
     // (the one pinned live body is the only possible excess).
     let retained = 0;
     for (const e of store.entries) {
-      if (e.type === 'hunk' && e.diff !== null) retained += e.diff.raw.length;
+      if (e.type === 'hunk' && e.diff !== null) retained += rawFromLines(e.diff.lines).length;
     }
     expect(retained).toBeLessThanOrEqual(MAX_JOURNAL_SNAPSHOT_BYTES + MB);
     // No identity was evicted: well under the count cap.

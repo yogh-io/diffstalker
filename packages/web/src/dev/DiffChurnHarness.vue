@@ -87,8 +87,7 @@ function renderDiff(file: FakeFile): DiffResult {
     for (let k = 0; k < h.body; k++) out.push(`+  new line ${h.id}.${k} rev${h.rev}`);
     out.push(` context after fn_${h.id}`);
   }
-  const raw = out.join('\n') + '\n';
-  return { raw, lines: parseDiffWithLineNumbers(raw) };
+  return { lines: parseDiffWithLineNumbers(out.join('\n') + '\n') };
 }
 
 function toStack(fake: FakeFile): StackFile {

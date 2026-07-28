@@ -18,6 +18,13 @@ import { createDaemon, Daemon } from './server.js';
 import { JournalStoreCache } from './repoRegistry.js';
 import { SseReader } from './test-helpers.js';
 
+/** The diff text of a wire diff — the wire carries lines only. */
+function wireDiffText(diff: { lines: { content: string }[] }): string {
+  return diff.lines.map((l) => l.content).join('\n') + '\n';
+}
+
+
+
 const SOCKET = path.join(os.tmpdir(), `diffstalkerd-journal-${process.pid}.sock`);
 
 let daemon: Daemon;
@@ -35,7 +42,7 @@ interface WireEntry {
   status?: string;
   span?: { start: number; count: number };
   stats?: { insertions: number; deletions: number };
-  diff?: { raw: string; lines: unknown[] } | null;
+  diff?: { lines: { content: string }[]; lines: unknown[] } | null;
   supersedes?: number[];
   siblings?: number;
   seeded?: boolean;
@@ -150,7 +157,7 @@ describe('GET /repos/:id/journal', () => {
     expect(typeof hunk!.ts).toBe('number');
     // The embedded DiffResult crosses the wire like /diff responses.
     expect(hunk!.diff).not.toBeNull();
-    expect(hunk!.diff!.raw).toContain('+two');
+    expect(wireDiffText(hunk!.diff!)).toContain('+two');
     expect(Array.isArray(hunk!.diff!.lines)).toBe(true);
 
     const seqs = journal.entries.map((e) => e.seq);

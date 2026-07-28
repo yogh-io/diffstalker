@@ -23,6 +23,9 @@
  */
 
 import type { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
+// Runtime import, but git/diffParse is the pure parser module (no
+// simple-git, no fs) the CLI already imports for the same reason.
+import { LARGE_DIFF_NOTICE_PREFIX } from '@diffstalker/core/git/diffParse';
 import { isDisplayableDiffLine } from '@diffstalker/core/view/diffFilters';
 import { getLineContent } from '@diffstalker/core/view/diffRowCalculations';
 import {
@@ -82,14 +85,28 @@ export interface DiffFileSection {
   hunks: DiffHunkGroup[];
 }
 
+/**
+ * Why this file has no diff body — the two cases that are deliberately
+ * not rendered, both announced rather than shown as an empty diff:
+ *  - 'binary': git's own "Binary files … differ" marker;
+ *  - 'large': the daemon's per-file size cap (MAX_FILE_DIFF_BYTES /
+ *    MAX_FILE_DIFF_LINES) withheld the content.
+ * `note` is the line to show the reader, carrying the size detail the
+ * daemon measured.
+ */
+export interface DiffNotShown {
+  kind: 'binary' | 'large';
+  note: string;
+}
+
 export interface DiffModel {
   sections: DiffFileSection[];
   /** ch width of each line-number gutter (digits of the max line number, min 3). */
   lineNumWidth: number;
   /** Total add/del/context rows across all hunks. */
   rowCount: number;
-  /** True when a "Binary files … differ" header is present. */
-  isBinary: boolean;
+  /** Set when there is deliberately no diff body; null when there is one. */
+  notShown: DiffNotShown | null;
   /** Latest editedAt across hunks; drives the relative-time ticker. */
   latestEditedAt?: number;
 }
@@ -127,9 +144,12 @@ interface RawSection {
   hunks: RawHunk[];
 }
 
-function groupSections(lines: DiffLine[]): { sections: RawSection[]; isBinary: boolean } {
+function groupSections(lines: DiffLine[]): {
+  sections: RawSection[];
+  notShown: DiffNotShown | null;
+} {
   const sections: RawSection[] = [];
-  let isBinary = false;
+  let notShown: DiffNotShown | null = null;
   let section: RawSection | null = null;
   let hunk: RawHunk | null = null;
 
@@ -150,7 +170,12 @@ function groupSections(lines: DiffLine[]): { sections: RawSection[]; isBinary: b
         sections.push(section);
       } else {
         ensureSection().notes.push(line.content);
-        if (line.content.startsWith('Binary files')) isBinary = true;
+        if (line.content.startsWith('Binary files')) {
+          notShown = { kind: 'binary', note: 'Binary file — no text diff to show.' };
+        } else if (line.content.startsWith(LARGE_DIFF_NOTICE_PREFIX)) {
+          // The daemon already formatted the size detail; show it verbatim.
+          notShown = { kind: 'large', note: line.content };
+        }
       }
     } else if (line.type === 'hunk') {
       hunk = { header: line, lines: [] };
@@ -161,7 +186,7 @@ function groupSections(lines: DiffLine[]): { sections: RawSection[]; isBinary: b
       hunk.lines.push(line);
     }
   }
-  return { sections, isBinary };
+  return { sections, notShown };
 }
 
 // --- Content-stable keys ---
@@ -313,14 +338,14 @@ function buildSection(
  * staged-ness has no meaning (History, Compare) omit it.
  */
 export function buildDiffModel(diff: DiffResult | null, staged = false): DiffModel {
-  const model: DiffModel = { sections: [], lineNumWidth: 3, rowCount: 0, isBinary: false };
+  const model: DiffModel = { sections: [], lineNumWidth: 3, rowCount: 0, notShown: null };
   if (!diff) return model;
 
   let hunkIndex = 0;
   const nextHunkIndex = (): number => hunkIndex++;
 
   const grouped = groupSections(diff.lines.filter(isDisplayableDiffLine));
-  model.isBinary = grouped.isBinary;
+  model.notShown = grouped.notShown;
   model.sections = grouped.sections.map((raw) => buildSection(raw, staged, nextHunkIndex));
 
   for (const section of model.sections) {

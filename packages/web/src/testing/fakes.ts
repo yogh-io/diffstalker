@@ -1,3 +1,5 @@
+import type { WorktreeInfo } from '@diffstalker/client';
+
 /**
  * Test doubles for the browser data layer: a fake global fetch driven by
  * a route handler, and a FakeEventSource standing in for the browser's
@@ -137,4 +139,28 @@ export class FakeEventSource {
   fail(): void {
     this.onerror?.();
   }
+}
+
+/**
+ * A WorktreeInfo fixture.
+ *
+ * `main` marks the repository's MAIN worktree — the first entry `git
+ * worktree list` reports, and the family's identity. Exactly one worktree
+ * per family has it. In a bare setup that entry IS the bare git dir, so
+ * pass `{ main: true, bare: true }` for it.
+ */
+export function worktree(
+  path: string,
+  branch: string | null,
+  opts: { main?: boolean; bare?: boolean; lastActivity?: number | null; aheadOfBase?: number | null } = {}
+): WorktreeInfo {
+  return {
+    path,
+    branch,
+    head: 'abc123',
+    isMain: opts.main ?? false,
+    isBare: opts.bare ?? false,
+    lastActivity: opts.lastActivity ?? null,
+    aheadOfBase: opts.aheadOfBase ?? null,
+  };
 }

@@ -31,7 +31,6 @@ const T0 = Date.UTC(2026, 6, 20, 12, 0, 0);
 
 function makeDiff(path: string, marker: string): DiffResult {
   return {
-    raw: '',
     lines: [
       { type: 'header', content: `diff --git a/${path} b/${path}` },
       { type: 'hunk', content: '@@ -10,5 +10,6 @@' },

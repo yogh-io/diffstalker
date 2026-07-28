@@ -12,7 +12,7 @@ import type { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
 
 /** Helper to build a DiffResult from lines */
 function makeDiff(lines: DiffLine[]): DiffResult {
-  return { raw: lines.map((l) => l.content).join('\n'), lines };
+  return { lines };
 }
 
 describe('buildDiffModel', () => {
@@ -20,13 +20,13 @@ describe('buildDiffModel', () => {
     const model = buildDiffModel(null);
     expect(model.sections).toEqual([]);
     expect(model.rowCount).toBe(0);
-    expect(model.isBinary).toBe(false);
+    expect(model.notShown).toBe(null);
     expect(model.lineNumWidth).toBe(3);
     expect(model.latestEditedAt).toBeUndefined();
   });
 
   test('returns an empty model for empty diff', () => {
-    const model = buildDiffModel({ raw: '', lines: [] });
+    const model = buildDiffModel({ lines: [] });
     expect(model.sections).toEqual([]);
     expect(model.rowCount).toBe(0);
   });
@@ -146,8 +146,23 @@ describe('buildDiffModel', () => {
         { type: 'header', content: 'Binary files a/img.png and b/img.png differ' },
       ])
     );
-    expect(model.isBinary).toBe(true);
+    expect(model.notShown).toEqual({
+      kind: 'binary',
+      note: 'Binary file — no text diff to show.',
+    });
     expect(model.sections[0].notes).toEqual(['Binary files a/img.png and b/img.png differ']);
+    expect(model.rowCount).toBe(0);
+  });
+
+  test('detects an over-cap diff and shows the daemon notice verbatim', () => {
+    const notice = 'Large file — diff not shown (18.3 MB, 121,285 lines)';
+    const model = buildDiffModel(
+      makeDiff([
+        { type: 'header', content: 'diff --git a/big.gml b/big.gml' },
+        { type: 'header', content: notice },
+      ])
+    );
+    expect(model.notShown).toEqual({ kind: 'large', note: notice });
     expect(model.rowCount).toBe(0);
   });
 

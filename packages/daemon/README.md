@@ -38,6 +38,8 @@ Options:
 --web-root PATH      Directory of built web-UI assets to serve at GET /
                      (default: ./web next to the daemon bundle; the published
                      package ships it there. Missing dir → API-only, non-fatal)
+--no-update-check    Never ask npm which version is latest; GET /version
+                     then reports the running version only
 --help, -h           Show this help
 ```
 
@@ -116,13 +118,14 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | Method | Path                       | What                                             |
 | ------ | -------------------------- | ------------------------------------------------ |
 | GET    | `/health`                  | `{ok, ready}`                                    |
+| GET    | `/version`                 | `{current, latest, status}` — the running version against npm's `latest` dist-tag (`current` \| `outdated` \| `ahead` \| `unknown`). The npm lookup is cached (6h, 5min after a failure) and only ever runs when this endpoint is called; `--no-update-check` skips it, leaving `latest: null` |
 | GET    | `/repos`                   | List open repos (`id`, `path`, `branch`)         |
 | POST   | `/repos`                   | Open a repo: `{"path": "/abs/path"}` → `{id, path}` (201 created, 200 already open) |
 | DELETE | `/repos/:id`               | Close a repo (refcounted per open)               |
 | GET    | `/repos/:id/worktrees`     | Registered worktrees (`path`, `branch`, `head`, `isBare`, `lastActivity`, `aheadOfBase`): main worktree, linked worktrees, and the bare entry in a bare-worktree layout |
 | GET    | `/worktrees?path=`         | Same as above, but for a raw filesystem path instead of an already-opened repo id (e.g. a recently-visited repo a client hasn't opened on this daemon) |
 | GET    | `/repos/:id/status`        | Shared state: status, hunk counts, stash list, in-progress operation, error, working-file mtimes (path → mtimeMs; what browser clients build mtime-based auto mode on) |
-| GET    | `/repos/:id/diff?path=&staged=` | Diff; whole tree without `path`, staged side with `staged=true` |
+| GET    | `/repos/:id/diff?path=&staged=` | Diff; whole tree without `path`, staged side with `staged=true`. Per-file cap: a file's diff over 256 KB or 5,000 lines is withheld — its headers are kept and its body becomes one `Large file — diff not shown (…)` line, the same shape git uses for `Binary files … differ`. Applies to every diff-bearing response (compare, commit diffs, journal) |
 | GET    | `/repos/:id/history?count=` | Commit history (`CommitInfo[]`, default 100, ISO dates) |
 | GET    | `/repos/:id/commits/:hash/diff` | Diff introduced by one commit (404 on unknown hash; merge and `--allow-empty` commits are 200 with an empty diff, matching the CLI) |
 | GET    | `/repos/:id/head-message`  | HEAD commit message for amend prefill: `{message}` (`""` when the repo has no commits) |

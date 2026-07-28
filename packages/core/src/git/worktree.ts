@@ -17,6 +17,20 @@ export interface RawWorktreeInfo {
   head: string | null;
   /** True for the bare repository entry (has no working tree). */
   isBare: boolean;
+  /**
+   * The repository's MAIN worktree — `git worktree list` always reports it
+   * first (for a bare repo, that first entry is the bare git dir itself).
+   *
+   * This is the family's identity, and it is git's answer rather than a
+   * guess from path shape. Clients used to group worktrees by their
+   * deepest common parent directory, which only holds for layouts that
+   * nest worktrees under the repo; siblings (`…/proj` + `…/proj-fix`)
+   * collapse to their shared PARENT, so the project took the name of
+   * whatever directory the user happens to keep repos in. Every layout —
+   * nested, sibling, bare-with-worktrees, scattered, or no worktrees at
+   * all — has exactly one main worktree.
+   */
+  isMain: boolean;
 }
 
 /** A worktree enriched with its most recent activity. */
@@ -233,6 +247,8 @@ export function parseWorktreePorcelain(output: string): RawWorktreeInfo[] {
         branch: null,
         head: null,
         isBare: false,
+        // git lists the main worktree first, always.
+        isMain: result.length === 0,
       };
     } else if (!current) {
       continue;

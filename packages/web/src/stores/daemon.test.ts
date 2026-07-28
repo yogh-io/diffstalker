@@ -21,6 +21,8 @@ const FOLLOW_STATE = {
   followedPath: null,
 };
 
+const VERSION_STATE = { current: '0.8.1', latest: '0.9.0', status: 'outdated' };
+
 let fake: FakeFetch;
 let onRequest: ((call: FetchCall) => FakeResponse | undefined) | null;
 
@@ -33,6 +35,9 @@ function defaultRoutes(call: FetchCall): FakeResponse {
   }
   if (call.url === '/follow') {
     return { body: FOLLOW_STATE };
+  }
+  if (call.url === '/version') {
+    return { body: VERSION_STATE };
   }
   return { status: 404, body: { error: `no fake route: ${call.method} ${call.url}` } };
 }
@@ -251,6 +256,29 @@ describe('useDaemonStore', () => {
     await flush();
     const after = fake.callsTo('/repos').filter((c) => c.method === 'GET').length;
     expect(after).toBe(listCalls + 1);
+  });
+
+  test('snapshot pulls the version state', async () => {
+    const store = useDaemonStore();
+    store.connect();
+    FakeEventSource.latest().emit('snapshot', []);
+    await flush();
+
+    expect(store.version).toEqual(VERSION_STATE);
+  });
+
+  test('a failing /version leaves the last known state and never touches the connection', async () => {
+    const store = useDaemonStore();
+    store.connect();
+    FakeEventSource.latest().emit('snapshot', []);
+    await flush();
+
+    onRequest = (call) =>
+      call.url === '/version' ? { status: 500, body: { error: 'boom' } } : undefined;
+    await store.loadVersion();
+
+    expect(store.version).toEqual(VERSION_STATE);
+    expect(store.connection).toBe('connected');
   });
 
   test('trackActive records the repo, makes it active, clears error — and never POSTs', () => {

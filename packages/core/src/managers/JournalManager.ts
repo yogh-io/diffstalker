@@ -34,6 +34,7 @@ import { randomBytes } from 'node:crypto';
 import * as logger from '../utils/logger.js';
 import { hashHunkBody } from '../git/hunkTimes.js';
 import { splitDiffByFile } from '../view/splitDiffByFile.js';
+import { diffByteSize, rawFromLines } from '../git/diffParse.js';
 import type { DiffLine, DiffResult } from '../git/diffParse.js';
 import type { FileStatus } from '../git/status.js';
 import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
@@ -63,7 +64,7 @@ export const MAX_SNAPSHOT_BYTES = 256 * 1024;
 export const MAX_JOURNAL_ENTRIES = 500;
 
 /**
- * Snapshot-body byte budget per store (sum of retained diff.raw lengths).
+ * Snapshot-body byte budget per store (sum of retained snapshot sizes).
  * Past it, the OLDEST OUTDATED entries' bodies are nulled first — the
  * cheapest info loss: diff: null is already legal ("pruned body") and the
  * entry's identity, stats, and lineage pointers all survive.
@@ -228,7 +229,7 @@ export function extractFileHunks(fileDiff: DiffResult): FileHunks {
       hunks: [
         {
           runs: [[0, PSEUDO_RUN_HI]],
-          bodyHash: hashHunkBody([fileDiff.raw]),
+          bodyHash: hashHunkBody([rawFromLines(fileDiff.lines)]),
           ins: 0,
           del: 0,
           span: { start: 0, count: 0 },
@@ -265,7 +266,7 @@ export function extractFileHunks(fileDiff: DiffResult): FileHunks {
       ins,
       del,
       span: spanOfRuns(runs),
-      diff: { raw: lines.map((l) => l.content).join('\n') + '\n', lines },
+      diff: { lines },
     };
   });
   return { hunks, renamedFrom, hunkless: false };
@@ -289,7 +290,7 @@ export interface ClassifiedHunk {
  */
 function snapshotFor(h: ObservedHunk): DiffResult | null {
   if (h.oversize === true) return null;
-  return h.diff.raw.length > MAX_SNAPSHOT_BYTES ? null : h.diff;
+  return diffByteSize(h.diff.lines) > MAX_SNAPSHOT_BYTES ? null : h.diff;
 }
 
 function deriveKind(ins: number, del: number, predSize: number): JournalHunkKind {
@@ -612,12 +613,12 @@ export class JournalManager extends EventEmitter<JournalEventMap> {
   private pruneBodies(liveSeqs: Set<number>): void {
     let bytes = 0;
     for (const e of this.store.entries) {
-      if (e.type === 'hunk' && e.diff !== null) bytes += e.diff.raw.length;
+      if (e.type === 'hunk' && e.diff !== null) bytes += diffByteSize(e.diff.lines);
     }
     for (const e of this.store.entries) {
       if (bytes <= MAX_JOURNAL_SNAPSHOT_BYTES) return;
       if (e.type !== 'hunk' || e.diff === null || liveSeqs.has(e.seq)) continue;
-      bytes -= e.diff.raw.length;
+      bytes -= diffByteSize(e.diff.lines);
       e.diff = null;
     }
   }

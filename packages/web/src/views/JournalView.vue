@@ -206,7 +206,11 @@ function fileDir(path: string): string {
  */
 function isNewFile(entry: JournalHunkEntry): boolean {
   if (entry.status === 'untracked' || entry.status === 'added') return true;
-  return entry.diff?.raw.includes('new file mode') ?? false;
+  return (
+    entry.diff?.lines.some(
+      (line) => line.type === 'header' && line.content.startsWith('new file mode')
+    ) ?? false
+  );
 }
 
 /**

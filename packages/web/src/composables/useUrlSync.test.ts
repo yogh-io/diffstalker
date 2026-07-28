@@ -42,32 +42,32 @@ afterEach(() => {
 
 describe('parseUrlPath', () => {
   test('repo path + view', () => {
-    expect(parseUrlPath('/gitRepos/calculator/fix-a/history')).toEqual({
-      repoRel: 'gitRepos/calculator/fix-a',
+    expect(parseUrlPath('/w/calculator/fix-a/history')).toEqual({
+      repoRel: 'w/calculator/fix-a',
       view: 'history',
       base: null,
     });
   });
 
   test('compare with a :-encoded base decodes to a slashed ref', () => {
-    expect(parseUrlPath('/gitRepos/calculator/fix-a/compare/upstream:main')).toEqual({
-      repoRel: 'gitRepos/calculator/fix-a',
+    expect(parseUrlPath('/w/calculator/fix-a/compare/upstream:main')).toEqual({
+      repoRel: 'w/calculator/fix-a',
       view: 'compare',
       base: 'upstream/main',
     });
   });
 
   test('compare with no base', () => {
-    expect(parseUrlPath('/gitRepos/diffstalker/compare')).toEqual({
-      repoRel: 'gitRepos/diffstalker',
+    expect(parseUrlPath('/w/diffstalker/compare')).toEqual({
+      repoRel: 'w/diffstalker',
       view: 'compare',
       base: null,
     });
   });
 
   test('a base equal to a view keyword is still read as the base (compare checked first)', () => {
-    expect(parseUrlPath('/gitRepos/x/compare/history')).toEqual({
-      repoRel: 'gitRepos/x',
+    expect(parseUrlPath('/w/x/compare/history')).toEqual({
+      repoRel: 'w/x',
       view: 'compare',
       base: 'history',
     });
@@ -75,8 +75,8 @@ describe('parseUrlPath', () => {
 
   test('a worktree segment named like a (non-compare) view is not mistaken for the view', () => {
     // repo ends in a dir called "history"; the appended view is "changes".
-    expect(parseUrlPath('/gitRepos/x/history/changes')).toEqual({
-      repoRel: 'gitRepos/x/history',
+    expect(parseUrlPath('/w/x/history/changes')).toEqual({
+      repoRel: 'w/x/history',
       view: 'changes',
       base: null,
     });
@@ -99,7 +99,7 @@ describe('writes a clean, home-relative path', () => {
     const daemon = useDaemonStore();
     const ui = useUiStore();
     const repo = useRepoStore();
-    daemon.repos = [{ id: 'r1', path: `${HOME}/gitRepos/calculator/fix-a`, branch: 'fix-a' }];
+    daemon.repos = [{ id: 'r1', path: `${HOME}/w/calculator/fix-a`, branch: 'fix-a' }];
     daemon.activeRepoId = 'r1';
 
     mount(Harness);
@@ -109,14 +109,14 @@ describe('writes a clean, home-relative path', () => {
     await flushPromises();
 
     expect(window.location.pathname).toBe(
-      '/gitRepos/calculator/fix-a/compare/upstream:main'
+      '/w/calculator/fix-a/compare/upstream:main'
     );
   });
 
   test('no base segment for a non-compare view', async () => {
     const daemon = useDaemonStore();
     const ui = useUiStore();
-    daemon.repos = [{ id: 'r1', path: `${HOME}/gitRepos/diffstalker`, branch: 'main' }];
+    daemon.repos = [{ id: 'r1', path: `${HOME}/w/diffstalker`, branch: 'main' }];
     daemon.activeRepoId = 'r1';
 
     mount(Harness);
@@ -124,6 +124,6 @@ describe('writes a clean, home-relative path', () => {
     ui.setActiveView('history');
     await flushPromises();
 
-    expect(window.location.pathname).toBe('/gitRepos/diffstalker/history');
+    expect(window.location.pathname).toBe('/w/diffstalker/history');
   });
 });

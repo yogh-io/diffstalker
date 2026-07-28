@@ -11,16 +11,34 @@ import { createPinia, setActivePinia } from 'pinia';
 import RepoSwitcher from './RepoSwitcher.vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useUiStore } from '../stores/ui';
-import { makeFakeFetch, Deferred } from '../testing/fakes';
+import { useWorktreeStore } from '../stores/worktrees';
+import { makeFakeFetch, worktree, Deferred } from '../testing/fakes';
 import type { WorktreeInfo } from '@diffstalker/client';
 
-const CALC = '/home/u/gitRepos/calculator';
+const CALC = '/w/calculator';
 
-function primeWorktrees(worktrees: WorktreeInfo[], activePath: string): void {
+/** The path a GET /worktrees call asked about. */
+function queriedPath(url: string): string {
+  return new URLSearchParams(url.split('?')[1] ?? '').get('path') ?? '';
+}
+
+/** Serve GET /worktrees?path= from a path -> worktrees map. */
+function worktreeFetch(byPath: Map<string, WorktreeInfo[]>) {
+  return makeFakeFetch((call) => {
+    if (call.method === 'GET' && call.url.startsWith('/worktrees')) {
+      return { body: byPath.get(queriedPath(call.url)) ?? [] };
+    }
+    return { status: 404, body: {} };
+  }).fn;
+}
+
+async function primeWorktrees(worktrees: WorktreeInfo[], activePath: string): Promise<void> {
   const daemon = useDaemonStore();
   daemon.repos = [{ id: 'r1', path: activePath, branch: null }];
   daemon.activeRepoId = 'r1';
-  daemon.worktrees = worktrees;
+  vi.stubGlobal('fetch', worktreeFetch(new Map([[activePath, worktrees]])));
+  useWorktreeStore(); // its active-path watcher resolves on creation
+  await flushPromises();
 }
 
 beforeEach(() => {
@@ -34,23 +52,24 @@ afterEach(() => {
 });
 
 describe('trigger label', () => {
-  test('"no repo" when nothing is active', () => {
+  test('"no repo" when nothing is active', async () => {
     expect(mount(RepoSwitcher).find('.repo-label').text()).toBe('no repo');
   });
 
-  test('the repo directory name for a single-worktree repo', () => {
-    primeWorktrees(
-      [{ path: '/home/u/proj/solo', branch: 'main', head: 'a', isBare: false, lastActivity: null, aheadOfBase: null }],
-      '/home/u/proj/solo'
+  test('the repo directory name for a single-worktree repo', async () => {
+    await primeWorktrees(
+      [worktree('/proj/solo', 'main', { main: true })],
+      '/proj/solo'
     );
     expect(mount(RepoSwitcher).find('.repo-label').text()).toBe('solo');
   });
 
-  test('the PROJECT name when the repo is one of several worktrees', () => {
-    primeWorktrees(
+  test('the PROJECT name when the repo is one of several worktrees', async () => {
+    await primeWorktrees(
       [
-        { path: `${CALC}/main`, branch: 'main', head: 'a', isBare: false, lastActivity: null, aheadOfBase: null },
-        { path: `${CALC}/fix-a`, branch: 'fix-a', head: 'b', isBare: false, lastActivity: null, aheadOfBase: null },
+        worktree(`${CALC}/.bare`, null, { main: true, bare: true }),
+        worktree(`${CALC}/main`, 'main'),
+        worktree(`${CALC}/fix-a`, 'fix-a'),
       ],
       `${CALC}/fix-a`
     );
@@ -65,33 +84,32 @@ describe('open-on-daemon list groups by project', () => {
     daemon.repos = [
       { id: 'calc-a', path: `${CALC}/fix-a`, branch: 'fix-a' },
       { id: 'calc-b', path: `${CALC}/main`, branch: 'main' },
-      { id: 'diff', path: '/home/u/gitRepos/diffstalker', branch: 'main' },
+      { id: 'diff', path: '/w/diffstalker', branch: 'main' },
     ];
 
+    // FOUR worktrees exist; only two of them are open on the daemon, so
+    // the badge must report 4, not the open count.
+    const calcFour = [
+      worktree(`${CALC}/.bare`, null, { main: true, bare: true }),
+      worktree(`${CALC}/main`, 'main'),
+      worktree(`${CALC}/fix-a`, 'fix-a'),
+      worktree(`${CALC}/fix-b`, 'fix-b'),
+      worktree(`${CALC}/spike`, 'spike'),
+    ];
     vi.stubGlobal(
       'fetch',
-      makeFakeFetch((call) => {
-        const calcUrls = ['/repos/calc-a/worktrees', '/repos/calc-b/worktrees'];
-        if (call.method === 'GET' && calcUrls.includes(call.url)) {
-          // FOUR worktrees exist; only two of them are open on the daemon,
-          // so the badge must report 4, not the open count.
-          return {
-            body: [
-              { path: `${CALC}/.bare`, branch: null, head: null, isBare: true },
-              { path: `${CALC}/main`, branch: 'main', head: 'a', isBare: false },
-              { path: `${CALC}/fix-a`, branch: 'fix-a', head: 'b', isBare: false },
-              { path: `${CALC}/fix-b`, branch: 'fix-b', head: 'c', isBare: false },
-              { path: `${CALC}/spike`, branch: 'spike', head: 'd', isBare: false },
-            ],
-          };
-        }
-        if (call.method === 'GET' && call.url === '/repos/diff/worktrees') {
-          return {
-            body: [{ path: '/home/u/gitRepos/diffstalker', branch: 'main', head: 'c', isBare: false }],
-          };
-        }
-        return { status: 404, body: {} };
-      }).fn
+      worktreeFetch(
+        new Map([
+          [`${CALC}/fix-a`, calcFour],
+          [`${CALC}/main`, calcFour],
+          [
+            '/w/diffstalker',
+            [
+              worktree('/w/diffstalker', 'main', { main: true }),
+            ] as WorktreeInfo[],
+          ],
+        ])
+      )
     );
 
     const wrapper = mount(RepoSwitcher);
@@ -112,9 +130,11 @@ describe('open-on-daemon list groups by project', () => {
 });
 
 describe('recent list groups by project', () => {
+  // Bare layout: the bare git dir is the family's main entry.
   const calcFamily = [
-    { path: `${CALC}/main`, branch: 'main', head: 'a', isBare: false, lastActivity: 1000, aheadOfBase: null },
-    { path: `${CALC}/fix-a`, branch: 'fix-a', head: 'b', isBare: false, lastActivity: 5000, aheadOfBase: null },
+    worktree(`${CALC}/.bare`, null, { main: true, bare: true }),
+    worktree(`${CALC}/main`, 'main', { lastActivity: 1000 }),
+    worktree(`${CALC}/fix-a`, 'fix-a', { lastActivity: 5000 }),
   ];
 
   test('holds back paths still being resolved instead of drawing one stray row each', async () => {
@@ -153,21 +173,15 @@ describe('recent list groups by project', () => {
 
   test('collapses worktree siblings into one row, opening the freshest on click', async () => {
     const ui = useUiStore();
-    ui.recentRepos = [`${CALC}/fix-a`, `${CALC}/main`, '/home/u/gitRepos/diffstalker'];
+    ui.recentRepos = [`${CALC}/fix-a`, `${CALC}/main`, '/w/diffstalker'];
 
     const fake = makeFakeFetch((call) => {
       if (call.method === 'GET' && call.url.startsWith('/worktrees?path=')) {
         const path = new URL(`http://x${call.url}`).searchParams.get('path');
-        if (path === '/home/u/gitRepos/diffstalker') {
+        if (path === '/w/diffstalker') {
           return {
             body: [
-              {
-                path: '/home/u/gitRepos/diffstalker',
-                branch: 'main',
-                head: 'c',
-                isBare: false,
-                lastActivity: 500,
-              },
+              worktree('/w/diffstalker', 'main', { main: true, lastActivity: 500 }),
             ],
           };
         }
@@ -265,24 +279,15 @@ describe('recent list groups by project', () => {
     const ui = useUiStore();
     ui.recentRepos = [
       `${CALC}/bump-search-client-1.11`, // removed worktree, dir no longer exists
-      '/home/u/gitRepos/diffstalker',
+      '/w/diffstalker',
     ];
 
     const fake = makeFakeFetch((call) => {
       if (call.method === 'GET' && call.url.startsWith('/worktrees?path=')) {
         const path = new URL(`http://x${call.url}`).searchParams.get('path');
-        if (path === '/home/u/gitRepos/diffstalker') {
+        if (path === '/w/diffstalker') {
           return {
-            body: [
-              {
-                path: '/home/u/gitRepos/diffstalker',
-                branch: 'main',
-                head: 'c',
-                isBare: false,
-                lastActivity: 500,
-                aheadOfBase: null,
-              },
-            ],
+            body: [worktree('/w/diffstalker', 'main', { main: true, lastActivity: 500 })],
           };
         }
         return { body: [] }; // dead path: no longer a git working tree

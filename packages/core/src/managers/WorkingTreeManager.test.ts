@@ -6,6 +6,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { rawFromLines } from '../git/diffParse.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -120,11 +121,11 @@ describe('WorkingTreeManager', () => {
       expect(obs.headOid).toMatch(/^[0-9a-f]{40}$/);
       expect(obs.headOid).toBe(gitExec(repoPath, 'rev-parse HEAD').trim());
       // Staged changes are visible on the HEAD axis...
-      expect(obs.headDiff.raw).toContain('diff --git a/tracked.txt b/tracked.txt');
-      expect(obs.headDiff.raw).toContain('+staged change');
+      expect(rawFromLines(obs.headDiff.lines)).toContain('diff --git a/tracked.txt b/tracked.txt');
+      expect(rawFromLines(obs.headDiff.lines)).toContain('+staged change');
       // ...and the untracked file rides along as a synthetic section.
-      expect(obs.headDiff.raw).toContain('diff --git a/new.txt b/new.txt');
-      expect(obs.headDiff.raw).toContain('+brand new');
+      expect(rawFromLines(obs.headDiff.lines)).toContain('diff --git a/new.txt b/new.txt');
+      expect(rawFromLines(obs.headDiff.lines)).toContain('+brand new');
       expect(obs.stashCount).toBe(0);
       expect(obs.operationInProgress).toBeNull();
       expect(obs.mtimes?.has('tracked.txt')).toBe(true);
@@ -300,7 +301,7 @@ describe('WorkingTreeManager', () => {
 
       const inputs = await gatherWith(manager, status, oid, Date.now());
       expect(inputs).not.toBeNull();
-      expect(inputs!.headDiff.raw).toContain('+normal save');
+      expect(rawFromLines(inputs!.headDiff.lines)).toContain('+normal save');
 
       resetRepo();
     });
@@ -320,7 +321,7 @@ describe('WorkingTreeManager', () => {
 
       const inputs = await gatherWith(manager, staleStatus, oid);
       expect(inputs).not.toBeNull();
-      const sections = inputs!.headDiff.raw.match(/^diff --git a\/dup\.txt /gm) ?? [];
+      const sections = rawFromLines(inputs!.headDiff.lines).match(/^diff --git a\/dup\.txt /gm) ?? [];
       expect(sections).toHaveLength(1);
 
       resetRepo();
@@ -334,7 +335,7 @@ describe('WorkingTreeManager', () => {
       await manager.refresh();
 
       expect(observations).toHaveLength(1);
-      const raw = observations[0].headDiff.raw;
+      const raw = rawFromLines(observations[0].headDiff.lines);
       expect(raw).toContain('diff --git a/big.txt b/big.txt');
       expect(raw).toContain(OVERSIZE_UNTRACKED_MARKER);
       expect(raw.length).toBeLessThan(100 * 1024); // the content is NOT embedded

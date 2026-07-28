@@ -33,6 +33,8 @@ Options:
   --web-root PATH      Directory with the built web UI to serve at GET /
                        (default: web/ next to the daemon's compiled module;
                        when missing, the daemon serves the API only)
+  --no-update-check    Never ask npm which version is latest; GET /version
+                       then reports the running version only
   --help, -h           Show this help
 `;
 
@@ -51,6 +53,8 @@ export interface CliOptions extends ListenOptions {
   noFollow?: boolean;
   /** Explicit web UI assets dir from --web-root. */
   webRoot?: string;
+  /** --no-update-check: never reach out to the npm registry. */
+  noUpdateCheck?: boolean;
 }
 
 export function parseArgs(argv: string[]): CliOptions | 'help' {
@@ -79,6 +83,9 @@ export function parseArgs(argv: string[]): CliOptions | 'help' {
         break;
       case '--web-root':
         options.webRoot = expectValue(argv, ++i, '--web-root');
+        break;
+      case '--no-update-check':
+        options.noUpdateCheck = true;
         break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
@@ -178,7 +185,12 @@ async function main(): Promise<void> {
   // the full API (commit, discard, hunk staging, remote/branch ops).
   const apiMode = options.port !== undefined ? 'web' : 'full';
 
-  const daemon = createDaemon({ followFile, webRoot, apiMode });
+  const daemon = createDaemon({
+    followFile,
+    webRoot,
+    apiMode,
+    updateCheck: !options.noUpdateCheck,
+  });
   await daemon.listen(options);
   // Status lines go to stderr: stdout stays clean for piping, and journald
   // captures stderr just the same.

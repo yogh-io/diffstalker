@@ -531,6 +531,6 @@ export function buildCombinedDiffDisplayRows(
     hunkMapping.push({ source: hunk.source, hunkIndex: hunk.hunkIndex });
   }
 
-  const rows = buildDiffDisplayRows({ raw: '', lines: mergedLines });
+  const rows = buildDiffDisplayRows({ lines: mergedLines });
   return { rows, hunkMapping };
 }

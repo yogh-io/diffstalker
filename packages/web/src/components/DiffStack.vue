@@ -1,7 +1,8 @@
 <script lang="ts">
 import type { DiffLine, DiffResult } from '@diffstalker/core/git/diff';
 import type { FileStatus } from '@diffstalker/core/git/status';
-import { buildDiffModel, type DiffModel } from '../utils/diffRows';
+import { LARGE_DIFF_NOTICE_PREFIX } from '@diffstalker/core/git/diffParse';
+import { buildDiffModel, type DiffModel, type DiffNotShown } from '../utils/diffRows';
 import { splitRowCount } from '../utils/diffSplit';
 
 /**
@@ -56,19 +57,30 @@ function modelFor(diff: DiffResult, staged: boolean): DiffModel {
 }
 
 /**
- * isBinary per DiffResult identity: a cheap header-line scan (the same
- * marker buildDiffModel keys on), memoized so the gate checks never
- * have to build a full model for a diff they will not render.
+ * The "no body to render" verdict per DiffResult identity: a cheap
+ * header-line scan (the same markers buildDiffModel keys on), memoized so
+ * the gate checks never have to build a full model for a diff they will
+ * not render. Covers both withheld cases — git's binary marker and the
+ * daemon's per-file size cap.
  */
-const binaryCache = new WeakMap<DiffResult, boolean>();
+const notShownCache = new WeakMap<DiffResult, DiffNotShown | null>();
 
-function isBinaryDiff(diff: DiffResult): boolean {
-  let cached = binaryCache.get(diff);
+function notShownForDiff(diff: DiffResult): DiffNotShown | null {
+  let cached = notShownCache.get(diff);
   if (cached === undefined) {
-    cached = diff.lines.some(
-      (line) => line.type === 'header' && line.content.startsWith('Binary files')
-    );
-    binaryCache.set(diff, cached);
+    cached = null;
+    for (const line of diff.lines) {
+      if (line.type !== 'header') continue;
+      if (line.content.startsWith('Binary files')) {
+        cached = { kind: 'binary', note: 'Binary file — no text diff to show.' };
+        break;
+      }
+      if (line.content.startsWith(LARGE_DIFF_NOTICE_PREFIX)) {
+        cached = { kind: 'large', note: line.content };
+        break;
+      }
+    }
+    notShownCache.set(diff, cached);
   }
   return cached;
 }
@@ -136,7 +148,7 @@ const PROBE_LINES: DiffLine[] = [
   { type: 'addition', content: '+y', newLineNum: 1 },
 ];
 
-const PROBE_DIFF: DiffResult = { raw: '', lines: PROBE_LINES };
+const PROBE_DIFF: DiffResult = { lines: PROBE_LINES };
 
 /** Rows in the probe's FIRST hunk (its height check derives the border). */
 const PROBE_FIRST_HUNK_ROWS = 2;
@@ -272,18 +284,20 @@ function setSectionEl(key: string, el: Element | ComponentPublicInstance | null)
   else sectionEls.delete(key);
 }
 
-// --- Binary files: placeholder-only ---
+// --- Withheld diffs (binary, over the size cap): placeholder-only ---
 
 /**
- * A binary file's section is ALWAYS the placeholder note: its sticky
- * header plus a plain "Binary file" line — never bytes, never a diff
- * body, and never the huge-file gate (there is no "Load diff" that
- * reveals binary content, explicit or auto). Real binary rendering
- * (image preview, size delta) is deliberately deferred — a future
- * feature; until then the note is all a binary section ever shows.
+ * These sections are ALWAYS the placeholder note: the sticky header plus
+ * one line saying why there is no diff — never bytes, never a diff body,
+ * and never the huge-file "Load diff" gate (there is nothing to reveal;
+ * the daemon did not send content). Two cases share this shape:
+ *  - binary files, per git's own marker. Real binary rendering (image
+ *    preview, size delta) is deliberately deferred to a future feature;
+ *  - files over the daemon's per-file diff cap, whose note carries the
+ *    measured size so the reader knows what was withheld.
  */
-function isBinaryFile(item: StackFile): boolean {
-  return item.diff !== null && isBinaryDiff(item.diff);
+function notShownFor(item: StackFile): DiffNotShown | null {
+  return item.diff === null ? null : notShownForDiff(item.diff);
 }
 
 // --- Huge files: "Load diff" gate ---
@@ -318,7 +332,7 @@ function isHuge(item: StackFile): boolean {
 function isUnloaded(item: StackFile): boolean {
   return (
     isHuge(item) &&
-    !isBinaryFile(item) &&
+    notShownFor(item) === null &&
     !loadedHugeKeys.has(item.key) &&
     !renderedSmallKeys.has(item.key)
   );
@@ -500,7 +514,7 @@ function bodyIntrinsicSize(item: StackFile): string {
 let stackChrome: {
   headerH?: number;
   gap?: number;
-  binaryNoteH?: number;
+  notShownNoteH?: number;
   loadDiffH?: number;
   toolbarH?: number;
 } = {};
@@ -557,7 +571,7 @@ function chromeGap(): number | null {
 }
 
 function stripHeight(
-  slot: 'binaryNoteH' | 'loadDiffH',
+  slot: 'notShownNoteH' | 'loadDiffH',
   key: string,
   selector: string
 ): number | null {
@@ -572,8 +586,8 @@ function stripHeight(
 /** Outer section height (header + visible body); null = unknowable. */
 function sectionOuterHeight(item: StackFile, headerH: number): number | null {
   if (item.collapsed) return headerH; // v-show hides every body variant
-  if (isBinaryFile(item)) {
-    const h = stripHeight('binaryNoteH', item.key, '.binary-note');
+  if (notShownFor(item) !== null) {
+    const h = stripHeight('notShownNoteH', item.key, '.not-shown-note');
     return h === null ? null : headerH + h;
   }
   if (isUnloaded(item)) {
@@ -1061,16 +1075,17 @@ defineExpose({
           >
         </span>
       </header>
-      <!-- Binary file: placeholder-only, always — never bytes, never a
-           diff body, no "Load diff" (explicit or auto). Real binary
-           rendering is a deferred future feature (see isBinaryFile). -->
+      <!-- Withheld diff (binary, or over the daemon's per-file size
+           cap): placeholder-only, always — never bytes, never a diff
+           body, no "Load diff" (there is no content to reveal). See
+           notShownFor. -->
       <div
-        v-if="isBinaryFile(item)"
+        v-if="notShownFor(item)"
         v-show="!item.collapsed"
-        class="binary-note"
-        data-testid="binary-note"
+        class="not-shown-note"
+        data-testid="not-shown-note"
       >
-        Binary file — no text diff to show.
+        {{ notShownFor(item)?.note }}
       </div>
       <!-- Unloaded huge file: the worst-case DOM cap — nothing below
            the header mounts until the user asks. A distinct affordance
@@ -1291,8 +1306,8 @@ defineExpose({
   background: var(--surface);
 }
 
-/* Binary file: the whole body is this note — no bytes, no "Load diff". */
-.binary-note {
+/* Withheld diff: the whole body is this note — no bytes, no "Load diff". */
+.not-shown-note {
   padding: 0.75rem;
   color: var(--text-dim);
   font-size: var(--fs-small);

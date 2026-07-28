@@ -57,8 +57,9 @@ beforeAll(async () => {
   // An unstaged modification so POST /stage has a real entry to act on.
   fs.writeFileSync(path.join(repoDir, 'file.txt'), 'one\ntwo\n');
 
-  webDaemon = createDaemon({ apiMode: 'web' });
-  fullDaemon = createDaemon({ apiMode: 'full' });
+  // updateCheck off: the suite must never reach the npm registry.
+  webDaemon = createDaemon({ apiMode: 'web', updateCheck: false });
+  fullDaemon = createDaemon({ apiMode: 'full', updateCheck: false });
   await webDaemon.listen({ socketPath: WEB_SOCKET });
   await fullDaemon.listen({ socketPath: FULL_SOCKET });
   repoId = await openOn(WEB_SOCKET);
@@ -82,6 +83,13 @@ describe('web-mode API surface', () => {
     const res = await req(WEB_SOCKET, 'POST', `/repos/${repoId}/stage`, { path: 'file.txt' });
     // Present + succeeds (200); crucially not an "Unknown route" 404.
     expect(res.status).toBe(200);
+  });
+
+  test('the version read IS routed (the status bar needs it)', async () => {
+    const res = await req(WEB_SOCKET, 'GET', '/version');
+    expect(res.status).toBe(200);
+    // updateCheck: false, so the published version stays unknown.
+    expect(await res.json()).toMatchObject({ latest: null, status: 'unknown' });
   });
 
   test('unstage IS routed', async () => {

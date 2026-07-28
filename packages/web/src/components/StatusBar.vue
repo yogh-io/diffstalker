@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * Status bar: daemon connection (diff-colored dot), follow target, and
- * the change count with aggregated +/− — all mono, all live.
+ * Status bar: daemon connection (diff-colored dot), follow target, the
+ * change count with aggregated +/−, and the running version against the
+ * latest published on npm — all mono, all live.
  */
 
 import { computed } from 'vue';
@@ -29,6 +30,30 @@ const additions = computed(
 const deletions = computed(
   () => files.value?.reduce((sum, file) => sum + (file.deletions ?? 0), 0) ?? 0
 );
+
+/**
+ * Version indicator. Shown only when the daemon knows its own version;
+ * 'outdated' also names the newer version, the rest is just the running
+ * one (the title line carries the detail).
+ */
+const version = computed(() => {
+  const state = daemon.version;
+  if (!state || state.current === null) return null;
+
+  const label = `v${state.current}`;
+  const titles: Record<typeof state.status, string> = {
+    current: `up to date with npm (${state.latest})`,
+    outdated: `update available on npm: ${state.latest}`,
+    ahead: `ahead of npm (latest published: ${state.latest})`,
+    unknown: 'npm version unknown — could not check',
+  };
+
+  return {
+    status: state.status,
+    label: state.status === 'outdated' ? `${label} → ${state.latest}` : label,
+    title: titles[state.status],
+  };
+});
 </script>
 
 <template>
@@ -52,6 +77,16 @@ const deletions = computed(
       {{ files.length }} changed
       <span v-if="additions > 0" class="count-add">+{{ additions }}</span>
       <span v-if="deletions > 0" class="count-del">&minus;{{ deletions }}</span>
+    </span>
+
+    <span
+      v-if="version"
+      class="version"
+      :data-state="version.status"
+      :title="version.title"
+      data-testid="version"
+    >
+      {{ version.label }}
     </span>
   </footer>
 </template>
@@ -117,5 +152,19 @@ const deletions = computed(
   display: inline-flex;
   gap: 0.375rem;
   white-space: nowrap;
+}
+
+.version {
+  white-space: nowrap;
+  cursor: default;
+}
+
+/* Only a stale version earns attention; matching npm stays quiet. */
+.version[data-state='outdated'] {
+  color: var(--warn);
+}
+
+.version[data-state='ahead'] {
+  color: var(--accent);
 }
 </style>

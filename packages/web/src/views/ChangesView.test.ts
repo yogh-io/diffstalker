@@ -72,7 +72,6 @@ function makeShared(files: FileEntry[]): RepoSharedState {
 }
 
 const BINARY_DIFF: DiffResult = {
-  raw: 'diff --git a/img.png b/img.png\nBinary files a/img.png and b/img.png differ\n',
   lines: [
     { type: 'header', content: 'diff --git a/img.png b/img.png' },
     { type: 'header', content: 'Binary files a/img.png and b/img.png differ' },
@@ -80,7 +79,6 @@ const BINARY_DIFF: DiffResult = {
 };
 
 const SAMPLE_DIFF: DiffResult = {
-  raw: 'diff --git a/src/app/main.ts b/src/app/main.ts\n@@ -1 +1 @@\n-old\n+new\n',
   lines: [
     { type: 'header', content: 'diff --git a/src/app/main.ts b/src/app/main.ts' },
     { type: 'hunk', content: '@@ -1 +1 @@' },
@@ -109,7 +107,7 @@ function mountView(files: FileEntry[] = FILES): {
 /** Seed the store's working-diff cache for a row key. */
 function seedDiff(repo: ReturnType<typeof useRepoStore>, key: string, diff: DiffResult): void {
   const byKey = new Map(repo.workingDiffs.byKey);
-  byKey.set(key, { raw: diff.raw, diff, fetchedAt: Date.now() });
+  byKey.set(key, { diff, fetchedAt: Date.now() });
   repo.workingDiffs = { byKey, seq: repo.workingDiffs.seq + 1 };
 }
 
@@ -472,7 +470,28 @@ describe('stacked diffs', () => {
     await wrapper.vm.$nextTick();
 
     const section = wrapper.find('[data-testid="file-diff"]');
-    expect(section.find('[data-testid="binary-note"]').text()).toContain('Binary file');
+    expect(section.find('[data-testid="not-shown-note"]').text()).toContain('Binary file');
+    expect(section.find('[data-testid="load-diff"]').exists()).toBe(false);
+    expect(section.find('.file-diff-body').exists()).toBe(false);
+    expect(section.find('[data-testid="diff-view"]').exists()).toBe(false);
+  });
+
+  test('an over-cap file renders the daemon\'s size notice — no diff body, no "Load diff"', async () => {
+    // Big stats on purpose: the withheld note wins over the huge gate too.
+    const big: FileEntry = { path: 'big.gml', status: 'modified', staged: false, insertions: 2000 };
+    const { wrapper, repo } = mountView([big]);
+    seedDiff(repo, 'u:big.gml', {
+      lines: [
+        { type: 'header', content: 'diff --git a/big.gml b/big.gml' },
+        { type: 'header', content: 'Large file — diff not shown (18.3 MB, 121,285 lines)' },
+      ],
+    });
+    await wrapper.vm.$nextTick();
+
+    const section = wrapper.find('[data-testid="file-diff"]');
+    expect(section.find('[data-testid="not-shown-note"]').text()).toContain(
+      'Large file — diff not shown (18.3 MB, 121,285 lines)'
+    );
     expect(section.find('[data-testid="load-diff"]').exists()).toBe(false);
     expect(section.find('.file-diff-body').exists()).toBe(false);
     expect(section.find('[data-testid="diff-view"]').exists()).toBe(false);

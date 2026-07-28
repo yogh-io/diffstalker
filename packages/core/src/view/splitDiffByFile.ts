@@ -25,50 +25,33 @@
 import type { DiffLine, DiffResult } from '../git/diffParse.js';
 import { extractDiffFilePath } from './diffPrimitives.js';
 
-interface FileGroup {
-  rawLines: string[];
-  lines: DiffLine[];
-}
-
-/** Split a whole-tree diff into per-file DiffResults, keyed by path. */
+/**
+ * Split a whole-tree diff into per-file DiffResults, keyed by path.
+ *
+ * One pass over the parsed lines — they ARE the diff (raw text is derived
+ * from them), so the old second pass over the raw string is gone. Line
+ * objects are carried across as-is, keeping their editedAt stamps.
+ */
 export function splitDiffByFile(diff: DiffResult): Map<string, DiffResult> {
-  const groups = new Map<string, FileGroup>();
+  const groups = new Map<string, DiffLine[]>();
 
-  // Pass 1: group the raw text by "diff --git" boundaries.
-  const rawLines = diff.raw.split('\n');
-  // Drop the trailing empty string from git's final newline, otherwise
-  // it lands as a phantom last line on the final section.
-  if (rawLines.length > 1 && rawLines[rawLines.length - 1] === '') {
-    rawLines.pop();
-  }
-  let current: FileGroup | null = null;
-  for (const line of rawLines) {
-    if (line.startsWith('diff --git')) {
-      const path = extractDiffFilePath(line);
-      if (path !== null) {
-        current = groups.get(path) ?? { rawLines: [], lines: [] };
-        groups.set(path, current);
-      }
-    }
-    current?.rawLines.push(line);
-  }
-
-  // Pass 2: the same grouping over the parsed lines (1:1 with the raw
-  // text), keeping the line objects — and their editedAt stamps — as-is.
-  let currentLines: DiffLine[] | null = null;
+  let current: DiffLine[] | null = null;
   for (const line of diff.lines) {
     if (line.type === 'header') {
       const path = extractDiffFilePath(line.content);
       if (path !== null) {
-        currentLines = groups.get(path)?.lines ?? null;
+        // A repeated path merges into its existing section (a file can be
+        // both staged and unstaged in one whole-tree read).
+        current = groups.get(path) ?? [];
+        groups.set(path, current);
       }
     }
-    currentLines?.push(line);
+    current?.push(line);
   }
 
   const result = new Map<string, DiffResult>();
-  for (const [path, group] of groups) {
-    result.set(path, { raw: group.rawLines.join('\n') + '\n', lines: group.lines });
+  for (const [path, lines] of groups) {
+    result.set(path, { lines });
   }
   return result;
 }

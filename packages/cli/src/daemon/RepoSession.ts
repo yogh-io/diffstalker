@@ -426,7 +426,7 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
         this._selection = {
           ...this._selection,
           diff,
-          combined: { unstaged: diff, staged: { raw: '', lines: [] } },
+          combined: { unstaged: diff, staged: { lines: [] } },
         };
         this.emit('state-change');
       }

@@ -15,18 +15,12 @@ function stripTrailingSlashes(path: string): string {
   return path.slice(0, end);
 }
 
-/**
- * Longest common directory prefix of the given absolute paths. For a single
- * path it is that path. Used to name a project from its worktrees
- * (…/calculator/<branch> → …/calculator).
- */
-export function commonParentDir(paths: string[]): string {
-  if (paths.length === 0) return '';
-  const segments = paths.map((p) => stripTrailingSlashes(p).split('/'));
-  const [first] = segments;
-  let i = 0;
-  while (i < first.length && segments.every((s) => s[i] === first[i])) i++;
-  return first.slice(0, i).join('/');
+/** Containing directory ('/a/b/c' → '/a/b'); '/' stays '/'. */
+export function parentDir(path: string): string {
+  const trimmed = stripTrailingSlashes(path);
+  const cut = trimmed.lastIndexOf('/');
+  if (cut <= 0) return '/';
+  return trimmed.slice(0, cut);
 }
 
 /** Human-readable byte size ('482 B', '1.2 KB', '3.4 MB'). */

@@ -97,6 +97,17 @@ export interface HealthState {
   home?: string | null;
 }
 
+/** How the running daemon relates to the latest version published on npm. */
+export type VersionStatus = 'current' | 'outdated' | 'ahead' | 'unknown';
+
+/** GET /version. Either side is null when it cannot be known — an
+ *  unreadable manifest, an offline daemon, or --no-update-check. */
+export interface VersionState {
+  current: string | null;
+  latest: string | null;
+  status: VersionStatus;
+}
+
 /** A repo as identified by the daemon (POST /repos, SSE repo-opened). */
 export interface RepoRef {
   id: string;

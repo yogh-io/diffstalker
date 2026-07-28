@@ -21,8 +21,10 @@ import { shouldGuard, guardRequest, SECURITY_HEADERS } from './security.js';
 import { RepoRegistry, type RepoHandle } from './repoRegistry.js';
 import { SseHub, DaemonEventHub } from './sse.js';
 import { FollowController } from './follow.js';
+import { createVersionService, type LatestVersionFetcher } from './version.js';
 import type { RouteDeps } from './routes/shared.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerVersionRoutes } from './routes/version.js';
 import { registerRepoRoutes } from './routes/repos.js';
 import { registerWorkingTreeRoutes } from './routes/workingTree.js';
 import { registerHistoryCompareRoutes } from './routes/historyCompare.js';
@@ -85,6 +87,17 @@ export interface DaemonOptions {
    * The CLI entry point selects 'web' for a --port bind, 'full' otherwise.
    */
   apiMode?: 'full' | 'web';
+  /**
+   * Whether GET /version may ask npm for the latest published version
+   * (the daemon's only outbound request). Default true; --no-update-check
+   * turns it off, and /version then reports latest: null / 'unknown'.
+   */
+  updateCheck?: boolean;
+  /**
+   * How to read the latest published version. Injected by tests so the
+   * suite never hits the registry; production uses the npm dist-tags URL.
+   */
+  fetchLatestVersion?: LatestVersionFetcher;
 }
 
 /** True when something accepts connections on the unix socket path. */
@@ -129,8 +142,14 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
   const router = new Router();
 
   const apiMode = options.apiMode ?? 'full';
-  const deps: RouteDeps = { registry, sse, daemonEvents, follow, apiMode };
+  const version = createVersionService(
+    options.updateCheck === false
+      ? () => Promise.resolve(null)
+      : options.fetchLatestVersion
+  );
+  const deps: RouteDeps = { registry, sse, daemonEvents, follow, apiMode, version };
   registerHealthRoutes(router);
+  registerVersionRoutes(router, deps);
   registerRepoRoutes(router, deps);
   registerWorkingTreeRoutes(router, deps);
   registerHistoryCompareRoutes(router, deps);

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { rawFromLines } from '../git/diffParse.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -61,7 +62,7 @@ describe('getDiff / getDiffForUntracked (fixture)', () => {
 
   it('getDiff returns empty raw for clean file', async () => {
     const diff = await getDiff(repoPath, 'file.txt');
-    expect(diff.raw).toBe('');
+    expect(rawFromLines(diff.lines)).toBe('');
   });
 
   it('getDiffForUntracked shows entire file as additions', async () => {
@@ -79,8 +80,8 @@ describe('getDiff / getDiffForUntracked (fixture)', () => {
     const diff = await getDiffForUntracked(repoPath, 'nl.txt');
     const additions = diff.lines.filter((l) => l.type === 'addition');
     expect(additions.map((l) => l.content)).toEqual(['+a', '+b']);
-    expect(diff.raw).toContain('@@ -0,0 +1,2 @@');
-    expect(diff.raw).not.toContain('No newline at end of file');
+    expect(rawFromLines(diff.lines)).toContain('@@ -0,0 +1,2 @@');
+    expect(rawFromLines(diff.lines)).not.toContain('No newline at end of file');
     resetRepo();
   });
 
@@ -89,8 +90,8 @@ describe('getDiff / getDiffForUntracked (fixture)', () => {
     const diff = await getDiffForUntracked(repoPath, 'nonl.txt');
     const additions = diff.lines.filter((l) => l.type === 'addition');
     expect(additions.map((l) => l.content)).toEqual(['+a', '+b']);
-    expect(diff.raw).toContain('@@ -0,0 +1,2 @@');
-    expect(diff.raw).toContain('\\ No newline at end of file');
+    expect(rawFromLines(diff.lines)).toContain('@@ -0,0 +1,2 @@');
+    expect(rawFromLines(diff.lines)).toContain('\\ No newline at end of file');
     resetRepo();
   });
 
@@ -135,7 +136,7 @@ describe('getCommitDiff (fixture)', () => {
 
   it('returns empty diff for invalid hash', async () => {
     const diff = await getCommitDiff(repoPath, 'deadbeef000000');
-    expect(diff.raw).toBe('');
+    expect(rawFromLines(diff.lines)).toBe('');
     expect(diff.lines).toEqual([]);
   });
 
@@ -391,9 +392,9 @@ describe('getDiffAgainstHead / getHeadOid (fixture)', () => {
     writeFixtureFile(repoPath, 'other.txt', 'one\nCHANGED\n');
 
     const diff = await getDiffAgainstHead(repoPath);
-    expect(diff.raw).toContain('diff --git a/seven.txt b/seven.txt');
-    expect(diff.raw).toContain('diff --git a/other.txt b/other.txt');
-    expect(diff.raw).toContain('+CHANGED');
+    expect(rawFromLines(diff.lines)).toContain('diff --git a/seven.txt b/seven.txt');
+    expect(rawFromLines(diff.lines)).toContain('diff --git a/other.txt b/other.txt');
+    expect(rawFromLines(diff.lines)).toContain('+CHANGED');
     resetRepo();
   });
 
@@ -403,9 +404,9 @@ describe('getDiffAgainstHead / getHeadOid (fixture)', () => {
       writeFixtureFile(freshPath, 'new.txt', 'hello\n');
       gitExec(freshPath, 'add new.txt');
       const diff = await getDiffAgainstHead(freshPath);
-      expect(diff.raw).toContain('diff --git a/new.txt b/new.txt');
-      expect(diff.raw).toContain('new file mode');
-      expect(diff.raw).toContain('+hello');
+      expect(rawFromLines(diff.lines)).toContain('diff --git a/new.txt b/new.txt');
+      expect(rawFromLines(diff.lines)).toContain('new file mode');
+      expect(rawFromLines(diff.lines)).toContain('+hello');
     } finally {
       removeFixtureRepo('head-diff-unborn-test');
     }
@@ -420,7 +421,7 @@ describe('getDiffAgainstHead / getHeadOid (fixture)', () => {
       // lines on each side; with diff.context=0 winning there would be none.
       const contextLines = diff.lines.filter((l) => l.type === 'context');
       expect(contextLines.length).toBe(6);
-      expect(diff.raw).toContain('@@ -1,7 +1,7 @@');
+      expect(rawFromLines(diff.lines)).toContain('@@ -1,7 +1,7 @@');
     } finally {
       gitExec(repoPath, 'config --unset diff.context');
       resetRepo();
@@ -436,7 +437,7 @@ describe('getDiffAgainstHead / getHeadOid (fixture)', () => {
       await expect(getDiffAgainstHead(nonRepo)).rejects.toThrow();
       // Contrast: the sibling swallows the same failure.
       const swallowed = await getDiff(nonRepo);
-      expect(swallowed).toEqual({ raw: '', lines: [] });
+      expect(swallowed).toEqual({ lines: [] });
     } finally {
       fs.rmSync(nonRepo, { recursive: true, force: true });
     }

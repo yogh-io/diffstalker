@@ -10,12 +10,19 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createDaemon, Daemon } from './server.js';
 import {
+
   createFixtureRepo,
   removeFixtureRepo,
   writeFixtureFile,
   gitExec,
   SseReader,
 } from './test-helpers.js';
+
+/** The diff text of a wire diff — the wire carries lines only. */
+function wireDiffText(diff: { lines: { content: string }[] }): string {
+  return diff.lines.map((l) => l.content).join('\n') + '\n';
+}
+
 
 const FIXTURE = 'daemon-server';
 const SOCKET = path.join(os.tmpdir(), `diffstalkerd-test-${process.pid}.sock`);
@@ -86,7 +93,8 @@ beforeAll(async () => {
   writeFixtureFile(repoPath, 'file.txt', 'original line\nmodified line\n');
   writeFixtureFile(repoPath, 'untracked.txt', 'hello untracked\n');
 
-  daemon = createDaemon();
+  // The npm lookup is stubbed: the suite must never touch the registry.
+  daemon = createDaemon({ fetchLatestVersion: () => Promise.resolve('99.0.0') });
   await daemon.listen({ socketPath: SOCKET });
 });
 
@@ -101,6 +109,15 @@ describe('daemon over unix socket', () => {
     const res = await request('/health');
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, ready: true });
+  });
+
+  test('GET /version reports the running version against npm', async () => {
+    const res = await request('/version');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { current: string; latest: string; status: string };
+    expect(body.latest).toBe('99.0.0');
+    expect(body.current).toMatch(/^\d+\.\d+\.\d+/);
+    expect(body.status).toBe('outdated');
   });
 
   test('unknown route is a JSON 404 with {error} only', async () => {
@@ -186,16 +203,16 @@ describe('daemon over unix socket', () => {
   test('GET /repos/:id/diff returns the tracked-file change', async () => {
     const res = await request(`/repos/${repoId}/diff?path=file.txt`);
     expect(res.status).toBe(200);
-    const diff = (await res.json()) as { raw: string; lines: unknown[] };
-    expect(diff.raw).toContain('+modified line');
+    const diff = (await res.json()) as { lines: { content: string }[] };
+    expect(wireDiffText(diff)).toContain('+modified line');
     expect(diff.lines.length).toBeGreaterThan(0);
   });
 
   test('GET /repos/:id/diff handles untracked files', async () => {
     const res = await request(`/repos/${repoId}/diff?path=untracked.txt`);
     expect(res.status).toBe(200);
-    const diff = (await res.json()) as { raw: string };
-    expect(diff.raw).toContain('+hello untracked');
+    const diff = (await res.json()) as { lines: { content: string }[] };
+    expect(wireDiffText(diff)).toContain('+hello untracked');
   });
 
   test('POST stage returns {state} with the refreshed shared state; unstage reverses it', async () => {

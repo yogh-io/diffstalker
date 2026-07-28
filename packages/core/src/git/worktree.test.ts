@@ -32,7 +32,14 @@ describe('parseWorktreePorcelain', () => {
     const result = parseWorktreePorcelain(output);
 
     expect(result).toHaveLength(4);
-    expect(result[0]).toEqual({ path: '/repo/.bare', branch: null, head: null, isBare: true });
+    expect(result[0]).toEqual({
+      path: '/repo/.bare',
+      branch: null,
+      head: null,
+      isBare: true,
+      // git lists the main worktree first — here the bare git dir itself.
+      isMain: true,
+    });
     expect(result[1]).toMatchObject({ path: '/repo/main', branch: 'main', isBare: false });
     expect(result[2]).toMatchObject({ path: '/repo/feature', branch: 'feature' });
     // A detached worktree keeps its HEAD but has no branch.
@@ -43,7 +50,9 @@ describe('parseWorktreePorcelain', () => {
   it('parses a single non-bare worktree without a trailing blank line', () => {
     const output = ['worktree /repo', 'HEAD abc123', 'branch refs/heads/main'].join('\n');
     const result = parseWorktreePorcelain(output);
-    expect(result).toEqual([{ path: '/repo', branch: 'main', head: 'abc123', isBare: false }]);
+    expect(result).toEqual([
+      { path: '/repo', branch: 'main', head: 'abc123', isBare: false, isMain: true },
+    ]);
   });
 
   it('returns an empty array for empty output', () => {

@@ -34,7 +34,7 @@ function del(text: string, oldNum: number): DiffLine {
 }
 
 function makeDiff(lines: DiffLine[]): DiffResult {
-  return { raw: lines.map((l) => l.content).join('\n') + '\n', lines };
+  return { lines };
 }
 
 function mountDiff(
@@ -332,7 +332,7 @@ describe('empty and edge states', () => {
   });
 
   test('an empty diff shows the quiet empty state', () => {
-    const wrapper = mountDiff({ raw: '', lines: [] });
+    const wrapper = mountDiff({ lines: [] });
     expect(wrapper.find('[data-testid="diff-empty"]').text()).toContain('No changes to show');
   });
 

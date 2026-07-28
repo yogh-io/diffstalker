@@ -15,6 +15,18 @@ import type { DiffstalkerClient, WireSharedState, MutationEnvelope } from '@diff
 import type { FileEntry } from '@diffstalker/core/git/status';
 import { RepoSession, openRepoSession } from './RepoSession.js';
 
+import type { DiffResult } from '@diffstalker/core/git/diff';
+
+/** A one-line diff carrying a marker — the wire has no raw text to tag. */
+function markerDiff(marker: string): DiffResult {
+  return { lines: [{ type: 'context', content: marker }] };
+}
+
+/** Read a markerDiff back. */
+function markerOf(diff: DiffResult | null | undefined): string | undefined {
+  return diff?.lines[0]?.content;
+}
+
 const REPO_ID = 'abc123def456';
 const REPO_PATH = '/fake/repo';
 
@@ -70,7 +82,7 @@ function fakeClient(overrides: FakeClientOptions = {}) {
     status: () => Promise.resolve(wireState()),
     diff: (_id, opts) => {
       const o = (opts ?? {}) as { path?: string; staged?: boolean };
-      return Promise.resolve({ raw: `${o.path ?? '(all)'}:${o.staged ?? false}`, lines: [] });
+      return Promise.resolve(markerDiff(`${o.path ?? '(all)'}:${o.staged ?? false}`));
     },
     stage: () => Promise.resolve(envelope()),
     unstage: () => Promise.resolve(envelope()),
@@ -81,7 +93,7 @@ function fakeClient(overrides: FakeClientOptions = {}) {
     unstageHunk: () => Promise.resolve(envelope()),
     commit: () => Promise.resolve(envelope()),
     history: () => Promise.resolve([]),
-    commitDiff: () => Promise.resolve({ raw: '', lines: [] }),
+    commitDiff: () => Promise.resolve({ lines: [] }),
     headMessage: () => Promise.resolve('head message'),
     compare: () => Promise.resolve({ baseBranch: 'main', commits: [], files: [] }),
     baseBranches: () => Promise.resolve(['main']),
@@ -190,7 +202,7 @@ describe('RepoSession selection', () => {
     let releaseA: (() => void) | null = null;
     const fake = fakeClient({
       diff: (_id: string, opts: { path?: string; staged?: boolean }) => {
-        const result = { raw: `${opts.path}:${opts.staged}`, lines: [] };
+        const result = markerDiff(`${opts.path}:${opts.staged}`);
         if (opts.path === 'a.ts') {
           return new Promise((resolve) => {
             releaseA = () => resolve(result);
@@ -205,11 +217,11 @@ describe('RepoSession selection', () => {
     await sleep(30);
     session.selectFile(fileB); // fetch resolves immediately
     await sleep(30);
-    expect(session.selection.diff?.raw).toBe('b.ts:false');
+    expect(markerOf(session.selection.diff)).toBe('b.ts:false');
 
     releaseA!(); // stale a.ts result arrives late
     await sleep(5);
-    expect(session.selection.diff?.raw).toBe('b.ts:false'); // not clobbered
+    expect(markerOf(session.selection.diff)).toBe('b.ts:false'); // not clobbered
     await session.dispose();
   });
 
@@ -226,7 +238,7 @@ describe('RepoSession selection', () => {
     expect(opts.path).toBe('new.ts');
     expect('staged' in opts).toBe(false);
     // Combined pair synthesizes an empty staged side for the flat view.
-    expect(session.selection.combined?.staged.raw).toBe('');
+    expect(session.selection.combined?.staged.lines).toEqual([]);
     await session.dispose();
   });
 

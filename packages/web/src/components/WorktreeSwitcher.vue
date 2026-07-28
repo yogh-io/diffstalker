@@ -24,23 +24,29 @@
  */
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useDaemonStore } from '../stores/daemon';
 import { useRepoOpen } from '../composables/useRepoOpen';
+import { useWorktreeStore } from '../stores/worktrees';
 import { useActiveWorktrees } from '../composables/useActiveWorktrees';
 import { basename } from '../utils/format';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import type { WorktreeInfo } from '@diffstalker/client';
 
-const daemon = useDaemonStore();
 const { openByPath } = useRepoOpen();
-const { worktrees, hasMultiple } = useActiveWorktrees();
+const { activePath, worktrees, hasMultiple } = useActiveWorktrees();
+const worktreeStore = useWorktreeStore();
 
 const open = ref(false);
 const rootEl = ref<HTMLElement | null>(null);
 
-const currentPath = computed(
-  () => daemon.repos.find((r) => r.id === daemon.activeRepoId)?.path ?? ''
-);
+/** The active worktree's own path — the SAME value the list is keyed by,
+ * so the trigger and the rows can never describe different repos. */
+const currentPath = computed(() => activePath.value ?? '');
+
+// Re-read on every opening: "edited N ago" and commits-ahead go stale
+// while the panel sits closed, and this is the moment they are read.
+watch(open, (isOpen) => {
+  if (isOpen && activePath.value !== null) void worktreeStore.refresh([activePath.value]);
+});
 
 /** Past this much silence a worktree is "stale" and gets collapsed away. */
 const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
@@ -56,10 +62,9 @@ watch(open, (isOpen) => {
 });
 
 /** Most recently active first — that's usually the one being switched to.
- * Unknown activity sorts last (it is also what makes a worktree stale). */
-const sortedWorktrees = computed(() =>
-  [...worktrees.value].sort((a, b) => (b.lastActivity ?? -Infinity) - (a.lastActivity ?? -Infinity))
-);
+ * Unknown activity sorts last (it is also what makes a worktree stale).
+ * The store already sorts this way; this is just the readable alias. */
+const sortedWorktrees = computed(() => worktrees.value);
 
 /** Touched within the last week. A worktree whose activity could not be
  * read counts as stale — unknown is not evidence of recent work. */

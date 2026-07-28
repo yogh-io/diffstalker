@@ -13,16 +13,16 @@ import { useDaemonStore } from '../stores/daemon';
 import { useUiStore } from '../stores/ui';
 import { useRepoOpen } from '../composables/useRepoOpen';
 import { useActiveWorktrees } from '../composables/useActiveWorktrees';
-import { DiffstalkerClient } from '../api/client';
-import { basename, commonParentDir } from '../utils/format';
+import { useWorktreeStore, type WorktreeProject } from '../stores/worktrees';
+import { basename } from '../utils/format';
 import RepoOpenForm from './RepoOpenForm.vue';
-import type { RepoSummary, WorktreeInfo } from '@diffstalker/client';
+import type { RepoSummary } from '@diffstalker/client';
 
 const daemon = useDaemonStore();
 const ui = useUiStore();
 const { openByPath, activate } = useRepoOpen();
 const { hasMultiple, projectName } = useActiveWorktrees();
-const client = new DiffstalkerClient();
+const worktreeStore = useWorktreeStore();
 
 const open = ref(false);
 const rootEl = ref<HTMLElement | null>(null);
@@ -42,7 +42,34 @@ const triggerLabel = computed(() => {
   return hasMultiple.value ? projectName.value : basename(activeRepo.value.path);
 });
 
-// --- Group open repos by project -------------------------------------------
+// --- Grouping, all from the one worktree store ---------------------------
+
+/**
+ * Both lists below fold a project's worktrees into ONE row, and both read
+ * the same store entries — so a project reads identically in the trigger
+ * label, the "Open on daemon" row, the "Recent" row, and the worktree
+ * dropdown. Rows are derived from what the store knows RIGHT NOW, so the
+ * panel's contents no longer depend on how recently it was opened.
+ */
+
+const recentsNotOpen = computed(() =>
+  ui.recentRepos.filter((path) => !daemon.repos.some((repo) => repo.path === path))
+);
+
+/** Every path the panel needs resolved: the open repos and the recents. */
+const neededPaths = computed(() => [
+  ...daemon.repos.map((repo) => repo.path),
+  ...recentsNotOpen.value,
+]);
+
+/**
+ * Resolve while the panel is open (and re-resolve as its inputs change).
+ * `ensure` skips what is already known and dedups in flight, so this is
+ * one request per unknown path no matter how often it fires.
+ */
+watch([open, neededPaths], ([isOpen]) => {
+  if (isOpen) void worktreeStore.ensure(neededPaths.value);
+});
 
 interface RepoProject {
   /** Project root: the deepest dir containing all the repo's worktrees. */
@@ -55,53 +82,12 @@ interface RepoProject {
   worktreeCount: number;
 }
 
-/** repoId -> its project root + total worktree count, resolved by pulling
- * each repo's worktrees once. */
-const projectByRepoId = ref(new Map<string, { root: string; worktreeCount: number }>());
-
-/** Concurrently, for the same reason as resolveRecentProjects: sequential
- * awaits leave open worktrees of one project drawn as separate rows for
- * N round-trips before they fold together. */
-async function resolveProjects(): Promise<void> {
-  const pending = daemon.repos.filter((repo) => !projectByRepoId.value.has(repo.id));
-  if (pending.length === 0) return;
-
-  const settled = await Promise.all(
-    pending.map(async (repo) => {
-      try {
-        const paths = (await client.worktrees(repo.id))
-          .filter((w) => !w.isBare)
-          .map((w) => w.path);
-        return [
-          repo.id,
-          { root: commonParentDir(paths) || repo.path, worktreeCount: paths.length },
-        ] as const;
-      } catch {
-        // Keep the repo path as its own project on failure.
-        return [repo.id, { root: repo.path, worktreeCount: 0 }] as const;
-      }
-    })
-  );
-
-  const next = new Map(projectByRepoId.value);
-  for (const [id, resolved] of settled) next.set(id, resolved);
-  projectByRepoId.value = next;
-}
-
-// Resolve lazily: only while the panel is open, and again if the open-repo
-// set changes while it stays open (only unseen ids are fetched).
-watch(
-  [open, () => daemon.repos],
-  ([isOpen]) => {
-    if (isOpen) void resolveProjects();
-  },
-  { immediate: false }
-);
-
 const openProjects = computed<RepoProject[]>(() => {
   const groups = new Map<string, RepoProject>();
   for (const repo of daemon.repos) {
-    const resolved = projectByRepoId.value.get(repo.id);
+    // Unresolved: the repo stands as its own project (its path, its name).
+    // It folds into its family the moment the entry lands.
+    const resolved = worktreeStore.projectFor(repo.path);
     const root = resolved?.root ?? repo.path;
     let group = groups.get(root);
     if (!group) {
@@ -111,104 +97,35 @@ const openProjects = computed<RepoProject[]>(() => {
     group.repos.push(repo);
     // Every repo in a group belongs to the same family, so they all report
     // the same count; take whichever resolved (0 while none has yet).
-    group.worktreeCount = Math.max(group.worktreeCount, resolved?.worktreeCount ?? 0);
+    group.worktreeCount = Math.max(group.worktreeCount, resolved?.worktrees.length ?? 0);
   }
   return [...groups.values()];
 });
 
-const recentsNotOpen = computed(() =>
-  ui.recentRepos.filter((path) => !daemon.repos.some((repo) => repo.path === path))
-);
-
-// --- Group recents by project (mirrors openProjects above) -----------------
-
-interface RecentProject {
-  /** Project root: the deepest dir containing every known worktree of this
-   * repo, or the recent path itself while unresolved / on failure. */
-  root: string;
-  name: string;
-  /** Every worktree of this project the daemon reports (used to pick which
-   * one to open — not just the ones that happen to be in `recentRepos`). */
-  worktrees: WorktreeInfo[];
-}
-
 /**
- * What we know about a recent path. ABSENT from the map means "still
- * asking" — deliberately distinct from every settled state, because a
- * pending path must NOT render: several worktrees of one repo each
- * resolve to the same project row, so drawing them before they resolve
- * shows a stray row per worktree that then vanishes (exactly the
- * "why is my worktree listed as a repo" bug).
+ * One row per project root, folding every recent path that resolved to the
+ * same root and dropping any already shown under "Open on daemon".
+ *
+ * Which recents render, by entry status:
+ *  - unknown / pending: held back. Several worktrees of one project each
+ *    resolve to the same row, so drawing them early shows a stray row per
+ *    worktree that then vanishes (the "why is my worktree listed as a
+ *    repo" bug);
+ *  - absent: dropped — the daemon looked and the path is not a worktree
+ *    (a removed directory still in prefs);
+ *  - failed: rendered by its own path. We could not ask, so the entry is
+ *    not evidence the path is bad, and the list must not silently lose it
+ *    because the daemon blinked.
  */
-type RecentResolution =
-  /** Resolved to a real worktree family. */
-  | { kind: 'project'; project: RecentProject }
-  /** Resolved, but the path is no longer a worktree at all (a removed
-   * worktree directory still in prefs) — drop it from the list. */
-  | { kind: 'gone' }
-  /** Could not ask (daemon down/restarting). Distinct from 'gone': the
-   * path may well be fine, so it still renders (by its own path — the
-   * best we know) and is retried the next time the panel opens. */
-  | { kind: 'failed' };
-
-const recentResolution = ref(new Map<string, RecentResolution>());
-
-/**
- * Resolve every not-yet-known recent path CONCURRENTLY. Sequentially
- * (one await per path) the unresolved window is N x round-trip, which is
- * long enough to see stray per-worktree rows before they fold together;
- * in parallel it is one round-trip for all of them.
- */
-async function resolveRecentProjects(): Promise<void> {
-  const pending = recentsNotOpen.value.filter((path) => !recentResolution.value.has(path));
-  if (pending.length === 0) return;
-
-  const settled = await Promise.all(
-    pending.map(async (path): Promise<[string, RecentResolution]> => {
-      try {
-        const worktrees = (await client.worktreesForPath(path)).filter((w) => !w.isBare);
-        if (worktrees.length === 0) return [path, { kind: 'gone' }];
-        const root = commonParentDir(worktrees.map((w) => w.path)) || path;
-        return [path, { kind: 'project', project: { root, name: basename(root), worktrees } }];
-      } catch {
-        return [path, { kind: 'failed' }];
-      }
-    })
-  );
-
-  const next = new Map(recentResolution.value);
-  for (const [path, resolution] of settled) next.set(path, resolution);
-  recentResolution.value = next;
-}
-
-watch(
-  [open, recentsNotOpen],
-  ([isOpen]) => {
-    if (!isOpen) return;
-    // Reopening retries whatever we couldn't reach last time; 'gone' and
-    // 'project' are settled facts and stay cached.
-    for (const [path, resolution] of recentResolution.value) {
-      if (resolution.kind === 'failed') recentResolution.value.delete(path);
-    }
-    void resolveRecentProjects();
-  },
-  { immediate: false }
-);
-
-/** One row per project root, folding every recent path that resolved to the
- * same root and dropping any already shown under "Open on daemon". Paths
- * still being resolved are held back entirely (see RecentResolution);
- * paths we could not reach fall back to their own path so the list never
- * silently loses an entry just because the daemon blinked. */
-const recentProjects = computed<RecentProject[]>(() => {
+const recentProjects = computed<WorktreeProject[]>(() => {
   const openRoots = new Set(openProjects.value.map((p) => p.root));
-  const seen = new Map<string, RecentProject>();
+  const seen = new Map<string, WorktreeProject>();
   for (const path of recentsNotOpen.value) {
-    const resolution = recentResolution.value.get(path);
-    if (resolution === undefined || resolution.kind === 'gone') continue;
+    const entry = worktreeStore.entryFor(path);
+    if (entry === undefined || entry.status === 'pending' || entry.status === 'absent') continue;
     const project =
-      resolution.kind === 'project'
-        ? resolution.project
+      entry.status === 'ready'
+        ? entry.project
         : { root: path, name: basename(path), worktrees: [] };
     if (openRoots.has(project.root) || seen.has(project.root)) continue;
     seen.set(project.root, project);
@@ -216,13 +133,10 @@ const recentProjects = computed<RecentProject[]>(() => {
   return [...seen.values()];
 });
 
-/** The worktree to open for a project: the most recently active one, or
- * the root itself when no worktree data resolved. */
-function bestWorktreePath(project: RecentProject): string {
-  if (project.worktrees.length === 0) return project.root;
-  return project.worktrees.reduce((best, w) =>
-    (w.lastActivity ?? -Infinity) > (best.lastActivity ?? -Infinity) ? w : best
-  ).path;
+/** The worktree to open for a project: the most recently active one (the
+ * store sorts by activity), or the root itself when nothing resolved. */
+function bestWorktreePath(project: WorktreeProject): string {
+  return project.worktrees[0]?.path ?? project.root;
 }
 
 /** Activate a project: keep the active worktree if it's in this project,
@@ -233,7 +147,7 @@ function pickProject(project: RepoProject): void {
   open.value = false;
 }
 
-async function pickRecentProject(project: RecentProject): Promise<void> {
+async function pickRecentProject(project: WorktreeProject): Promise<void> {
   const ok = await openByPath(bestWorktreePath(project));
   if (ok) open.value = false;
 }

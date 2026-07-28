@@ -15,6 +15,7 @@ import { HttpError, sendJson } from '../router.js';
 import type { RepoRegistry, RepoHandle } from '../repoRegistry.js';
 import type { SseHub, DaemonEventHub } from '../sse.js';
 import type { FollowController } from '../follow.js';
+import type { VersionService } from '../version.js';
 import { serializeSharedState } from '../serialize.js';
 
 /** Everything a route module needs, injected by createDaemon. */
@@ -24,6 +25,8 @@ export interface RouteDeps {
   daemonEvents: DaemonEventHub;
   /** Null when follow mode is disabled (--no-follow). */
   follow: FollowController | null;
+  /** Running-vs-published version, behind a cache (GET /version). */
+  version: VersionService;
   /**
    * REST surface to expose. 'web' registers only what the web UI uses
    * (reads + repo open/release + file stage/unstage); 'full' adds the

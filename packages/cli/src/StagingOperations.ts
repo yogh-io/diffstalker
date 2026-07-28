@@ -5,7 +5,7 @@ import type { FlatFileEntry } from '@diffstalker/core/view/flatFileList';
 import type { CombinedHunkInfo } from './utils/displayRows.js';
 import { getFlatFileAtIndex } from '@diffstalker/core/view/flatFileList';
 import { getCategoryForIndex, type CategoryName } from '@diffstalker/core/view/fileCategories';
-import { extractHunkPatch } from '@diffstalker/core/git/diffParse';
+import { extractHunkPatch, rawFromLines } from '@diffstalker/core/git/diffParse';
 
 /**
  * Read-only context provided by App for staging decisions.
@@ -186,8 +186,10 @@ export class StagingOperations {
     const combined = session?.selection.combined;
     if (!combined) return;
 
-    const rawDiff = mapping.source === 'unstaged' ? combined.unstaged.raw : combined.staged.raw;
-    const patch = extractHunkPatch(rawDiff, mapping.hunkIndex);
+    const side = mapping.source === 'unstaged' ? combined.unstaged : combined.staged;
+    // The wire carries lines only; extractHunkPatch works on patch text,
+    // which lines reconstruct exactly (it splits on newlines anyway).
+    const patch = extractHunkPatch(rawFromLines(side.lines), mapping.hunkIndex);
     if (!patch) return;
 
     this.pendingHunkIndex = this.ctx.uiState.state.selectedHunkIndex;
@@ -201,10 +203,10 @@ export class StagingOperations {
 
   private async toggleCurrentHunkCategorized(selectedFile: FileEntry): Promise<void> {
     const session = this.ctx.getSession();
-    const rawDiff = session?.selection.diff?.raw;
-    if (!rawDiff) return;
+    const lines = session?.selection.diff?.lines;
+    if (!lines || lines.length === 0) return;
 
-    const patch = extractHunkPatch(rawDiff, this.ctx.uiState.state.selectedHunkIndex);
+    const patch = extractHunkPatch(rawFromLines(lines), this.ctx.uiState.state.selectedHunkIndex);
     if (!patch) return;
 
     const files = session?.shared.status?.files ?? [];

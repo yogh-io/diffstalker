@@ -25,7 +25,7 @@ const daemonUrl = process.env.DIFFSTALKER_DAEMON_URL ?? 'http://127.0.0.1:7337';
  * where it expected JSON. `devProxy.test.ts` derives the real set from
  * the daemon's route registrations and fails if this list drifts.
  */
-export const apiPaths = ['/health', '/repos', '/events', '/follow', '/worktrees'];
+export const apiPaths = ['/health', '/version', '/repos', '/events', '/follow', '/worktrees'];
 
 export default defineConfig({
   plugins: [vue()],

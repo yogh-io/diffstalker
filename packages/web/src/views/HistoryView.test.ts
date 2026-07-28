@@ -40,7 +40,6 @@ function commit(overrides: Partial<CommitInfo> = {}): CommitInfo {
 
 /** A commit diff spanning two files — the multi-file DiffView case. */
 const TWO_FILE_DIFF: DiffResult = {
-  raw: '',
   lines: [
     { type: 'header', content: 'diff --git a/src/foo.ts b/src/foo.ts' },
     { type: 'hunk', content: '@@ -1 +1 @@' },

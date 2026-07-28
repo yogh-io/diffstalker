@@ -1,13 +1,13 @@
 /**
  * splitDiffByFile tests: multi-file splitting, single-file passthrough,
- * empty input, binary-file headers, raw round-trip fidelity (per-file
- * raws re-concatenate to the whole-tree raw), and preservation of the
- * already-parsed line objects (editedAt stamps, object identity).
+ * empty input, binary-file headers, round-trip fidelity (the per-file
+ * sections re-concatenate to the whole-tree text), and preservation of
+ * the already-parsed line objects (editedAt stamps, object identity).
  */
 
 import { describe, test, expect } from 'vitest';
 import { splitDiffByFile } from './splitDiffByFile.js';
-import { parseDiffWithLineNumbers } from '../git/diffParse.js';
+import { parseDiffWithLineNumbers, rawFromLines } from '../git/diffParse.js';
 import type { DiffResult } from '../git/diffParse.js';
 
 function fileDiffRaw(path: string, marker: string): string {
@@ -35,8 +35,8 @@ describe('splitDiffByFile', () => {
     const split = splitDiffByFile(toDiffResult(rawA + rawB));
 
     expect([...split.keys()]).toEqual(['src/a.ts', 'src/b.ts']);
-    expect(split.get('src/a.ts')!.raw).toBe(rawA);
-    expect(split.get('src/b.ts')!.raw).toBe(rawB);
+    expect(rawFromLines(split.get('src/a.ts')!.lines ?? [])).toBe(rawA);
+    expect(rawFromLines(split.get('src/b.ts')!.lines ?? [])).toBe(rawB);
 
     // Each per-file lines set is exactly that file's slice of the whole.
     const aLines = split.get('src/a.ts')!.lines;
@@ -48,19 +48,19 @@ describe('splitDiffByFile', () => {
   test('per-file raws re-concatenate to the whole-tree raw (round trip)', () => {
     const whole = fileDiffRaw('a.ts', 'A') + fileDiffRaw('b.ts', 'B') + fileDiffRaw('c.ts', 'C');
     const split = splitDiffByFile(toDiffResult(whole));
-    expect([...split.values()].map((d) => d.raw).join('')).toBe(whole);
+    expect([...split.values()].map((d) => rawFromLines(d.lines)).join('')).toBe(whole);
   });
 
   test('a single-file diff yields one entry with the input raw', () => {
     const raw = fileDiffRaw('only.ts', 'X');
     const split = splitDiffByFile(toDiffResult(raw));
     expect(split.size).toBe(1);
-    expect(split.get('only.ts')!.raw).toBe(raw);
+    expect(rawFromLines(split.get('only.ts')!.lines ?? [])).toBe(raw);
     expect(split.get('only.ts')!.lines).toHaveLength(8);
   });
 
   test('an empty diff yields an empty map', () => {
-    expect(splitDiffByFile({ raw: '', lines: [] }).size).toBe(0);
+    expect(splitDiffByFile({ lines: [] }).size).toBe(0);
   });
 
   test('a binary-file section keeps its Binary files header, no hunks', () => {
@@ -75,7 +75,7 @@ describe('splitDiffByFile', () => {
 
     expect([...split.keys()]).toEqual(['img.png', 'a.ts']);
     const img = split.get('img.png')!;
-    expect(img.raw).toBe(binary);
+    expect(rawFromLines(img.lines)).toBe(binary);
     expect(img.lines.some((l) => l.content.startsWith('Binary files'))).toBe(true);
     expect(img.lines.every((l) => l.type === 'header')).toBe(true);
   });
@@ -95,6 +95,6 @@ describe('splitDiffByFile', () => {
     const raw = 'warning: something\n' + fileDiffRaw('a.ts', 'A');
     const split = splitDiffByFile(toDiffResult(raw));
     expect([...split.keys()]).toEqual(['a.ts']);
-    expect(split.get('a.ts')!.raw).toBe(fileDiffRaw('a.ts', 'A'));
+    expect(rawFromLines(split.get('a.ts')!.lines ?? [])).toBe(fileDiffRaw('a.ts', 'A'));
   });
 });

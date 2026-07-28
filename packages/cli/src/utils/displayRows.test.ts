@@ -17,7 +17,7 @@ describe('buildDiffDisplayRows', () => {
   });
 
   it('returns empty array for empty diff', () => {
-    expect(buildDiffDisplayRows({ raw: '', lines: [] })).toEqual([]);
+    expect(buildDiffDisplayRows({ lines: [] })).toEqual([]);
   });
 
   it('filters non-displayable headers', () => {

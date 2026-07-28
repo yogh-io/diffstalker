@@ -27,7 +27,6 @@ let socketFile: string | null = null;
 
 /** One-hunk snapshot diff as the daemon embeds it (file header + one @@ section). */
 const hunkDiff: DiffResult = {
-  raw: 'diff --git a/file.txt b/file.txt\n@@ -1,2 +1,3 @@\n context\n+added line\n',
   lines: [
     { type: 'header', content: 'diff --git a/file.txt b/file.txt' },
     { type: 'hunk', content: '@@ -1,2 +1,3 @@' },

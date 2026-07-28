@@ -65,13 +65,13 @@ describe('daemon + repos', () => {
 
 describe('working tree', () => {
   test('diff without options queries the whole tree', async () => {
-    respond = () => ({ body: { raw: '', lines: [] } });
+    respond = () => ({ body: { lines: [] } });
     await client.diff('r1');
     expect(fake.calls[0].url).toBe('/repos/r1/diff');
   });
 
   test('diff includes path and an explicit staged=false', async () => {
-    respond = () => ({ body: { raw: '', lines: [] } });
+    respond = () => ({ body: { lines: [] } });
     await client.diff('r1', { path: 'src/a.ts', staged: false });
     expect(fake.calls[0].url).toBe('/repos/r1/diff?path=src%2Fa.ts&staged=false');
   });
@@ -110,7 +110,7 @@ describe('history / compare decoding', () => {
   });
 
   test('commitDiff encodes the hash', async () => {
-    respond = () => ({ body: { raw: '', lines: [] } });
+    respond = () => ({ body: { lines: [] } });
     await client.commitDiff('r1', 'abc/def');
     expect(fake.calls[0].url).toBe('/repos/r1/commits/abc%2Fdef/diff');
   });
@@ -170,7 +170,7 @@ describe('journal', () => {
           kind: 'edited',
           span: { start: 1, count: 2 },
           stats: { insertions: 1, deletions: 0 },
-          diff: { raw: '@@ -1,2 +1,3 @@\n+added', lines: [] },
+          diff: { lines: [] },
           supersedes: [3],
           siblings: 1,
           seeded: false,

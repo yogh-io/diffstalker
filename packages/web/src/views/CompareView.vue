@@ -286,8 +286,28 @@ function toggleFileCollapsed(path: string): void {
 /** Compare files mapped onto the stack's shape; keyed by path (unique
  *  within a compare — no staged/unstaged split here). Diffs are
  *  pre-embedded, so the stack's placeholder branch never triggers. */
+/**
+ * Every file in TREE order — the same order, and the same directory
+ * grouping, the tree above shows. The daemon returns files in git's flat
+ * path sort, which differs from the tree the moment a directory holds
+ * both sub-directories and loose files (the tree puts `src/bootstrap/…`
+ * before `src/app.ts`; a flat sort interleaves them), so scrolling the
+ * diffs did not read like walking the tree.
+ *
+ * Built from treeRows, NOT visibleRows: collapsing a directory is a
+ * navigation affordance for the tree, and must never reorder the diffs
+ * or drop a file's diff out of the stack.
+ */
+const treeOrderedFiles = computed<CompareFileDiff[]>(() =>
+  treeRows.value.flatMap((row) => {
+    if (row.type !== 'file' || row.fileIndex === undefined) return [];
+    const file = files.value[row.fileIndex];
+    return file ? [file] : [];
+  })
+);
+
 const stackFiles = computed<StackFile[]>(() =>
-  files.value.map((file) => ({
+  treeOrderedFiles.value.map((file) => ({
     key: file.path,
     path: file.path,
     status: file.status,

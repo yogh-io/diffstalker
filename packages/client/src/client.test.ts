@@ -13,6 +13,7 @@ import * as path from 'node:path';
 import { createDaemon, type Daemon } from 'diffstalkerd/src/server.ts';
 import { DiffstalkerClient, DaemonError, isConnectionError } from './index.js';
 import type { RepoRef, WireSharedState } from './index.js';
+import { rawFromLines } from '@diffstalker/core/git/diffParse';
 
 const SOCKET = path.join(os.tmpdir(), `diffstalker-client-test-${process.pid}.sock`);
 
@@ -154,7 +155,7 @@ describe('working tree', () => {
 
   test('diff({path}) returns the change', async () => {
     const diff = await client.diff(repoId, { path: 'file.txt' });
-    expect(diff.raw).toContain('+added line');
+    expect(rawFromLines(diff.lines)).toContain('+added line');
     // DiffLine.content keeps the raw diff prefix ('+').
     expect(
       diff.lines.some((line) => line.type === 'addition' && line.content === '+added line')
@@ -182,7 +183,7 @@ describe('working tree', () => {
   test('commitDiff returns the diff of the new commit', async () => {
     const [head] = await client.history(repoId, 1);
     const diff = await client.commitDiff(repoId, head.hash);
-    expect(diff.raw).toContain('+added line');
+    expect(rawFromLines(diff.lines)).toContain('+added line');
   });
 });
 

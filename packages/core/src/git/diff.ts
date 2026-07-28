@@ -3,7 +3,13 @@ import * as path from 'node:path';
 import { createGit } from './gitClient.js';
 import { CommitInfo } from './status.js';
 import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
-import { parseDiffWithLineNumbers } from './diffParse.js';
+import {
+  capLargeFileDiffs,
+  largeDiffNotice,
+  parseDiffWithLineNumbers,
+  rawFromLines,
+  MAX_FILE_DIFF_BYTES,
+} from './diffParse.js';
 import type { DiffLine, DiffResult } from './diffParse.js';
 
 // Re-export the pure diff/patch parsers so existing importers (the daemon,
@@ -75,11 +81,10 @@ export async function getDiff(
       args.push('--', file);
     }
 
-    const raw = await git.diff(args);
-    const lines = parseDiffWithLineNumbers(raw);
-    return { raw, lines };
+    const raw = capLargeFileDiffs(await git.diff(args));
+    return { lines: parseDiffWithLineNumbers(raw) };
   } catch {
-    return { raw: '', lines: [] };
+    return { lines: [] };
   }
 }
 
@@ -135,14 +140,30 @@ export async function getDiffAgainstHead(repoPath: string): Promise<DiffResult> 
   const git = createGit(repoPath);
   const head = await getHeadOid(repoPath);
   const base = head === UNBORN_HEAD_OID ? EMPTY_TREE_OID : 'HEAD';
-  const raw = await git.raw(['diff', '-U3', base, '--']);
-  return { raw, lines: parseDiffWithLineNumbers(raw) };
+  const raw = capLargeFileDiffs(await git.raw(['diff', '-U3', base, '--']));
+  return { lines: parseDiffWithLineNumbers(raw) };
 }
 
-/** Cap on the untracked file read below — mirrors explorerData's display
- *  limit. A file larger than this yields an empty diff (catch-to-empty
- *  convention) rather than buffering an unbounded read into memory. */
-const MAX_UNTRACKED_DIFF_BYTES = 1024 * 1024;
+/** Cap on the untracked file read below: the same per-file diff cap every
+ *  other path uses, so one threshold governs "too big to show". Over it,
+ *  the file is never read — it gets the notice instead. */
+const MAX_UNTRACKED_DIFF_BYTES = MAX_FILE_DIFF_BYTES;
+
+/**
+ * An untracked file too big to read: git's new-file header shape plus the
+ * same notice an oversized tracked diff gets. Line count is unknown (the
+ * file is never read) — the notice carries the byte size only.
+ */
+function tooLargeUntrackedDiff(file: string, bytes: number): DiffResult {
+  const lines: DiffLine[] = [
+    { type: 'header', content: `diff --git a/${file} b/${file}` },
+    { type: 'header', content: 'new file mode 100644' },
+    { type: 'header', content: '--- /dev/null' },
+    { type: 'header', content: `+++ b/${file}` },
+    { type: 'header', content: largeDiffNotice(bytes) },
+  ];
+  return { lines };
+}
 
 export async function getDiffForUntracked(repoPath: string, file: string): Promise<DiffResult> {
   try {
@@ -153,7 +174,7 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
     const root = path.resolve(repoPath);
     const resolved = path.resolve(root, file);
     if (resolved !== root && !resolved.startsWith(root + path.sep)) {
-      return { raw: '', lines: [] };
+      return { lines: [] };
     }
     let real: string;
     let realRoot: string;
@@ -162,16 +183,21 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
       realRoot = fs.realpathSync(root);
     } catch {
       // Path or a link target does not resolve: nothing to serve.
-      return { raw: '', lines: [] };
+      return { lines: [] };
     }
     if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
-      return { raw: '', lines: [] };
+      return { lines: [] };
     }
-    // Refuse non-regular files and cap the read so a huge untracked file
-    // cannot freeze the event loop / exhaust memory.
+    // Refuse non-regular files outright (nothing to show for a FIFO or a
+    // device), and never read a huge file into memory: it gets the same
+    // "too large" notice a tracked file's oversized diff gets, rather
+    // than an empty diff that reads as "no changes".
     const stat = fs.statSync(real);
-    if (!stat.isFile() || stat.size > MAX_UNTRACKED_DIFF_BYTES) {
-      return { raw: '', lines: [] };
+    if (!stat.isFile()) {
+      return { lines: [] };
+    }
+    if (stat.size > MAX_UNTRACKED_DIFF_BYTES) {
+      return tooLargeUntrackedDiff(file, stat.size);
     }
     // For untracked files, show the entire file as additions, shaped like
     // git's own new-file diff: the trailing newline produces no phantom
@@ -200,10 +226,14 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
       }
     }
 
-    const raw = lines.map((l) => l.content).join('\n');
-    return { raw, lines };
+    // A file under the byte cap can still blow the line cap (many short
+    // lines); capLargeFileDiffs is the one place that decides either way.
+    const raw = rawFromLines(lines);
+    const capped = capLargeFileDiffs(raw);
+    if (capped !== raw) return { lines: parseDiffWithLineNumbers(capped) };
+    return { lines };
   } catch {
-    return { raw: '', lines: [] };
+    return { lines: [] };
   }
 }
 
@@ -329,7 +359,7 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
   const nameStatus = await git.raw(['diff', '--name-status', `${base}...HEAD`]);
 
   // Get full diff
-  const rawDiff = await git.raw(['diff', `${base}...HEAD`]);
+  const rawDiff = capLargeFileDiffs(await git.raw(['diff', `${base}...HEAD`]));
 
   // Parse numstat: "additions deletions filepath" per line
   const numstatLines = numstat
@@ -395,7 +425,7 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
       status,
       additions: stats.additions,
       deletions: stats.deletions,
-      diff: { raw: chunk, lines },
+      diff: { lines },
     });
   }
 
@@ -448,11 +478,12 @@ export async function getCommitDiff(repoPath: string, hash: string): Promise<Dif
   try {
     // git show --format="" gives just the diff without commit metadata;
     // --end-of-options keeps a flag-shaped hash from being read as an option
-    const raw = await git.raw(['show', '--format=', '--end-of-options', hash]);
-    const lines = parseDiffWithLineNumbers(raw);
-    return { raw, lines };
+    const raw = capLargeFileDiffs(
+      await git.raw(['show', '--format=', '--end-of-options', hash])
+    );
+    return { lines: parseDiffWithLineNumbers(raw) };
   } catch {
-    return { raw: '', lines: [] };
+    return { lines: [] };
   }
 }
 
@@ -550,7 +581,7 @@ export async function getCompareDiffWithUncommitted(
       status: fileStatus,
       additions: fileStats.additions,
       deletions: fileStats.deletions,
-      diff: { raw: chunk, lines },
+      diff: { lines },
       isUncommitted: true,
     });
   }

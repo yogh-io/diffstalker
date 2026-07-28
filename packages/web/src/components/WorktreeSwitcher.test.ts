@@ -5,8 +5,9 @@
  * the closed control), and its dropdown lists every worktree sorted
  * most-recently-active first, each with a second line noting commits
  * ahead of base and how long ago it was edited. Picking a row opens it
- * (POST /repos). The worktree list comes from the daemon store (set
- * directly here).
+ * (POST /repos). The worktree list is resolved the real way — through
+ * GET /worktrees?path= into the worktree store — so these exercise the
+ * same path the app does.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -14,29 +15,43 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import WorktreeSwitcher from './WorktreeSwitcher.vue';
 import { useDaemonStore } from '../stores/daemon';
-import { makeFakeFetch } from '../testing/fakes';
+import { useWorktreeStore } from '../stores/worktrees';
+import { makeFakeFetch, worktree } from '../testing/fakes';
 import type { WorktreeInfo } from '@diffstalker/client';
 
-const CALC = '/home/u/gitRepos/calculator';
+const CALC = '/w/calculator';
+// A bare-repo layout: the bare git dir is the main entry, worktrees sit
+// beside it. The switcher must not care which layout this is.
 const WORKTREES: WorktreeInfo[] = [
-  { path: `${CALC}/main`, branch: 'main', head: 'aaa', isBare: false, lastActivity: null, aheadOfBase: null },
-  { path: `${CALC}/fix-a`, branch: 'fix-a', head: 'bbb', isBare: false, lastActivity: null, aheadOfBase: null },
-  { path: `${CALC}/detached`, branch: null, head: 'ccc', isBare: false, lastActivity: null, aheadOfBase: null },
+  worktree(`${CALC}/.bare`, null, { main: true, bare: true }),
+  worktree(`${CALC}/main`, 'main'),
+  worktree(`${CALC}/fix-a`, 'fix-a'),
+  worktree(`${CALC}/detached`, null),
 ];
 
 let posted: Array<{ path: string }>;
+/** What GET /worktrees?path= answers, per queried path. */
+let worktreesByPath: Map<string, WorktreeInfo[]>;
 
-function prime(worktrees: WorktreeInfo[], activePath: string): void {
+/** The path a GET /worktrees call asked about. */
+function queriedPath(url: string): string {
+  return new URLSearchParams(url.split('?')[1] ?? '').get('path') ?? '';
+}
+
+async function prime(worktrees: WorktreeInfo[], activePath: string): Promise<void> {
   const daemon = useDaemonStore();
   daemon.repos = [{ id: 'r1', path: activePath, branch: null }];
   daemon.activeRepoId = 'r1';
-  daemon.worktrees = worktrees;
+  worktreesByPath.set(activePath, worktrees);
+  useWorktreeStore(); // its active-path watcher resolves on creation
+  await flushPromises();
 }
 
 beforeEach(() => {
   localStorage.clear();
   setActivePinia(createPinia());
   posted = [];
+  worktreesByPath = new Map();
   vi.stubGlobal(
     'fetch',
     makeFakeFetch((call) => {
@@ -44,6 +59,9 @@ beforeEach(() => {
         const body = call.body as { path: string };
         posted.push(body);
         return { body: { id: 'other', path: body.path } };
+      }
+      if (call.method === 'GET' && call.url.startsWith('/worktrees')) {
+        return { body: worktreesByPath.get(queriedPath(call.url)) ?? [] };
       }
       return { status: 404, body: {} };
     }).fn
@@ -55,18 +73,19 @@ afterEach(() => {
 });
 
 describe('visibility', () => {
-  test('hidden when no repo is active', () => {
+  test('hidden when no repo is active', async () => {
     const wrapper = mount(WorktreeSwitcher);
     expect(wrapper.find('[data-testid="worktree-select"]').exists()).toBe(false);
   });
 
-  test('hidden when there is only one worktree', () => {
-    prime(
+  test('hidden when there is only one worktree', async () => {
+    await prime(
       [
         {
           path: `${CALC}/only`,
           branch: 'only',
           head: 'aaa',
+          isMain: false,
           isBare: false,
           lastActivity: null,
           aheadOfBase: null,
@@ -80,13 +99,14 @@ describe('visibility', () => {
 });
 
 describe('multi-worktree repo', () => {
-  test('the closed trigger shows only the current worktree name, no meta', () => {
-    prime(
+  test('the closed trigger shows only the current worktree name, no meta', async () => {
+    await prime(
       [
         {
           path: `${CALC}/fix-a`,
           branch: 'fix-a',
           head: 'a',
+          isMain: false,
           isBare: false,
           lastActivity: Date.now() - 60_000,
           aheadOfBase: 3,
@@ -95,6 +115,7 @@ describe('multi-worktree repo', () => {
           path: `${CALC}/main`,
           branch: 'main',
           head: 'b',
+          isMain: false,
           isBare: false,
           lastActivity: Date.now() - 120_000,
           aheadOfBase: 0,
@@ -107,7 +128,7 @@ describe('multi-worktree repo', () => {
   });
 
   test('opening the dropdown lists worktrees, active one highlighted, detached -> dir name', async () => {
-    prime(WORKTREES, `${CALC}/fix-a`);
+    await prime(WORKTREES, `${CALC}/fix-a`);
     const wrapper = mount(WorktreeSwitcher);
     await wrapper.find('[data-testid="worktree-select"]').trigger('click');
 
@@ -118,7 +139,7 @@ describe('multi-worktree repo', () => {
   });
 
   test('picking a different worktree opens it by path and closes the dropdown', async () => {
-    prime(WORKTREES, `${CALC}/fix-a`);
+    await prime(WORKTREES, `${CALC}/fix-a`);
     const wrapper = mount(WorktreeSwitcher);
     await wrapper.find('[data-testid="worktree-select"]').trigger('click');
 
@@ -132,12 +153,13 @@ describe('multi-worktree repo', () => {
 
   test('sorts by most-recently-active first and labels ahead-count + how long ago', async () => {
     const now = Date.now();
-    prime(
+    await prime(
       [
         {
           path: `${CALC}/earlier`,
           branch: 'earlier',
           head: 'a',
+          isMain: false,
           isBare: false,
           lastActivity: now - 3 * 60 * 60 * 1000,
           aheadOfBase: 2,
@@ -146,6 +168,7 @@ describe('multi-worktree repo', () => {
           path: `${CALC}/fresh`,
           branch: 'fresh',
           head: 'b',
+          isMain: false,
           isBare: false,
           lastActivity: now - 60 * 1000,
           aheadOfBase: 0,
@@ -154,6 +177,7 @@ describe('multi-worktree repo', () => {
           path: `${CALC}/unknown`,
           branch: 'unknown',
           head: 'c',
+          isMain: false,
           isBare: false,
           lastActivity: null,
           aheadOfBase: null,
@@ -186,6 +210,7 @@ describe('recent / stale sections', () => {
       path: `${CALC}/${name}`,
       branch: name,
       head: 'h',
+      isMain: false,
       isBare: false,
       lastActivity: ageMs === null ? null : Date.now() - ageMs,
       aheadOfBase: null,
@@ -216,7 +241,7 @@ describe('recent / stale sections', () => {
   }
 
   test('splits at a week and collapses stale to three behind "N more"', async () => {
-    prime(MANY, `${CALC}/now-a`);
+    await prime(MANY, `${CALC}/now-a`);
     const wrapper = await openPanel();
 
     expect(
@@ -229,7 +254,7 @@ describe('recent / stale sections', () => {
   });
 
   test('"N more" reveals the rest', async () => {
-    prime(MANY, `${CALC}/now-a`);
+    await prime(MANY, `${CALC}/now-a`);
     const wrapper = await openPanel();
 
     await wrapper.find('[data-testid="worktree-more"]').trigger('click');
@@ -242,7 +267,7 @@ describe('recent / stale sections', () => {
     // old-e is the 5th stale entry — past the three-row preview. Being
     // unable to see which worktree you are on would be worse than the
     // extra row, so it is shown anyway (and still counted as hidden-none).
-    prime(MANY, `${CALC}/old-e`);
+    await prime(MANY, `${CALC}/old-e`);
     const wrapper = await openPanel();
 
     expect(names(wrapper)).toContain('old-e');
@@ -255,7 +280,7 @@ describe('recent / stale sections', () => {
   });
 
   test('no section headings when nothing is stale', async () => {
-    prime([wt('now-a', 1 * DAY), wt('now-b', 2 * DAY)], `${CALC}/now-a`);
+    await prime([wt('now-a', 1 * DAY), wt('now-b', 2 * DAY)], `${CALC}/now-a`);
     const wrapper = await openPanel();
 
     expect(wrapper.find('[data-testid="worktree-options"] .group-label').exists()).toBe(false);
@@ -263,7 +288,7 @@ describe('recent / stale sections', () => {
   });
 
   test('reopening collapses the stale list again', async () => {
-    prime(MANY, `${CALC}/now-a`);
+    await prime(MANY, `${CALC}/now-a`);
     const wrapper = await openPanel();
     await wrapper.find('[data-testid="worktree-more"]').trigger('click');
     expect(names(wrapper)).toHaveLength(MANY.length);

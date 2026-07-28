@@ -4,9 +4,9 @@
  * /home/<user> prefix.
  *
  *   /<home-relative-repo-path>/<view>
- *   /gitRepos/calculator/fix-bbox/compare
- *   /gitRepos/calculator/fix-bbox/compare/upstream:main   (overridden base)
- *   /gitRepos/diffstalker/history
+ *   /w/calculator/fix-bbox/compare
+ *   /w/calculator/fix-bbox/compare/upstream:main   (overridden base)
+ *   /w/diffstalker/history
  *
  * The repo path's slashes are real path segments. Paths are stored RELATIVE
  * to the daemon's $HOME (fetched from GET /health) — a repo outside home

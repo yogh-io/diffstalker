@@ -36,6 +36,7 @@ import {
   FileHunkCounts,
 } from '../git/diff.js';
 import { HunkTimeTracker } from '../git/hunkTimes.js';
+import { rawFromLines } from '../git/diffParse.js';
 import { resolveGitDirs } from '../git/worktree.js';
 import { splitDiffByFile } from '../view/splitDiffByFile.js';
 import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
@@ -432,8 +433,8 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         ]);
 
       const hunkCounts: FileHunkCounts = {
-        unstaged: countHunksPerFile(allUnstagedDiff.raw),
-        staged: countHunksPerFile(allStagedDiff.raw),
+        unstaged: countHunksPerFile(rawFromLines(allUnstagedDiff.lines)),
+        staged: countHunksPerFile(rawFromLines(allStagedDiff.lines)),
       };
 
       // Observe every hunk so first-seen stamps are locked in as soon as a
@@ -573,12 +574,8 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
       const headDiff = await getDiffAgainstHead(this.repoPath);
       const present = new Set(splitDiffByFile(headDiff).keys());
-      const raws: string[] = [];
-      if (headDiff.raw) {
-        raws.push(headDiff.raw.endsWith('\n') ? headDiff.raw : headDiff.raw + '\n');
-      }
       const lines = [...headDiff.lines];
-      await this.appendUntrackedSections(status, present, raws, lines);
+      await this.appendUntrackedSections(status, present, lines);
 
       const oidAfter = await getHeadOid(this.repoPath);
       if (oidBefore !== oidAfter) return null; // torn window: HEAD moved
@@ -587,7 +584,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       if (this.sectionWrittenDuringGather(status, present, gatherStart)) return null; // torn window
 
       return {
-        headDiff: { raw: raws.join(''), lines },
+        headDiff: { lines },
         headOid: oidAfter,
         stashCount: guardAfter.stashCount,
         operationInProgress: guardAfter.operation,
@@ -613,7 +610,6 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   private async appendUntrackedSections(
     status: GitStatus,
     present: Set<string>,
-    raws: string[],
     lines: DiffLine[]
   ): Promise<void> {
     const seen = new Set<string>();
@@ -628,34 +624,27 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       }
       if (!stat.isFile()) continue;
       if (stat.size > MAX_UNTRACKED_JOURNAL_BYTES) {
-        this.appendOversizeSection(file.path, stat, raws, lines);
+        this.appendOversizeSection(file.path, stat, lines);
         continue;
       }
       const untrackedDiff = await getDiffForUntracked(this.repoPath, file.path);
-      if (!untrackedDiff.raw) continue; // caught-to-empty — defer
-      raws.push(untrackedDiff.raw.endsWith('\n') ? untrackedDiff.raw : untrackedDiff.raw + '\n');
+      if (untrackedDiff.lines.length === 0) continue; // caught-to-empty — defer
       lines.push(...untrackedDiff.lines);
     }
   }
 
   /**
    * A header-only stand-in section for an oversize untracked file. The
-   * size/mtime suffix makes the section's raw (and so the journal's
+   * size/mtime suffix makes the section's content (and so the journal's
    * silence hash) change when the file changes: created once, then an
    * edited entry per later save — always with diff: null.
    */
-  private appendOversizeSection(
-    filePath: string,
-    stat: fs.Stats,
-    raws: string[],
-    lines: DiffLine[]
-  ): void {
+  private appendOversizeSection(filePath: string, stat: fs.Stats, lines: DiffLine[]): void {
     const header = [
       `diff --git a/${filePath} b/${filePath}`,
       'new file mode 100644',
       `${OVERSIZE_UNTRACKED_MARKER} size=${stat.size} mtime=${Math.round(stat.mtimeMs)}`,
     ];
-    raws.push(header.join('\n') + '\n');
     lines.push(...header.map((content): DiffLine => ({ type: 'header', content })));
   }
 

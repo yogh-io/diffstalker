@@ -36,7 +36,6 @@ function fileDiff(
   isUncommitted = false
 ): CompareFileDiff {
   const diff: DiffResult = {
-    raw: '',
     lines: [
       { type: 'header', content: `diff --git a/${path} b/${path}` },
       { type: 'hunk', content: '@@ -1 +1 @@' },
@@ -533,6 +532,52 @@ describe('folder collapse', () => {
 });
 
 describe('per-file diffs', () => {
+  test('the diff sections follow the TREE order, not the daemon file order', async () => {
+    // A directory holding BOTH a sub-directory and loose files is where
+    // the two orders part ways: the daemon returns git's flat path sort
+    // (app.ts, bootstrap/theme.css, util.ts) while the tree groups the
+    // sub-directory (bootstrap/theme.css, then app.ts, util.ts). The
+    // stack must read like walking the tree.
+    const files = [
+      fileDiff('src/app.ts', 'modified', 1, 0),
+      fileDiff('src/bootstrap/theme.css', 'added', 2, 0),
+      fileDiff('src/util.ts', 'modified', 3, 0),
+    ];
+    const { wrapper } = mountView(makeCompareDiff(files));
+    await flushPromises();
+
+    const treeOrder = wrapper
+      .findAll('.file-row')
+      .map((row) => files[Number(row.attributes('data-file-index'))].path);
+    const stackOrder = wrapper
+      .findAll('[data-testid="file-diff"] .path')
+      .map((el) => el.text());
+
+    expect(stackOrder).toEqual(treeOrder);
+    // Guard the guard: the tree order really does differ from the input,
+    // so this would fail if the stack simply echoed the daemon's order.
+    expect(stackOrder).not.toEqual(files.map((f) => f.path));
+  });
+
+  test('collapsing a directory reorders nothing and drops no diff', async () => {
+    const files = [
+      fileDiff('src/app.ts', 'modified', 1, 0),
+      fileDiff('src/bootstrap/theme.css', 'added', 2, 0),
+      fileDiff('src/util.ts', 'modified', 3, 0),
+    ];
+    const { wrapper } = mountView(makeCompareDiff(files));
+    await flushPromises();
+    const before = wrapper.findAll('[data-testid="file-diff"] .path').map((el) => el.text());
+
+    // Collapse is a TREE affordance; the diffs below must not move.
+    const dirRow = wrapper.findAll('.dir-row').at(-1);
+    await dirRow?.trigger('click');
+    await flushPromises();
+
+    const after = wrapper.findAll('[data-testid="file-diff"] .path').map((el) => el.text());
+    expect(after).toEqual(before);
+  });
+
   test('renders one DiffView per compare file, under a header with path + stats', () => {
     const { wrapper } = mountView();
     const sections = wrapper.findAll('[data-testid="file-diff"]');

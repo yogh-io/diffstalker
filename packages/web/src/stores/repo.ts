@@ -109,11 +109,30 @@ const WHOLE_TREE_REPULL_THRESHOLD = 15;
 
 /** One cached per-file working diff. The DiffResult is markRaw'd. */
 export interface WorkingDiffEntry {
-  /** The diff's raw text — compared BY VALUE to preserve identity. */
-  raw: string;
   diff: DiffResult;
   /** When this entry's content was applied (epoch ms). */
   fetchedAt: number;
+}
+
+/**
+ * Value-equality for two diffs, used to PRESERVE OBJECT IDENTITY: an
+ * unchanged file keeps its existing DiffResult, so render memos keyed on
+ * identity stay hit. This used to compare the raw diff text, which the
+ * wire no longer carries (it was a duplicate of `lines`); walking the
+ * lines is the same comparison, allocates nothing, and exits at the first
+ * difference.
+ *
+ * editedAt is deliberately NOT compared — the old raw text carried no
+ * hunk stamps either, so a re-stamp must not count as a content change.
+ */
+function sameDiff(a: DiffResult, b: DiffResult): boolean {
+  if (a === b) return true;
+  if (a.lines.length !== b.lines.length) return false;
+  for (let i = 0; i < a.lines.length; i++) {
+    if (a.lines[i].content !== b.lines[i].content) return false;
+    if (a.lines[i].type !== b.lines[i].type) return false;
+  }
+  return true;
 }
 
 /** The working-diff cache: entries keyed by file-list row key. */
@@ -727,9 +746,9 @@ export const useRepoStore = defineStore('repo', () => {
     if (workingSnapshot !== null && !workingSnapshot.files.has(key)) return;
     appliedSeqByKey.set(key, token);
     const cached = workingDiffs.value.byKey.get(key);
-    if (cached && cached.raw === diff.raw) return;
+    if (cached && sameDiff(cached.diff, diff)) return;
     commitWorkingDiffs((byKey) => {
-      byKey.set(key, { raw: diff.raw, diff: markRaw(diff), fetchedAt: Date.now() });
+      byKey.set(key, { diff: markRaw(diff), fetchedAt: Date.now() });
       return true;
     });
   }
@@ -888,8 +907,8 @@ export const useRepoStore = defineStore('repo', () => {
       if ((appliedSeqByKey.get(key) ?? 0) > token) continue; // a newer per-file pull landed
       appliedSeqByKey.set(key, token);
       const cached = byKey.get(key);
-      if (cached && cached.raw === diff.raw) continue; // identity preserved
-      byKey.set(key, { raw: diff.raw, diff: markRaw(diff), fetchedAt: Date.now() });
+      if (cached && sameDiff(cached.diff, diff)) continue; // identity preserved
+      byKey.set(key, { diff: markRaw(diff), fetchedAt: Date.now() });
       dirty = true;
     }
     return dirty;

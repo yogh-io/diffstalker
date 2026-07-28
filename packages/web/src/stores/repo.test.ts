@@ -22,6 +22,22 @@ import type { FakeFetch, FetchCall, FakeResponse } from '../testing/fakes';
 import type { WireSharedState } from '@diffstalker/client';
 import type { FileEntry, FileStatus } from '@diffstalker/core/git/status';
 import type { JournalHunkEntry } from '@diffstalker/core/types/journal';
+import { parseDiffWithLineNumbers, rawFromLines } from '@diffstalker/core/git/diffParse';
+import type { WorkingDiffEntry } from './repo';
+
+/**
+ * A wire diff body. The wire carries LINES only — the raw text used to be
+ * duplicated alongside them, so these fakes parse it the way the daemon
+ * does.
+ */
+function diffBody(raw: string): { lines: ReturnType<typeof parseDiffWithLineNumbers> } {
+  return { lines: parseDiffWithLineNumbers(raw) };
+}
+
+/** The diff text a cache entry represents. */
+function rawOf(entry: WorkingDiffEntry): string {
+  return rawFromLines(entry.diff.lines);
+}
 
 // --- Fixtures ---
 
@@ -87,7 +103,7 @@ function compareBody(): unknown {
         status: 'modified',
         additions: 2,
         deletions: 0,
-        diff: { raw: 'compare-file-diff', lines: [] },
+        diff: diffBody('compare-file-diff'),
       },
     ],
     commits: [{ hash: 'c1', message: 'm', author: 'a', date: '2026-07-01T00:00:00.000Z' }],
@@ -106,13 +122,13 @@ function defaultGetRoutes(url: string): FakeResponse | undefined {
   }
   if (url.startsWith('/repos/r1/diff')) {
     // Distinguishable per-query payload for stale-guard assertions.
-    return { body: { raw: `diff:${url}`, lines: [] } };
+    return { body: diffBody(`diff:${url}`) };
   }
   if (url.startsWith('/repos/r1/history')) {
     return { body: [{ hash: 'h1', message: 'm', author: 'a', date: '2026-07-01T00:00:00.000Z' }] };
   }
   if (url.startsWith('/repos/r1/commits/')) {
-    return { body: { raw: `commit-diff:${url}`, lines: [] } };
+    return { body: diffBody(`commit-diff:${url}`) };
   }
   if (url.startsWith('/repos/r1/compare')) {
     return { body: compareBody() };
@@ -412,9 +428,9 @@ describe('working-diff cache', () => {
     const rawB = fileDiffRaw('b.ts', 'B');
     const rawU = fileDiffRaw('u.txt', 'U');
     onRequest = (call) => {
-      if (call.url === '/repos/r1/diff') return { body: { raw: rawA, lines: [] } };
-      if (call.url === '/repos/r1/diff?staged=true') return { body: { raw: rawB, lines: [] } };
-      if (call.url === '/repos/r1/diff?path=u.txt') return { body: { raw: rawU, lines: [] } };
+      if (call.url === '/repos/r1/diff') return { body: diffBody(rawA) };
+      if (call.url === '/repos/r1/diff?staged=true') return { body: diffBody(rawB) };
+      if (call.url === '/repos/r1/diff?path=u.txt') return { body: diffBody(rawU) };
       return undefined;
     };
 
@@ -423,9 +439,9 @@ describe('working-diff cache', () => {
 
     const byKey = store.workingDiffs.byKey;
     expect([...byKey.keys()].sort()).toEqual(['s:b.ts', 'u:a.ts', 'u:u.txt']);
-    expect(byKey.get('u:a.ts')!.raw).toBe(rawA);
-    expect(byKey.get('s:b.ts')!.raw).toBe(rawB);
-    expect(byKey.get('u:u.txt')!.raw).toBe(rawU);
+    expect(rawOf(byKey.get('u:a.ts')!)).toBe(rawA);
+    expect(rawOf(byKey.get('s:b.ts')!)).toBe(rawB);
+    expect(rawOf(byKey.get('u:u.txt')!)).toBe(rawU);
     // The untracked file was fetched per-file and NEVER with staged=true.
     expect(diffCalls()).toContain('/repos/r1/diff?path=u.txt');
   });
@@ -446,9 +462,9 @@ describe('working-diff cache', () => {
     const heldTree = new Deferred<FakeResponse>();
     onRequest = (call) => {
       if (call.url === '/repos/r1/diff') return heldTree.promise; // activation hangs
-      if (call.url === '/repos/r1/diff?staged=true') return { body: { raw: '', lines: [] } };
+      if (call.url === '/repos/r1/diff?staged=true') return { body: diffBody('') };
       if (call.url === '/repos/r1/diff?path=a.ts&staged=false') {
-        return { body: { raw: rawFresh, lines: [] } };
+        return { body: diffBody(rawFresh) };
       }
       return undefined;
     };
@@ -463,10 +479,10 @@ describe('working-diff cache', () => {
     source.emit('state-change', wireState([fileEntry('a.ts')], { mtimes: { 'a.ts': 2 } }));
     await flush();
 
-    heldTree.resolve({ body: { raw: rawStale, lines: [] } }); // the STALE tree lands
+    heldTree.resolve({ body: diffBody(rawStale) }); // the STALE tree lands
     await flush();
     await advance(25); // the post-pull re-diff's refetch debounce
-    expect(store.workingDiffs.byKey.get('u:a.ts')!.raw).toBe(rawFresh);
+    expect(rawOf(store.workingDiffs.byKey.get('u:a.ts')!)).toBe(rawFresh);
   });
 
   test('a failed activation retries QUIETLY on the next state-change instead of staying empty', async () => {
@@ -475,8 +491,8 @@ describe('working-diff cache', () => {
     onRequest = (call) => {
       if (!call.url.startsWith('/repos/r1/diff')) return undefined;
       if (broken) return { status: 500, body: { error: 'boom' } };
-      if (call.url === '/repos/r1/diff') return { body: { raw: rawA, lines: [] } };
-      return { body: { raw: '', lines: [] } };
+      if (call.url === '/repos/r1/diff') return { body: diffBody(rawA) };
+      return { body: diffBody('') };
     };
     const { store, source } = await openStore([fileEntry('a.ts')]);
     // Passive warm-up: the failure must not overwrite the wire error line.
@@ -486,7 +502,7 @@ describe('working-diff cache', () => {
     broken = false;
     source.emit('state-change', wireState([fileEntry('a.ts')]));
     await flush();
-    expect(store.workingDiffs.byKey.get('u:a.ts')!.raw).toBe(rawA);
+    expect(rawOf(store.workingDiffs.byKey.get('u:a.ts')!)).toBe(rawA);
   });
 
   test('an EXPLICIT refreshAllDiffs surfaces its failure in shared.error', async () => {
@@ -504,8 +520,8 @@ describe('working-diff cache', () => {
     );
     const held: Deferred<FakeResponse>[] = [];
     onRequest = (call) => {
-      if (call.url === '/repos/r1/diff') return { body: { raw: '', lines: [] } };
-      if (call.url === '/repos/r1/diff?staged=true') return { body: { raw: '', lines: [] } };
+      if (call.url === '/repos/r1/diff') return { body: diffBody('') };
+      if (call.url === '/repos/r1/diff?staged=true') return { body: diffBody('') };
       if (call.url.includes('path=')) {
         const deferred = new Deferred<FakeResponse>();
         held.push(deferred);
@@ -518,7 +534,7 @@ describe('working-diff cache', () => {
     const pathCalls = () => diffCalls().filter((u) => u.includes('path='));
     expect(pathCalls()).toHaveLength(6); // bounded: never all 8 at once
 
-    held[0].resolve({ body: { raw: fileDiffRaw('u0.txt', '0'), lines: [] } });
+    held[0].resolve({ body: diffBody(fileDiffRaw('u0.txt', '0')) });
     await flush();
     expect(pathCalls()).toHaveLength(7); // a freed worker picked up the 7th
 
@@ -526,22 +542,22 @@ describe('working-diff cache', () => {
     while (resolved < 8) {
       await flush();
       while (resolved < held.length) {
-        held[resolved].resolve({ body: { raw: '', lines: [] } });
+        held[resolved].resolve({ body: diffBody('') });
         resolved += 1;
       }
     }
     await flush();
     expect(pathCalls()).toHaveLength(8);
-    expect(store.workingDiffs.byKey.get('u:u0.txt')!.raw).toBe(fileDiffRaw('u0.txt', '0'));
+    expect(rawOf(store.workingDiffs.byKey.get('u:u0.txt')!)).toBe(fileDiffRaw('u0.txt', '0'));
   });
 
   test('identity preservation: an unchanged raw keeps the SAME DiffResult object and model', async () => {
     const rawA = fileDiffRaw('a.ts', 'A');
     onRequest = (call) => {
-      if (call.url === '/repos/r1/diff') return { body: { raw: rawA, lines: [] } };
-      if (call.url === '/repos/r1/diff?staged=true') return { body: { raw: '', lines: [] } };
+      if (call.url === '/repos/r1/diff') return { body: diffBody(rawA) };
+      if (call.url === '/repos/r1/diff?staged=true') return { body: diffBody('') };
       if (call.url === '/repos/r1/diff?path=a.ts&staged=false') {
-        return { body: { raw: rawA, lines: [] } };
+        return { body: diffBody(rawA) };
       }
       return undefined;
     };
@@ -568,10 +584,10 @@ describe('working-diff cache', () => {
     const rawB = fileDiffRaw('b.ts', 'B');
     let aVersion = rawA1;
     onRequest = (call) => {
-      if (call.url === '/repos/r1/diff') return { body: { raw: aVersion + rawB, lines: [] } };
-      if (call.url === '/repos/r1/diff?staged=true') return { body: { raw: '', lines: [] } };
+      if (call.url === '/repos/r1/diff') return { body: diffBody(aVersion + rawB) };
+      if (call.url === '/repos/r1/diff?staged=true') return { body: diffBody('') };
       if (call.url === '/repos/r1/diff?path=a.ts&staged=false') {
-        return { body: { raw: aVersion, lines: [] } };
+        return { body: diffBody(aVersion) };
       }
       return undefined;
     };
@@ -588,7 +604,7 @@ describe('working-diff cache', () => {
 
     // Only a.ts was refetched; the entry was replaced in place (never blanked).
     expect(diffCalls().slice(callsBefore)).toEqual(['/repos/r1/diff?path=a.ts&staged=false']);
-    expect(store.workingDiffs.byKey.get('u:a.ts')!.raw).toBe(rawA2);
+    expect(rawOf(store.workingDiffs.byKey.get('u:a.ts')!)).toBe(rawA2);
     expect(store.workingDiffs.byKey.get('u:b.ts')!.diff).toBe(bBefore);
   });
 
@@ -596,8 +612,8 @@ describe('working-diff cache', () => {
     const files = Array.from({ length: 16 }, (_, i) => fileEntry(`f${i}.ts`));
     const whole = files.map((f) => fileDiffRaw(f.path, f.path)).join('');
     onRequest = (call) => {
-      if (call.url === '/repos/r1/diff') return { body: { raw: whole, lines: [] } };
-      if (call.url === '/repos/r1/diff?staged=true') return { body: { raw: '', lines: [] } };
+      if (call.url === '/repos/r1/diff') return { body: diffBody(whole) };
+      if (call.url === '/repos/r1/diff?staged=true') return { body: diffBody('') };
       return undefined;
     };
     const { store, source } = await openStore(files);
@@ -628,11 +644,11 @@ describe('working-diff cache', () => {
     const slow = new Deferred<FakeResponse>();
     let pathHits = 0;
     onRequest = (call) => {
-      if (call.url === '/repos/r1/diff') return { body: { raw: v1, lines: [] } };
-      if (call.url === '/repos/r1/diff?staged=true') return { body: { raw: '', lines: [] } };
+      if (call.url === '/repos/r1/diff') return { body: diffBody(v1) };
+      if (call.url === '/repos/r1/diff?staged=true') return { body: diffBody('') };
       if (call.url === '/repos/r1/diff?path=a.ts&staged=false') {
         pathHits += 1;
-        return pathHits === 1 ? slow.promise : { body: { raw: v3, lines: [] } };
+        return pathHits === 1 ? slow.promise : { body: diffBody(v3) };
       }
       return undefined;
     };
@@ -642,21 +658,21 @@ describe('working-diff cache', () => {
     await advance(25); // refetch 1 fires — withheld
     source.emit('state-change', wireState([fileEntry('a.ts')], { mtimes: { 'a.ts': 3 } }));
     await advance(25); // refetch 2 fires — lands v3
-    expect(store.workingDiffs.byKey.get('u:a.ts')!.raw).toBe(v3);
+    expect(rawOf(store.workingDiffs.byKey.get('u:a.ts')!)).toBe(v3);
 
-    slow.resolve({ body: { raw: v2, lines: [] } }); // refetch 1 lands LAST
+    slow.resolve({ body: diffBody(v2) }); // refetch 1 lands LAST
     await flush();
-    expect(store.workingDiffs.byKey.get('u:a.ts')!.raw).toBe(v3); // not clobbered
+    expect(rawOf(store.workingDiffs.byKey.get('u:a.ts')!)).toBe(v3); // not clobbered
   });
 
   test('files leaving the status set are evicted; entering files are fetched', async () => {
     const rawA = fileDiffRaw('a.ts', 'A');
     const rawB = fileDiffRaw('b.ts', 'B');
     onRequest = (call) => {
-      if (call.url === '/repos/r1/diff') return { body: { raw: rawA, lines: [] } };
-      if (call.url === '/repos/r1/diff?staged=true') return { body: { raw: '', lines: [] } };
+      if (call.url === '/repos/r1/diff') return { body: diffBody(rawA) };
+      if (call.url === '/repos/r1/diff?staged=true') return { body: diffBody('') };
       if (call.url === '/repos/r1/diff?path=b.ts&staged=false') {
-        return { body: { raw: rawB, lines: [] } };
+        return { body: diffBody(rawB) };
       }
       return undefined;
     };
@@ -666,7 +682,7 @@ describe('working-diff cache', () => {
     source.emit('state-change', wireState([fileEntry('b.ts')]));
     await advance(25);
     expect(store.workingDiffs.byKey.has('u:a.ts')).toBe(false);
-    expect(store.workingDiffs.byKey.get('u:b.ts')!.raw).toBe(rawB);
+    expect(rawOf(store.workingDiffs.byKey.get('u:b.ts')!)).toBe(rawB);
   });
 
   test('open() resets the cache; the new repo activates on ITS first snapshot', async () => {
@@ -674,12 +690,12 @@ describe('working-diff cache', () => {
     const rawA9 = fileDiffRaw('a.ts', 'A9');
     let version = rawA;
     onRequest = (call) => {
-      if (call.url === '/repos/r1/diff') return { body: { raw: version, lines: [] } };
-      if (call.url === '/repos/r1/diff?staged=true') return { body: { raw: '', lines: [] } };
+      if (call.url === '/repos/r1/diff') return { body: diffBody(version) };
+      if (call.url === '/repos/r1/diff?staged=true') return { body: diffBody('') };
       return undefined;
     };
     const { store } = await openStore([fileEntry('a.ts')]);
-    expect(store.workingDiffs.byKey.get('u:a.ts')!.raw).toBe(rawA);
+    expect(rawOf(store.workingDiffs.byKey.get('u:a.ts')!)).toBe(rawA);
     const firstEntry = store.workingDiffs.byKey.get('u:a.ts')!;
 
     version = rawA9;
@@ -691,7 +707,7 @@ describe('working-diff cache', () => {
     const source = FakeEventSource.latest();
     source.emit('snapshot', wireState([fileEntry('a.ts')], { mtimes: { 'a.ts': 9 } }));
     await flush();
-    expect(store.workingDiffs.byKey.get('u:a.ts')!.raw).toBe(rawA9);
+    expect(rawOf(store.workingDiffs.byKey.get('u:a.ts')!)).toBe(rawA9);
     expect(store.workingDiffs.byKey.get('u:a.ts')).not.toBe(firstEntry);
   });
 });
@@ -778,7 +794,7 @@ describe('history', () => {
     expect(store.history.selectedCommit).toBe(commit);
 
     await store.selectHistoryCommit(null); // deselect before the diff lands
-    slow.resolve({ body: { raw: 'stale commit diff', lines: [] } });
+    slow.resolve({ body: diffBody('stale commit diff') });
     await selectPromise;
     expect(store.history.commitDiff).toBeNull();
   });
@@ -1285,7 +1301,7 @@ describe('compare', () => {
         status: 'added',
         additions: 1,
         deletions: 0,
-        diff: { raw: 'b-diff', lines: [] },
+        diff: diffBody('b-diff'),
       },
       ...reordered.files,
     ];
@@ -1293,7 +1309,7 @@ describe('compare', () => {
       call.url.startsWith('/repos/r1/compare') ? { body: reordered } : undefined;
     await store.refreshCompare();
     expect(store.compare.selection).toMatchObject({ type: 'file', index: 1 });
-    expect(store.compare.selection.diff!.raw).toBe('compare-file-diff');
+    expect(rawFromLines(store.compare.selection.diff!.lines)).toContain('compare-file-diff');
 
     // a.ts vanishes: the selection clears instead of pointing elsewhere.
     const without = compareBody() as { files: unknown[] };
@@ -1303,7 +1319,7 @@ describe('compare', () => {
         status: 'added',
         additions: 1,
         deletions: 0,
-        diff: { raw: 'b-diff', lines: [] },
+        diff: diffBody('b-diff'),
       },
     ];
     onRequest = (call) =>
@@ -1336,7 +1352,7 @@ describe('compare', () => {
     expect(store.compare.selection).toEqual({
       type: 'file',
       index: 0,
-      diff: { raw: 'compare-file-diff', lines: [] },
+      diff: diffBody('compare-file-diff'),
     });
 
     store.selectCompareFile(99);
@@ -1361,7 +1377,7 @@ describe('compare', () => {
     await store.refreshCompare();
     await store.selectCompareCommit(0);
     expect(store.compare.selection.type).toBe('commit');
-    expect(store.compare.selection.diff!.raw).toContain('commit-diff:');
+    expect(rawFromLines(store.compare.selection.diff!.lines)).toContain('commit-diff:');
   });
 });
 

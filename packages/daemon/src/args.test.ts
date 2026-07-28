@@ -109,7 +109,32 @@ describe('parseArgs error branches (exit 2 + message + usage)', () => {
     expect(result.stdout).toContain('--follow-file PATH');
     expect(result.stdout).toContain('--no-follow');
     expect(result.stdout).toContain('--web-root PATH');
+    expect(result.stdout).toContain('--no-update-check');
   });
+});
+
+describe('update check', () => {
+  test('--no-update-check leaves the published version unknown (no registry call)', async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-version-'));
+    const socket = path.join(base, 'd.sock');
+
+    try {
+      await withRunningDaemon(
+        ['--socket', socket, '--no-follow', '--no-update-check'],
+        {},
+        async () => {
+          const res = await fetch('http://localhost/version', { unix: socket } as RequestInit);
+          expect(res.status).toBe(200);
+          const body = (await res.json()) as { current: string; latest: null; status: string };
+          expect(body.current).toMatch(/^\d+\.\d+\.\d+/);
+          expect(body.latest).toBe(null);
+          expect(body.status).toBe('unknown');
+        }
+      );
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 15000);
 });
 
 describe('web root wiring', () => {
