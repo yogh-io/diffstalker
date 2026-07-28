@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-28
+
+### Added
+
+- **Web UI: recent repos group by project.** The header's "Recent" list now
+  collapses a repo's worktrees into one row (like the "Open on daemon" list
+  already did), instead of one row per worktree; picking a multi-worktree
+  project opens its most recently edited worktree. A recent entry that no
+  longer resolves to any worktree (a removed worktree directory still in
+  local prefs) is dropped instead of showing as its own stray row.
+- **Web UI: the worktree switcher is a two-line dropdown.** Replaces the
+  native `<select>` (whose closed state leaked the active worktree's
+  last-edited time into the trigger) with a custom panel, sorted
+  most-recently-edited first, each row noting commits ahead of its base
+  branch and a relative "edited N ago" time.
+- **Web UI: wrap long lines.** A small, deliberately low-key "Wrap" toggle in
+  the corner of every diff pane (Changes, Compare, History) and the Explorer
+  file viewer — off by default, persisted, closer to a Notepad/Word "Word
+  Wrap" checkbox than the header's headline display toggles. Unified diffs
+  and the file viewer wrap; split diffs always stay on their normal
+  horizontal-scroll layout (a wrapped del/add pair can wrap to a different
+  line count per side, which would desync the two columns).
+
 ## [0.8.0] - 2026-07-26
 
 A security-hardening and web-UI-polish release. The daemon is now
