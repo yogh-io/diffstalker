@@ -11,7 +11,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import RepoSwitcher from './RepoSwitcher.vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useUiStore } from '../stores/ui';
-import { makeFakeFetch } from '../testing/fakes';
+import { makeFakeFetch, Deferred } from '../testing/fakes';
 import type { WorktreeInfo } from '@diffstalker/client';
 
 const CALC = '/home/u/gitRepos/calculator';
@@ -73,11 +73,15 @@ describe('open-on-daemon list groups by project', () => {
       makeFakeFetch((call) => {
         const calcUrls = ['/repos/calc-a/worktrees', '/repos/calc-b/worktrees'];
         if (call.method === 'GET' && calcUrls.includes(call.url)) {
+          // FOUR worktrees exist; only two of them are open on the daemon,
+          // so the badge must report 4, not the open count.
           return {
             body: [
               { path: `${CALC}/.bare`, branch: null, head: null, isBare: true },
               { path: `${CALC}/main`, branch: 'main', head: 'a', isBare: false },
               { path: `${CALC}/fix-a`, branch: 'fix-a', head: 'b', isBare: false },
+              { path: `${CALC}/fix-b`, branch: 'fix-b', head: 'c', isBare: false },
+              { path: `${CALC}/spike`, branch: 'spike', head: 'd', isBare: false },
             ],
           };
         }
@@ -97,9 +101,13 @@ describe('open-on-daemon list groups by project', () => {
     const names = wrapper.findAll('[data-testid="open-repos"] .repo-row .name').map((n) => n.text());
     expect(names).toEqual(['calculator', 'diffstalker']);
 
-    // The calculator row shows its open-worktree count; diffstalker does not.
-    const calcRow = wrapper.findAll('[data-testid="open-repos"] .repo-row')[0];
-    expect(calcRow.find('.branch').text()).toBe('2 open');
+    // The badge counts ALL of the project's worktrees (4), not the 2 that
+    // happen to be open — the same wording the Recent list uses, so one
+    // project reads identically in either list. A single-worktree repo
+    // (diffstalker) gets no badge at all.
+    const rows = wrapper.findAll('[data-testid="open-repos"] .repo-row');
+    expect(rows[0].find('.branch').text()).toBe('4 worktrees');
+    expect(rows[1].find('.branch').exists()).toBe(false);
   });
 });
 
@@ -108,6 +116,40 @@ describe('recent list groups by project', () => {
     { path: `${CALC}/main`, branch: 'main', head: 'a', isBare: false, lastActivity: 1000, aheadOfBase: null },
     { path: `${CALC}/fix-a`, branch: 'fix-a', head: 'b', isBare: false, lastActivity: 5000, aheadOfBase: null },
   ];
+
+  test('holds back paths still being resolved instead of drawing one stray row each', async () => {
+    // Two worktrees of ONE project. Until they resolve, neither knows it
+    // belongs to "calculator", so rendering them optimistically draws two
+    // stray rows named after the worktrees that then collapse into one —
+    // the "why is my worktree listed as a repo" bug. They must not render.
+    const ui = useUiStore();
+    ui.recentRepos = [`${CALC}/fix-a`, `${CALC}/main`];
+
+    const gate = new Deferred<void>();
+    vi.stubGlobal(
+      'fetch',
+      makeFakeFetch(async (call) => {
+        if (call.method === 'GET' && call.url.startsWith('/worktrees?path=')) {
+          await gate.promise; // hold every lookup in flight
+          return { body: calcFamily };
+        }
+        return { status: 404, body: {} };
+      }).fn
+    );
+
+    const wrapper = mount(RepoSwitcher);
+    await wrapper.find('.switch-btn').trigger('click');
+    await flushPromises();
+
+    // In flight: nothing drawn, rather than two soon-to-vanish rows.
+    expect(wrapper.findAll('[data-testid="recent-repos"] .repo-row')).toHaveLength(0);
+
+    gate.resolve();
+    await flushPromises();
+
+    const names = wrapper.findAll('[data-testid="recent-repos"] .repo-row .name').map((n) => n.text());
+    expect(names).toEqual(['calculator']);
+  });
 
   test('collapses worktree siblings into one row, opening the freshest on click', async () => {
     const ui = useUiStore();

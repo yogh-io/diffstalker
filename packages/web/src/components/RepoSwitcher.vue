@@ -50,25 +50,42 @@ interface RepoProject {
   name: string;
   /** The open worktrees of this project (one repo id each). */
   repos: RepoSummary[];
+  /** ALL worktrees the project has, not just the open ones — the same
+   * count the Recent list shows, so one project reads the same in both. */
+  worktreeCount: number;
 }
 
-/** repoId -> project root, resolved by pulling each repo's worktrees once. */
-const projectRootById = ref(new Map<string, string>());
+/** repoId -> its project root + total worktree count, resolved by pulling
+ * each repo's worktrees once. */
+const projectByRepoId = ref(new Map<string, { root: string; worktreeCount: number }>());
 
+/** Concurrently, for the same reason as resolveRecentProjects: sequential
+ * awaits leave open worktrees of one project drawn as separate rows for
+ * N round-trips before they fold together. */
 async function resolveProjects(): Promise<void> {
-  for (const repo of daemon.repos) {
-    if (projectRootById.value.has(repo.id)) continue;
-    let root = repo.path;
-    try {
-      const paths = (await client.worktrees(repo.id))
-        .filter((w) => !w.isBare)
-        .map((w) => w.path);
-      root = commonParentDir(paths) || repo.path;
-    } catch {
-      // Keep the repo path as its own project on failure.
-    }
-    projectRootById.value = new Map(projectRootById.value).set(repo.id, root);
-  }
+  const pending = daemon.repos.filter((repo) => !projectByRepoId.value.has(repo.id));
+  if (pending.length === 0) return;
+
+  const settled = await Promise.all(
+    pending.map(async (repo) => {
+      try {
+        const paths = (await client.worktrees(repo.id))
+          .filter((w) => !w.isBare)
+          .map((w) => w.path);
+        return [
+          repo.id,
+          { root: commonParentDir(paths) || repo.path, worktreeCount: paths.length },
+        ] as const;
+      } catch {
+        // Keep the repo path as its own project on failure.
+        return [repo.id, { root: repo.path, worktreeCount: 0 }] as const;
+      }
+    })
+  );
+
+  const next = new Map(projectByRepoId.value);
+  for (const [id, resolved] of settled) next.set(id, resolved);
+  projectByRepoId.value = next;
 }
 
 // Resolve lazily: only while the panel is open, and again if the open-repo
@@ -84,13 +101,17 @@ watch(
 const openProjects = computed<RepoProject[]>(() => {
   const groups = new Map<string, RepoProject>();
   for (const repo of daemon.repos) {
-    const root = projectRootById.value.get(repo.id) ?? repo.path;
+    const resolved = projectByRepoId.value.get(repo.id);
+    const root = resolved?.root ?? repo.path;
     let group = groups.get(root);
     if (!group) {
-      group = { root, name: basename(root), repos: [] };
+      group = { root, name: basename(root), repos: [], worktreeCount: 0 };
       groups.set(root, group);
     }
     group.repos.push(repo);
+    // Every repo in a group belongs to the same family, so they all report
+    // the same count; take whichever resolved (0 while none has yet).
+    group.worktreeCount = Math.max(group.worktreeCount, resolved?.worktreeCount ?? 0);
   }
   return [...groups.values()];
 });
@@ -111,55 +132,84 @@ interface RecentProject {
   worktrees: WorktreeInfo[];
 }
 
-/** recent path -> that path's resolved project (root + full worktree
- * family), or null once confirmed the path no longer resolves to any
- * worktree at all (e.g. a removed worktree directory still in prefs) —
- * such a path is dropped from the list rather than shown as its own
- * stray "project" named after a directory that no longer exists. */
-const recentProjectByPath = ref(new Map<string, RecentProject | null>());
+/**
+ * What we know about a recent path. ABSENT from the map means "still
+ * asking" — deliberately distinct from every settled state, because a
+ * pending path must NOT render: several worktrees of one repo each
+ * resolve to the same project row, so drawing them before they resolve
+ * shows a stray row per worktree that then vanishes (exactly the
+ * "why is my worktree listed as a repo" bug).
+ */
+type RecentResolution =
+  /** Resolved to a real worktree family. */
+  | { kind: 'project'; project: RecentProject }
+  /** Resolved, but the path is no longer a worktree at all (a removed
+   * worktree directory still in prefs) — drop it from the list. */
+  | { kind: 'gone' }
+  /** Could not ask (daemon down/restarting). Distinct from 'gone': the
+   * path may well be fine, so it still renders (by its own path — the
+   * best we know) and is retried the next time the panel opens. */
+  | { kind: 'failed' };
 
+const recentResolution = ref(new Map<string, RecentResolution>());
+
+/**
+ * Resolve every not-yet-known recent path CONCURRENTLY. Sequentially
+ * (one await per path) the unresolved window is N x round-trip, which is
+ * long enough to see stray per-worktree rows before they fold together;
+ * in parallel it is one round-trip for all of them.
+ */
 async function resolveRecentProjects(): Promise<void> {
-  for (const path of recentsNotOpen.value) {
-    if (recentProjectByPath.value.has(path)) continue;
-    let worktrees: WorktreeInfo[];
-    try {
-      worktrees = (await client.worktreesForPath(path)).filter((w) => !w.isBare);
-    } catch {
-      // A transient failure (daemon restarting, network hiccup) tells us
-      // nothing about whether this path is a real repo — leave it
-      // unresolved so the next panel-open retries, rather than caching
-      // null and permanently mistaking "couldn't ask" for "confirmed dead".
-      continue;
-    }
-    let project: RecentProject | null = null;
-    if (worktrees.length > 0) {
-      const root = commonParentDir(worktrees.map((w) => w.path)) || path;
-      project = { root, name: basename(root), worktrees };
-    }
-    recentProjectByPath.value = new Map(recentProjectByPath.value).set(path, project);
-  }
+  const pending = recentsNotOpen.value.filter((path) => !recentResolution.value.has(path));
+  if (pending.length === 0) return;
+
+  const settled = await Promise.all(
+    pending.map(async (path): Promise<[string, RecentResolution]> => {
+      try {
+        const worktrees = (await client.worktreesForPath(path)).filter((w) => !w.isBare);
+        if (worktrees.length === 0) return [path, { kind: 'gone' }];
+        const root = commonParentDir(worktrees.map((w) => w.path)) || path;
+        return [path, { kind: 'project', project: { root, name: basename(root), worktrees } }];
+      } catch {
+        return [path, { kind: 'failed' }];
+      }
+    })
+  );
+
+  const next = new Map(recentResolution.value);
+  for (const [path, resolution] of settled) next.set(path, resolution);
+  recentResolution.value = next;
 }
 
 watch(
   [open, recentsNotOpen],
   ([isOpen]) => {
-    if (isOpen) void resolveRecentProjects();
+    if (!isOpen) return;
+    // Reopening retries whatever we couldn't reach last time; 'gone' and
+    // 'project' are settled facts and stay cached.
+    for (const [path, resolution] of recentResolution.value) {
+      if (resolution.kind === 'failed') recentResolution.value.delete(path);
+    }
+    void resolveRecentProjects();
   },
   { immediate: false }
 );
 
 /** One row per project root, folding every recent path that resolved to the
- * same root, dropping any that's already shown under "Open on daemon", and
- * hiding paths confirmed dead (resolved to zero worktrees). A path not yet
- * resolved shows optimistically as its own path-named row until it either
- * settles into a real project or turns out to be dead. */
+ * same root and dropping any already shown under "Open on daemon". Paths
+ * still being resolved are held back entirely (see RecentResolution);
+ * paths we could not reach fall back to their own path so the list never
+ * silently loses an entry just because the daemon blinked. */
 const recentProjects = computed<RecentProject[]>(() => {
   const openRoots = new Set(openProjects.value.map((p) => p.root));
   const seen = new Map<string, RecentProject>();
   for (const path of recentsNotOpen.value) {
-    const cached = recentProjectByPath.value.get(path);
-    if (cached === null) continue;
-    const project = cached ?? { root: path, name: basename(path), worktrees: [] };
+    const resolution = recentResolution.value.get(path);
+    if (resolution === undefined || resolution.kind === 'gone') continue;
+    const project =
+      resolution.kind === 'project'
+        ? resolution.project
+        : { root: path, name: basename(path), worktrees: [] };
     if (openRoots.has(project.root) || seen.has(project.root)) continue;
     seen.set(project.root, project);
   }
@@ -236,10 +286,10 @@ onBeforeUnmount(() => {
         >
           <span class="name mono" :title="project.name">{{ project.name }}</span>
           <span
-            v-if="project.repos.length > 1"
+            v-if="project.worktreeCount > 1"
             class="branch mono"
-            :title="`${project.repos.length} open worktrees`"
-            >{{ project.repos.length }} open</span
+            :title="`${project.worktreeCount} worktrees (${project.repos.length} open on the daemon)`"
+            >{{ project.worktreeCount }} worktrees</span
           >
           <span class="path mono" :title="project.root">{{ project.root }}</span>
         </button>

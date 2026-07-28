@@ -16,8 +16,16 @@ import vue from '@vitejs/plugin-vue';
 
 const daemonUrl = process.env.DIFFSTALKER_DAEMON_URL ?? 'http://127.0.0.1:7337';
 
-/** Everything the daemon's API answers; these must never fall through to the SPA. */
-const apiPaths = ['/health', '/repos', '/events', '/follow'];
+/**
+ * Every TOP-LEVEL path the daemon's API answers; these must never fall
+ * through to the SPA. Only dev uses this — in prod the daemon serves the
+ * SPA itself and its router claims these paths first — which is exactly
+ * what makes a miss here so easy to ship: a new top-level route works in
+ * prod and silently returns index.html in dev, so the client sees HTML
+ * where it expected JSON. `devProxy.test.ts` derives the real set from
+ * the daemon's route registrations and fails if this list drifts.
+ */
+export const apiPaths = ['/health', '/repos', '/events', '/follow', '/worktrees'];
 
 export default defineConfig({
   plugins: [vue()],

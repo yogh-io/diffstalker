@@ -5,9 +5,13 @@ module.exports = {
     {
       name: "no-node-builtins",
       comment:
-        "Web code runs in the browser: no Node builtins (node:fs, path, http, ...)",
+        "Web code runs in the browser: no Node builtins (node:fs, path, http, ...). " +
+        "Test files are exempt (same carve-out core's view/ rule makes): vitest runs " +
+        "them in Node and `vite build` never reaches them — it only follows imports " +
+        "from index.html — so a builtin there cannot land in the browser bundle. " +
+        "devProxy.test.ts needs fs to read the daemon's route registrations.",
       severity: "error",
-      from: { path: "^src/" },
+      from: { path: "^src/", pathNot: "\\.test\\.ts$" },
       to: { dependencyTypes: ["core"] },
     },
     {
