@@ -1,15 +1,16 @@
 # Maintainer: yogh-io <info@yogh.nl>
 pkgname=diffstalker-git
+# Placeholder: pkgver() rewrites this from `git describe` on every build.
 pkgver=0.1.0.r0.g0000000
 pkgrel=1
 pkgdesc="Terminal UI for git staging, committing, and reviewing changes"
 arch=('any')
 url="https://github.com/yogh-io/diffstalker"
 license=('MIT')
-depends=('nodejs')
+depends=('nodejs' 'git')
 makedepends=('bun' 'git')
 provides=('diffstalker' 'diffstalkerd')
-conflicts=('diffstalker')
+conflicts=('diffstalker' 'diffstalkerd')
 source=("${pkgname}::git+${url}.git")
 sha256sums=('SKIP')
 
@@ -17,6 +18,35 @@ pkgver() {
     cd "$pkgname"
     git describe --long --tags --abbrev=7 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' ||
     printf "0.1.0.r%s.g%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+# Runtime dependencies, staged as a tree of real directories.
+#
+# The workspace install links every package into a shared store
+# (node_modules/.bun/<pkg>@<ver>), so packages/*/node_modules holds symlinks
+# that would land in $pkgdir dangling. A separate production install of the
+# package's own declared dependencies — the same set npm consumers get — with
+# the hoisted linker produces real directories instead, transitive deps
+# included. Versions are pinned to whatever the workspace install resolved, so
+# what ships matches what this build compiled against.
+_stage_runtime_deps() {
+    local pkg="$1" stage="$srcdir/runtime/$(basename "$1")"
+    install -dm755 "$stage"
+    node -e '
+      const fs = require("node:fs");
+      const [pkgDir, outDir] = process.argv.slice(1);
+      const read = (p) => JSON.parse(fs.readFileSync(p, "utf-8"));
+      const dependencies = {};
+      for (const [name, range] of Object.entries(read(pkgDir + "/package.json").dependencies ?? {})) {
+        // Workspace siblings are bundled into dist/ (core, client) or shipped
+        // as their own bin (diffstalkerd) — never installed as a dependency.
+        if (range.startsWith("workspace:")) continue;
+        dependencies[name] = read(pkgDir + "/node_modules/" + name + "/package.json").version;
+      }
+      fs.writeFileSync(outDir + "/package.json",
+        JSON.stringify({ name: "diffstalker-runtime", version: "0.0.0", private: true, dependencies }));
+    ' "$PWD/$pkg" "$stage"
+    ( cd "$stage" && bun install --production --linker hoisted )
 }
 
 build() {
@@ -28,54 +58,56 @@ build() {
     # npm consumers get.
     ( cd packages/cli && bun run build:prod )
     ( cd packages/daemon && bun run build:prod )
+
+    _stage_runtime_deps packages/cli
+    _stage_runtime_deps packages/daemon
 }
 
-# Dev-only node_modules entries to drop from the runtime install. build:prod
-# bundles everything into dist/index.js except a handful of externals (packages
-# with dynamic requires / native bits); those externals plus their runtime
-# transitive deps must ship, but the toolchain must not.
-_devmodules=(eslint '@eslint' '@typescript-eslint' typescript-eslint typescript
-    prettier eslint-config-prettier eslint-plugin-sonarjs dependency-cruiser
-    '@types' '@diffstalker' diffstalkerd '@diffstalker/client' '.bin' '.cache')
+# Install one built component in the layout npm publishes: dist/index.js beside
+# a package.json, node_modules alongside. That layout is load-bearing — the
+# bundles are ESM, so Node needs "type": "module" in a package.json above them;
+# the daemon reads ../package.json for the version it reports to clients, and
+# serves the web UI from web/ next to its own module. Flattening dist/ away
+# breaks all three.
+_install_component() {
+    local pkg="$1" dir="$2" name="$3"
+    local dest="$pkgdir/usr/lib/diffstalker/$dir" version
+    version=$(node -p "require('$PWD/$pkg/package.json').version")
 
-_install_runtime_modules() {
-    # $1 = source package dir, $2 = destination lib dir. Copies the resolved
-    # node_modules tree (external runtime deps + their transitive deps, which
-    # bun flattens here) minus the dev toolchain, next to the bundle so Node's
-    # upward module resolution finds them.
-    local src="$1/node_modules" dst="$2/node_modules"
-    install -dm755 "$dst"
-    cp -r "$src/." "$dst/"
-    for m in "${_devmodules[@]}"; do
-        rm -rf "${dst:?}/$m"
-    done
+    install -Dm644 "$pkg/dist/index.js" "$dest/dist/index.js"
+    printf '{\n  "name": "%s",\n  "version": "%s",\n  "type": "module",\n  "private": true\n}\n' \
+        "$name" "$version" > "$dest/package.json"
+    chmod 644 "$dest/package.json"
+
+    install -dm755 "$dest/node_modules"
+    cp -r "$srcdir/runtime/$dir/node_modules/." "$dest/node_modules/"
+    rm -rf "$dest/node_modules/.bin" "$dest/node_modules/.cache"
 }
 
 package() {
     cd "$pkgname"
 
-    install -dm755 "$pkgdir/usr/lib/diffstalker/cli" "$pkgdir/usr/lib/diffstalker/daemon"
-    install -m644 packages/cli/dist/index.js "$pkgdir/usr/lib/diffstalker/cli/index.js"
-    install -m644 packages/daemon/dist/index.js "$pkgdir/usr/lib/diffstalker/daemon/index.js"
+    _install_component packages/cli cli diffstalker
+    _install_component packages/daemon daemon diffstalkerd
 
-    # Web UI assets. The daemon serves the SPA at GET / from web/ next to its
-    # own module (resolveWebRoot); build:prod placed them at dist/web.
-    install -dm755 "$pkgdir/usr/lib/diffstalker/daemon/web"
-    cp -r packages/daemon/dist/web/. "$pkgdir/usr/lib/diffstalker/daemon/web/"
+    # Web UI assets: the daemon serves the SPA at GET / from web/ next to its
+    # own module, which build:prod placed at dist/web.
+    cp -r packages/daemon/dist/web "$pkgdir/usr/lib/diffstalker/daemon/dist/"
 
-    _install_runtime_modules packages/cli "$pkgdir/usr/lib/diffstalker/cli"
-    _install_runtime_modules packages/daemon "$pkgdir/usr/lib/diffstalker/daemon"
-
-    # Wrapper bins on PATH. The TUI finds the daemon via PATH (diffstalkerd)
-    # and spawns it automatically on a unix socket.
+    # Wrapper bins on PATH. The TUI cannot resolve diffstalkerd from its own
+    # node_modules here (it is a separate bin, not a bundled dependency), so it
+    # falls through to PATH and spawns this wrapper on a unix socket.
     install -dm755 "$pkgdir/usr/bin"
     cat > "$pkgdir/usr/bin/diffstalker" << 'EOF'
 #!/usr/bin/env node
-import('/usr/lib/diffstalker/cli/index.js');
+import('/usr/lib/diffstalker/cli/dist/index.js').catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
 EOF
     cat > "$pkgdir/usr/bin/diffstalkerd" << 'EOF'
 #!/usr/bin/env node
-import('/usr/lib/diffstalker/daemon/index.js').catch((e) => {
+import('/usr/lib/diffstalker/daemon/dist/index.js').catch((e) => {
   console.error(e);
   process.exit(1);
 });
