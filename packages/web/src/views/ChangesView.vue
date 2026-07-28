@@ -492,6 +492,7 @@ const rootStyle = computed(() => ({
       :active-key="ui.activeStackKey"
       :syntax="ui.diffSyntaxEnabled"
       :mode="ui.diffMode"
+      :wrap="ui.wrapEnabled"
       :tabindex="isPortrait ? 0 : undefined"
       :role="isPortrait ? 'region' : undefined"
       :aria-label="isPortrait ? 'File diffs' : undefined"

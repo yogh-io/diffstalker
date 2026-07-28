@@ -24,6 +24,7 @@ import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
 import DiffView from '../components/DiffView.vue';
+import WrapToggle from '../components/WrapToggle.vue';
 
 const PAGE_SIZE = 100;
 
@@ -279,16 +280,21 @@ function selectAndFocusPayload(commit: CommitInfo): void {
           :aria-label="isPortrait ? 'Commit diff' : undefined"
           @keydown="onPayloadKeydown"
         >
+          <div class="detail-toolbar">
+            <WrapToggle />
+          </div>
           <p v-if="detailError" class="col-empty view-error" data-testid="detail-error">
             {{ detailError }}
           </p>
           <p v-else-if="!history.commitDiff" class="col-empty">Loading diff…</p>
           <DiffView
             v-else
+            class="detail-diffview"
             :diff="history.commitDiff"
             show-file-headers
             :syntax="ui.diffSyntaxEnabled"
             :mode="ui.diffMode"
+            :wrap="ui.wrapEnabled"
           />
         </div>
       </template>
@@ -496,6 +502,23 @@ function selectAndFocusPayload(commit: CommitInfo): void {
 }
 
 .detail-diff {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-toolbar {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.25rem 0.5rem 0;
+}
+
+/* Fallthrough class onto DiffView's root (whichever of its two v-if/v-else
+   roots renders) — reaches remaining space in .detail-diff's flex column,
+   below .detail-toolbar, same pattern as .diffs-col on <DiffStack>. */
+.detail-diffview {
   flex: 1;
   min-height: 0;
 }

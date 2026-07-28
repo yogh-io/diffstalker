@@ -20,6 +20,7 @@ describe('loadPrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -37,6 +38,7 @@ describe('loadPrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -54,6 +56,7 @@ describe('loadPrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -78,6 +81,7 @@ describe('loadPrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -133,6 +137,14 @@ describe('loadPrefs', () => {
     expect(loadPrefs().diffMode).toBe('unified');
   });
 
+  test('wrapEnabled: persists a stored boolean, drops anything else', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ wrapEnabled: true }));
+    expect(loadPrefs().wrapEnabled).toBe(true);
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ wrapEnabled: 'yes' }));
+    expect(loadPrefs().wrapEnabled).toBe(false);
+  });
+
   test('degrades to defaults when localStorage throws (private mode / quota)', () => {
     vi.stubGlobal('localStorage', {
       getItem(): string | null {
@@ -150,6 +162,7 @@ describe('loadPrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,
@@ -172,6 +185,7 @@ describe('savePrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
       historyTop: null,

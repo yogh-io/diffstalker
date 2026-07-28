@@ -21,6 +21,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRepoStore } from '../stores/repo';
+import { useUiStore } from '../stores/ui';
 import { useExplorerStore } from '../stores/explorer';
 import type { ExplorerRow } from '../stores/explorer';
 import { statusLetter } from '../utils/format';
@@ -31,6 +32,7 @@ import { makePayloadKeyHandler } from '../composables/usePortraitKeys';
 import FileContentPane from '../components/FileContentPane.vue';
 
 const repo = useRepoStore();
+const ui = useUiStore();
 const explorer = useExplorerStore();
 const {
   rows,
@@ -382,7 +384,13 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
       :aria-label="isPortrait ? 'File content' : undefined"
       @keydown="onPayloadKeydown"
     >
-      <FileContentPane :path="selectedPath" :file="file" :loading="fileLoading" :error="fileError" />
+      <FileContentPane
+        :path="selectedPath"
+        :file="file"
+        :loading="fileLoading"
+        :error="fileError"
+        :wrap="ui.wrapEnabled"
+      />
     </section>
   </div>
 </template>

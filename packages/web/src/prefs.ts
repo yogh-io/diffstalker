@@ -46,6 +46,13 @@ export interface Prefs {
    */
   diffMode: DiffMode;
   /**
+   * Wrap long lines in diffs and the Explorer file viewer, instead of
+   * horizontal scrolling. Global, off by default (matches the CLI's
+   * wrapMode) — a small, low-key toggle in each pane's corner, not
+   * grouped with the header's auto/syntax/split/follow toggles.
+   */
+  wrapEnabled: boolean;
+  /**
    * Changes view files/diff split as a fraction of the container width
    * (landscape column layout); null = the view's default. Clamped to a
    * sane band on read.
@@ -87,6 +94,7 @@ function defaults(): Prefs {
     autoMode: false,
     diffSyntax: false,
     diffMode: 'unified',
+    wrapEnabled: false,
     changesSplit: null,
     changesTop: null,
     historyTop: null,
@@ -117,6 +125,7 @@ function sanitize(raw: unknown): Prefs {
   if (typeof record.autoMode === 'boolean') prefs.autoMode = record.autoMode;
   if (typeof record.diffSyntax === 'boolean') prefs.diffSyntax = record.diffSyntax;
   if (isDiffMode(record.diffMode)) prefs.diffMode = record.diffMode;
+  if (typeof record.wrapEnabled === 'boolean') prefs.wrapEnabled = record.wrapEnabled;
   prefs.changesSplit = readFraction(record.changesSplit, CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX);
   for (const key of TOP_KEYS) {
     prefs[key] = readFraction(record[key], TOP_MIN, TOP_MAX);

@@ -712,6 +712,15 @@ git operations.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.
+  Both the open-on-daemon list and the recent-repos list group a repo's
+  worktrees under one project row (e.g. "calculator" instead of one row per
+  worktree); picking a recent multi-worktree project opens its most
+  recently edited worktree. The worktree switcher beside it (shown once a
+  multi-worktree project is active) is a custom dropdown, not a native
+  select, so its closed trigger shows only the current worktree's name (no
+  clutter) while the open list sorts worktrees most-recently-edited first,
+  each on two lines: the name, then commits-ahead-of-base and a relative
+  "edited N ago" time in smaller, dimmer text.
 - **Auto mode** (header toggle or `a`, persisted): read-only auto-following of
   the newest change — the web port of the CLI's auto mode. When a file's
   content changes on disk, it is auto-selected and its row flashes briefly;
@@ -742,6 +751,19 @@ git operations.
   share the vertical scroll. Syntax highlighting composes with split. In the
   stacked-diff views (Changes, Compare) the exact-height virtualization counts
   split rows, so scrolling stays precise in either mode.
+- **Wrap long lines** (app-wide, persisted, off by default): a small "Wrap"
+  toggle in the corner of each diff pane (Changes, Compare, History) and the
+  Explorer file viewer — deliberately understated compared to the header's
+  auto/syntax/split toggles, closer to a Notepad/Word "Word Wrap" checkbox
+  than a headline display mode. On, long lines break onto multiple visual
+  lines instead of needing horizontal scroll. Off by default, wrapped rows
+  give up their row-level (and, in Changes/Compare, per-file)
+  content-visibility virtualization — a wrapped row's height is no longer a
+  known constant, so rather than trust an inexact placeholder the affected
+  content just renders in full, unvirtualized. A deliberate, occasional
+  opt-in, not the default hot path, so this trade is one-sided: wrap mode
+  never causes a wrong-height jump, at the cost of skipping the off-screen
+  layout/paint skip for whatever it's turned on for.
 
 ### Portrait layout (vertical monitors)
 

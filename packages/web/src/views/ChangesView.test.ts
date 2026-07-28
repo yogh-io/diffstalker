@@ -383,6 +383,21 @@ describe('stacked diffs', () => {
     expect(sections[2].find('[data-testid="diff-placeholder"]').exists()).toBe(true);
   });
 
+  test('the wrap toggle switches the stack (and its DiffViews) into wrap mode', async () => {
+    const { wrapper, repo } = mountView();
+    seedDiff(repo, 'u:src/app/main.ts', SAMPLE_DIFF);
+    await wrapper.vm.$nextTick();
+
+    const section = wrapper.findAll('[data-testid="file-diff"]')[0];
+    expect(section.find('.file-diff-body').classes()).not.toContain('wrap-mode');
+    expect(section.find('.diff-scroll').classes()).not.toContain('wrap');
+
+    await wrapper.find('[data-testid="wrap-toggle"]').trigger('click');
+
+    expect(section.find('.file-diff-body').classes()).toContain('wrap-mode');
+    expect(section.find('.diff-scroll').classes()).toContain('wrap');
+  });
+
   test('manual per-file collapse hides the body and toggles back', async () => {
     const { wrapper, repo } = mountView();
     seedDiff(repo, 'u:src/app/main.ts', SAMPLE_DIFF);

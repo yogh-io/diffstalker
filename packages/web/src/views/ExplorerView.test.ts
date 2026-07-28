@@ -241,6 +241,18 @@ describe('file selection and the content pane', () => {
     expect(content.text()).toContain('const x = 1;');
   });
 
+  test('the wrap toggle switches the file content pane into wrap mode', async () => {
+    const { wrapper } = await mountView();
+    await wrapper.findAll('.tree-row')[2].trigger('click'); // main.ts
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="file-content"]').classes()).not.toContain('wrap');
+
+    await wrapper.find('[data-testid="wrap-toggle"]').trigger('click');
+
+    expect(wrapper.find('[data-testid="file-content"]').classes()).toContain('wrap');
+  });
+
   test('a binary file shows the flag-driven note', async () => {
     onRequest = (call) =>
       call.url.includes('/file')

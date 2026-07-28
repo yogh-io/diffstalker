@@ -123,6 +123,26 @@ describe('auto mode', () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ autoMode: true }));
     expect(useUiStore().autoModeEnabled).toBe(true);
   });
+});
+
+describe('wrap mode', () => {
+  test('defaults off; toggleWrap flips and persists', () => {
+    const store = useUiStore();
+    expect(store.wrapEnabled).toBe(false);
+
+    store.toggleWrap();
+    expect(store.wrapEnabled).toBe(true);
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).wrapEnabled).toBe(true);
+
+    store.toggleWrap();
+    expect(store.wrapEnabled).toBe(false);
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).wrapEnabled).toBe(false);
+  });
+
+  test('restores the stored toggle', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ wrapEnabled: true }));
+    expect(useUiStore().wrapEnabled).toBe(true);
+  });
 
   test('flashFile flashes a row for FLASH_MS; a re-flash restarts the window', () => {
     vi.useFakeTimers();

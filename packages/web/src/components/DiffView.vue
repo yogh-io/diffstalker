@@ -60,6 +60,18 @@ const props = defineProps<{
   /** Syntax-highlight content lines (global toggle). Off by default. */
   syntax?: boolean;
   /**
+   * Wrap long lines instead of horizontal-scrolling them (global toggle,
+   * off by default). Unified rows lose their row-level content-visibility
+   * virtualization while wrap is on — a wrapped line's height is no
+   * longer a known constant, so the exact-height trick this view (and
+   * DiffStack's per-file sizing) relies on elsewhere would silently go
+   * wrong; natural layout is the reliable fallback for the rare,
+   * deliberately-opted-into wrap case. Split mode is exempt: it never
+   * wraps regardless of this prop (the two columns wrap independently
+   * otherwise, desyncing which old/new lines face each other).
+   */
+  wrap?: boolean;
+  /**
    * Force per-file section headers on (History's commit diffs). Left
    * off, headers still show automatically when the diff spans more
    * than one file (a whole-tree diff); a single-file diff shows none —
@@ -238,7 +250,7 @@ onBeforeUnmount(() => {
     v-else
     ref="rootEl"
     class="diff-scroll mono"
-    :class="{ 'with-file-headers': showHeaders, split: isSplit, embedded }"
+    :class="{ 'with-file-headers': showHeaders, split: isSplit, embedded, wrap }"
     data-testid="diff-view"
     :style="{ '--ln-w': `${model.lineNumWidth}ch` }"
   >
@@ -389,6 +401,15 @@ onBeforeUnmount(() => {
 .hunk {
   width: max-content;
   min-width: 100%;
+}
+
+/* Wrap mode: max-content would size the section/hunk to its longest
+   UNWRAPPED line (the whole point of width:max-content elsewhere), which
+   would defeat wrapping — pin to the scroller's own width instead so
+   .content actually wraps within it, not past it. */
+.diff-scroll.wrap .file-section,
+.diff-scroll.wrap .hunk {
+  width: 100%;
 }
 
 /* Split mode: the sections must NOT shrink-wrap to content. max-content
@@ -547,6 +568,18 @@ onBeforeUnmount(() => {
   contain-intrinsic-size: auto var(--row-h, 1.26rem);
 }
 
+/* Wrap mode: a wrapped line's real height is no longer the constant
+   content-visibility above assumes (it may be several physical lines
+   tall), so promising an intrinsic size here would just be wrong and
+   drift on realize. Turning virtualization off for wrapped rows is the
+   reliable choice — full natural layout, nothing to get wrong — over a
+   sized-but-inaccurate placeholder. Same reasoning as DiffStack's
+   file-level content-visibility for wrap mode. */
+.diff-scroll.wrap .row {
+  width: 100%;
+  content-visibility: visible;
+}
+
 .ln {
   text-align: right;
   padding-left: 0.75ch;
@@ -570,6 +603,20 @@ onBeforeUnmount(() => {
      without the leading numbers or +/- symbols. */
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* Wrap mode: break onto multiple visual lines within the row instead of
+   overflowing it. overflow-wrap:anywhere (not break-word) because code
+   routinely has long unbroken runs (URLs, minified tokens) with no
+   otherwise-breakable point for break-word to find. Unified only
+   (:not(.split)) — split's two columns are independent, so a wrapped
+   del/add pair would wrap to different physical line counts on each
+   side and desync the alignment split depends on; see the .split-line
+   rule below, which keeps split on its normal (unwrapped) layout no
+   matter what wrap is set to. */
+.diff-scroll.wrap:not(.split) .content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .row.add {
@@ -648,6 +695,12 @@ onBeforeUnmount(() => {
   content-visibility: auto;
   contain-intrinsic-size: auto var(--row-h, 1.26rem);
 }
+
+/* No wrap-mode override here, on purpose: split's .content stays
+   white-space:pre (see .diff-scroll.wrap:not(.split) .content above),
+   so a split line's height is always the constant --row-h regardless
+   of the wrap toggle — this row keeps its normal max-content sizing
+   and virtualization no matter what wrap is set to. */
 
 .split-line .ln {
   text-align: right;

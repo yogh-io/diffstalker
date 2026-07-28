@@ -551,6 +551,18 @@ describe('per-file diffs', () => {
     expect(sections[2].find('.uncommitted-tag').text()).toBe('[uncommitted]');
   });
 
+  test('the wrap toggle switches the stack (and its DiffViews) into wrap mode', async () => {
+    const { wrapper } = mountView();
+    const first = wrapper.findAll('[data-testid="file-diff"]')[0];
+    expect(first.find('.file-diff-body').classes()).not.toContain('wrap-mode');
+    expect(first.find('.diff-scroll').classes()).not.toContain('wrap');
+
+    await wrapper.find('[data-testid="wrap-toggle"]').trigger('click');
+
+    expect(first.find('.file-diff-body').classes()).toContain('wrap-mode');
+    expect(first.find('.diff-scroll').classes()).toContain('wrap');
+  });
+
   test('a file section collapses and re-expands', async () => {
     const { wrapper } = mountView();
     const first = wrapper.findAll('[data-testid="file-diff"]')[0];

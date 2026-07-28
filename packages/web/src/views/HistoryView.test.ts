@@ -273,6 +273,24 @@ describe('commit detail', () => {
     expect(detail.find('.row.del .content').text()).toBe('old foo');
   });
 
+  test('the wrap toggle switches the commit diff into wrap mode', async () => {
+    const selected = commit({ message: 'Split the daemon', author: 'Ada' });
+    const { wrapper, repo } = mountView([selected]);
+    repo.history = {
+      ...repo.history,
+      selectedCommit: repo.history.commits[0],
+      commitDiff: TWO_FILE_DIFF,
+    };
+    await wrapper.vm.$nextTick();
+
+    const detail = wrapper.find('[data-testid="commit-detail"]');
+    expect(detail.find('.diff-scroll').classes()).not.toContain('wrap');
+
+    await detail.find('[data-testid="wrap-toggle"]').trigger('click');
+
+    expect(detail.find('.diff-scroll').classes()).toContain('wrap');
+  });
+
   test('a selected commit with no diff yet shows a loading line', async () => {
     const { wrapper, repo } = mountView([commit()]);
     repo.history = { ...repo.history, selectedCommit: repo.history.commits[0], commitDiff: null };

@@ -230,6 +230,7 @@ import {
   type StackSection,
 } from '../composables/useStackScroll';
 import DiffView from './DiffView.vue';
+import WrapToggle from './WrapToggle.vue';
 
 const props = defineProps<{
   files: StackFile[];
@@ -239,6 +240,20 @@ const props = defineProps<{
   syntax?: boolean;
   /** Forwarded to each file's DiffView: unified or side-by-side split. */
   mode?: 'unified' | 'split';
+  /**
+   * Forwarded to each file's DiffView: wrap long lines. Also disables
+   * this stack's own exact per-file height computation (see
+   * exactBodyHeight) — a wrapped file's real height depends on how many
+   * lines its long lines wrap into, which this stack has no cheap way to
+   * know exactly, so it falls back to the (rougher, already-existing)
+   * stats-based estimate and stops content-visibility-skipping that
+   * file's body, trading the off-screen-skip optimization for a height
+   * promise it can actually keep. Same applies to sectionHeightModel's
+   * arithmetic offsets (the scroll spy's OTHER consumer of that same
+   * height promise) — it returns null while wrap is on, falling back to
+   * the DOM-read path, for the same reason.
+   */
+  wrap?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -247,6 +262,7 @@ const emit = defineEmits<{
 }>();
 
 const scrollerEl = ref<HTMLElement | null>(null);
+const toolbarEl = ref<HTMLElement | null>(null);
 
 /** Section elements by key, kept by the v-for ref callbacks. */
 const sectionEls = new Map<string, HTMLElement>();
@@ -424,6 +440,12 @@ function estimateBodyHeight(item: StackFile): number {
  * or an empty/binary model that renders prose instead of rows).
  */
 function exactBodyHeight(item: StackFile): number | null {
+  // Wrap mode: a wrapped line's height is no longer the constant rowH
+  // this formula multiplies by, so an "exact" height here would just be
+  // wrong. Null routes callers to the estimate, and to turning this
+  // body's content-visibility off entirely (see the wrap-mode CSS below)
+  // rather than trusting an inexact placeholder.
+  if (props.wrap) return null;
   const sizes = probeSizes.value;
   if (!sizes || !item.diff) return null;
   const model = modelFor(item.diff, item.staged ?? false);
@@ -480,7 +502,20 @@ let stackChrome: {
   gap?: number;
   binaryNoteH?: number;
   loadDiffH?: number;
+  toolbarH?: number;
 } = {};
+
+/** The wrap-toggle toolbar's own height — the height model's `start`
+ * offset before the first section, so the spy's arithmetic offsets
+ * agree with where sections actually sit (the toolbar is an in-flow
+ * sibling, not part of any section). */
+function chromeToolbarH(): number | null {
+  if (stackChrome.toolbarH === undefined) {
+    if (!toolbarEl.value) return null;
+    stackChrome.toolbarH = toolbarEl.value.getBoundingClientRect().height;
+  }
+  return stackChrome.toolbarH ?? null;
+}
 
 function chromeHeaderH(): number | null {
   if (stackChrome.headerH === undefined) {
@@ -554,17 +589,22 @@ function sectionOuterHeight(item: StackFile, headerH: number): number | null {
 /**
  * The height model handed to useStackScroll: lets it rebuild the
  * spy/tween offset cache with ZERO per-section DOM reads. Null (full
- * DOM fallback) only when no probe has landed (tests, first paint) or
- * a chrome piece cannot be measured yet.
+ * DOM fallback) only when no probe has landed (tests, first paint), a
+ * chrome piece cannot be measured yet, OR wrap mode is on — wrapped
+ * bodies render at content-visibility:visible (see exactBodyHeight),
+ * so sectionOuterHeight's estimateBodyHeight fallback no longer
+ * matches what actually renders; the DOM-read fallback is the only
+ * honest source of section offsets while that's true.
  */
 function sectionHeightModel(): SectionHeightModel | null {
-  if (probeSizes.value === null) return null;
+  if (probeSizes.value === null || props.wrap) return null;
   const headerH = chromeHeaderH();
   const gap = chromeGap();
-  if (headerH === null || gap === null) return null;
+  const toolbarH = chromeToolbarH();
+  if (headerH === null || gap === null || toolbarH === null) return null;
   const byKey = new Map(props.files.map((f) => [f.key, f]));
   return {
-    start: 0, // the first section sits at the scroller's top
+    start: toolbarH, // the toolbar sits in-flow before the first section
     gap,
     heightFor: (key) => {
       const item = byKey.get(key);
@@ -742,15 +782,17 @@ watch(
   { flush: 'post' }
 );
 
-// Flipping the global unified<->split mode re-renders every body at a new
-// height (split collapses each run to max(dels, adds) rows, vs
-// dels + adds unified), so content above the viewport would shift under
-// the reader. Sandwich the flip in the same anchor prepare/restore the
-// files and probe-resize paths use — nothing the user is looking at moves.
-// changedEls: [null] means "a height change happened somewhere; keep the
-// anchored line put" (the probe-resize path, where every body also moves).
+// Flipping the global unified<->split mode, OR wrap on/off, re-renders
+// every body at a new height (split collapses each run to max(dels,
+// adds) rows, vs dels + adds unified; wrap turns fixed-height rows into
+// however-many-lines-they-wrap-to), so content above the viewport would
+// shift under the reader. Sandwich the flip in the same anchor
+// prepare/restore the files and probe-resize paths use — nothing the
+// user is looking at moves. changedEls: [null] means "a height change
+// happened somewhere; keep the anchored line put" (the probe-resize
+// path, where every body also moves).
 watch(
-  () => props.mode,
+  () => [props.mode, props.wrap],
   () => {
     anchor.prepare({ survivingKeys: survivingKeys(committedFiles), changedEls: [null] });
   },
@@ -758,7 +800,7 @@ watch(
 );
 
 watch(
-  () => props.mode,
+  () => [props.mode, props.wrap],
   () => {
     anchor.restore();
     // Every body's height changed: the spy/tween offsets are stale, and
@@ -980,6 +1022,14 @@ defineExpose({
         <DiffView :diff="probeDiff" show-file-headers />
       </div>
     </div>
+    <!-- Scrolls away with the rest of the stack, on purpose: wrap is a
+         set-and-forget preference, not something reached for mid-scroll,
+         and pinning it would mean fighting the file/hunk sticky-header
+         stack (both already claim top:0 at different offsets) for very
+         little benefit. -->
+    <div ref="toolbarEl" class="stack-toolbar">
+      <WrapToggle />
+    </div>
     <section
       v-for="item in files"
       :key="item.key"
@@ -1044,6 +1094,7 @@ defineExpose({
         v-show="!item.collapsed"
         :ref="(el) => setBodyEl(item.key, el)"
         class="file-diff-body"
+        :class="{ 'wrap-mode': props.wrap }"
         :style="{ containIntrinsicSize: bodyIntrinsicSize(item) }"
       >
         <DiffView
@@ -1052,6 +1103,7 @@ defineExpose({
           :file-path="item.path"
           :syntax="props.syntax"
           :mode="props.mode"
+          :wrap="props.wrap"
           embedded
         />
         <div
@@ -1079,6 +1131,12 @@ defineExpose({
      suppress it elsewhere, and it would double-correct against the
      useScrollAnchor sandwich — which is the ONE compensation path. */
   overflow-anchor: none;
+}
+
+.stack-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.25rem 0.25rem 0;
 }
 
 /* The size probe: laid out (so it measures) but invisible, zero-height,
@@ -1213,6 +1271,18 @@ defineExpose({
    this onto .file-diff — c-v on the section breaks its sticky header. */
 .file-diff-body {
   content-visibility: auto;
+}
+
+/* Wrap mode: exactBodyHeight() returns null while props.wrap is set, so
+   the inline contain-intrinsic-size above is only ever the rough stats
+   estimate — content-visibility:auto would use it as a real placeholder
+   for far-away files, and a rough estimate standing in for a file that
+   might be a normal height OR five times taller (many long lines,
+   wrapped) is exactly the kind of drift the exact-height model elsewhere
+   is built to avoid. Turning content-visibility off for wrapped bodies
+   is the reliable trade: full natural layout, no promise to keep. */
+.file-diff-body.wrap-mode {
+  content-visibility: visible;
 }
 
 /* Untracked file whose fetch hasn't landed (phase 1); sized inline

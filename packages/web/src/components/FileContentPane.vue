@@ -23,6 +23,7 @@ import { computed } from 'vue';
 import type { FileForDisplay } from '@diffstalker/core/git/explorerData';
 import { highlightContent } from '../utils/highlight';
 import { formatBytes } from '../utils/format';
+import WrapToggle from './WrapToggle.vue';
 
 const props = defineProps<{
   /** Repo-relative path of the selected file; null = nothing selected. */
@@ -30,6 +31,11 @@ const props = defineProps<{
   file: FileForDisplay | null;
   loading: boolean;
   error: string | null;
+  /** Wrap long lines instead of horizontal-scrolling them (global
+   * toggle, off by default). Same content-visibility trade-off as
+   * DiffView's wrap prop: rows lose row-level virtualization while this
+   * is on, since a wrapped row's height is no longer a known constant. */
+  wrap?: boolean;
 }>();
 
 const highlighted = computed(() => {
@@ -58,6 +64,7 @@ const isEmptyFile = computed(
       <span class="file-meta">
         <span v-if="highlighted?.language" class="file-lang">{{ highlighted.language }}</span>
         <span v-if="file" class="file-size">{{ formatBytes(file.size) }}</span>
+        <WrapToggle />
       </span>
     </header>
 
@@ -82,7 +89,12 @@ const isEmptyFile = computed(
 
       <p v-else-if="isEmptyFile" class="pane-note" data-testid="file-empty">Empty file</p>
 
-      <div v-else-if="highlighted" class="code-scroll mono" data-testid="file-content">
+      <div
+        v-else-if="highlighted"
+        class="code-scroll mono"
+        :class="{ wrap }"
+        data-testid="file-content"
+      >
         <div
           class="code-lines"
           :class="{ stale: loading }"
@@ -191,6 +203,14 @@ const isEmptyFile = computed(
   padding: 0.25rem 0 0.5rem;
 }
 
+/* Wrap mode: max-content would size to the longest UNWRAPPED line,
+   defeating wrapping — pin to the scroller's own width instead, same
+   reasoning as DiffView's wrap-mode override. */
+.code-scroll.wrap .code-lines,
+.code-scroll.wrap .code-row {
+  width: 100%;
+}
+
 /* A quietly dimmed body while a newer file load is in flight. */
 .code-lines.stale {
   opacity: 0.55;
@@ -208,6 +228,13 @@ const isEmptyFile = computed(
      from realized ones; the rem value is only the pre-probe fallback. */
   content-visibility: auto;
   contain-intrinsic-size: auto var(--row-h, 1.26rem);
+}
+
+/* Wrap mode: a wrapped row's real height is no longer the constant the
+   above intrinsic-size assumes, so virtualizing it would size a skipped
+   row wrong and cause a jump on realize. Same trade-off as DiffView. */
+.code-scroll.wrap .code-row {
+  content-visibility: visible;
 }
 
 .ln {
@@ -232,6 +259,11 @@ const isEmptyFile = computed(
      numbers. */
   user-select: text;
   -webkit-user-select: text;
+}
+
+.code-scroll.wrap .code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .truncated-note {

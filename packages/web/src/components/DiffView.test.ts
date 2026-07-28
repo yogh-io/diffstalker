@@ -44,6 +44,7 @@ function mountDiff(
     filePath?: string;
     syntax?: boolean;
     mode?: 'unified' | 'split';
+    wrap?: boolean;
   } = {}
 ) {
   return mount(DiffView, { props: { diff, ...props } });
@@ -482,6 +483,33 @@ describe('split mode (the `mode` prop)', () => {
   test('syntax highlighting composes with split mode', () => {
     const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', mode: 'split', syntax: true });
     expect(wrapper.find('.split-body [class*="hljs-"]').exists()).toBe(true);
+  });
+});
+
+describe('wrap mode (the `wrap` prop)', () => {
+  const diff = makeDiff([
+    header('src/foo.ts'),
+    hunk('@@ -1,2 +1,2 @@'),
+    ctx('keep', 1, 1),
+    add('a very long line that would otherwise need horizontal scrolling', 2),
+  ]);
+
+  test('off by default: plain white-space, no wrap class', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts' });
+    expect(wrapper.find('.diff-scroll').classes()).not.toContain('wrap');
+  });
+
+  test('on: the scroll root carries the wrap class', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', wrap: true });
+    expect(wrapper.find('.diff-scroll').classes()).toContain('wrap');
+  });
+
+  test('composes with split mode: the wrap class still lands on the root', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', mode: 'split', wrap: true });
+    const root = wrapper.find('.diff-scroll');
+    expect(root.classes()).toContain('wrap');
+    expect(root.classes()).toContain('split');
+    expect(wrapper.find('.split-body').exists()).toBe(true);
   });
 });
 

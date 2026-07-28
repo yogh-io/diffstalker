@@ -58,6 +58,9 @@ export const useUiStore = defineStore('ui', () => {
   const diffSyntaxEnabled = shallowRef<boolean>(stored.diffSyntax);
   /** Diff layout: 'unified' or 'split' — app-wide, every DiffView. */
   const diffMode = shallowRef<DiffMode>(stored.diffMode);
+  /** Wrap long lines instead of horizontal scroll — diffs and the
+   * Explorer file viewer, app-wide. */
+  const wrapEnabled = shallowRef<boolean>(stored.wrapEnabled);
   /** Path of the file row currently flashed by auto mode, null when none. */
   const flashedFile = shallowRef<string | null>(null);
   let flashTimer: ReturnType<typeof setTimeout> | null = null;
@@ -111,6 +114,11 @@ export const useUiStore = defineStore('ui', () => {
     savePrefs({ diffMode: diffMode.value });
   }
 
+  function toggleWrap(): void {
+    wrapEnabled.value = !wrapEnabled.value;
+    savePrefs({ wrapEnabled: wrapEnabled.value });
+  }
+
   /** Briefly highlight a file row (auto-selected), then clear. */
   function flashFile(path: string): void {
     flashedFile.value = path;
@@ -148,6 +156,7 @@ export const useUiStore = defineStore('ui', () => {
     autoModeEnabled,
     diffSyntaxEnabled,
     diffMode,
+    wrapEnabled,
     flashedFile,
     activeStackKey,
     init,
@@ -157,6 +166,7 @@ export const useUiStore = defineStore('ui', () => {
     toggleAutoMode,
     toggleDiffSyntax,
     toggleDiffMode,
+    toggleWrap,
     flashFile,
     setActiveStackKey,
     openOverlay,
