@@ -42,6 +42,17 @@ export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
     sendJson(res, 200, await listWorktrees(handle.path));
   });
 
+  router.get('/worktrees', async ({ query, res }) => {
+    // Unlike /repos/:id/worktrees, this takes a raw filesystem path rather
+    // than an opened repo id — it's for a path a client knows about (e.g. a
+    // recently-visited repo) but hasn't opened on this daemon. Same
+    // trust boundary as POST /repos, which already runs git against any
+    // client-supplied path.
+    const path = query.get('path');
+    if (!path) throw new HttpError(400, 'Missing "path" query parameter');
+    sendJson(res, 200, await listWorktrees(path));
+  });
+
   router.delete('/repos/:id', ({ params, res }) => {
     requireRepo(registry, params.id);
     // On actual dispose the registry's onClosed callback tears down the

@@ -72,7 +72,7 @@ describe('pickDefaultWorktree', () => {
     fs.writeFileSync(path.join(gitDir, 'index'), '');
     const mtime = new Date(Date.now() - indexAgeMs);
     fs.utimesSync(path.join(gitDir, 'index'), mtime, mtime);
-    return { path: worktreePath, branch: name, head: 'abc123', isBare: false };
+    return { path: worktreePath, branch: name, head: 'abc123', isBare: false, lastActivity: null, aheadOfBase: null };
   }
 
   it('picks the worktree with the most recent git index activity', () => {
@@ -92,6 +92,8 @@ describe('pickDefaultWorktree', () => {
       branch: null,
       head: null,
       isBare: true,
+      lastActivity: null,
+      aheadOfBase: null,
     };
 
     expect(pickDefaultWorktree([bare, only])).toBe(only);
@@ -108,8 +110,8 @@ describe('pickDefaultWorktree', () => {
     fs.utimesSync(oldDir, past, past);
 
     const entries: WorktreeInfo[] = [
-      { path: oldDir, branch: 'old', head: 'a', isBare: false },
-      { path: newDir, branch: 'new', head: 'b', isBare: false },
+      { path: oldDir, branch: 'old', head: 'a', isBare: false, lastActivity: null, aheadOfBase: null },
+      { path: newDir, branch: 'new', head: 'b', isBare: false, lastActivity: null, aheadOfBase: null },
     ];
     expect(pickDefaultWorktree(entries)?.path).toBe(newDir);
   });
@@ -117,7 +119,9 @@ describe('pickDefaultWorktree', () => {
   it('returns null for an empty list or bare-only list', () => {
     expect(pickDefaultWorktree([])).toBeNull();
     expect(
-      pickDefaultWorktree([{ path: '/x/.bare', branch: null, head: null, isBare: true }])
+      pickDefaultWorktree([
+        { path: '/x/.bare', branch: null, head: null, isBare: true, lastActivity: null, aheadOfBase: null },
+      ])
     ).toBeNull();
   });
 });

@@ -118,6 +118,12 @@ export class DiffstalkerClient {
     return request('GET', this.repoPath(id, '/worktrees'));
   }
 
+  /** Same as worktrees(), but for a raw filesystem path that may not be
+   * open on this daemon (e.g. a recently-visited repo). */
+  worktreesForPath(path: string): Promise<WorktreeInfo[]> {
+    return request('GET', '/worktrees' + toQuery({ path }));
+  }
+
   // --- Working tree ---
 
   status(id: string): Promise<WireSharedState> {

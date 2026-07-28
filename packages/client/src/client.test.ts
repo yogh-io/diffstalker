@@ -223,6 +223,13 @@ describe('history, compare, explorer, follow', () => {
     expect(worktrees[0].isBare).toBe(false);
   });
 
+  test('worktreesForPath lists the same family from an un-opened path', async () => {
+    const worktrees = await client.worktreesForPath(repoDir);
+    expect(worktrees.length).toBe(1);
+    expect(worktrees[0].path).toBe(repoDir);
+    expect(worktrees[0].branch).toBe('main');
+  });
+
   test('headMessage returns the HEAD commit message', async () => {
     const [head] = await client.history(repoId, 1);
     expect(await client.headMessage(repoId)).toBe(head.message);

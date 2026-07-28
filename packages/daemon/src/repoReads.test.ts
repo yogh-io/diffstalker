@@ -29,6 +29,8 @@ interface WireWorktree {
   branch: string | null;
   head: string | null;
   isBare: boolean;
+  lastActivity: number | null;
+  aheadOfBase: number | null;
 }
 
 function gitExec(cwd: string, command: string): string {
@@ -106,12 +108,17 @@ describe('GET /repos/:id/worktrees', () => {
     expect(main!.branch).toBe('main');
     expect(main!.head).toBe(headHash);
     expect(main!.isBare).toBe(false);
+    expect(typeof main!.lastActivity).toBe('number');
+    // No remote and only one branch — no candidate base branch to compare against.
+    expect(main!.aheadOfBase).toBeNull();
 
     const linked = worktrees.find((w) => w.path === linkedDir);
     expect(linked).toBeDefined();
     expect(linked!.branch).toBe('wt-branch');
     expect(linked!.head).toBe(headHash);
     expect(linked!.isBare).toBe(false);
+    expect(typeof linked!.lastActivity).toBe('number');
+    expect(linked!.aheadOfBase).toBeNull();
   });
 
   test('a repo without linked worktrees lists just its own', async () => {
@@ -125,6 +132,28 @@ describe('GET /repos/:id/worktrees', () => {
   test('unknown repo id is a 404', async () => {
     const res = await request('/repos/r999/worktrees');
     expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /worktrees?path=', () => {
+  test('lists a repo family from a path that was never opened', async () => {
+    // linkedDir is only ever created via `git worktree add`, never POSTed
+    // to /repos — this must still resolve the whole family.
+    const res = await request(`/worktrees?path=${encodeURIComponent(linkedDir)}`);
+    expect(res.status).toBe(200);
+    const worktrees = (await res.json()) as WireWorktree[];
+    expect(worktrees.map((w) => w.path).sort()).toEqual([linkedDir, repoDir].sort());
+  });
+
+  test('a non-repo path yields an empty array, not an error', async () => {
+    const res = await request(`/worktrees?path=${encodeURIComponent(os.tmpdir())}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  test('missing "path" is a 400', async () => {
+    const res = await request('/worktrees');
+    expect(res.status).toBe(400);
   });
 });
 

@@ -1,11 +1,14 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createGit } from './gitClient.js';
+import { getDefaultBaseBranch } from './diff.js';
+import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
 
 /**
- * A single git worktree, as reported by `git worktree list --porcelain`.
+ * A single git worktree, as reported by `git worktree list --porcelain`,
+ * before activity data is attached.
  */
-export interface WorktreeInfo {
+export interface RawWorktreeInfo {
   /** Absolute path to the worktree's working directory (or the bare git dir). */
   path: string;
   /** Branch name (without `refs/heads/`), or null when detached or bare. */
@@ -14,6 +17,18 @@ export interface WorktreeInfo {
   head: string | null;
   /** True for the bare repository entry (has no working tree). */
   isBare: boolean;
+}
+
+/** A worktree enriched with its most recent activity. */
+export interface WorktreeInfo extends RawWorktreeInfo {
+  /** Most recent git index/HEAD activity (epoch ms), or null when it
+   * couldn't be determined (bare entry, or nothing stat'able). */
+  lastActivity: number | null;
+  /** Commits on this worktree's HEAD that aren't on its resolved base
+   * branch (the persisted per-worktree choice, or the discovered default —
+   * same rule as the Compare tab). Null for a bare entry, or when no base
+   * branch could be determined. */
+  aheadOfBase: number | null;
 }
 
 /**
@@ -53,10 +68,57 @@ export async function listWorktrees(anyRepoPath: string): Promise<WorktreeInfo[]
   try {
     const git = createGit(dir);
     const out = await git.raw(['worktree', 'list', '--porcelain']);
-    return parseWorktreePorcelain(out);
+    const raw = parseWorktreePorcelain(out);
+    const ahead = await aheadOfBaseCounts(raw, dir);
+    return raw.map((wt) => ({
+      ...wt,
+      lastActivity: wt.isBare ? null : finiteOrNull(lastGitActivity(wt.path)),
+      aheadOfBase: ahead.get(wt.path) ?? null,
+    }));
   } catch {
     return [];
   }
+}
+
+/** `-Infinity` (nothing stat'able) becomes null; a real mtime passes through. */
+function finiteOrNull(time: number): number | null {
+  return Number.isFinite(time) ? time : null;
+}
+
+/**
+ * Commits-ahead-of-base for every non-bare worktree, keyed by path.
+ *
+ * The candidate-base discovery (`getDefaultBaseBranch`) scans recent `git
+ * log --all`, which is the expensive part — it runs ONCE per family (from
+ * `anyPathInFamily`, since sibling worktrees share the same refs) and is
+ * reused for every worktree that has no explicit persisted base-branch
+ * choice of its own. A worktree with an explicit choice (set via the
+ * Compare tab) uses that instead, same rule as resolveEffectiveBaseBranch.
+ */
+async function aheadOfBaseCounts(
+  worktrees: RawWorktreeInfo[],
+  anyPathInFamily: string
+): Promise<Map<string, number>> {
+  const nonBare = worktrees.filter((wt) => !wt.isBare);
+  if (nonBare.length === 0) return new Map();
+
+  const discoveredDefault = await getDefaultBaseBranch(anyPathInFamily).catch(() => null);
+
+  const entries = await Promise.all(
+    nonBare.map(async (wt): Promise<[string, number] | null> => {
+      const base = getCachedBaseBranch(wt.path) ?? discoveredDefault;
+      if (!base) return null;
+      try {
+        const git = createGit(wt.path);
+        const out = await git.raw(['rev-list', '--count', '--end-of-options', `${base}..HEAD`]);
+        return [wt.path, parseInt(out.trim(), 10)];
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  return new Map(entries.filter((e): e is [string, number] => e !== null));
 }
 
 /**
@@ -159,9 +221,9 @@ export function resolveGitDirs(worktreePath: string): GitDirs | null {
  * Records are separated by blank lines; each starts with a `worktree <path>`
  * line followed by `HEAD`, `branch`, `detached`, or `bare` attribute lines.
  */
-export function parseWorktreePorcelain(output: string): WorktreeInfo[] {
-  const result: WorktreeInfo[] = [];
-  let current: WorktreeInfo | null = null;
+export function parseWorktreePorcelain(output: string): RawWorktreeInfo[] {
+  const result: RawWorktreeInfo[] = [];
+  let current: RawWorktreeInfo | null = null;
 
   for (const line of output.split('\n')) {
     if (line.startsWith('worktree ')) {

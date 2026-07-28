@@ -16,7 +16,7 @@ import { useActiveWorktrees } from '../composables/useActiveWorktrees';
 import { DiffstalkerClient } from '../api/client';
 import { basename, commonParentDir } from '../utils/format';
 import RepoOpenForm from './RepoOpenForm.vue';
-import type { RepoSummary } from '@diffstalker/client';
+import type { RepoSummary, WorktreeInfo } from '@diffstalker/client';
 
 const daemon = useDaemonStore();
 const ui = useUiStore();
@@ -99,6 +99,82 @@ const recentsNotOpen = computed(() =>
   ui.recentRepos.filter((path) => !daemon.repos.some((repo) => repo.path === path))
 );
 
+// --- Group recents by project (mirrors openProjects above) -----------------
+
+interface RecentProject {
+  /** Project root: the deepest dir containing every known worktree of this
+   * repo, or the recent path itself while unresolved / on failure. */
+  root: string;
+  name: string;
+  /** Every worktree of this project the daemon reports (used to pick which
+   * one to open — not just the ones that happen to be in `recentRepos`). */
+  worktrees: WorktreeInfo[];
+}
+
+/** recent path -> that path's resolved project (root + full worktree
+ * family), or null once confirmed the path no longer resolves to any
+ * worktree at all (e.g. a removed worktree directory still in prefs) —
+ * such a path is dropped from the list rather than shown as its own
+ * stray "project" named after a directory that no longer exists. */
+const recentProjectByPath = ref(new Map<string, RecentProject | null>());
+
+async function resolveRecentProjects(): Promise<void> {
+  for (const path of recentsNotOpen.value) {
+    if (recentProjectByPath.value.has(path)) continue;
+    let worktrees: WorktreeInfo[];
+    try {
+      worktrees = (await client.worktreesForPath(path)).filter((w) => !w.isBare);
+    } catch {
+      // A transient failure (daemon restarting, network hiccup) tells us
+      // nothing about whether this path is a real repo — leave it
+      // unresolved so the next panel-open retries, rather than caching
+      // null and permanently mistaking "couldn't ask" for "confirmed dead".
+      continue;
+    }
+    let project: RecentProject | null = null;
+    if (worktrees.length > 0) {
+      const root = commonParentDir(worktrees.map((w) => w.path)) || path;
+      project = { root, name: basename(root), worktrees };
+    }
+    recentProjectByPath.value = new Map(recentProjectByPath.value).set(path, project);
+  }
+}
+
+watch(
+  [open, recentsNotOpen],
+  ([isOpen]) => {
+    if (isOpen) void resolveRecentProjects();
+  },
+  { immediate: false }
+);
+
+/** One row per project root, folding every recent path that resolved to the
+ * same root, dropping any that's already shown under "Open on daemon", and
+ * hiding paths confirmed dead (resolved to zero worktrees). A path not yet
+ * resolved shows optimistically as its own path-named row until it either
+ * settles into a real project or turns out to be dead. */
+const recentProjects = computed<RecentProject[]>(() => {
+  const openRoots = new Set(openProjects.value.map((p) => p.root));
+  const seen = new Map<string, RecentProject>();
+  for (const path of recentsNotOpen.value) {
+    const cached = recentProjectByPath.value.get(path);
+    if (cached === null) continue;
+    const project = cached ?? { root: path, name: basename(path), worktrees: [] };
+    if (openRoots.has(project.root) || seen.has(project.root)) continue;
+    seen.set(project.root, project);
+  }
+  return [...seen.values()];
+});
+
+/** The worktree to open for a project: the most recently active one, or
+ * the root itself when no worktree data resolved. */
+function bestWorktreePath(project: RecentProject): string {
+  if (project.worktrees.length === 0) return project.root;
+  return project.worktrees.reduce((best, w) =>
+    (w.lastActivity ?? -Infinity) > (best.lastActivity ?? -Infinity) ? w : best
+  ).path;
+}
+
 /** Activate a project: keep the active worktree if it's in this project,
  * else switch to its first open worktree; the header select refines. */
 function pickProject(project: RepoProject): void {
@@ -107,8 +183,8 @@ function pickProject(project: RepoProject): void {
   open.value = false;
 }
 
-async function pickRecent(path: string): Promise<void> {
-  const ok = await openByPath(path);
+async function pickRecentProject(project: RecentProject): Promise<void> {
+  const ok = await openByPath(bestWorktreePath(project));
   if (ok) open.value = false;
 }
 
@@ -169,16 +245,22 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <div v-if="recentsNotOpen.length" class="group" data-testid="recent-repos">
+      <div v-if="recentProjects.length" class="group" data-testid="recent-repos">
         <p class="group-label">Recent</p>
         <button
-          v-for="path in recentsNotOpen"
-          :key="path"
+          v-for="project in recentProjects"
+          :key="project.root"
           class="repo-row"
-          @click="pickRecent(path)"
+          @click="pickRecentProject(project)"
         >
-          <span class="name mono" :title="basename(path)">{{ basename(path) }}</span>
-          <span class="path mono" :title="path">{{ path }}</span>
+          <span class="name mono" :title="project.name">{{ project.name }}</span>
+          <span
+            v-if="project.worktrees.length > 1"
+            class="branch mono"
+            :title="`${project.worktrees.length} worktrees`"
+            >{{ project.worktrees.length }} worktrees</span
+          >
+          <span class="path mono" :title="project.root">{{ project.root }}</span>
         </button>
       </div>
     </div>
