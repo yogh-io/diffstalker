@@ -153,6 +153,12 @@ Terminal UI (pulls in `diffstalkerd` automatically and spawns it for you):
 npm install -g diffstalker
 ```
 
+Arch Linux — one AUR package gives you both bins and the web UI. It builds the
+current `main`, so it tracks the repo rather than the published releases:
+```bash
+yay -S diffstalker-git      # or paru -S diffstalker-git
+```
+
 Or from source (the repo is a bun workspace of several packages):
 ```bash
 git clone https://github.com/yogh-io/diffstalker.git
