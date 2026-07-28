@@ -14,7 +14,7 @@
     },
     "packages/cli": {
       "name": "diffstalker",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "bin": {
         "diffstalker": "bin/diffstalker",
       },
@@ -81,7 +81,7 @@
     },
     "packages/daemon": {
       "name": "diffstalkerd",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "bin": {
         "diffstalkerd": "bin/diffstalkerd",
       },
