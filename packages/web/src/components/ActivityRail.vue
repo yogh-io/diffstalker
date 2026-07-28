@@ -17,11 +17,27 @@
  * never share the row with the global toggles.
  */
 
+import { computed } from 'vue';
 import { useUiStore, VIEWS } from '../stores/ui';
+import { useRepoStore } from '../stores/repo';
 import HeaderToggles from './HeaderToggles.vue';
 import type { ViewName } from '../prefs';
 
 const ui = useUiStore();
+const repo = useRepoStore();
+
+/**
+ * Changed-file count on the Changes tab, so the tab itself says whether
+ * there is anything to look at — no navigating over to find an empty
+ * view. Null (no count rendered) only before a status has ever loaded;
+ * once it has, 0 is shown deliberately, since "nothing to do" is exactly
+ * what the number is there to tell you.
+ *
+ * Counts status.files, the same array the status bar's "N changed" and
+ * ChangesView's clean-tree check use, so a 0 here always coincides with
+ * the "working tree is clean" message rather than disagreeing with it.
+ */
+const changedCount = computed(() => repo.shared.status?.files.length ?? null);
 
 /** Minimal 16x16 stroke icons, one per view. */
 const ICON_PATHS: Record<ViewName, string> = {
@@ -41,7 +57,11 @@ const ICON_PATHS: Record<ViewName, string> = {
       class="rail-item"
       :class="{ active: ui.activeView === view.name }"
       :aria-current="ui.activeView === view.name ? 'page' : undefined"
-      :title="view.label"
+      :title="
+        view.name === 'changes' && changedCount !== null
+          ? `${view.label} — ${changedCount} changed file${changedCount === 1 ? '' : 's'}`
+          : view.label
+      "
       @click="ui.setActiveView(view.name)"
     >
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
@@ -55,6 +75,15 @@ const ICON_PATHS: Record<ViewName, string> = {
         />
       </svg>
       <span class="rail-label">{{ view.label }}</span>
+      <!-- Sibling of the label, not a child: the cramped band hides
+           .rail-label for icon-only tabs, and the count is precisely what
+           should survive that — it is the reason not to open the tab. -->
+      <span
+        v-if="view.name === 'changes' && changedCount !== null"
+        class="rail-count"
+        data-testid="changes-count"
+        >({{ changedCount }})</span
+      >
     </button>
 
     <!-- Right group, pinned to the band's right edge: the global display
@@ -123,6 +152,21 @@ const ICON_PATHS: Record<ViewName, string> = {
   white-space: nowrap;
 }
 
+/* Dimmer than the label: the tab is still named "Changes", the count is
+   an annotation on it, not part of the name. Negative margin pulls it
+   off the flex gap so it reads as attached to the word, while staying a
+   sibling that outlives the label in the cramped band. */
+.rail-count {
+  margin-left: -0.325rem;
+  color: var(--text-dim);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.rail-item.active .rail-count {
+  color: var(--text);
+}
+
 /* Right group: the view toolbar (adopted slot) + the global display
    toggles, pinned to the band's right edge (margin-left:auto). Wraps
    below the tabs when the band is too narrow. */
@@ -149,6 +193,13 @@ const ICON_PATHS: Record<ViewName, string> = {
 
   .rail-label {
     display: none;
+  }
+
+  /* The count stays: with the word gone it is the only thing telling you
+     whether Changes is worth opening. Reclaim the label's flex gap. */
+  .rail-count {
+    margin-left: -0.325rem;
+    font-size: var(--fs-micro);
   }
 
   /* Cramped: drop the divider so the icon tabs and toggles sit flush. */

@@ -16,6 +16,7 @@ import type { Pinia } from 'pinia';
 import ActivityRail from './ActivityRail.vue';
 import railSource from './ActivityRail.vue?raw';
 import { useUiStore } from '../stores/ui';
+import { useRepoStore } from '../stores/repo';
 
 let pinia: Pinia;
 
@@ -76,5 +77,69 @@ describe('band right group (global display toggles)', () => {
     const bandRightRule = railSource.match(/\.band-right\s*\{[^}]*\}/)?.[0] ?? '';
     expect(bandRightRule).toMatch(/margin-left\s*:\s*auto/);
     expect(bandRightRule).not.toMatch(/position\s*:\s*absolute/);
+  });
+});
+
+describe('changed-file count on the Changes tab', () => {
+  function primeStatus(fileCount: number): void {
+    const repo = useRepoStore();
+    repo.shared = {
+      ...repo.shared,
+      status: {
+        files: Array.from({ length: fileCount }, (_, i) => ({
+          path: `f${i}.ts`,
+          status: 'modified' as const,
+          staged: false,
+          insertions: 1,
+          deletions: 0,
+        })),
+        branch: { current: 'main', ahead: 0, behind: 0 },
+        isRepo: true,
+      },
+      isLoading: false,
+    };
+  }
+
+  test('no count before any status has loaded (no repo open)', () => {
+    const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(wrapper.find('[data-testid="changes-count"]').exists()).toBe(false);
+    expect(wrapper.findAll('button.rail-item')[0].text()).toBe('Changes');
+  });
+
+  test('shows the count beside the label', () => {
+    primeStatus(31);
+    const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(wrapper.find('[data-testid="changes-count"]').text()).toBe('(31)');
+    expect(wrapper.findAll('button.rail-item')[0].text()).toBe('Changes(31)');
+  });
+
+  test('shows (0) on a clean tree — the point is to see it is empty without opening it', () => {
+    primeStatus(0);
+    const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(wrapper.find('[data-testid="changes-count"]').text()).toBe('(0)');
+  });
+
+  test('only the Changes tab carries a count', () => {
+    primeStatus(3);
+    const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(wrapper.findAll('[data-testid="changes-count"]')).toHaveLength(1);
+    const tabs = wrapper.findAll('button.rail-item');
+    expect(tabs.slice(1).map((t) => t.text())).toEqual([
+      'Journal',
+      'History',
+      'Compare',
+      'Explorer',
+    ]);
+  });
+
+  test('the count is a sibling of the label, so it survives the icon-only band', () => {
+    // The cramped media query hides .rail-label; the count must not be
+    // inside it, or the one signal worth keeping disappears with the word.
+    primeStatus(5);
+    const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
+    const count = wrapper.find('[data-testid="changes-count"]').element;
+    expect(count.parentElement?.classList.contains('rail-item')).toBe(true);
+    expect(count.closest('.rail-label')).toBeNull();
+    expect(railSource).toMatch(/@media[^{]*\{[\s\S]*\.rail-label\s*\{\s*display:\s*none/);
   });
 });
