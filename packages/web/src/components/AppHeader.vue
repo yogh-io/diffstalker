@@ -21,32 +21,53 @@ import ThemeSwitcher from './ThemeSwitcher.vue';
 const daemon = useDaemonStore();
 const repo = useRepoStore();
 const ui = useUiStore();
-const { worktrees, hasMultiple } = useActiveWorktrees();
+const { hasMultiple } = useActiveWorktrees();
 
 const branch = computed(() => repo.shared.status?.branch ?? null);
 
-/** The active worktree's displayed name (branch, or dir name when detached)
- * — matches what the worktree select shows for the current worktree. */
-const activeWorktreeName = computed(() => {
+/**
+ * What the worktree select's trigger actually displays: the active
+ * worktree's DIRECTORY name.
+ *
+ * This used to be computed as `branch ?? dir`, which is what the select's
+ * ROWS showed — not its trigger. When a worktree's directory and branch
+ * differ (a `main` worktree with a feature branch checked out) the
+ * breadcrumb then suppressed the branch name believing the select already
+ * displayed it, and the current branch appeared nowhere in plain text.
+ */
+const activeWorktreeLabel = computed<string | null>(() => {
   const activePath = daemon.repos.find((r) => r.id === daemon.activeRepoId)?.path ?? null;
-  const wt = worktrees.value.find((w) => w.path === activePath);
-  return wt ? (wt.branch ?? basename(wt.path)) : null;
+  return activePath === null ? null : basename(activePath);
 });
 
 /**
  * Show the branch name in the breadcrumb UNLESS the worktree select is up
- * and already shows that exact name (branch == worktree) — then it would be
- * a duplicate, so drop it and let the breadcrumb read "→ <upstream>". Only
- * drop it when there IS an upstream to show, so the breadcrumb is never empty.
+ * and already shows that exact name — then it would be a duplicate, so
+ * drop it and let the breadcrumb read "→ <upstream>". Only drop it when
+ * there IS an upstream to show, so the breadcrumb is never empty.
  */
 const showBranchName = computed(
   () =>
     !(
       hasMultiple.value &&
       branch.value?.tracking != null &&
-      branch.value.current === activeWorktreeName.value
+      branch.value.current === activeWorktreeLabel.value
     )
 );
+
+/**
+ * The upstream, shortened to just the remote when it is the same branch
+ * name there (`aer-4569-x` → `origin/aer-4569-x` reads as "→ origin").
+ * A DIFFERENT upstream branch is spelled out in full — that is the case
+ * worth reading. The title carries the full ref either way.
+ */
+const trackingLabel = computed(() => {
+  const current = branch.value?.current;
+  const tracking = branch.value?.tracking;
+  if (!tracking || !current) return tracking ?? '';
+  const suffix = `/${current}`;
+  return tracking.endsWith(suffix) ? tracking.slice(0, -suffix.length) : tracking;
+});
 
 /**
  * One error line. With a repo active, the repo's error (incl. the calm
@@ -82,7 +103,7 @@ const errorLine = computed(() =>
         <span v-if="showBranchName" class="branch-name">{{ branch.current }}</span>
         <template v-if="branch.tracking">
           <span class="arrow" aria-hidden="true">&rarr;</span>
-          <span class="tracking">{{ branch.tracking }}</span>
+          <span class="tracking" :title="branch.tracking">{{ trackingLabel }}</span>
         </template>
         <span v-if="branch.ahead > 0" class="count-add">&uarr;{{ branch.ahead }}</span>
         <span v-if="branch.behind > 0" class="count-del">&darr;{{ branch.behind }}</span>

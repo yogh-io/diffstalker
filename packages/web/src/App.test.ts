@@ -525,7 +525,9 @@ describe('live readouts', () => {
     // Header: branch → tracking, ahead/behind in diff colors.
     const branch = wrapper.find('[data-testid="branch-info"]');
     expect(branch.text()).toContain('main');
-    expect(branch.text()).toContain('origin/main');
+    // A same-named upstream shortens to its remote; the full ref is the title.
+    expect(branch.find('.tracking').text()).toBe('origin');
+    expect(branch.find('.tracking').attributes('title')).toBe('origin/main');
     expect(branch.find('.count-add').text()).toBe('↑2');
     expect(branch.find('.count-del').text()).toBe('↓1');
 

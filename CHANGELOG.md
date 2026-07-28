@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A worktree is named by its directory everywhere, and its branch is
+  never hidden.** The switcher's trigger showed the directory while its
+  rows showed the branch, so a `main` worktree with a feature branch
+  checked out read as two different names depending on where you looked.
+  Worse, the header suppressed the branch name in the breadcrumb whenever
+  it matched "what the switcher shows" — computed the row way, not the
+  trigger way — so in exactly that case the current branch appeared
+  nowhere in plain text. The switcher now names the PLACE (the directory)
+  in both, and a row carries the checked-out branch on its own line when
+  it differs from the directory name; a detached worktree says "detached"
+  in its meta line. The breadcrumb states the branch whenever the switcher
+  is not already showing that exact word.
+- **The upstream shortens to its remote when it adds nothing.** A branch
+  tracking the same name upstream printed it twice
+  (`aer-4569-x → origin/aer-4569-x`); it now reads `aer-4569-x → origin`,
+  with the full ref on hover. A genuinely different upstream branch
+  (`main → upstream/release-2025.1`) is still spelled out.
 - **Project identity now comes from git, not from path shape.** Worktrees
   were grouped by their deepest common parent directory, which assumed a
   layout: worktrees parked as SIBLINGS of the repo (`…/proj` +

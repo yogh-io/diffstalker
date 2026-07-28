@@ -15,6 +15,10 @@
  * always shown; the rest is Stale, collapsed to a few rows behind an
  * "N more" reveal. Sorted most-recently-active first within each.
  *
+ * Worktrees are named by their DIRECTORY, in the trigger and the rows
+ * alike (see worktreeName); the branch checked out there is a separate
+ * line, shown only when it differs.
+ *
  * The PROJECT name is shown by the repo picker (RepoSwitcher) when
  * worktrees exist, so the closed trigger shows only the worktree's own
  * name (no meta) — the name appears once, not twice, and the collapsed
@@ -100,15 +104,39 @@ const showSectionLabels = computed(
   () => recentWorktrees.value.length > 0 && staleWorktrees.value.length > 0
 );
 
-/** A worktree's name: its branch, or its directory name when detached. */
+/**
+ * A worktree's name is its DIRECTORY name, always.
+ *
+ * The switcher picks a place on disk, so it names one — and the trigger
+ * has always shown the directory, while the rows used to show the branch
+ * (falling back to the directory when detached). Those agree only while
+ * every worktree dir is named after its branch; the moment a `main`
+ * worktree has a feature branch checked out, the same worktree read as
+ * two different names depending on where you looked.
+ *
+ * What is checked out is the branch indicator's job, and the row repeats
+ * it below (worktreeBranch) only when it differs from the directory.
+ */
 function worktreeName(worktree: WorktreeInfo): string {
-  return worktree.branch ?? basename(worktree.path);
+  return basename(worktree.path);
+}
+
+/**
+ * The row's branch line: shown only when it adds something the name does
+ * not already say. A worktree dir named after its branch — the common
+ * case — would otherwise read the same word twice.
+ */
+function worktreeBranch(worktree: WorktreeInfo): string | null {
+  if (worktree.branch === null) return null;
+  return worktree.branch === basename(worktree.path) ? null : worktree.branch;
 }
 
 /** The row's second line: "N commits ahead · edited N ago", either half
  * omitted when unknown (no base branch resolved / never committed). */
 function worktreeMeta(worktree: WorktreeInfo): string {
   const parts: string[] = [];
+  // A detached worktree has no branch line, so it says so here instead.
+  if (worktree.branch === null) parts.push('detached');
   if (worktree.aheadOfBase !== null && worktree.aheadOfBase > 0) {
     parts.push(`${worktree.aheadOfBase} commit${worktree.aheadOfBase === 1 ? '' : 's'} ahead`);
   }
@@ -171,6 +199,7 @@ onBeforeUnmount(() => {
           @click="pick(w)"
         >
           <span class="name mono">{{ worktreeName(w) }}</span>
+          <span v-if="worktreeBranch(w)" class="branch mono">{{ worktreeBranch(w) }}</span>
           <span v-if="worktreeMeta(w)" class="meta mono">{{ worktreeMeta(w) }}</span>
         </button>
       </template>
@@ -186,6 +215,7 @@ onBeforeUnmount(() => {
           @click="pick(w)"
         >
           <span class="name mono">{{ worktreeName(w) }}</span>
+          <span v-if="worktreeBranch(w)" class="branch mono">{{ worktreeBranch(w) }}</span>
           <span v-if="worktreeMeta(w)" class="meta mono">{{ worktreeMeta(w) }}</span>
         </button>
         <button
@@ -302,6 +332,17 @@ onBeforeUnmount(() => {
 .name {
   font-size: var(--fs-base);
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The checked-out branch, when the directory name does not already say
+   it. Between the name and the dim meta line in weight, since it is a
+   fact about the worktree rather than a timestamp. */
+.branch {
+  font-size: var(--fs-small);
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

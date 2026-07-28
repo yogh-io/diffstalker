@@ -734,7 +734,16 @@ git operations.
   select, so its closed trigger shows only the current worktree's name (no
   clutter) while the open list sorts worktrees most-recently-edited first,
   each on two lines: the name, then commits-ahead-of-base and a relative
-  "edited N ago" time in smaller, dimmer text.
+  "edited N ago" time in smaller, dimmer text. A worktree is named by its
+  DIRECTORY in the trigger and the rows alike — the switcher picks a place
+  on disk — and the branch checked out there gets its own line on the row
+  ONLY when it differs from the directory name (a `main` worktree holding
+  a feature branch); a detached worktree reads "detached" in its meta.
+  What is checked out is the branch indicator's job, and it states the
+  branch whenever the switcher is not already showing that exact word.
+  The upstream shortens to just the remote when it is the same branch name
+  there (`aer-4569-x → origin`, full ref on hover); a different upstream
+  branch is spelled out.
 - **One worktree source (`stores/worktrees`).** The trigger label, the
   worktree dropdown, the "Open on daemon" rows, and the "Recent" rows all
   read worktree knowledge from a single store keyed by filesystem PATH

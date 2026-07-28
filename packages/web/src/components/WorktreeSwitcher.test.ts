@@ -98,6 +98,64 @@ describe('visibility', () => {
   });
 });
 
+describe('directory vs branch', () => {
+  // A `main` worktree with a feature branch checked out: the switcher
+  // names the PLACE, and the branch rides below it. The two used to
+  // disagree — trigger showed the directory, rows showed the branch.
+  const MIXED: WorktreeInfo[] = [
+    worktree(`${CALC}/.bare`, null, { main: true, bare: true }),
+    worktree(`${CALC}/main`, 'aer-4569-mobile-machinery-terms', { lastActivity: Date.now() }),
+    worktree(`${CALC}/fix-bbox`, 'fix-bbox', { lastActivity: Date.now() }),
+  ];
+
+  test('the trigger and the row both name the DIRECTORY', async () => {
+    await prime(MIXED, `${CALC}/main`);
+    const wrapper = mount(WorktreeSwitcher);
+    expect(wrapper.find('.wt-name').text()).toBe('main');
+
+    await wrapper.find('[data-testid="worktree-select"]').trigger('click');
+    const rows = wrapper.findAll('[data-testid="worktree-options"] .wt-row');
+    expect(rows[0].find('.name').text()).toBe('main');
+  });
+
+  test('the branch shows below the name when it differs from the directory', async () => {
+    await prime(MIXED, `${CALC}/main`);
+    const wrapper = mount(WorktreeSwitcher);
+    await wrapper.find('[data-testid="worktree-select"]').trigger('click');
+
+    const rows = wrapper.findAll('[data-testid="worktree-options"] .wt-row');
+    expect(rows[0].find('.branch').text()).toBe('aer-4569-mobile-machinery-terms');
+  });
+
+  test('a directory named after its branch shows no branch line (no echo)', async () => {
+    await prime(MIXED, `${CALC}/main`);
+    const wrapper = mount(WorktreeSwitcher);
+    await wrapper.find('[data-testid="worktree-select"]').trigger('click');
+
+    const rows = wrapper.findAll('[data-testid="worktree-options"] .wt-row');
+    const fixBbox = rows.find((r) => r.find('.name').text() === 'fix-bbox');
+    expect(fixBbox!.find('.branch').exists()).toBe(false);
+  });
+
+  test('a detached worktree says so in the meta line', async () => {
+    await prime(
+      [
+        worktree(`${CALC}/.bare`, null, { main: true, bare: true }),
+        worktree(`${CALC}/main`, 'main', { lastActivity: Date.now() }),
+        worktree(`${CALC}/spike`, null, { lastActivity: Date.now() }),
+      ],
+      `${CALC}/main`
+    );
+    const wrapper = mount(WorktreeSwitcher);
+    await wrapper.find('[data-testid="worktree-select"]').trigger('click');
+
+    const rows = wrapper.findAll('[data-testid="worktree-options"] .wt-row');
+    const spike = rows.find((r) => r.find('.name').text() === 'spike');
+    expect(spike!.find('.branch').exists()).toBe(false);
+    expect(spike!.find('.meta').text()).toContain('detached');
+  });
+});
+
 describe('multi-worktree repo', () => {
   test('the closed trigger shows only the current worktree name, no meta', async () => {
     await prime(
