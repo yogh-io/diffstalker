@@ -14,14 +14,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Web UI: recent repos group by project.** The header's "Recent" list now
   collapses a repo's worktrees into one row (like the "Open on daemon" list
   already did), instead of one row per worktree; picking a multi-worktree
-  project opens its most recently edited worktree. A recent entry that no
-  longer resolves to any worktree (a removed worktree directory still in
-  local prefs) is dropped instead of showing as its own stray row.
-- **Web UI: the worktree switcher is a two-line dropdown.** Replaces the
-  native `<select>` (whose closed state leaked the active worktree's
-  last-edited time into the trigger) with a custom panel, sorted
-  most-recently-edited first, each row noting commits ahead of its base
-  branch and a relative "edited N ago" time.
+  project opens its most recently edited worktree. Both lists label a
+  project with the same "N worktrees" count — all of its worktrees, not
+  just the open ones — so one project reads identically in either. A recent
+  entry that no longer resolves to any worktree (a removed worktree
+  directory still in local prefs) is dropped instead of showing as its own
+  stray row.
+- **Web UI: the worktree switcher is a two-line dropdown, split into
+  Recent and Stale.** Replaces the native `<select>` (whose closed state
+  leaked the active worktree's last-edited time into the trigger) with a
+  custom panel: each row notes commits ahead of its base branch and a
+  relative "edited N ago" time. A long-lived project accumulates worktrees
+  without bound, so anything touched in the last week is Recent and always
+  shown, while the rest collapses to three rows behind an "N more" reveal.
+  The active worktree stays visible even when it falls outside that
+  preview.
+- **Web UI: the Changes tab shows its changed-file count** — `Changes (4)`,
+  or `Changes (0)` on a clean tree — so the tab says whether there is
+  anything to look at without having to open it first.
 - **Web UI: wrap long lines.** A small, deliberately low-key "Wrap" toggle in
   the corner of every diff pane (Changes, Compare, History) and the Explorer
   file viewer — off by default, persisted, closer to a Notepad/Word "Word
