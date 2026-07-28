@@ -1,12 +1,14 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
 import type { Modal } from './Modal.js';
-// @ts-expect-error TS1544: NodeNext only allows default imports from JSON, but the
-// named form is what lets bun's bundler tree-shake the manifest down to just the
-// version string (a default import inlines the whole package.json into the prod
-// bundle). bun (dev/start) supports named JSON imports at runtime; the published
-// bundle has the literal baked in.
-import { version } from '../../../package.json' with { type: 'json' };
+// Default import, not `{ version }`: a JSON module has only a default export, so
+// the named form throws in Node — and `bin/diffstalker` runs the compiled dist
+// under Node, which made every non-bundled build (bun run build + bun link, and
+// the from-source path in the README) fail to start. bun and the prod bundle both
+// tolerated it, so the break only showed outside them.
+import manifest from '../../../package.json' with { type: 'json' };
+
+const { version } = manifest;
 
 interface HotkeyEntry {
   key: string;
