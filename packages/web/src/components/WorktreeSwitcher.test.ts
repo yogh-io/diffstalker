@@ -135,8 +135,8 @@ describe('multi-worktree repo', () => {
     prime(
       [
         {
-          path: `${CALC}/stale`,
-          branch: 'stale',
+          path: `${CALC}/earlier`,
+          branch: 'earlier',
           head: 'a',
           isBare: false,
           lastActivity: now - 3 * 60 * 60 * 1000,
@@ -166,13 +166,112 @@ describe('multi-worktree repo', () => {
 
     const rows = wrapper.findAll('[data-testid="worktree-options"] .wt-row');
     const names = rows.map((r) => r.find('.name').text());
-    expect(names).toEqual(['fresh', 'stale', 'unknown']);
+    expect(names).toEqual(['fresh', 'earlier', 'unknown']);
 
     // fresh: 0 ahead is not shown, just the relative time.
     expect(rows[0].find('.meta').text()).toMatch(/^\d+ (second|minute)s? ago$/);
-    // stale: both halves, ahead-count first.
+    // earlier: both halves, ahead-count first.
     expect(rows[1].find('.meta').text()).toMatch(/^2 commits ahead · \d+ hours? ago$/);
     // unknown: nothing resolved — no meta line at all.
     expect(rows[2].find('.meta').exists()).toBe(false);
+  });
+});
+
+describe('recent / stale sections', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  /** A worktree last touched `ageMs` ago (null = activity unknown). */
+  function wt(name: string, ageMs: number | null): WorktreeInfo {
+    return {
+      path: `${CALC}/${name}`,
+      branch: name,
+      head: 'h',
+      isBare: false,
+      lastActivity: ageMs === null ? null : Date.now() - ageMs,
+      aheadOfBase: null,
+    };
+  }
+
+  /** Two fresh worktrees + five long-untouched ones. */
+  const MANY = [
+    wt('now-a', 1 * DAY),
+    wt('now-b', 6 * DAY),
+    wt('old-a', 8 * DAY),
+    wt('old-b', 9 * DAY),
+    wt('old-c', 10 * DAY),
+    wt('old-d', 11 * DAY),
+    wt('old-e', 12 * DAY),
+  ];
+
+  async function openPanel() {
+    const wrapper = mount(WorktreeSwitcher);
+    await wrapper.find('[data-testid="worktree-select"]').trigger('click');
+    return wrapper;
+  }
+
+  function names(wrapper: ReturnType<typeof mount>): string[] {
+    return wrapper
+      .findAll('[data-testid="worktree-options"] .wt-row')
+      .map((r) => r.find('.name').text());
+  }
+
+  test('splits at a week and collapses stale to three behind "N more"', async () => {
+    prime(MANY, `${CALC}/now-a`);
+    const wrapper = await openPanel();
+
+    expect(
+      wrapper.findAll('[data-testid="worktree-options"] .group-label').map((l) => l.text())
+    ).toEqual(['Recent', 'Stale']);
+
+    // Both recent ones, but only the three freshest of the five stale.
+    expect(names(wrapper)).toEqual(['now-a', 'now-b', 'old-a', 'old-b', 'old-c']);
+    expect(wrapper.find('[data-testid="worktree-more"]').text()).toBe('2 more');
+  });
+
+  test('"N more" reveals the rest', async () => {
+    prime(MANY, `${CALC}/now-a`);
+    const wrapper = await openPanel();
+
+    await wrapper.find('[data-testid="worktree-more"]').trigger('click');
+
+    expect(names(wrapper)).toEqual(MANY.map((w) => w.branch));
+    expect(wrapper.find('[data-testid="worktree-more"]').exists()).toBe(false);
+  });
+
+  test('the active worktree stays visible even when buried in the stale list', async () => {
+    // old-e is the 5th stale entry — past the three-row preview. Being
+    // unable to see which worktree you are on would be worse than the
+    // extra row, so it is shown anyway (and still counted as hidden-none).
+    prime(MANY, `${CALC}/old-e`);
+    const wrapper = await openPanel();
+
+    expect(names(wrapper)).toContain('old-e');
+    const active = wrapper
+      .findAll('[data-testid="worktree-options"] .wt-row')
+      .filter((r) => r.classes().includes('active'));
+    expect(active).toHaveLength(1);
+    expect(active[0].find('.name').text()).toBe('old-e');
+    expect(wrapper.find('[data-testid="worktree-more"]').text()).toBe('1 more');
+  });
+
+  test('no section headings when nothing is stale', async () => {
+    prime([wt('now-a', 1 * DAY), wt('now-b', 2 * DAY)], `${CALC}/now-a`);
+    const wrapper = await openPanel();
+
+    expect(wrapper.find('[data-testid="worktree-options"] .group-label').exists()).toBe(false);
+    expect(names(wrapper)).toEqual(['now-a', 'now-b']);
+  });
+
+  test('reopening collapses the stale list again', async () => {
+    prime(MANY, `${CALC}/now-a`);
+    const wrapper = await openPanel();
+    await wrapper.find('[data-testid="worktree-more"]').trigger('click');
+    expect(names(wrapper)).toHaveLength(MANY.length);
+
+    const trigger = wrapper.find('[data-testid="worktree-select"]');
+    await trigger.trigger('click'); // close
+    await trigger.trigger('click'); // reopen
+
+    expect(names(wrapper)).toEqual(['now-a', 'now-b', 'old-a', 'old-b', 'old-c']);
   });
 });

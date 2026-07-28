@@ -2,12 +2,18 @@
 /**
  * Worktree switcher: a dropdown of the active repo's worktrees, shown
  * beside the repo picker when the repo is one of several worktrees of the
- * same project. Sorted most-recently-active first; each row is labeled
- * with how many commits it's ahead of its base branch and how long ago it
- * was edited (a native <select> can't do a two-line row, so this mirrors
- * RepoSwitcher's custom button+panel instead). Picking one activates it
- * (opens it by path — the daemon refcounts, so re-picking the current one
- * is a no-op).
+ * same project. Each row is labeled with how many commits it's ahead of
+ * its base branch and how long ago it was edited (a native <select> can't
+ * do a two-line row, so this mirrors RepoSwitcher's custom button+panel
+ * instead). Picking one activates it (opens it by path — the daemon
+ * refcounts, so re-picking the current one is a no-op).
+ *
+ * Split into RECENT and STALE (sectioned like RepoSwitcher's panel),
+ * because a long-lived project accumulates worktrees without bound — 34
+ * on one real repo — and an unbroken 34-row list is unusable however
+ * well it's sorted. Everything touched in the last week is Recent and
+ * always shown; the rest is Stale, collapsed to a few rows behind an
+ * "N more" reveal. Sorted most-recently-active first within each.
  *
  * The PROJECT name is shown by the repo picker (RepoSwitcher) when
  * worktrees exist, so the closed trigger shows only the worktree's own
@@ -17,7 +23,7 @@
  * picker).
  */
 
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useRepoOpen } from '../composables/useRepoOpen';
 import { useActiveWorktrees } from '../composables/useActiveWorktrees';
@@ -36,9 +42,57 @@ const currentPath = computed(
   () => daemon.repos.find((r) => r.id === daemon.activeRepoId)?.path ?? ''
 );
 
-/** Most recently active first — that's usually the one being switched to. */
+/** Past this much silence a worktree is "stale" and gets collapsed away. */
+const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+/** How many stale worktrees to show before the "N more" reveal. */
+const STALE_PREVIEW = 3;
+
+const staleExpanded = ref(false);
+
+// Each opening starts collapsed again: the reveal is for "I need that one
+// old branch right now", not a preference worth remembering.
+watch(open, (isOpen) => {
+  if (!isOpen) staleExpanded.value = false;
+});
+
+/** Most recently active first — that's usually the one being switched to.
+ * Unknown activity sorts last (it is also what makes a worktree stale). */
 const sortedWorktrees = computed(() =>
   [...worktrees.value].sort((a, b) => (b.lastActivity ?? -Infinity) - (a.lastActivity ?? -Infinity))
+);
+
+/** Touched within the last week. A worktree whose activity could not be
+ * read counts as stale — unknown is not evidence of recent work. */
+const recentWorktrees = computed(() => {
+  const cutoff = Date.now() - STALE_AFTER_MS;
+  return sortedWorktrees.value.filter((w) => w.lastActivity !== null && w.lastActivity >= cutoff);
+});
+
+const staleWorktrees = computed(() => {
+  const cutoff = Date.now() - STALE_AFTER_MS;
+  return sortedWorktrees.value.filter((w) => w.lastActivity === null || w.lastActivity < cutoff);
+});
+
+/**
+ * The stale rows actually rendered: the first few, plus the active
+ * worktree whenever it is stale but would fall outside that window —
+ * being unable to see which worktree you are on is worse than one extra
+ * row.
+ */
+const visibleStale = computed(() => {
+  if (staleExpanded.value) return staleWorktrees.value;
+  const shown = staleWorktrees.value.slice(0, STALE_PREVIEW);
+  const active = staleWorktrees.value.find((w) => w.path === currentPath.value);
+  if (active && !shown.includes(active)) shown.push(active);
+  return shown;
+});
+
+const hiddenStaleCount = computed(() => staleWorktrees.value.length - visibleStale.value.length);
+
+/** Label the sections only when there are actually two of them; a lone
+ * "Recent" heading over every worktree of a two-worktree repo is noise. */
+const showSectionLabels = computed(
+  () => recentWorktrees.value.length > 0 && staleWorktrees.value.length > 0
 );
 
 /** A worktree's name: its branch, or its directory name when detached. */
@@ -101,17 +155,43 @@ onBeforeUnmount(() => {
     </button>
 
     <div v-if="open" class="panel" data-testid="worktree-options">
-      <button
-        v-for="w in sortedWorktrees"
-        :key="w.path"
-        class="wt-row"
-        :class="{ active: w.path === currentPath }"
-        :title="w.path"
-        @click="pick(w)"
-      >
-        <span class="name mono">{{ worktreeName(w) }}</span>
-        <span v-if="worktreeMeta(w)" class="meta mono">{{ worktreeMeta(w) }}</span>
-      </button>
+      <template v-if="recentWorktrees.length">
+        <p v-if="showSectionLabels" class="group-label">Recent</p>
+        <button
+          v-for="w in recentWorktrees"
+          :key="w.path"
+          class="wt-row"
+          :class="{ active: w.path === currentPath }"
+          :title="w.path"
+          @click="pick(w)"
+        >
+          <span class="name mono">{{ worktreeName(w) }}</span>
+          <span v-if="worktreeMeta(w)" class="meta mono">{{ worktreeMeta(w) }}</span>
+        </button>
+      </template>
+
+      <template v-if="staleWorktrees.length">
+        <p v-if="showSectionLabels" class="group-label">Stale</p>
+        <button
+          v-for="w in visibleStale"
+          :key="w.path"
+          class="wt-row"
+          :class="{ active: w.path === currentPath }"
+          :title="w.path"
+          @click="pick(w)"
+        >
+          <span class="name mono">{{ worktreeName(w) }}</span>
+          <span v-if="worktreeMeta(w)" class="meta mono">{{ worktreeMeta(w) }}</span>
+        </button>
+        <button
+          v-if="hiddenStaleCount > 0"
+          class="more-row mono"
+          data-testid="worktree-more"
+          @click="staleExpanded = true"
+        >
+          {{ hiddenStaleCount }} more
+        </button>
+      </template>
     </div>
   </div>
 </template>
@@ -169,6 +249,32 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+
+/* Matches RepoSwitcher's section headings so the two panels read alike. */
+.group-label {
+  margin: 0.25rem 0 0.125rem;
+  padding: 0 0.5rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* Deliberately not a .wt-row: it reveals rows rather than switching to
+   one, so it should not look like something you can land on. */
+.more-row {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  text-align: left;
+  font-size: var(--fs-small);
+  color: var(--text-dim);
+}
+
+.more-row:hover {
+  color: var(--text);
+  background: var(--surface-raised);
 }
 
 .wt-row {
