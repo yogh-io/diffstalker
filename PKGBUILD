@@ -20,6 +20,50 @@ pkgver() {
     printf "0.1.0.r%s.g%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
 }
 
+# The paths this package puts on PATH. `npm install -g diffstalker` and
+# `npm link` both plant unowned files here — npm's prefix on Arch is /usr — and
+# pacman aborts the whole transaction on any file it does not own ("exists in
+# filesystem"). That check runs ahead of every install scriptlet and hook, so a
+# .install file cannot clear the way; build time is the only point where this
+# package still gets to say something, and it is at least ahead of the failure.
+_pathbins=(/usr/bin/diffstalker /usr/bin/diffstalkerd)
+
+_warn() {
+    if declare -F warning >/dev/null; then
+        warning '%s' "$1"
+    else
+        printf '==> WARNING: %s\n' "$1" >&2
+    fi
+}
+
+_check_foreign_bins() {
+    local p target foreign=()
+    for p in "${_pathbins[@]}"; do
+        # -e alone is false for a dangling symlink, which is exactly what a
+        # stale `npm link` leaves once its target moves. Test -L as well or the
+        # most common case slips through unnoticed.
+        [[ -e $p || -L $p ]] || continue
+        pacman -Qo -- "$p" &>/dev/null || foreign+=("$p")
+    done
+    (( ${#foreign[@]} )) || return 0
+
+    _warn "No package owns these paths, so pacman will refuse to install over them:"
+    for p in "${foreign[@]}"; do
+        if target=$(readlink -- "$p"); then _warn "    $p -> $target"; else _warn "    $p"; fi
+    done
+    _warn "Almost always a leftover npm global install or 'npm link'. Clear it with:"
+    _warn "    sudo npm rm -g diffstalker diffstalkerd     # tidies node_modules too"
+    _warn "    sudo rm ${foreign[*]}"
+    _warn "Or let pacman take the paths over: --overwrite '/usr/bin/diffstalker*'"
+    return 0
+}
+
+prepare() {
+    # Once here, before the multi-minute build, and once more at the end of
+    # package() where it is the last thing printed before pacman's transaction.
+    _check_foreign_bins
+}
+
 # Runtime dependencies, staged as a tree of real directories.
 #
 # The workspace install links every package into a shared store
@@ -120,4 +164,8 @@ EOF
 
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+
+    # Last word before pacman commits, so the remedy is still on screen when
+    # the "exists in filesystem" error lands a few lines further down.
+    _check_foreign_bins
 }

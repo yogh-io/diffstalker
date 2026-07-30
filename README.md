@@ -159,6 +159,16 @@ current `main`, so it tracks the repo rather than the published releases:
 yay -S diffstalker-git      # or paru -S diffstalker-git
 ```
 
+If that fails with `diffstalker: /usr/bin/diffstalker exists in filesystem`, an
+earlier `npm install -g diffstalker` or `npm link` owns the path — npm's prefix
+on Arch is `/usr`, so its bins land in pacman's territory unowned, and pacman
+will not install over a file no package owns. The build warns about this before
+it happens; clear it and retry:
+```bash
+sudo npm rm -g diffstalker diffstalkerd     # also drops /usr/lib/node_modules
+yay -S diffstalker-git
+```
+
 Or from source (the repo is a bun workspace of several packages):
 ```bash
 git clone https://github.com/yogh-io/diffstalker.git
