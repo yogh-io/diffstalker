@@ -14,6 +14,7 @@ import {
   getCommitDiff,
   getCandidateBaseBranches,
   getDefaultBaseBranch,
+  getCommitCountBetweenRefs,
   getDiffBetweenRefs,
   commitExists,
   resolveEffectiveBaseBranch,
@@ -198,6 +199,13 @@ describe('getCandidateBaseBranches / getDefaultBaseBranch / getDiffBetweenRefs (
     expect(diff.commits.some((c) => c.message === 'feature commit')).toBe(true);
   });
 
+  it('getCommitCountBetweenRefs agrees with the full compare it stands in for', async () => {
+    // The whole point of the cheap count is that the tab never contradicts
+    // the list, so assert against the real thing rather than a literal.
+    const diff = await getDiffBetweenRefs(repoPath, 'origin/main');
+    expect(await getCommitCountBetweenRefs(repoPath, 'origin/main')).toBe(diff.commits.length);
+  });
+
   it('getDiffBetweenRefs throws NoCommonHistoryError across unrelated history', async () => {
     // An orphan branch shares no ancestor with HEAD: the empty merge-base
     // must be an explicit error, not a silent HEAD...HEAD empty diff.
@@ -206,6 +214,14 @@ describe('getCandidateBaseBranches / getDefaultBaseBranch / getDiffBetweenRefs (
     gitExec(repoPath, 'commit -m "unrelated root"');
     gitExec(repoPath, 'checkout feature');
     await expect(getDiffBetweenRefs(repoPath, 'unrelated')).rejects.toThrow(NoCommonHistoryError);
+  });
+
+  it('getCommitCountBetweenRefs throws on unrelated history too, never counts 0', async () => {
+    // A 0 would read as "nothing to compare" on the tab; no shared history
+    // is a different answer, and the endpoint must be able to tell them apart.
+    await expect(getCommitCountBetweenRefs(repoPath, 'unrelated')).rejects.toThrow(
+      NoCommonHistoryError
+    );
   });
 
   it('resolveEffectiveBaseBranch prefers the persisted choice over the default', async () => {

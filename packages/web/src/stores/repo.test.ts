@@ -130,6 +130,10 @@ function defaultGetRoutes(url: string): FakeResponse | undefined {
   if (url.startsWith('/repos/r1/commits/')) {
     return { body: diffBody(`commit-diff:${url}`) };
   }
+  // Before the /compare prefix below, which would otherwise swallow it.
+  if (url.startsWith('/repos/r1/compare/count')) {
+    return { body: { baseBranch: 'origin/main', commits: 3 } };
+  }
   if (url.startsWith('/repos/r1/compare')) {
     return { body: compareBody() };
   }
@@ -1198,6 +1202,64 @@ describe('compare', () => {
     expect(store.compare.noBaseBranch).toBe(false);
   });
 
+  test('the commit count is pulled on the first snapshot, before compare is ever opened', async () => {
+    // The whole point of the standalone count: the rail can badge the tab
+    // without anyone visiting the view.
+    const { store } = await openStore();
+    expect(fake.callsTo('/repos/r1/compare/count')).toHaveLength(1);
+    expect(store.compare.commitCount).toBe(3);
+    // ...and without dragging the heavy payload along.
+    expect(fake.callsTo('/repos/r1/compare?')).toHaveLength(0);
+  });
+
+  test('the count re-pulls on state-change while compare stays closed', async () => {
+    const { store, source } = await openStore();
+    source.emit('state-change', wireState());
+    await flush();
+    expect(fake.callsTo('/repos/r1/compare/count')).toHaveLength(2);
+    expect(store.compare.commitCount).toBe(3);
+  });
+
+  test('once compare is open the full refresh carries the count, with no extra pull', async () => {
+    const { store, source } = await openStore();
+    const countCallsBefore = fake.callsTo('/repos/r1/compare/count').length;
+
+    await store.refreshCompare();
+    // compareBody() lists one commit; the badge must follow the list it
+    // labels, not the standalone endpoint's 3.
+    expect(store.compare.commitCount).toBe(1);
+
+    source.emit('state-change', wireState());
+    await flush();
+    expect(store.compare.commitCount).toBe(1);
+    expect(fake.callsTo('/repos/r1/compare/count')).toHaveLength(countCallsBefore);
+  });
+
+  test('a 422 on the count clears it rather than badging a misleading 0', async () => {
+    const { store } = await openStore();
+    expect(store.compare.commitCount).toBe(3);
+
+    onRequest = (call) =>
+      call.url.startsWith('/repos/r1/compare/count')
+        ? { status: 422, body: { error: 'No usable base branch' } }
+        : undefined;
+    await store.refreshCompareCount();
+    expect(store.compare.commitCount).toBeNull();
+  });
+
+  test('a transient count failure keeps the last known number', async () => {
+    const { store } = await openStore();
+    expect(store.compare.commitCount).toBe(3);
+
+    onRequest = (call) =>
+      call.url.startsWith('/repos/r1/compare/count')
+        ? { status: 500, body: { error: 'git exploded' } }
+        : undefined;
+    await store.refreshCompareCount();
+    // A badge blinking out on a blip is worse than one that lags.
+    expect(store.compare.commitCount).toBe(3);
+  });
+
   test('a 422 is the no-base-branch state, not an error banner', async () => {
     const { store } = await openStore();
     onRequest = (call) =>
@@ -1241,12 +1303,14 @@ describe('compare', () => {
   test('compare is re-pulled on state-change once loaded, keeping the uncommitted flag', async () => {
     const { store, source } = await openStore();
     await store.refreshCompare(true);
-    expect(fake.callsTo('/compare')[0].url).toBe('/repos/r1/compare?uncommitted=true');
+    // '/compare?' and not '/compare': the standalone count endpoint shares
+    // the prefix, and these assertions are about the diff pulls only.
+    expect(fake.callsTo('/compare?')[0].url).toBe('/repos/r1/compare?uncommitted=true');
 
     source.emit('state-change', wireState());
     await flush();
-    expect(fake.callsTo('/compare')).toHaveLength(2);
-    expect(fake.callsTo('/compare')[1].url).toBe('/repos/r1/compare?uncommitted=true');
+    expect(fake.callsTo('/compare?')).toHaveLength(2);
+    expect(fake.callsTo('/compare?')[1].url).toBe('/repos/r1/compare?uncommitted=true');
   });
 
   test('out-of-order refreshCompare responses apply only the latest request', async () => {
@@ -1340,7 +1404,7 @@ describe('compare', () => {
 
     await store.setSelectedCompareBase('origin/dev');
     expect(store.selectedCompareBase).toBe('origin/dev');
-    expect(fake.callsTo('/compare')[0]).toMatchObject({
+    expect(fake.callsTo('/compare?')[0]).toMatchObject({
       method: 'GET',
       url: '/repos/r1/compare?base=origin%2Fdev&uncommitted=false',
     });
@@ -1365,7 +1429,7 @@ describe('compare', () => {
 
     source.emit('state-change', wireState());
     await flush();
-    const urls = fake.callsTo('/compare').map((c) => c.url);
+    const urls = fake.callsTo('/compare?').map((c) => c.url);
     expect(urls).toEqual([
       '/repos/r1/compare?base=origin%2Fdev&uncommitted=true',
       '/repos/r1/compare?base=origin%2Fdev&uncommitted=true',

@@ -57,6 +57,39 @@ function openRepoRoute(call: FetchCall): FakeResponse {
   return { body: { id: opened.id, path: opened.path } };
 }
 
+/** Repo-scoped GET reads (/repos/:id/…), matched by path. */
+function repoGetRoutes(url: string): FakeResponse | undefined {
+  // The History / Compare views pull these on activation.
+  if (/^\/repos\/[^/]+\/history/.test(url)) {
+    return { body: [] };
+  }
+  // The fuzzy finder pulls the full file list on open.
+  if (/^\/repos\/[^/]+\/files$/.test(url)) {
+    return { body: ['README.md', 'src/a.ts', 'src/b.ts'] };
+  }
+  if (/^\/repos\/[^/]+\/base-branches$/.test(url)) {
+    return { body: ['origin/main'] };
+  }
+  // The rail's Compare badge pulls this for every applied state, whether or
+  // not the Compare view has ever been opened. Before the /compare? route,
+  // which shares its prefix.
+  if (/^\/repos\/[^/]+\/compare\/count/.test(url)) {
+    return { body: { baseBranch: 'origin/main', commits: 0 } };
+  }
+  if (/^\/repos\/[^/]+\/compare\?/.test(url)) {
+    return {
+      body: {
+        baseBranch: 'origin/main',
+        stats: { filesChanged: 0, additions: 0, deletions: 0 },
+        files: [],
+        commits: [],
+        uncommittedCount: 0,
+      },
+    };
+  }
+  return undefined;
+}
+
 function routes(call: FetchCall): FakeResponse {
   if (call.method === 'GET' && call.url === '/repos') {
     return { body: serverRepos };
@@ -70,27 +103,9 @@ function routes(call: FetchCall): FakeResponse {
   if (call.url === '/follow') {
     return { body: FOLLOW_STATE };
   }
-  // The History / Compare views pull these on activation.
-  if (call.method === 'GET' && /^\/repos\/[^/]+\/history/.test(call.url)) {
-    return { body: [] };
-  }
-  // The fuzzy finder pulls the full file list on open.
-  if (call.method === 'GET' && /^\/repos\/[^/]+\/files$/.test(call.url)) {
-    return { body: ['README.md', 'src/a.ts', 'src/b.ts'] };
-  }
-  if (call.method === 'GET' && /^\/repos\/[^/]+\/base-branches$/.test(call.url)) {
-    return { body: ['origin/main'] };
-  }
-  if (call.method === 'GET' && /^\/repos\/[^/]+\/compare\?/.test(call.url)) {
-    return {
-      body: {
-        baseBranch: 'origin/main',
-        stats: { filesChanged: 0, additions: 0, deletions: 0 },
-        files: [],
-        commits: [],
-        uncommittedCount: 0,
-      },
-    };
+  if (call.method === 'GET') {
+    const repoRoute = repoGetRoutes(call.url);
+    if (repoRoute) return repoRoute;
   }
   return { status: 404, body: { error: `no fake route: ${call.method} ${call.url}` } };
 }
@@ -417,7 +432,11 @@ describe('view routing', () => {
     const wrapper = await mountWithRepos([REPO_ONE]);
     await flushPromises();
     expect(wrapper.text()).toContain('include uncommitted');
-    expect(wrapper.find('button[aria-current="page"]').attributes('title')).toBe('Compare');
+    // The active tab is Compare, and its title carries the commit count the
+    // rail badges it with (0 against this fake's empty compare).
+    expect(wrapper.find('button[aria-current="page"]').attributes('title')).toBe(
+      'Compare — 0 commits vs the base branch'
+    );
     wrapper.unmount();
   });
 });

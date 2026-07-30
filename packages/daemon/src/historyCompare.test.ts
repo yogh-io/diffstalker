@@ -343,6 +343,50 @@ describe('compare endpoints', () => {
     expect(diff.baseBranch).toBe('main');
   });
 
+  test('GET /compare/count matches what /compare lists, without the payload', async () => {
+    // The count exists so a client can badge the tab without pulling the
+    // diff; assert it against the real list rather than a literal, since
+    // the two disagreeing is the only way this can be wrong.
+    const full = (await (await request(`/repos/${repoId}/compare?base=main`)).json()) as
+      WireCompareDiff;
+
+    const res = await request(`/repos/${repoId}/compare/count?base=main`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { baseBranch: string; commits: number };
+    expect(body).toEqual({ baseBranch: 'main', commits: full.commits.length });
+  });
+
+  test('GET /compare/count without base resolves the same base /compare would', async () => {
+    const put = await sendJsonBody('PUT', `/repos/${repoId}/compare/base`, { branch: 'main' });
+    expect(put.status).toBe(200);
+    const res = await request(`/repos/${repoId}/compare/count`);
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { baseBranch: string }).toMatchObject({ baseBranch: 'main' });
+  });
+
+  test('GET /compare/count with an unknown base ref is a 400 naming the ref', async () => {
+    const res = await request(`/repos/${repoId}/compare/count?base=doesnotexist`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('Unknown base ref: doesnotexist');
+  });
+
+  test('GET /compare/count with no resolvable base is a 422', async () => {
+    const res = await request(`/repos/${noBaseRepoId}/compare/count`);
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('No usable base branch');
+  });
+
+  test('GET /compare/count across unrelated history is a 422, never a count of 0', async () => {
+    // A 0 would badge the tab as "nothing to compare", which is a
+    // different statement from "these histories do not meet".
+    const res = await request(`/repos/${mergeRepoId}/compare/count?base=orphan`);
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('No common history');
+  });
+
   test('GET /compare?uncommitted=true includes the working-tree change', async () => {
     const res = await request(`/repos/${repoId}/compare?base=main&uncommitted=true`);
     expect(res.status).toBe(200);

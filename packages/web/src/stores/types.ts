@@ -112,6 +112,14 @@ export interface CompareSelectionState {
 export interface RepoCompareState {
   compareDiff: CompareDiff | null;
   baseBranch: string | null;
+  /**
+   * How many commits the compare would list, kept live from the moment the
+   * repo opens — pulled on its own from GET /compare/count so the rail can
+   * badge the tab without the (far heavier) full compareDiff. Null means
+   * not yet known or nothing to measure against (no base branch); 0 is a
+   * real answer and is shown as one.
+   */
+  commitCount: number | null;
   loading: boolean;
   error: string | null;
   /**

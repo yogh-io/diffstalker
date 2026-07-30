@@ -203,6 +203,7 @@ function initialCompare(): RepoCompareState {
   return {
     compareDiff: null,
     baseBranch: null,
+    commitCount: null,
     loading: false,
     error: null,
     noBaseBranch: false,
@@ -319,6 +320,13 @@ export const useRepoStore = defineStore('repo', () => {
    * OFF) cannot overwrite the state the UI's controls reflect.
    */
   let compareRequestSeq = 0;
+  /**
+   * Same guard for the standalone commit-count pulls, and the handshake
+   * between them and a full compare load: whichever bumps this last owns
+   * commitCount, so a slow count response cannot land on top of the fresher
+   * number a completed compare already wrote.
+   */
+  let compareCountSeq = 0;
   /**
    * True once refreshAllDiffs has run for this repo: only then do
    * state-changes cascade into per-file cache refetches (mirrors
@@ -598,6 +606,11 @@ export const useRepoStore = defineStore('repo', () => {
     }
     if (compare.value.compareDiff !== null && !compare.value.loading) {
       void refreshCompare(lastIncludeUncommitted);
+    } else {
+      // Compare is not open: still keep the rail's commit count current,
+      // which costs one rev-list rather than a whole CompareDiff. (When it
+      // IS open, the refresh above carries the count with it.)
+      void refreshCompareCount();
     }
   }
 
@@ -1325,6 +1338,37 @@ export const useRepoStore = defineStore('repo', () => {
     return { type: 'file', index, diff: next.files[index].diff };
   }
 
+  /**
+   * Pull just the commit count (GET /compare/count), for the rail's tab
+   * badge. Runs on every applied state so the number is right from the
+   * first snapshot and stays right as commits land — the full compare is
+   * far too expensive to pull for a number, which is the whole reason this
+   * endpoint exists.
+   *
+   * A 422 (no base branch, or no shared history) clears the count rather
+   * than showing 0: "nothing to compare against" is not "zero commits".
+   * Every other failure leaves the last known count alone — a badge going
+   * blank on a transient blip is worse than a slightly stale number.
+   */
+  async function refreshCompareCount(): Promise<void> {
+    const id = repoId.value;
+    if (id === null) return;
+    const gen = generation;
+    const seq = ++compareCountSeq;
+    try {
+      const { commits } = await client.compareCount(id, {
+        base: selectedCompareBase.value ?? undefined,
+      });
+      if (gen !== generation || seq !== compareCountSeq) return;
+      compare.value = { ...compare.value, commitCount: commits };
+    } catch (err) {
+      if (gen !== generation || seq !== compareCountSeq) return;
+      if (err instanceof DaemonError && err.status === 422) {
+        compare.value = { ...compare.value, commitCount: null };
+      }
+    }
+  }
+
   async function refreshCompare(includeUncommitted: boolean = false): Promise<void> {
     lastIncludeUncommitted = includeUncommitted;
     const id = repoId.value;
@@ -1338,10 +1382,15 @@ export const useRepoStore = defineStore('repo', () => {
         uncommitted: includeUncommitted,
       });
       if (gen !== generation || seq !== compareRequestSeq) return;
+      // The loaded list is the authority on its own length: take the count
+      // from it and retire any count request still in flight, so the badge
+      // can never contradict the commits the user is looking at.
+      compareCountSeq += 1;
       compare.value = {
         ...compare.value,
         compareDiff: diff,
         baseBranch: diff.baseBranch,
+        commitCount: diff.commits.length,
         loading: false,
         noBaseBranch: false,
         selection: reanchoredCompareSelection(compare.value, diff),
@@ -1367,6 +1416,7 @@ export const useRepoStore = defineStore('repo', () => {
         ...compare.value,
         compareDiff: null,
         baseBranch: null,
+        commitCount: null,
         loading: false,
         error: null,
         noBaseBranch: true,
@@ -1476,6 +1526,7 @@ export const useRepoStore = defineStore('repo', () => {
     loadJournal,
     // compare
     refreshCompare,
+    refreshCompareCount,
     getLastIncludeUncommitted,
     getCandidateBaseBranches,
     setSelectedCompareBase,

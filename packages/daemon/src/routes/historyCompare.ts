@@ -11,6 +11,7 @@ import {
   getCommitDiff,
   getDiffBetweenRefs,
   getCompareDiffWithUncommitted,
+  getCommitCountBetweenRefs,
   getCandidateBaseBranches,
   getDefaultBaseBranch,
   resolveEffectiveBaseBranch,
@@ -52,6 +53,26 @@ async function resolveUsableBaseBranch(repoPath: string): Promise<string> {
     }
   }
   throw new HttpError(422, 'No usable base branch');
+}
+
+/**
+ * The base a compare request reads against: the client's `?base=` when it
+ * names one, otherwise the server-resolved default. Shared by /compare and
+ * /compare/count so the tab count and the list it labels can never end up
+ * measuring different bases.
+ *
+ * A client-named base that does not resolve is the client's error (400);
+ * having no usable base at all is server-side state (422).
+ */
+async function resolveRequestedBase(repoPath: string, query: URLSearchParams): Promise<string> {
+  const requestedBase = query.get('base');
+  if (requestedBase === null) {
+    return resolveUsableBaseBranch(repoPath);
+  }
+  if (!(await commitExists(repoPath, requestedBase))) {
+    throw new HttpError(400, `Unknown base ref: ${requestedBase}`);
+  }
+  return requestedBase;
 }
 
 export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): void {
@@ -121,21 +142,34 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     });
   }
 
+  /**
+   * How many commits /compare would list, without building the diff. Lets a
+   * client badge the compare tab from the moment a repo opens — the full
+   * payload is far too expensive to pull just for a number, so the tab would
+   * otherwise stay blank until the view is opened.
+   */
+  router.get('/repos/:id/compare/count', async ({ params, query, res }) => {
+    const handle = requireRepo(registry, params.id);
+    const base = await resolveRequestedBase(handle.path, query);
+    try {
+      sendJson(res, 200, {
+        baseBranch: base,
+        commits: await getCommitCountBetweenRefs(handle.path, base),
+      });
+    } catch (err) {
+      // Same 422 as /compare: no shared history is a real answer, and a
+      // client must not render it as a count of zero.
+      if (err instanceof NoCommonHistoryError) {
+        throw new HttpError(422, err.message);
+      }
+      throw err;
+    }
+  });
+
   router.get('/repos/:id/compare', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
     const uncommitted = parseBoolParam(query, 'uncommitted', false);
-
-    const requestedBase = query.get('base');
-    let base: string;
-    if (requestedBase !== null) {
-      // A client-named base that does not resolve is the client's error.
-      if (!(await commitExists(handle.path, requestedBase))) {
-        throw new HttpError(400, `Unknown base ref: ${requestedBase}`);
-      }
-      base = requestedBase;
-    } else {
-      base = await resolveUsableBaseBranch(handle.path);
-    }
+    const base = await resolveRequestedBase(handle.path, query);
 
     // Response is the CompareDiff itself — consistent with /diff returning
     // the DiffResult directly. It already carries the resolved base as

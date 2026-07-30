@@ -39,6 +39,33 @@ const repo = useRepoStore();
  */
 const changedCount = computed(() => repo.shared.status?.files.length ?? null);
 
+/**
+ * Commit count on the Compare tab, for the same reason and read the same
+ * way. Unlike Changes, compare data is not streamed — the store keeps this
+ * one number live off GET /compare/count, so the badge is there before the
+ * view has ever been opened. Null (nothing rendered) while it is unknown or
+ * there is no base branch to compare against; 0 is shown, since "your
+ * branch matches the base" is exactly what it is there to say.
+ */
+const compareCommitCount = computed(() => repo.compare.commitCount);
+
+/** The count a tab shows, or null for tabs that carry none. */
+function countFor(name: ViewName): number | null {
+  if (name === 'changes') return changedCount.value;
+  if (name === 'compare') return compareCommitCount.value;
+  return null;
+}
+
+/** Tooltip: the tab's name, plus what its count means when it has one. */
+function titleFor(name: ViewName, label: string): string {
+  const count = countFor(name);
+  if (count === null) return label;
+  if (name === 'changes') {
+    return `${label} — ${count} changed file${count === 1 ? '' : 's'}`;
+  }
+  return `${label} — ${count} commit${count === 1 ? '' : 's'} vs the base branch`;
+}
+
 /** Minimal 16x16 stroke icons, one per view. */
 const ICON_PATHS: Record<ViewName, string> = {
   changes: 'M8 1.5v5M5.5 4h5M4.5 11.5h7',
@@ -57,11 +84,7 @@ const ICON_PATHS: Record<ViewName, string> = {
       class="rail-item"
       :class="{ active: ui.activeView === view.name }"
       :aria-current="ui.activeView === view.name ? 'page' : undefined"
-      :title="
-        view.name === 'changes' && changedCount !== null
-          ? `${view.label} — ${changedCount} changed file${changedCount === 1 ? '' : 's'}`
-          : view.label
-      "
+      :title="titleFor(view.name, view.label)"
       @click="ui.setActiveView(view.name)"
     >
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
@@ -79,10 +102,10 @@ const ICON_PATHS: Record<ViewName, string> = {
            .rail-label for icon-only tabs, and the count is precisely what
            should survive that — it is the reason not to open the tab. -->
       <span
-        v-if="view.name === 'changes' && changedCount !== null"
+        v-if="countFor(view.name) !== null"
         class="rail-count"
-        data-testid="changes-count"
-        >({{ changedCount }})</span
+        :data-testid="`${view.name}-count`"
+        >({{ countFor(view.name) }})</span
       >
     </button>
 

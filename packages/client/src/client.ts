@@ -35,6 +35,7 @@ import type {
   VersionState,
   WireCommitInfo,
   WireCompareDiff,
+  CompareCount,
   WireSharedState,
   WorktreeInfo,
 } from './wire.js';
@@ -291,6 +292,19 @@ export class DiffstalkerClient {
       this.repoPath(id, '/compare') + toQuery({ base: opts.base, uncommitted: opts.uncommitted })
     );
     return { ...diff, commits: diff.commits.map(reviveCommit) };
+  }
+
+  /**
+   * How many commits compare() would return, without the diff payload.
+   * For callers that only need the number (a tab badge), where pulling the
+   * full CompareDiff would be orders of magnitude more work. Nothing to
+   * revive — both fields are JSON-native.
+   */
+  compareCount(id: string, opts: { base?: string } = {}): Promise<CompareCount> {
+    return this.transport.request(
+      'GET',
+      this.repoPath(id, '/compare/count') + toQuery({ base: opts.base })
+    );
   }
 
   // --- Journal ---

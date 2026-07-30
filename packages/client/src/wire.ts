@@ -154,6 +154,15 @@ export type WireCommitInfo = Omit<CommitInfo, 'date'> & { date: string };
 export type WireCompareDiff = Omit<CompareDiff, 'commits'> & { commits: WireCommitInfo[] };
 
 /**
+ * GET /repos/:id/compare/count: how many commits /compare would list, and
+ * the base it measured against. JSON-native — no revival.
+ */
+export interface CompareCount {
+  baseBranch: string;
+  commits: number;
+}
+
+/**
  * GET /repos/:id/journal?since=<seq>: entries with seq > since (all when
  * omitted). Entries are JSON-native (ts is epoch ms; span/stats/supersedes
  * are plain; the embedded DiffResult crosses the wire as-is, like GET

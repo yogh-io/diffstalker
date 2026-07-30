@@ -90,6 +90,7 @@ function mountView(compareDiff: CompareDiff | null = makeCompareDiff()): {
     repo.compare = {
       compareDiff,
       baseBranch: compareDiff.baseBranch,
+      commitCount: compareDiff.commits.length,
       loading: false,
       error: null,
       noBaseBranch: false,
@@ -638,6 +639,7 @@ describe('empty and edge states', () => {
     repo.compare = {
       compareDiff: null,
       baseBranch: null,
+    commitCount: null,
       loading: false,
       error: null,
       noBaseBranch: true,
@@ -664,6 +666,7 @@ describe('empty and edge states', () => {
     repo.compare = {
       compareDiff: null,
       baseBranch: null,
+    commitCount: null,
       loading: true,
       error: null,
       noBaseBranch: false,
@@ -678,6 +681,7 @@ describe('empty and edge states', () => {
     repo.compare = {
       compareDiff: null,
       baseBranch: null,
+    commitCount: null,
       loading: false,
       error: 'Failed to load compare diff: boom',
       noBaseBranch: false,

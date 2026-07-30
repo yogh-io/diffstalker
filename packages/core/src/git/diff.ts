@@ -469,6 +469,34 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
 }
 
 /**
+ * How many commits the compare view would list, without building the diff.
+ *
+ * The same range getDiffBetweenRefs logs (`<merge-base>..HEAD`, the
+ * three-dot base), counted by rev-list instead — so a caller that only
+ * wants the number never pays for the numstat, name-status, and per-file
+ * diffs behind a full CompareDiff. Same range, same answer; the tab count
+ * cannot disagree with the list it labels.
+ *
+ * Throws NoCommonHistoryError on an unrelated base, exactly as the full
+ * compare does — "no shared history" is a real answer, not a count of 0.
+ */
+export async function getCommitCountBetweenRefs(
+  repoPath: string,
+  baseRef: string
+): Promise<number> {
+  const git = createGit(repoPath);
+
+  const mergeBase = await git.raw(['merge-base', '--end-of-options', baseRef, 'HEAD']);
+  const base = mergeBase.trim();
+  if (!base) {
+    throw new NoCommonHistoryError(baseRef);
+  }
+
+  const count = await git.raw(['rev-list', '--count', '--end-of-options', `${base}..HEAD`]);
+  return Number.parseInt(count.trim(), 10);
+}
+
+/**
  * Get diff for a specific commit.
  * Shows the changes introduced by that commit.
  */

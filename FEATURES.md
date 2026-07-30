@@ -731,6 +731,17 @@ git operations.
 
 - Branch indicator: current branch → tracking, ahead/behind counts —
   read-only text, no fetch/pull/push controls.
+- Tab counts on the activity rail: **Changes** shows the changed-file count,
+  **Compare** the number of commits against the base branch, so a tab says
+  whether it is worth opening. Both show `(0)` rather than hiding — an empty
+  tab IS the signal — and both survive the cramped icon-only band, where the
+  count is all that is left. Changes reads the streamed status; Compare has
+  no stream, so it rides a dedicated `GET /compare/count`
+  (`git rev-list --count`) pulled on every applied state — the full compare
+  payload is far too heavy to fetch for a number. Once the Compare view is
+  open its loaded commit list becomes the authority, so the badge can never
+  contradict the list it labels. No base branch to compare against shows no
+  badge at all, never a misleading `(0)`.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.

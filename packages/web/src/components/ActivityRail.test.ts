@@ -119,10 +119,12 @@ describe('changed-file count on the Changes tab', () => {
     expect(wrapper.find('[data-testid="changes-count"]').text()).toBe('(0)');
   });
 
-  test('only the Changes tab carries a count', () => {
+  test('tabs with nothing to count carry no badge', () => {
     primeStatus(3);
     const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
     expect(wrapper.findAll('[data-testid="changes-count"]')).toHaveLength(1);
+    // Compare has its own count, but only once the store has one; here it
+    // has not been pulled, so its tab is bare like the countless ones.
     const tabs = wrapper.findAll('button.rail-item');
     expect(tabs.slice(1).map((t) => t.text())).toEqual([
       'Journal',
@@ -141,5 +143,65 @@ describe('changed-file count on the Changes tab', () => {
     expect(count.parentElement?.classList.contains('rail-item')).toBe(true);
     expect(count.closest('.rail-label')).toBeNull();
     expect(railSource).toMatch(/@media[^{]*\{[\s\S]*\.rail-label\s*\{\s*display:\s*none/);
+  });
+});
+
+describe('commit count on the Compare tab', () => {
+  function primeCompareCount(commitCount: number | null): void {
+    const repo = useRepoStore();
+    repo.compare = { ...repo.compare, commitCount };
+  }
+
+  test('no count until the store has pulled one', () => {
+    const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(wrapper.find('[data-testid="compare-count"]').exists()).toBe(false);
+    expect(wrapper.findAll('button.rail-item')[3].text()).toBe('Compare');
+  });
+
+  test('shows the commit count beside the label', () => {
+    primeCompareCount(12);
+    const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(wrapper.find('[data-testid="compare-count"]').text()).toBe('(12)');
+    expect(wrapper.findAll('button.rail-item')[3].text()).toBe('Compare(12)');
+  });
+
+  test('shows (0) when the branch matches its base', () => {
+    primeCompareCount(0);
+    const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(wrapper.find('[data-testid="compare-count"]').text()).toBe('(0)');
+  });
+
+  test('no base branch (null) renders no badge rather than a misleading (0)', () => {
+    primeCompareCount(null);
+    const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(wrapper.find('[data-testid="compare-count"]').exists()).toBe(false);
+  });
+
+  test('the tooltip says what the number counts, and pluralizes', () => {
+    primeCompareCount(1);
+    const one = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(one.findAll('button.rail-item')[3].attributes('title')).toBe(
+      'Compare — 1 commit vs the base branch'
+    );
+
+    primeCompareCount(4);
+    const many = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(many.findAll('button.rail-item')[3].attributes('title')).toBe(
+      'Compare — 4 commits vs the base branch'
+    );
+  });
+
+  test('Changes and Compare carry their counts independently', () => {
+    const repo = useRepoStore();
+    repo.shared = {
+      ...repo.shared,
+      status: { files: [], branch: { current: 'main', ahead: 0, behind: 0 }, isRepo: true },
+      isLoading: false,
+    };
+    primeCompareCount(7);
+
+    const wrapper = mount(ActivityRail, { global: { plugins: [pinia] } });
+    expect(wrapper.find('[data-testid="changes-count"]').text()).toBe('(0)');
+    expect(wrapper.find('[data-testid="compare-count"]').text()).toBe('(7)');
   });
 });

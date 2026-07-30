@@ -148,6 +148,21 @@ describe('history / compare decoding', () => {
     expect(fake.calls.every((c) => c.method === 'GET')).toBe(true);
   });
 
+  test('compareCount asks the count endpoint and passes the payload through', async () => {
+    respond = () => ({ body: { baseBranch: 'origin/main', commits: 12 } });
+    await expect(client.compareCount('r1')).resolves.toEqual({
+      baseBranch: 'origin/main',
+      commits: 12,
+    });
+    expect(fake.calls[0]).toMatchObject({ method: 'GET', url: '/repos/r1/compare/count' });
+  });
+
+  test('compareCount forwards the picked base, so it counts what compare would list', async () => {
+    respond = () => ({ body: { baseBranch: 'origin/dev', commits: 4 } });
+    await client.compareCount('r1', { base: 'origin/dev' });
+    expect(fake.calls[0].url).toBe('/repos/r1/compare/count?base=origin%2Fdev');
+  });
+
   test('getCompareBase unwraps {base} (read of the effective base)', async () => {
     respond = () => ({ body: { base: 'origin/main' } });
     await expect(client.getCompareBase('r1')).resolves.toBe('origin/main');

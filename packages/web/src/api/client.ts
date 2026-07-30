@@ -32,6 +32,7 @@ import type {
   VersionState,
   WireCommitInfo,
   WireCompareDiff,
+  CompareCount,
   WireSharedState,
 } from '@diffstalker/client';
 import type { CommitInfo } from '@diffstalker/core/git/status';
@@ -192,6 +193,16 @@ export class DiffstalkerClient {
       this.repoPath(id, '/compare') + toQuery({ base: opts.base, uncommitted: opts.uncommitted })
     );
     return { ...diff, commits: diff.commits.map(reviveCommit) };
+  }
+
+  /**
+   * How many commits compare() would return, without the diff payload —
+   * what the rail's Compare badge is pulled from, since the full
+   * CompareDiff is orders of magnitude too heavy to fetch for a number.
+   * Both fields are JSON-native, so nothing is revived.
+   */
+  compareCount(id: string, opts: { base?: string } = {}): Promise<CompareCount> {
+    return request('GET', this.repoPath(id, '/compare/count') + toQuery({ base: opts.base }));
   }
 
   // --- Journal ---
