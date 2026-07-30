@@ -24,7 +24,7 @@
     "format": "cd packages/core && bun run format && cd ../cli && bun run format && cd ../daemon && bun run format && cd ../client && bun run format && cd ../web && bun run format",
     "format:check": "cd packages/core && bun run format:check && cd ../cli && bun run format:check && cd ../daemon && bun run format:check && cd ../client && bun run format:check && cd ../web && bun run format:check",
     "deps": "cd packages/core && bun run deps && cd ../cli && bun run deps && cd ../daemon && bun run deps && cd ../client && bun run deps && cd ../web && bun run deps && cd ../.. && bun run deps:workspace",
-    "deps:workspace": "depcruise packages/core/src packages/client/src packages/daemon/src packages/cli/src --config .dependency-cruiser.cjs",
+    "deps:workspace": "bunx --bun depcruise packages/core/src packages/client/src packages/daemon/src packages/cli/src --config .dependency-cruiser.cjs",
     "metrics": "bun scripts/collect-metrics.ts",
     "metrics:snapshot": "bun scripts/collect-metrics.ts --save",
     "release": "scripts/release.sh",

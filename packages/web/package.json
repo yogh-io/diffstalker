@@ -10,9 +10,9 @@
     "type-check": "vue-tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint src/ vite.config.ts && depcruise src/ --config .dependency-cruiser.cjs",
+    "lint": "eslint src/ vite.config.ts && bunx --bun depcruise src/ --config .dependency-cruiser.cjs",
     "lint:fix": "eslint src/ vite.config.ts --fix",
-    "deps": "depcruise src/ --config .dependency-cruiser.cjs",
+    "deps": "bunx --bun depcruise src/ --config .dependency-cruiser.cjs",
     "format": "prettier --write src/",
     "format:check": "prettier --check src/"
   },
