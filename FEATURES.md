@@ -671,7 +671,15 @@ When enabled (`a` toggle):
 (run `diffstalkerd --port N`, open `http://localhost:N` — same-origin, since the
 daemon has no CORS and a browser can't reach the unix socket). It is a pure daemon
 client over the same REST + SSE, laid out for a real screen (persistent panes
-instead of tab-switching). The web UI is **nearly a viewer**: the only git
+instead of tab-switching).
+
+`--port` **adds** the browser's transport rather than replacing the unix socket,
+so one daemon serves the terminal UI and the browser over a single git state and
+event stream — the TUI attaches to it instead of spawning its own. Each listener
+gets its own API surface, graded by how well the transport is protected: the
+owner-only (`0600`) socket carries the full API, the port carries the web subset
+below. On Arch, `systemctl --user enable --now diffstalkerd` starts exactly that
+daemon (see the daemon README for the unit). The web UI is **nearly a viewer**: the only git
 mutation it makes is file-level **stage / unstage** (from the Changes list);
 there is no commit, discard, hunk-staging, or remote/branch operation (those
 live in the terminal UI). Its other non-GET calls are opening a repo

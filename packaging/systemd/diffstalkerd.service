@@ -1,0 +1,45 @@
+[Unit]
+Description=diffstalker daemon (git state service + web UI)
+Documentation=https://github.com/yogh-io/diffstalker
+# The socket lives under %t (XDG_RUNTIME_DIR), which only exists once the
+# user session is up.
+After=default.target
+
+[Service]
+Type=exec
+# Binds two transports over one git state: the unix socket at %t carries the
+# full API for the terminal UI, and loopback :7337 carries the web subset for
+# the browser. Leaving the socket to its default is deliberate — it is the
+# same path `diffstalker` probes, so the TUI attaches to THIS daemon instead
+# of spawning its own.
+ExecStart=/usr/bin/diffstalkerd --port 7337
+
+Restart=on-failure
+RestartSec=2s
+# The daemon has no idle timeout and holds watchers on open repos; it is
+# meant to stay warm for the session.
+KillSignal=SIGTERM
+TimeoutStopSec=10s
+
+# It exists to read and write the user's repositories, so it cannot be
+# sandboxed away from $HOME. These are the hardening options that still hold.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectClock=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+# ProtectSystem=strict makes /usr, /boot and /etc read-only; git needs to
+# write inside the user's own tree, plus its cache and runtime dirs.
+ReadWritePaths=%h
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=default.target

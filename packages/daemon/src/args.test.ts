@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
-import { spawn, spawnSync } from 'node:child_process';
+import { execSync, spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -52,11 +52,16 @@ describe('parseArgs error branches (exit 2 + message + usage)', () => {
     expect(result.stderr).toContain('--port requires a non-negative integer');
   });
 
-  test('--socket and --port are mutually exclusive', () => {
-    // Never bound: parseArgs rejects the combination before any listen.
-    const result = runDaemon(['--socket', '/nonexistent/x.sock', '--port', '8080']);
+  test('--socket and --no-socket are mutually exclusive', () => {
+    const result = runDaemon(['--socket', '/nonexistent/x.sock', '--no-socket']);
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain('--socket and --port are mutually exclusive');
+    expect(result.stderr).toContain('--socket and --no-socket are mutually exclusive');
+  });
+
+  test('--no-socket without --port leaves nothing listening', () => {
+    const result = runDaemon(['--no-socket']);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--no-socket requires --port');
   });
 
   test('unknown argument', () => {
@@ -185,6 +190,82 @@ describe('web root wiring', () => {
       fs.rmSync(base, { recursive: true, force: true });
     }
   }, 15000);
+});
+
+describe('dual bind (unix socket + TCP port)', () => {
+  test('one daemon, one state, a different API surface per transport', async () => {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ds-dual-')));
+    const socket = path.join(base, 'd.sock');
+    const repoDir = path.join(base, 'repo');
+    fs.mkdirSync(repoDir);
+    const git = (command: string): void => {
+      execSync(`git ${command}`, { cwd: repoDir, stdio: 'ignore' });
+    };
+    git('init --initial-branch=main');
+    git('config user.email "test@test.com"');
+    git('config user.name "Test User"');
+    fs.writeFileSync(path.join(repoDir, 'file.txt'), 'one\n');
+    git('add file.txt');
+    git('commit -m initial');
+
+    const openRepo = async (url: string, init: RequestInit): Promise<string> => {
+      const res = await fetch(url, {
+        ...init,
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: repoDir }),
+      });
+      const json = (await res.json()) as { id: string };
+      return json.id;
+    };
+
+    try {
+      await withRunningDaemon(
+        ['--socket', socket, '--port', '0', '--no-follow', '--no-update-check'],
+        {},
+        async (getStderr) => {
+          // --port 0 lets the kernel choose; the daemon reports what it got.
+          const port = Number(/127\.0\.0\.1:(\d+)/.exec(getStderr())?.[1]);
+          expect(Number.isInteger(port)).toBe(true);
+
+          // Both transports answer.
+          const viaSocketHealth = await fetch('http://localhost/health', {
+            unix: socket,
+          } as RequestInit);
+          expect(viaSocketHealth.status).toBe(200);
+          expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(200);
+
+          // ...and they are ONE daemon: a repo opened over the socket is the
+          // same registry entry the port sees, so the id matches.
+          const socketId = await openRepo('http://localhost/repos', {
+            unix: socket,
+          } as RequestInit);
+          const portId = await openRepo(`http://127.0.0.1:${port}/repos`, {});
+          expect(portId).toBe(socketId);
+
+          // Least privilege is per transport, not per daemon: commit is
+          // routed on the owner-only socket and absent on the port.
+          const commit = (url: string, init: RequestInit): Promise<Response> =>
+            fetch(url, {
+              ...init,
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ message: 'x' }),
+            });
+
+          const overSocket = await commit(`http://localhost/repos/${socketId}/commit`, {
+            unix: socket,
+          } as RequestInit);
+          expect(overSocket.status).not.toBe(404);
+
+          const overPort = await commit(`http://127.0.0.1:${port}/repos/${socketId}/commit`, {});
+          expect(overPort.status).toBe(404);
+        }
+      );
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 20000);
 });
 
 /** Spawn the daemon, wait for the listening line, hand control to `run`. */

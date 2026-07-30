@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **One daemon serves the terminal UI and the browser at once.** `--socket`
+  and `--port` are no longer mutually exclusive: the unix socket is the
+  daemon's identity and is always bound (unless `--no-socket`), and `--port`
+  adds the browser's transport on top. `diffstalkerd --port 7337` therefore
+  gives one process, one git state, and one event stream that both clients
+  observe — where previously a port bind replaced the socket, the CLI found
+  nothing to attach to, and you ended up running two independent daemons
+  whose states never agreed.
+- **Least privilege is now decided per listener rather than per daemon.**
+  Each transport gets its own routing table over the shared state, graded by
+  how well it is protected: a unix socket (or an inherited activation fd) is
+  owner-only at the filesystem layer and carries the full API, while a TCP
+  port carries the web subset. Commit, discard, hunk staging and every
+  remote/branch route are simply absent from a port's routing table, so a
+  dual-bound daemon is still safe to point a browser at. `createDaemon({
+  apiMode })` still forces one surface onto every listener, for embedders.
+- **A systemd user service**, installed by the Arch package at
+  `/usr/lib/systemd/user/diffstalkerd.service` —
+  `systemctl --user enable --now diffstalkerd` and the web UI is at
+  `http://diffstalker.localhost:7337/`. A user unit, not a system one: the
+  socket lives under `$XDG_RUNTIME_DIR` and git runs as the invoking user.
+  Not socket-activated, because a cold activated start overruns the CLI's
+  250 ms health probe and the TUI would race it by spawning a second daemon.
+- `--no-socket` (requires `--port`) for a browser-only daemon, and `--port 0`
+  to let the kernel choose a free port — the daemon reports the one it got.
+
+### Fixed
+
+- **The AUR package now warns before pacman's "exists in filesystem" abort.**
+  Installing over a previous `npm install -g diffstalker` fails because npm's
+  prefix on Arch is `/usr`, leaving `/usr/bin/diffstalker` owned by no
+  package. Nothing in a package can clear that at install time — the
+  file-conflict check gates the transaction ahead of every scriptlet and
+  hook — so the PKGBUILD checks at build time instead and prints the exact
+  remedy, in `prepare()` and again at the end of `package()`. Detects the
+  dangling symlink a stale `npm link` leaves behind, which `test -e` alone
+  reports as absent.
+
 ## [0.9.0] - 2026-07-28
 
 ### Fixed

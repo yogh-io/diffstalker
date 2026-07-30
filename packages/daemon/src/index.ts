@@ -2,14 +2,20 @@
  * diffstalkerd entry point: parse CLI args, start the daemon, and shut
  * down cleanly on SIGINT/SIGTERM/SIGHUP.
  *
- * Socket resolution order: explicit --socket/--port, then a systemd
+ * The unix socket is the daemon's identity: one per user, always bound
+ * unless --no-socket. Resolution order is explicit --socket, then a systemd
  * socket-activation fd (LISTEN_FDS), then $XDG_RUNTIME_DIR/diffstalker/.
- * There is deliberately no /tmp fallback — a world-writable default
- * would hide the problem instead of surfacing it.
+ * There is deliberately no /tmp fallback — a world-writable default would
+ * hide the problem instead of surfacing it.
+ *
+ * --port ADDS the browser's transport rather than replacing the socket, so
+ * one daemon serves the TUI and the web UI over a single git state. The
+ * two listeners get different API surfaces; see server.ts modeFor.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { runtimeDir, cacheDir } from '@diffstalker/core/utils/xdg';
 import { createDaemon, ListenOptions } from './server.js';
@@ -26,7 +32,10 @@ Usage: diffstalkerd [options]
 Options:
   --socket PATH        Bind a unix socket at PATH
                        (default: $XDG_RUNTIME_DIR/diffstalker/${SOCKET_NAME})
-  --port N             Bind TCP port N (loopback only) instead of a unix socket
+  --no-socket          Do not bind a unix socket (requires --port)
+  --port N             Also bind TCP port N (loopback only) for the web UI.
+                       The port serves the web API subset; the unix socket
+                       keeps the full API
   --follow-file PATH   Hook file to follow (created when missing)
                        (default: ~/.cache/diffstalker/target)
   --no-follow          Disable follow mode (no hook-file watcher)
@@ -47,6 +56,8 @@ function expectValue(argv: string[], index: number, flag: string): string {
 }
 
 export interface CliOptions extends ListenOptions {
+  /** --no-socket: bind the TCP port only, no unix socket at all. */
+  noSocket?: boolean;
   /** Explicit hook file from --follow-file. */
   followFile?: string;
   /** --no-follow: no hook-file watcher at all. */
@@ -68,6 +79,9 @@ export function parseArgs(argv: string[]): CliOptions | 'help' {
         return 'help';
       case '--socket':
         options.socketPath = expectValue(argv, ++i, '--socket');
+        break;
+      case '--no-socket':
+        options.noSocket = true;
         break;
       case '--port':
         options.port = Number(expectValue(argv, ++i, '--port'));
@@ -92,8 +106,13 @@ export function parseArgs(argv: string[]): CliOptions | 'help' {
     }
   }
 
-  if (options.socketPath !== undefined && options.port !== undefined) {
-    throw new Error('--socket and --port are mutually exclusive');
+  // --socket and --port are NOT exclusive: binding both is the normal
+  // deployment (TUI on the socket, browser on the port, one git state).
+  if (options.socketPath !== undefined && options.noSocket) {
+    throw new Error('--socket and --no-socket are mutually exclusive');
+  }
+  if (options.noSocket && options.port === undefined) {
+    throw new Error('--no-socket requires --port (nothing would be listening)');
   }
   if (options.followFile !== undefined && options.noFollow) {
     throw new Error('--follow-file and --no-follow are mutually exclusive');
@@ -107,11 +126,14 @@ function hasActivationFds(): boolean {
 }
 
 /**
- * Fill in where to listen when neither --socket nor --port was given:
- * a systemd activation fd when present, otherwise the XDG runtime dir.
+ * Fill in the unix socket to bind, unless one was named explicitly or
+ * --no-socket opted out: a systemd activation fd when present, otherwise
+ * $XDG_RUNTIME_DIR/diffstalker/. A --port bind does NOT suppress this — the
+ * socket is the daemon's identity, and skipping it is what leaves the TUI
+ * spawning a second daemon alongside the web one.
  */
-function applyListenDefaults(options: ListenOptions): void {
-  if (options.socketPath !== undefined || options.port !== undefined) return;
+function applyListenDefaults(options: CliOptions): void {
+  if (options.noSocket || options.socketPath !== undefined) return;
 
   if (hasActivationFds()) {
     options.fd = SD_LISTEN_FDS_START;
@@ -120,6 +142,15 @@ function applyListenDefaults(options: ListenOptions): void {
 
   const dir = runtimeDir();
   if (!dir) {
+    // With a port to fall back on this is a warning, not a failure: the web
+    // UI still works, only the CLI transport is missing.
+    if (options.port !== undefined) {
+      console.error(
+        'diffstalkerd: XDG_RUNTIME_DIR is not set; binding the TCP port only.\n' +
+          'Pass --socket PATH to also accept CLI connections.'
+      );
+      return;
+    }
     console.error(
       'diffstalkerd: XDG_RUNTIME_DIR is not set and no --socket/--port given.\n' +
         'Refusing to guess a socket location; pass --socket PATH or set XDG_RUNTIME_DIR.'
@@ -179,27 +210,34 @@ async function main(): Promise<void> {
 
   const webRoot = resolveWebRoot(options.webRoot);
 
-  // Least privilege: a TCP port is the web UI's transport, so it exposes only
-  // the web-supported REST surface (reads + repo open/release + file stage/
-  // unstage). A unix socket / inherited fd is the CLI's transport and gets
-  // the full API (commit, discard, hunk staging, remote/branch ops).
-  const apiMode = options.port !== undefined ? 'web' : 'full';
-
+  // apiMode is deliberately left unset: least privilege is decided per
+  // listener by how well its transport is protected — a unix socket / an
+  // inherited fd is owner-only and gets the full API (commit, discard, hunk
+  // staging, remote/branch ops), a TCP port is reachable by any local
+  // process and gets the web subset. See server.ts modeFor.
   const daemon = createDaemon({
     followFile,
     webRoot,
-    apiMode,
     updateCheck: !options.noUpdateCheck,
   });
   await daemon.listen(options);
+
+  // The port the kernel actually handed out, not the one asked for: --port 0
+  // delegates the choice, and being told the result is the only way to use it.
+  const tcp = daemon.addresses().find((addr): addr is AddressInfo => typeof addr !== 'string');
+  const boundPort = tcp?.port ?? options.port;
+
   // Status lines go to stderr: stdout stays clean for piping, and journald
-  // captures stderr just the same.
+  // captures stderr just the same. One line per bound transport — there can
+  // legitimately be more than one.
   if (options.fd !== undefined) {
     console.error(`diffstalkerd listening on inherited socket (fd ${options.fd})`);
-  } else if (options.socketPath) {
+  }
+  if (options.socketPath) {
     console.error(`diffstalkerd listening on unix socket ${options.socketPath}`);
-  } else {
-    console.error(`diffstalkerd listening on 127.0.0.1:${options.port}`);
+  }
+  if (boundPort !== undefined) {
+    console.error(`diffstalkerd listening on 127.0.0.1:${boundPort}`);
   }
   if (followFile) {
     console.error(`diffstalkerd following ${followFile}`);
@@ -207,8 +245,8 @@ async function main(): Promise<void> {
   if (webRoot) {
     console.error(`diffstalkerd serving web UI from ${webRoot}`);
     // A browser can only reach a TCP port (not a unix socket); print the URL.
-    if (options.port !== undefined) {
-      announcePortAccess(options.port);
+    if (boundPort !== undefined) {
+      announcePortAccess(boundPort);
     }
   }
 

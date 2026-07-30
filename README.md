@@ -148,6 +148,12 @@ npm install -g diffstalkerd
 diffstalkerd --port 7337    # open http://localhost:7337
 ```
 
+`--port` *adds* the browser's transport: the daemon still binds its usual unix
+socket, so the terminal UI attaches to this same daemon rather than starting a
+second one, and both clients watch one git state. The port carries a reduced
+API (reads plus file staging); commit, discard and every remote operation stay
+on the owner-only socket.
+
 Terminal UI (pulls in `diffstalkerd` automatically and spawns it for you):
 ```bash
 npm install -g diffstalker
@@ -157,6 +163,13 @@ Arch Linux — one AUR package gives you both bins and the web UI. It builds the
 current `main`, so it tracks the repo rather than the published releases:
 ```bash
 yay -S diffstalker-git      # or paru -S diffstalker-git
+```
+
+The package ships a systemd **user** service, so the daemon and its web UI can
+just be running:
+```bash
+systemctl --user enable --now diffstalkerd
+# web UI at http://diffstalker.localhost:7337/
 ```
 
 If that fails with `diffstalker: /usr/bin/diffstalker exists in filesystem`, an

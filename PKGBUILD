@@ -158,9 +158,18 @@ import('/usr/lib/diffstalker/daemon/dist/index.js').catch((e) => {
 EOF
     chmod 755 "$pkgdir/usr/bin/diffstalker" "$pkgdir/usr/bin/diffstalkerd"
 
-    # TODO (Phase 6 deferred): ship systemd user units for socket-activated
-    # diffstalkerd (see packages/daemon/README.md) instead of relying on the
-    # TUI to spawn it.
+    # systemd USER unit, never a system one: the socket lives under
+    # $XDG_RUNTIME_DIR (per-user, 0700) and every git call runs as the
+    # invoking user, with their config, ssh keys and worktrees. A system
+    # service would be the wrong uid for all three.
+    #
+    # Not socket-activated, deliberately. The CLI health-probes the socket
+    # with a 250ms budget before falling back to spawning its own daemon
+    # (DaemonLifecycle.ts), and a cold activated start overruns that — the
+    # TUI would then try to spawn a second daemon and hit "already running".
+    # An always-warm service answers the probe immediately.
+    install -Dm644 "$srcdir/$pkgname/packaging/systemd/diffstalkerd.service" \
+        "$pkgdir/usr/lib/systemd/user/diffstalkerd.service"
 
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"

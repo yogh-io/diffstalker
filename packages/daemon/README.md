@@ -31,7 +31,10 @@ Options:
 ```
 --socket PATH        Bind a unix socket at PATH
                      (default: $XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock)
---port N             Bind TCP port N (loopback only) instead of a unix socket
+--no-socket          Do not bind a unix socket (requires --port)
+--port N             Also bind TCP port N (loopback only) for the web UI.
+                     The port serves the web API subset; the unix socket
+                     keeps the full API
 --follow-file PATH   Hook file to follow (created when missing)
                      (default: ~/.cache/diffstalker/target)
 --no-follow          Disable follow mode (no hook-file watcher)
@@ -43,8 +46,20 @@ Options:
 --help, -h           Show this help
 ```
 
-`--socket` and `--port` are mutually exclusive; so are `--follow-file` and
-`--no-follow`.
+`--socket` and `--port` are **not** mutually exclusive — binding both is the
+normal deployment. The unix socket is the daemon's identity (one per user) and
+is always bound unless `--no-socket`; `--port` adds the browser's transport on
+top, over the same git state. `--follow-file` and `--no-follow` are exclusive,
+as are `--socket` and `--no-socket`.
+
+```bash
+diffstalkerd --port 7337      # socket for the TUI + :7337 for the browser
+```
+
+That single daemon is what both clients talk to: `diffstalker` finds the socket
+and attaches instead of spawning its own, so the TUI and the browser observe one
+state over one event stream. Binding only a port (`--no-socket --port N`) leaves
+the CLI nothing to attach to, and it will start a second, separate daemon.
 
 A browser can only reach the daemon over TCP (`--port`), not a unix socket, and
 the daemon sends no CORS headers — so the web UI is served same-origin from the
@@ -52,11 +67,17 @@ daemon itself. `GET /` and any unmatched non-API GET path return the SPA's
 `index.html` (client-side routing); hashed `/assets/*` are served with a long
 immutable cache. The REST/SSE API always takes precedence over static files.
 
-Without `--socket`/`--port`, the daemon binds a unix socket at
+Without `--socket`, the daemon binds a unix socket at
 `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock`. The directory is created
 with mode `0700` and the socket is chmod'd to `0600` (owner only). If
 `XDG_RUNTIME_DIR` is unset, the daemon refuses to start — there is
 deliberately no `/tmp` fallback. Pass `--socket PATH` explicitly instead.
+(With a `--port` to fall back on, an unset `XDG_RUNTIME_DIR` is a warning
+rather than a failure: the web UI still works, only the CLI transport is
+missing.)
+
+`--port 0` asks the kernel to pick a free port; the daemon prints the one it
+actually got.
 
 If a live daemon already answers on the socket path, startup fails; a stale
 socket file (nothing listening) is removed and reused.
@@ -75,12 +96,23 @@ headers (`X-Content-Type-Options`, `X-Frame-Options: DENY`,
 SPA). To reach the daemon from another machine, forward the port over SSH
 (`ssh -L`). See `SECURITY.md` at the repo root.
 
-A `--port` daemon also exposes a **reduced API** (least privilege): only the
-endpoints the web UI uses — reads, `POST`/`DELETE /repos`, and
-`POST /repos/:id/stage`/`unstage`. The CLI-only mutations (commit, discard,
-hunk staging, `PUT /compare/base`, and every remote/branch operation) are
-not routed on a port; they exist only over the unix socket. Requesting one
-on a port returns `404 Unknown route`.
+The API surface is chosen **per listener**, by how well that transport is
+protected — not per daemon. A unix socket (or an inherited activation fd) is
+owner-only at the filesystem layer and carries the **full** API. A TCP port is
+reachable by any process on the host and carries a **reduced** API (least
+privilege): only the endpoints the web UI uses — reads, `POST`/`DELETE /repos`,
+and `POST /repos/:id/stage`/`unstage`. The CLI-only mutations (commit, discard,
+hunk staging, `PUT /compare/base`, and every remote/branch operation) are not
+routed on a port at all; requesting one there returns `404 Unknown route`.
+
+So a daemon bound to both transports simultaneously is still safe to expose to a
+browser: the write-capable surface stays behind `0600` file permissions, and no
+origin-guard bypass can reach it, because those routes are not in the port's
+routing table to begin with. Each listener gets its own routing table over one
+shared registry, SSE hub and follow controller.
+
+Embedders can override this with `createDaemon({ apiMode })`, which forces one
+surface onto every listener regardless of transport.
 
 ## Environment
 
@@ -91,7 +123,37 @@ on a port returns `404 Unknown route`.
 - `LISTEN_FDS` / `LISTEN_PID` — systemd socket activation. When systemd hands
   the process a pre-bound socket (`LISTEN_PID` matches and `LISTEN_FDS >= 1`),
   the daemon listens on the inherited fd (fd 3) and does not create, chmod, or
-  unlink any socket file. Explicit `--socket`/`--port` takes precedence.
+  unlink any socket file. An explicit `--socket` (or `--no-socket`) takes
+  precedence; `--port` does not suppress it, since the port is additive.
+  Only fd 3 is used — a `.socket` unit with several `ListenStream=` entries
+  would have all but the first ignored.
+
+## systemd (user service)
+
+The Arch package installs a **user** unit at
+`/usr/lib/systemd/user/diffstalkerd.service`:
+
+```bash
+systemctl --user enable --now diffstalkerd
+# web UI at http://diffstalker.localhost:7337/
+```
+
+It runs `diffstalkerd --port 7337`, which binds the default unix socket *and*
+the port — so the terminal UI attaches to the same daemon the browser is
+talking to, and `systemctl --user status diffstalkerd` is the whole story.
+
+A **user** unit, never a system one: the socket lives under `$XDG_RUNTIME_DIR`
+(per-user, `0700`), and every git call runs as the invoking user with their
+config, ssh keys and worktrees. A system service would be the wrong uid for
+all three.
+
+Deliberately **not** socket-activated, even though the daemon implements the
+`sd_listen_fds` protocol. The CLI health-probes the socket with a 250 ms budget
+before falling back to spawning its own daemon; a cold activated start overruns
+that, so the TUI would try to spawn a second daemon and hit `already running`.
+An always-warm service answers the probe immediately. The daemon also has no
+idle timeout — it holds watchers on open repos and is meant to stay warm for
+the session — so lazy activation buys little here.
 
 ## API
 
