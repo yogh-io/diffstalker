@@ -528,19 +528,6 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   margin: auto;
 }
 
-/* Narrow widths: stack — commits above, detail below. */
-@media (max-width: 44rem) {
-  .history {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(6rem, 40%) minmax(0, 1fr);
-  }
-
-  .commits-col {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-}
-
 /* Portrait: rotate column → row. Full-width detail below a bounded
    commit band, with a draggable row resizer (portrait-only element). */
 @media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px) {

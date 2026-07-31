@@ -802,11 +802,9 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
 
 /* --- File tree (left) --- */
 
+/* Shared panel surface lives in style.css; only the block padding is
+   Compare-specific (its list starts with the commits section). */
 .files-col {
-  min-width: 0;
-  overflow-y: auto;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
   padding: 0.375rem 0;
 }
 
@@ -933,19 +931,6 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   min-width: 0;
 }
 
-/* Narrow widths: stack — files above, diffs below. */
-@media (max-width: 44rem) {
-  .pr-body {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(6rem, 32%) minmax(0, 1fr);
-  }
-
-  .files-col {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-}
-
 /* Portrait: rotate ONLY the nested PR body — topbar and the (open)
    commits list keep stacking above it. The file band on top is a
    jump-index over the full-width stacked diffs; base picker + commits
@@ -958,7 +943,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   }
 
   .files-col {
-    border-right: none;
+    /* No border-right to clear — the base rule in style.css has none. */
     border-bottom: 1px solid var(--border);
   }
 

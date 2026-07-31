@@ -543,12 +543,7 @@ const rootStyle = computed(() => ({
 
 /* --- Files column --- */
 
-.files-col {
-  min-width: 0;
-  overflow-y: auto;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-}
+/* .files-col: shared panel surface, see style.css. */
 
 .col-empty {
   margin: 1rem;
@@ -763,26 +758,8 @@ const rootStyle = computed(() => ({
   min-width: 0;
 }
 
-/* Narrow widths: stack — files above, diffs below. */
-@media (max-width: 44rem) {
-  .changes {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(6rem, 35%) minmax(8rem, 1fr);
-  }
-
-  .files-col {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .resizer {
-    display: none;
-  }
-}
-
 /* Portrait: rotate column → row. Full-width diffs below a bounded file
-   band; the same resizer drags the row split (after the 44rem block so
-   a narrow portrait window gets this layout, resizer included). */
+   band; the same resizer drags the row split. */
 @media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px) {
   .changes {
     grid-template-columns: minmax(0, 1fr);
@@ -790,7 +767,7 @@ const rootStyle = computed(() => ({
   }
 
   .files-col {
-    border-right: none;
+    /* No border-right to clear — the base rule in style.css has none. */
     border-bottom: 1px solid var(--border);
   }
 

@@ -113,6 +113,27 @@ input::placeholder {
 
 /* --- Shared view scaffold (placeholder views, replaced by later slices) --- */
 
+/**
+ * The file-list panel beside a diff stack — Changes and Compare both have
+ * one, and both had their own byte-identical copy of this rule. Defined once
+ * here so a change to the panel's surface is made in one place: when the
+ * stack started insetting its cards, the border-right had to be dropped from
+ * BOTH copies to stop the boundary being drawn twice, and missing one would
+ * have left the two views silently inconsistent.
+ *
+ * Deliberately no border: the diff column insets its cards, so the page
+ * background between the panels is what separates them.
+ *
+ * Views keep only what genuinely differs (Compare's block padding). A scoped
+ * rule in the view outranks this one on specificity — scoped styles compile
+ * to an attribute selector — so a local override needs no !important.
+ */
+.files-col {
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
 .view {
   padding: 1.25rem 1.5rem;
   max-width: 64rem;

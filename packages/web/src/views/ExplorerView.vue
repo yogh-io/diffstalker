@@ -623,19 +623,6 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
   overflow: hidden;
 }
 
-/* Narrow widths: stack — tree above, content below. */
-@media (max-width: 44rem) {
-  .explorer {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(6rem, 40%) minmax(0, 1fr);
-  }
-
-  .tree-col {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-}
-
 /* Portrait: rotate column → row. Full-width content below a bounded
    tree band (taller default — a tree needs vertical room); the toolbar
    lives in the tab band's slot (Teleport), freeing a row here. The
