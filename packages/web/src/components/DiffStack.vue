@@ -1186,6 +1186,17 @@ defineExpose({
      useScrollAnchor sandwich — which is the ONE compensation path. */
   overflow-anchor: none;
 
+  /* Inset the cards so page background shows on BOTH sides as well as
+     between them — the same band left, right and in the gaps, which is what
+     makes a card read as a discrete sheet rather than a full-bleed strip.
+     This is also what separates the stack from the file tree now that the
+     tree's border-right is gone: both the tree and a card body paint
+     --surface, so without this inset they would fuse into one slab.
+     INLINE axis only. Block padding here would shift every section's
+     offsetTop while the height model still starts at `start: toolbarH`,
+     drifting every scroll target by the padding. */
+  padding-inline: 0.75rem;
+
   /* The spine color. --border is tuned to be a hairline against --surface;
      against --bg it is far too faint to read as a file's full-height edge.
      Mixing toward --text-dim lifts it to a visible rule in every theme,
@@ -1194,13 +1205,21 @@ defineExpose({
   --file-edge: color-mix(in srgb, var(--border) 40%, var(--text-dim));
 
   /* The card body's fill, resolved HERE and not on .file-diff itself.
-     Writing `--bg: color-mix(..., var(--bg))` on the card would be a
-     self-reference: a custom property may not consume its own value, so the
-     declaration is invalid at computed-value time, --bg resolves to nothing,
-     and every `background: var(--bg)` inside the card silently falls back to
-     transparent. On this ancestor --bg is merely inherited, so there is no
-     cycle. */
-  --file-bg: color-mix(in srgb, var(--surface) 30%, var(--bg));
+     Writing `--bg: var(--surface)` on the card and ALSO mixing against
+     var(--bg) there would be a self-reference: a custom property may not
+     consume its own value, so the declaration would be invalid at
+     computed-value time, --bg would resolve to nothing, and every
+     `background: var(--bg)` inside the card would fall back to transparent.
+     On this ancestor --bg is merely inherited, so there is no cycle.
+
+     --surface outright, not a mix toward it. A 30% mix measured 2/255 against
+     the gutter in the dark themes — invisible, which is exactly the "I can't
+     tell these are three files" complaint. This is the same desk/sheet
+     relationship the file tree already uses (that panel paints --surface
+     against the page's --bg and reads as obviously separate), so it is
+     proven in-app and guaranteed distinct in every theme: --bg and --surface
+     differ by construction, or headers would not be visible either. */
+  --file-bg: var(--surface);
 }
 
 .stack-toolbar {
@@ -1270,10 +1289,12 @@ defineExpose({
 }
 
 .file-diff + .file-diff {
-  /* Unchanged, deliberately: the gutter keeps the untinted --bg that the
-     card's fill is read against. Shrinking it to bank density would weaken
-     the separator this change leans on. */
-  margin-top: 0.75rem;
+  /* The gutter, and the main separator now that cards are --surface against
+     a --bg page. 0.75rem was barely wider than a row, so three stacked cards
+     still scanned as one ruled region. Read as a band of page background,
+     not as spacing. chromeGap() measures this at runtime, so the height
+     model follows any change here with no code edit. */
+  margin-top: 2rem;
 }
 
 /* The scroll-spy's active file, outlined as one object. Zero px cost, and
