@@ -514,6 +514,7 @@ function bodyIntrinsicSize(item: StackFile): string {
 let stackChrome: {
   headerH?: number;
   gap?: number;
+  borderY?: number;
   notShownNoteH?: number;
   loadDiffH?: number;
   toolbarH?: number;
@@ -529,6 +530,34 @@ function chromeToolbarH(): number | null {
     stackChrome.toolbarH = toolbarEl.value.getBoundingClientRect().height;
   }
   return stackChrome.toolbarH ?? null;
+}
+
+/**
+ * The card's own block-axis chrome on `.file-diff` — border-top +
+ * border-bottom (plus any padding, should one ever be added). Every
+ * section carries it, so it is a flat per-section constant that has to
+ * enter `sectionOuterHeight`; without it each section's arithmetic top
+ * drifts by this much MORE than the one above, compounding down the
+ * stack until a jump to the last file lands visibly wrong.
+ *
+ * Computed style, not layout: resolved widths are plain lengths, so this
+ * costs no reflow. The `|| 0` guards are load-bearing — happy-dom returns
+ * '' for unset widths, and one NaN here silently poisons every cumulative
+ * offset in useStackScroll rather than throwing.
+ */
+function chromeBorderY(): number | null {
+  if (stackChrome.borderY === undefined) {
+    for (const el of sectionEls.values()) {
+      const cs = getComputedStyle(el);
+      stackChrome.borderY =
+        (parseFloat(cs.borderTopWidth) || 0) +
+        (parseFloat(cs.borderBottomWidth) || 0) +
+        (parseFloat(cs.paddingTop) || 0) +
+        (parseFloat(cs.paddingBottom) || 0);
+      break;
+    }
+  }
+  return stackChrome.borderY ?? null;
 }
 
 function chromeHeaderH(): number | null {
@@ -583,21 +612,30 @@ function stripHeight(
   return stackChrome[slot] ?? null;
 }
 
-/** Outer section height (header + visible body); null = unknowable. */
-function sectionOuterHeight(item: StackFile, headerH: number): number | null {
-  if (item.collapsed) return headerH; // v-show hides every body variant
+/**
+ * Outer section height (card chrome + header + visible body); null =
+ * unknowable. `borderY` is the card's own border-box chrome and applies to
+ * EVERY branch — a branch that forgets it drifts only for sections of that
+ * kind, which is the hardest version of this bug to see.
+ */
+function sectionOuterHeight(
+  item: StackFile,
+  headerH: number,
+  borderY: number
+): number | null {
+  if (item.collapsed) return borderY + headerH; // v-show hides every body variant
   if (notShownFor(item) !== null) {
     const h = stripHeight('notShownNoteH', item.key, '.not-shown-note');
-    return h === null ? null : headerH + h;
+    return h === null ? null : borderY + headerH + h;
   }
   if (isUnloaded(item)) {
     const h = stripHeight('loadDiffH', item.key, '.load-diff');
-    return h === null ? null : headerH + h;
+    return h === null ? null : borderY + headerH + h;
   }
   // Exact model height; the estimate branches (placeholder, empty
   // diff) match the inline sizing the body renders with, so the
   // arithmetic top stays honest within the spy's hysteresis.
-  return headerH + (exactBodyHeight(item) ?? estimateBodyHeight(item));
+  return borderY + headerH + (exactBodyHeight(item) ?? estimateBodyHeight(item));
 }
 
 /**
@@ -615,14 +653,15 @@ function sectionHeightModel(): SectionHeightModel | null {
   const headerH = chromeHeaderH();
   const gap = chromeGap();
   const toolbarH = chromeToolbarH();
-  if (headerH === null || gap === null || toolbarH === null) return null;
+  const borderY = chromeBorderY();
+  if (headerH === null || gap === null || toolbarH === null || borderY === null) return null;
   const byKey = new Map(props.files.map((f) => [f.key, f]));
   return {
     start: toolbarH, // the toolbar sits in-flow before the first section
     gap,
     heightFor: (key) => {
       const item = byKey.get(key);
-      return item === undefined ? null : sectionOuterHeight(item, headerH);
+      return item === undefined ? null : sectionOuterHeight(item, headerH, borderY);
     },
   };
 }
@@ -1049,7 +1088,7 @@ defineExpose({
       :key="item.key"
       :ref="(el) => setSectionEl(item.key, el)"
       class="file-diff"
-      :class="{ selected: item.key === activeKey }"
+      :class="{ selected: item.key === activeKey, uncommitted: item.uncommitted }"
       :data-key="item.key"
       data-testid="file-diff"
       tabindex="-1"
@@ -1146,6 +1185,22 @@ defineExpose({
      suppress it elsewhere, and it would double-correct against the
      useScrollAnchor sandwich — which is the ONE compensation path. */
   overflow-anchor: none;
+
+  /* The spine color. --border is tuned to be a hairline against --surface;
+     against --bg it is far too faint to read as a file's full-height edge.
+     Mixing toward --text-dim lifts it to a visible rule in every theme,
+     light and dark, without hardcoding a color. color-mix precedent:
+     --row-selected-bg in style.css. */
+  --file-edge: color-mix(in srgb, var(--border) 40%, var(--text-dim));
+
+  /* The card body's fill, resolved HERE and not on .file-diff itself.
+     Writing `--bg: color-mix(..., var(--bg))` on the card would be a
+     self-reference: a custom property may not consume its own value, so the
+     declaration is invalid at computed-value time, --bg resolves to nothing,
+     and every `background: var(--bg)` inside the card silently falls back to
+     transparent. On this ancestor --bg is merely inherited, so there is no
+     cycle. */
+  --file-bg: color-mix(in srgb, var(--surface) 30%, var(--bg));
 }
 
 .stack-toolbar {
@@ -1181,14 +1236,64 @@ defineExpose({
   content-visibility: visible;
 }
 
+/* One card per file, so a file reads as a single object with a top AND a
+   bottom edge — "where does this file end" was the actual complaint.
+
+   Deliberately NOT here:
+     - overflow: hidden/clip — would make the card a scroll container and
+       silently re-root the sticky file header and every hunk header onto a
+       box that never scrolls. Nothing overflows the card anyway: the body's
+       content-visibility already applies paint containment.
+     - position: relative — would make .file-diff the offsetParent of every
+       .hunk and break useScrollAnchor.pickAnchor, which compares a hunk's
+       offsetTop against its section's.
+     - padding or a border on .file-diff-body — contain-intrinsic-size sizes
+       the CONTENT box while assertBodyHeights compares a border-box rect.
+   Anything added to .file-diff itself MUST be threaded into chromeBorderY(). */
+.file-diff {
+  border: 1px solid var(--border);
+  /* The spine: the only chrome present for the file's whole vertical
+     extent, so "which file am I in" stays answerable mid-scroll, when both
+     the header and the bottom edge are off-screen. Inline axis only — zero
+     vertical cost. */
+  border-left: 3px solid var(--file-edge);
+  border-radius: 4px;
+  /* Fills the card body: .row, .diff-scroll, .not-shown-note and .load-diff
+     all paint var(--bg), so re-pointing --bg here turns the whole file into
+     a tinted region read against an untinted gutter. This is what carries
+     the separation mid-scroll — the border alone is a hairline at the far
+     edges, the weakest mark in the weakest position. Costs zero vertical
+     space and nothing in the height model. --file-bg is pre-resolved on
+     .stack-scroller; mixing against var(--bg) here would be a self-reference
+     and would blank the fill entirely. */
+  --bg: var(--file-bg);
+}
+
 .file-diff + .file-diff {
+  /* Unchanged, deliberately: the gutter keeps the untinted --bg that the
+     card's fill is read against. Shrinking it to bank density would weaken
+     the separator this change leans on. */
   margin-top: 0.75rem;
+}
+
+/* The scroll-spy's active file, outlined as one object. Zero px cost, and
+   only expressible because the card has a border to recolor. */
+.file-diff.selected {
+  border-color: var(--selection);
+}
+
+/* Spine only, so it never competes with .selected — which wins the other
+   three edges by source order. */
+.file-diff.uncommitted {
+  border-left-color: var(--uncommitted);
 }
 
 /* Programmatically focusable (Enter in the jump navigator). */
 .file-diff:focus-visible {
   outline: 1px solid var(--selection);
-  outline-offset: -1px;
+  /* Was -1px, which now lands on the card border and reads as a color
+     change rather than a focus ring. */
+  outline-offset: -4px;
 }
 
 /* Sticky per-file header inside the stack scroller; each .file-diff
@@ -1204,13 +1309,28 @@ defineExpose({
   align-items: baseline;
   gap: 0.625rem;
   padding: 0.375rem 0.75rem;
-  border-top: 1px solid var(--border);
+  /* border-top removed: the card draws the top edge now, so keeping this
+     would double the hairline (net -1px per file). */
   border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  /* Card radius minus each border width, so the fill does not square off
+     the card's rounded top corners — cheaper than clipping the card, which
+     would re-root the sticky headers. */
+  border-radius: 1px 3px 0 0;
+  /* One rank ABOVE the hunk headers, which stay --surface. This is the root
+     cause of the complaint: today a file header and a hunk header are
+     byte-identical chrome, so a 6-hunk file shows 7 near-identical bands and
+     the file header loses the hierarchy fight. Not a hover collision —
+     .file-diff-header has no hover state. */
+  background: var(--surface-raised);
   font-size: var(--fs-base);
   /* Stays viewport-width while pinned left, rather than stretching to the
      widest line (which would push its content off-screen and leave a gap). */
   width: 100%;
+}
+
+/* Same selection language as the file tree and every other list. */
+.file-diff.selected .file-diff-header {
+  background: var(--row-selected-bg);
 }
 
 .file-diff-header .path {

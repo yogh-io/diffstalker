@@ -482,7 +482,14 @@ onBeforeUnmount(() => {
   z-index: 2;
   padding: 0.1875rem 0.75rem;
   background: var(--surface);
-  border-top: 1px solid var(--border);
+  /* border-top removed: .hunk already carries a border-bottom (cleared on
+     :last-child), so every hunk seam was two adjacent hairlines and the seam
+     under a file header was doubled too. Deleting it quiets the rules that
+     compete with the file boundary and gives back 1px per hunk. The first
+     hunk header keeps a top edge in all three consumers, each of which has a
+     border-bottom directly above it: DiffStack's .file-diff-header,
+     DiffView's own .file-header (show-file-headers), JournalView's
+     .entry-header. */
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-small);
   white-space: nowrap;

@@ -721,6 +721,16 @@ git operations.
   Enter/Space/Left/Right on the button) — view state only; keyboard file
   navigation skips files hidden under a collapsed folder, and the stacked
   diffs on the right are unaffected.
+- File cards in the stacked diffs (every surface built on the stack —
+  Changes, Compare, History, Journal): each file is one bordered, rounded
+  card with a tinted body, a 3px left spine, and a header ranked one surface
+  above the hunk headers, so a file reads as a single object instead of a
+  continuous strip. The spine is the only chrome spanning the file's whole
+  height, which is what answers "which file am I in" mid-scroll; the active
+  file's card takes the selection color, and an uncommitted file's spine
+  takes the uncommitted color. Costs +1px per file and gives back 1px per
+  hunk (the hunk seams were doubled hairlines), so a multi-hunk file is net
+  shorter than before.
 - **Explorer** — a VS Code-style lazy file tree with git-status decoration
   (dotfile / ignored / changed-only toggles) beside syntax-highlighted file
   content (highlight.js) with binary / truncated / too-large states.
