@@ -58,10 +58,42 @@ _check_foreign_bins() {
     return 0
 }
 
+# The quieter half of the same problem: an install that is not in /usr/bin at
+# all, but ahead of it on PATH. `bun link`, and any npm prefix under $HOME or
+# /usr/local, put their bins in a directory most shells search first, so pacman
+# installs without a single complaint and the OLD build keeps answering
+# `diffstalker`. That is worse than the file conflict above, which at least
+# fails loudly — here nothing reports anything and the package looks broken or,
+# worse, looks fine while running week-old code. Only entries BEFORE /usr/bin
+# can shadow us; anything after is already shadowed by us and is harmless.
+_check_path_shadow() {
+    local p name dir shadow=() parts=()
+    IFS=: read -r -a parts <<< "$PATH"
+    for p in "${_pathbins[@]}"; do
+        name=${p##*/}
+        for dir in "${parts[@]}"; do
+            [[ $dir == /usr/bin ]] && break
+            [[ -n $dir && -x $dir/$name ]] && { shadow+=("$dir/$name"); break; }
+        done
+    done
+    (( ${#shadow[@]} )) || return 0
+
+    _warn "These come before /usr/bin on PATH and will run INSTEAD of this package:"
+    for p in "${shadow[@]}"; do
+        if dir=$(readlink -- "$p"); then _warn "    $p -> $dir"; else _warn "    $p"; fi
+    done
+    _warn "Usually 'bun link' from a source checkout, or an npm prefix in \$HOME."
+    _warn "Clear it, or this install has no visible effect:"
+    _warn "    bun unlink        # run in packages/cli and packages/daemon"
+    _warn "    npm rm -g diffstalker diffstalkerd"
+    return 0
+}
+
 prepare() {
     # Once here, before the multi-minute build, and once more at the end of
     # package() where it is the last thing printed before pacman's transaction.
     _check_foreign_bins
+    _check_path_shadow
 }
 
 # Runtime dependencies, staged as a tree of real directories.
@@ -175,6 +207,8 @@ EOF
     install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
 
     # Last word before pacman commits, so the remedy is still on screen when
-    # the "exists in filesystem" error lands a few lines further down.
+    # the "exists in filesystem" error lands a few lines further down — and so
+    # a PATH shadow, which produces no error at all, is the final thing said.
     _check_foreign_bins
+    _check_path_shadow
 }
