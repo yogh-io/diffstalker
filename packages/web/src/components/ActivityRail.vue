@@ -221,7 +221,8 @@ const ICON_PATHS: Record<ViewName, string> = {
   /* The count stays: with the word gone it is the only thing telling you
      whether Changes is worth opening. Reclaim the label's flex gap. */
   .rail-count {
-    margin-left: -0.325rem;
+    /* margin-left is already -0.325rem from the base rule; only the size
+       changes in the cramped band. */
     font-size: var(--fs-micro);
   }
 

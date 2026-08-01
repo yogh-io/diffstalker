@@ -76,23 +76,21 @@ body > .toolbar-slot {
   display: none;
 }
 
-@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px) {
-  /* The active view's lifted controls get their OWN full-width row under
-     the rail — never the rail's right group beside the global toggles. */
-  .view-toolbar-strip > .toolbar-slot {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.625rem;
-    min-width: 0;
-    padding: 0.375rem 0.75rem;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-  }
+/* The active view's lifted controls get their OWN full-width row under
+   the rail — never the rail's right group beside the global toggles. */
+:root[data-split='stacked'] .view-toolbar-strip > .toolbar-slot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+  min-width: 0;
+  padding: 0.375rem 0.75rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
 
-  /* Nothing teleported (Changes / History): collapse the row to nothing. */
-  .view-toolbar-strip > .toolbar-slot:empty {
-    display: none;
-  }
+/* Nothing teleported (Changes / History): collapse the row to nothing. */
+:root[data-split='stacked'] .view-toolbar-strip > .toolbar-slot:empty {
+  display: none;
 }
 </style>

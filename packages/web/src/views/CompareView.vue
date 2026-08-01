@@ -927,71 +927,69 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
    jump-index over the full-width stacked diffs; base picker + commits
    toggle live in the tab band (Teleport — they keep this component's
    scope, so the in-band restyles below reach them). */
-@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px) {
-  .pr-body {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(4rem, var(--compare-top, 22vh)) 8px minmax(0, 1fr);
-  }
+:root[data-split='stacked'] .pr-body {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(4rem, var(--compare-top, 22vh)) 8px minmax(0, 1fr);
+}
 
-  .files-col {
-    /* No border-right to clear — the base rule in style.css has none. */
-    border-bottom: 1px solid var(--border);
-  }
+:root[data-split='stacked'] .files-col {
+  /* No border-right to clear — the base rule in style.css has none. */
+  border-bottom: 1px solid var(--border);
+}
 
-  /* A visible divider bar (not a bare drag gap) so the two stacked panes
-     read as clearly separate, with a centered grab handle signalling it
-     drags. */
-  .row-resizer {
-    height: 8px;
-    cursor: row-resize;
-    background: var(--surface-raised);
-    box-shadow:
-      inset 0 1px 0 var(--border),
-      inset 0 -1px 0 var(--border);
-    touch-action: none;
-    position: relative;
-  }
+/* A visible divider bar (not a bare drag gap) so the two stacked panes
+   read as clearly separate, with a centered grab handle signalling it
+   drags. */
+:root[data-split='stacked'] .row-resizer {
+  height: 8px;
+  cursor: row-resize;
+  background: var(--surface-raised);
+  box-shadow:
+    inset 0 1px 0 var(--border),
+    inset 0 -1px 0 var(--border);
+  touch-action: none;
+  position: relative;
+}
 
-  .row-resizer::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    margin: auto;
-    width: 2.25rem;
-    height: 2px;
-    border-radius: 1px;
-    background: var(--text-dim);
-    opacity: 0.5;
-  }
+:root[data-split='stacked'] .row-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 2.25rem;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-dim);
+  opacity: 0.5;
+}
 
-  .row-resizer:hover,
-  .row-resizer:focus-visible {
-    background: var(--selection);
-  }
+:root[data-split='stacked'] .row-resizer:hover,
+:root[data-split='stacked'] .row-resizer:focus-visible {
+  background: var(--selection);
+}
 
-  .row-resizer:hover::after,
-  .row-resizer:focus-visible::after {
-    background: var(--surface);
-    opacity: 0.9;
-  }
+:root[data-split='stacked'] .row-resizer:hover::after,
+:root[data-split='stacked'] .row-resizer:focus-visible::after {
+  background: var(--surface);
+  opacity: 0.9;
+}
 
-  /* In-band restyles for the lifted controls. */
-  .commits-toggle {
-    width: auto;
-    padding: 0.25rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-  }
+/* In-band restyles for the lifted controls. */
+:root[data-split='stacked'] .commits-toggle {
+  width: auto;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
 
-  /* The toggle is out of the section: no empty strip when collapsed. */
-  .commits-section {
-    background: transparent;
-    border-bottom: none;
-  }
+/* The toggle is out of the section: no empty strip when collapsed. */
+:root[data-split='stacked'] .commits-section {
+  background: transparent;
+  border-bottom: none;
+}
 
-  .commit-list {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-  }
+:root[data-split='stacked'] .commit-list {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 </style>

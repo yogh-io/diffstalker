@@ -7,7 +7,7 @@
  * landscape/default path.
  */
 
-import { getCurrentInstance, onBeforeUnmount, ref } from 'vue';
+import { getCurrentInstance, onBeforeUnmount, ref, watchEffect } from 'vue';
 import type { Ref } from 'vue';
 
 /**
@@ -52,4 +52,29 @@ export function useMediaQuery(query: string): Ref<boolean> {
 /** Shared shorthand: is the app in the portrait/vertical layout? */
 export function usePortrait(): Ref<boolean> {
   return useMediaQuery(PORTRAIT_QUERY);
+}
+
+/**
+ * The layout mode, published as `data-split="stacked" | "split"` on the root
+ * element so CSS can state the breakpoint ONCE.
+ *
+ * PORTRAIT_QUERY used to be copy-pasted into five `@media` blocks as well as
+ * being the JS query — six places to keep in step, with nothing to catch a
+ * miss. CSS has no way to name a media query, so the standard fix is to let JS
+ * own the single definition and expose the answer as an attribute; the CSS
+ * blocks become `:root[data-split='stacked'] …`.
+ *
+ * Call this ONCE, from App setup — the same place the theme attribute is
+ * stamped, and for the same reason: components with portrait styles do not
+ * all call usePortrait (ViewToolbarStrip has the styles and never calls it),
+ * so the attribute cannot depend on which view happens to be mounted.
+ */
+export function useSplitMode(): Ref<boolean> {
+  const isPortrait = usePortrait();
+  if (typeof document !== 'undefined') {
+    watchEffect(() => {
+      document.documentElement.dataset.split = isPortrait.value ? 'stacked' : 'split';
+    });
+  }
+  return isPortrait;
 }

@@ -19,15 +19,17 @@
  *   level from ui.activeOverlay.
  */
 
-import { computed, onMounted, onUnmounted, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useDaemonStore } from './stores/daemon';
+import { useExplorerStore } from './stores/explorer';
 import { useRepoStore } from './stores/repo';
 import { useUiStore } from './stores/ui';
 import { useRepoOpen } from './composables/useRepoOpen';
 import { useGlobalKeys } from './composables/useGlobalKeys';
 import { useFollowMode } from './composables/useFollowMode';
 import { useAutoMode } from './composables/useAutoMode';
-import { useUrlSync } from './composables/useUrlSync';
+import { useSplitMode } from './composables/useMediaQuery';
+import { useUrlSync, type UrlState } from './composables/useUrlSync';
 import AppHeader from './components/AppHeader.vue';
 import ActivityRail from './components/ActivityRail.vue';
 import ViewToolbarStrip from './components/ViewToolbarStrip.vue';
@@ -43,8 +45,13 @@ import ExplorerView from './views/ExplorerView.vue';
 import type { ViewName } from './prefs';
 
 const daemon = useDaemonStore();
+const explorer = useExplorerStore();
 const repo = useRepoStore();
 const ui = useUiStore();
+
+// Publishes data-split on the root element: the ONE definition of the
+// stacked/split breakpoint, which every portrait CSS block now reads.
+useSplitMode();
 const { activate, openByPath } = useRepoOpen();
 
 // Stamp the theme before first paint (setup runs before mount).
@@ -133,13 +140,16 @@ function activateFirst(repos: typeof daemon.repos): void {
   void activate(repos[0]);
 }
 
-// URL state: reproduce the shown repo/view/base from the query, and keep
-// the query in sync as those change (useUrlSync installs the write watcher).
+// URL state: reproduce the shown repo/view/base/file from the path, and keep
+// the path in sync as those change (useUrlSync installs the write watcher).
 // A repo in the URL WINS over follow / first-repo on cold load — disarm the
 // auto-activation so they don't race it. The view is applied in setup (before
-// mount) so the first paint is the shared view. The compare base rides the
-// repo once it opens.
-const urlSync = useUrlSync();
+// mount) so the first paint is the shared view. The compare base and the
+// explorer's file ride the repo once it opens.
+//
+// Back/forward hands the popped state here: only this level can open a repo
+// (useRepoOpen) — useUrlSync owns the URL, never the app state.
+const urlSync = useUrlSync({ onPopState: applyUrlState });
 
 async function applyUrlRepo(repoRel: string, base: string | null): Promise<void> {
   await urlSync.whenHomeReady;
@@ -150,13 +160,36 @@ async function applyUrlRepo(repoRel: string, base: string | null): Promise<void>
   if (ok && base !== null) await repo.setSelectedCompareBase(base);
 }
 
+/**
+ * Show what a URL names: view first (it paints without waiting), then the
+ * repo, then the explorer's file. A repo already open is not reopened — the
+ * POST would release and re-take the ref and remount the view for nothing.
+ * The reveal waits a tick after an open so the explorer store's repo-switch
+ * reset has flushed (same ordering useFollowMode needs).
+ */
+async function applyUrlState(state: UrlState): Promise<void> {
+  if (state.view) ui.setActiveView(state.view);
+  if (state.repoRel === null) return;
+  if (urlSync.isActiveRepo(state.repoRel)) {
+    if (state.base !== null && state.base !== repo.selectedCompareBase) {
+      await repo.setSelectedCompareBase(state.base);
+    }
+  } else {
+    await applyUrlRepo(state.repoRel, state.base);
+    await nextTick();
+  }
+  if (state.file !== null && state.file !== explorer.selectedPath) {
+    await explorer.revealFile(state.file);
+  }
+}
+
 if (urlSync.initial.view) ui.setActiveView(urlSync.initial.view);
 if (urlSync.initial.repoRel !== null) {
   disarmAutoActivate();
   // The URL repo wins over the initial follow target too (follow resumes on
   // the next live hook change).
   daemon.skipInitialFollow = true;
-  void applyUrlRepo(urlSync.initial.repoRel, urlSync.initial.base);
+  void applyUrlState(urlSync.initial);
 }
 
 watch(

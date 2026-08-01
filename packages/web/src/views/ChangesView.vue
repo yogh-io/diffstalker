@@ -757,52 +757,50 @@ const rootStyle = computed(() => ({
 
 /* Portrait: rotate column → row. Full-width diffs below a bounded file
    band; the same resizer drags the row split. */
-@media (orientation: portrait), (max-aspect-ratio: 1/1), (max-width: 1400px) {
-  .changes {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(6rem, var(--changes-top, 30vh)) 8px minmax(0, 1fr);
-  }
+:root[data-split='stacked'] .changes {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(6rem, var(--changes-top, 30vh)) 8px minmax(0, 1fr);
+}
 
-  .files-col {
-    /* No border-right to clear — the base rule in style.css has none. */
-    border-bottom: 1px solid var(--border);
-  }
+:root[data-split='stacked'] .files-col {
+  /* No border-right to clear — the base rule in style.css has none. */
+  border-bottom: 1px solid var(--border);
+}
 
-  /* A visible divider bar (not a bare drag gap) so the file band and the
-     diffs read as clearly separate, with a centered grab handle. */
-  .resizer {
-    display: block;
-    width: auto;
-    height: 8px;
-    cursor: row-resize;
-    background: var(--surface-raised);
-    box-shadow:
-      inset 0 1px 0 var(--border),
-      inset 0 -1px 0 var(--border);
-    position: relative;
-  }
+/* A visible divider bar (not a bare drag gap) so the file band and the
+   diffs read as clearly separate, with a centered grab handle. */
+:root[data-split='stacked'] .resizer {
+  display: block;
+  width: auto;
+  height: 8px;
+  cursor: row-resize;
+  background: var(--surface-raised);
+  box-shadow:
+    inset 0 1px 0 var(--border),
+    inset 0 -1px 0 var(--border);
+  position: relative;
+}
 
-  .resizer::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    margin: auto;
-    width: 2.25rem;
-    height: 2px;
-    border-radius: 1px;
-    background: var(--text-dim);
-    opacity: 0.5;
-  }
+:root[data-split='stacked'] .resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 2.25rem;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-dim);
+  opacity: 0.5;
+}
 
-  .resizer:hover,
-  .resizer:focus-visible {
-    background: var(--selection);
-  }
+:root[data-split='stacked'] .resizer:hover,
+:root[data-split='stacked'] .resizer:focus-visible {
+  background: var(--selection);
+}
 
-  .resizer:hover::after,
-  .resizer:focus-visible::after {
-    background: var(--surface);
-    opacity: 0.9;
-  }
+:root[data-split='stacked'] .resizer:hover::after,
+:root[data-split='stacked'] .resizer:focus-visible::after {
+  background: var(--surface);
+  opacity: 0.9;
 }
 </style>
