@@ -22,6 +22,16 @@ import { createDaemon, ListenOptions } from './server.js';
 
 const SOCKET_NAME = 'diffstalkerd.sock';
 
+/**
+ * The socket file for a named instance. `--instance work` binds work.sock in
+ * the same runtime dir, so a second daemon needs one word rather than an
+ * absolute path spelled identically on both sides. No name means the default
+ * socket, which is what every client looks for first.
+ */
+function socketNameFor(instance: string | undefined): string {
+  return instance === undefined ? SOCKET_NAME : `${instance}.sock`;
+}
+
 /** systemd passes activated sockets starting at fd 3 (SD_LISTEN_FDS_START). */
 const SD_LISTEN_FDS_START = 3;
 
@@ -32,6 +42,9 @@ Usage: diffstalkerd [options]
 Options:
   --socket PATH        Bind a unix socket at PATH
                        (default: $XDG_RUNTIME_DIR/diffstalker/${SOCKET_NAME})
+  --instance NAME      Bind <NAME>.sock in the runtime dir, so several
+                       daemons can run side by side (default: the shared
+                       socket every client looks for first)
   --no-socket          Do not bind a unix socket (requires --port)
   --port N             Also bind TCP port N (loopback only) for the web UI.
                        The port serves the web API subset; the unix socket
@@ -58,6 +71,12 @@ function expectValue(argv: string[], index: number, flag: string): string {
 export interface CliOptions extends ListenOptions {
   /** --no-socket: bind the TCP port only, no unix socket at all. */
   noSocket?: boolean;
+  /**
+   * --instance NAME: bind <NAME>.sock in the runtime dir instead of the
+   * default socket, so several daemons can run side by side. Ignored when
+   * --socket names a path outright.
+   */
+  instance?: string;
   /** Explicit hook file from --follow-file. */
   followFile?: string;
   /** --no-follow: no hook-file watcher at all. */
@@ -79,6 +98,9 @@ export function parseArgs(argv: string[]): CliOptions | 'help' {
         return 'help';
       case '--socket':
         options.socketPath = expectValue(argv, ++i, '--socket');
+        break;
+      case '--instance':
+        options.instance = expectValue(argv, ++i, '--instance');
         break;
       case '--no-socket':
         options.noSocket = true;
@@ -158,7 +180,7 @@ function applyListenDefaults(options: CliOptions): void {
     process.exit(1);
   }
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  options.socketPath = path.join(dir, SOCKET_NAME);
+  options.socketPath = path.join(dir, socketNameFor(options.instance));
 }
 
 /**

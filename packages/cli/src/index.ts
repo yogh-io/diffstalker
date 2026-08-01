@@ -53,6 +53,7 @@ interface ParsedArgs {
   initialPath?: string;
   debug?: boolean;
   socket?: string;
+  instance?: string;
 }
 
 function parseArgs(args: string[]): ParsedArgs {
@@ -68,6 +69,13 @@ function parseArgs(args: string[]): ParsedArgs {
       }
     } else if (arg === '--debug' || arg === '-d') {
       result.debug = true;
+    } else if (arg === '--instance') {
+      if (args[i + 1] && !args[i + 1].startsWith('-')) {
+        result.instance = args[++i];
+      } else {
+        console.error('--instance requires a name');
+        process.exit(1);
+      }
     } else if (arg === '--socket' || arg === '-s') {
       if (args[i + 1] && !args[i + 1].startsWith('-')) {
         result.socket = args[++i];
@@ -85,8 +93,12 @@ Options:
   -f, --follow [FILE]  Follow hook file for dynamic repo switching
                        (default: ~/.cache/diffstalker/target)
   -s, --socket PATH    diffstalkerd socket to attach to or spawn on
-                       (default: $DIFFSTALKER_SOCKET, then
+                       (default: $DIFFSTALKER_SOCKET, then --instance, then
                        $XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock)
+      --instance NAME  Attach to the daemon named NAME (<NAME>.sock in the
+                       runtime dir), spawning it if absent. The client half
+                       of diffstalkerd --instance; $DIFFSTALKER_INSTANCE
+                       sets it too.
   -d, --debug          Log path changes to stderr for debugging
   -h, --help           Show this help message
 
@@ -157,7 +169,7 @@ async function main(): Promise<void> {
   // failure prints on the normal buffer.
   let client;
   try {
-    ({ client } = await ensureDaemon({ socketPath: args.socket, followFile }));
+    ({ client } = await ensureDaemon({ socketPath: args.socket, followFile, instance: args.instance }));
   } catch (err) {
     console.error(
       `Failed to reach diffstalkerd: ${err instanceof Error ? err.message : String(err)}`
@@ -174,7 +186,7 @@ async function main(): Promise<void> {
     client,
     initialPath: args.initialPath,
     reconnect: () =>
-      ensureDaemon({ socketPath: args.socket, followFile }).then((r) => r.client),
+      ensureDaemon({ socketPath: args.socket, followFile, instance: args.instance }).then((r) => r.client),
   });
 
   // Wait for app to exit

@@ -110,6 +110,46 @@ describe('resolveSocketPath', () => {
   test('refuses to guess without XDG_RUNTIME_DIR (no /tmp fallback)', () => {
     expect(() => resolveSocketPath(undefined, {})).toThrow(/XDG_RUNTIME_DIR/);
   });
+
+  test('resolves a named instance to <name>.sock in the runtime dir', () => {
+    const env = { XDG_RUNTIME_DIR: '/run/user/1000' };
+    expect(resolveSocketPath(undefined, env, 'work')).toBe(
+      '/run/user/1000/diffstalker/work.sock'
+    );
+  });
+
+  test('reads the instance from $DIFFSTALKER_INSTANCE', () => {
+    const env = { XDG_RUNTIME_DIR: '/run/user/1000', DIFFSTALKER_INSTANCE: 'envwork' };
+    expect(resolveSocketPath(undefined, env)).toBe('/run/user/1000/diffstalker/envwork.sock');
+  });
+
+  test('prefers the explicit instance over $DIFFSTALKER_INSTANCE', () => {
+    const env = { XDG_RUNTIME_DIR: '/run/user/1000', DIFFSTALKER_INSTANCE: 'envwork' };
+    expect(resolveSocketPath(undefined, env, 'flagwork')).toBe(
+      '/run/user/1000/diffstalker/flagwork.sock'
+    );
+  });
+
+  /**
+   * A path is already unambiguous, so both path forms outrank both name
+   * forms — the name only ever picks a file inside the runtime dir.
+   */
+  test('prefers an explicit path over an instance name', () => {
+    const env = { XDG_RUNTIME_DIR: '/run/user/1000' };
+    expect(resolveSocketPath('/custom/explicit.sock', env, 'work')).toBe('/custom/explicit.sock');
+  });
+
+  test('prefers $DIFFSTALKER_SOCKET over an instance name', () => {
+    const env = { XDG_RUNTIME_DIR: '/run/user/1000', DIFFSTALKER_SOCKET: '/custom/envpath.sock' };
+    expect(resolveSocketPath(undefined, env, 'work')).toBe('/custom/envpath.sock');
+  });
+
+  test('falls back to the shared socket for an empty instance name', () => {
+    const env = { XDG_RUNTIME_DIR: '/run/user/1000' };
+    expect(resolveSocketPath(undefined, env, '')).toBe(
+      '/run/user/1000/diffstalker/diffstalkerd.sock'
+    );
+  });
 });
 
 /** A client whose GET /follow reports the given target file. */

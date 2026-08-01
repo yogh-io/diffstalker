@@ -35,13 +35,20 @@ export interface EnsureDaemonResult {
 }
 
 /**
- * Resolve the daemon socket path: explicit flag, then the
- * DIFFSTALKER_SOCKET env var, then the XDG runtime dir. Throws when none
- * applies — never a /tmp guess.
+ * Resolve the daemon socket path: --socket, then $DIFFSTALKER_SOCKET, then
+ * <runtime dir>/<instance>.sock (--instance or $DIFFSTALKER_INSTANCE), then
+ * the default socket. Throws when the runtime dir is unknown — never a /tmp
+ * guess.
+ *
+ * The two path forms win over the two name forms because a path is already
+ * unambiguous; the name only chooses a file inside the runtime dir. This is
+ * the client half of the daemon's --instance: one shared word instead of an
+ * absolute path spelled identically in two places.
  */
 export function resolveSocketPath(
   explicit?: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  instance?: string
 ): string {
   if (explicit) return explicit;
   const fromEnv = env.DIFFSTALKER_SOCKET;
@@ -54,7 +61,10 @@ export function resolveSocketPath(
         'Pass --socket PATH or set DIFFSTALKER_SOCKET.'
     );
   }
-  return path.join(dir, SOCKET_NAME);
+  // A path beats a name: --socket and $DIFFSTALKER_SOCKET are already
+  // absolute, so the instance only decides which file inside the runtime dir.
+  const name = instance ?? env.DIFFSTALKER_INSTANCE;
+  return path.join(dir, name === undefined || name === '' ? SOCKET_NAME : `${name}.sock`);
 }
 
 /** One bounded /health probe: true only for a live, ready daemon. */
@@ -199,8 +209,10 @@ export async function assertFollowFileMatches(
 export async function ensureDaemon(options: {
   socketPath?: string;
   followFile?: string;
+  /** --instance NAME: which daemon to attach to, and to spawn if absent. */
+  instance?: string;
 }): Promise<EnsureDaemonResult> {
-  const socketPath = resolveSocketPath(options.socketPath);
+  const socketPath = resolveSocketPath(options.socketPath, process.env, options.instance);
   const client = new DiffstalkerClient({ socketPath });
 
   if (await isHealthy(client, HEALTH_TIMEOUT_MS)) {
