@@ -30,6 +30,11 @@
      drift from the bar itself. */
   --row-rail: 2px;
 
+  /* The draggable divider's thickness. Deliberately NOT part of any spacing
+     scale: a drag target must GROW on touch where a gap shrinks, so the two
+     are anti-correlated by input device. Named so nobody consolidates it. */
+  --divider: 8px;
+
   /* Pre-probe row height: --fs-base times the 1.55 line-height DiffView and
      FileContentPane share. DiffStack's measureProbe overwrites this as an
      INLINE style on the document root once a real row is measured, and an

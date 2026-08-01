@@ -37,6 +37,7 @@ import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
 import { useActiveRowScroll } from '../composables/useActiveRowScroll';
 import DiffStack, { type StackFile } from '../components/DiffStack.vue';
+import SplitResizer from '../components/SplitResizer.vue';
 
 const repo = useRepoStore();
 const ui = useUiStore();
@@ -530,22 +531,7 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
           </template>
         </aside>
 
-        <div
-          v-if="isPortrait"
-          class="row-resizer"
-          role="separator"
-          :aria-orientation="split.ariaOrientation.value"
-          aria-label="Resize file list"
-          :aria-valuenow="split.ariaValueNow.value"
-          :aria-valuemin="split.ariaValueMin.value"
-          :aria-valuemax="split.ariaValueMax.value"
-          tabindex="0"
-          @pointerdown="split.onPointerDown"
-          @pointermove="split.onPointerMove"
-          @pointerup="split.onPointerUp"
-          @pointercancel="split.onPointerCancel"
-          @keydown="split.onKeydown"
-        ></div>
+        <SplitResizer v-if="isPortrait" :split="split" label="Resize file list" />
 
         <DiffStack
           ref="stackEl"
@@ -878,42 +864,6 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
 /* A visible divider bar (not a bare drag gap) so the two stacked panes
    read as clearly separate, with a centered grab handle signalling it
    drags. */
-:root[data-split='stacked'] .row-resizer {
-  /* Paints BOTH its own edges, which is why the panels above and below draw
-     none: with a panel border-bottom as well the boundary was three hairlines
-     inside 9px. */
-  height: 8px;
-  cursor: row-resize;
-  background: var(--surface-raised);
-  box-shadow:
-    inset 0 1px 0 var(--border),
-    inset 0 -1px 0 var(--border);
-  touch-action: none;
-  position: relative;
-}
-
-:root[data-split='stacked'] .row-resizer::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 2.25rem;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--text-dim);
-  opacity: 0.5;
-}
-
-:root[data-split='stacked'] .row-resizer:hover,
-:root[data-split='stacked'] .row-resizer:focus-visible {
-  background: var(--selection);
-}
-
-:root[data-split='stacked'] .row-resizer:hover::after,
-:root[data-split='stacked'] .row-resizer:focus-visible::after {
-  background: var(--surface);
-  opacity: 0.9;
-}
 
 /* In-band restyles for the lifted controls. */
 :root[data-split='stacked'] .commits-toggle {
