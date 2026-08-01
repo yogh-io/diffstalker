@@ -196,6 +196,46 @@ input::placeholder {
   color: var(--del);
 }
 
+/* The status letter beside a path — one colour per FileStatus member (see
+   core/src/git/status.ts; add here when the union grows). Changes, Compare and
+   the diff stack each declared this identically; statusLetter() in
+   utils/format was already single-sourced, the colours were not.
+
+   Name kept as `.letter`: `.status-letter` belongs to Explorer's badge, which
+   has different geometry and no font-weight. Explorer keeps its own map, keyed
+   off .tree-row.st-* with a line-through on deleted, so the status-to-colour
+   mapping still lives in more than one place — only this element rule is now
+   single-source. */
+.letter {
+  flex: none;
+  width: 1ch;
+  font-weight: 700;
+}
+
+.letter[data-status='modified'] {
+  color: var(--status-modified);
+}
+
+.letter[data-status='added'] {
+  color: var(--status-added);
+}
+
+.letter[data-status='deleted'] {
+  color: var(--status-deleted);
+}
+
+.letter[data-status='untracked'] {
+  color: var(--status-untracked);
+}
+
+.letter[data-status='renamed'] {
+  color: var(--status-renamed);
+}
+
+.letter[data-status='copied'] {
+  color: var(--status-copied);
+}
+
 /* Compare's "[uncommitted]" marker. One file has two render surfaces — the
    tree row and the card header — and each carried its own identical copy.
    No font-family here on purpose: DiffStack's span has `mono` and Compare's

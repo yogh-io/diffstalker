@@ -1466,32 +1466,6 @@ defineExpose({
   color: var(--text);
 }
 
-.letter {
-  flex: none;
-  width: 1ch;
-  font-weight: 700;
-}
-
-.letter[data-status='modified'] {
-  color: var(--status-modified);
-}
-
-.letter[data-status='added'] {
-  color: var(--status-added);
-}
-
-.letter[data-status='deleted'] {
-  color: var(--status-deleted);
-}
-
-.letter[data-status='renamed'] {
-  color: var(--status-renamed);
-}
-
-.letter[data-status='untracked'] {
-  color: var(--status-untracked);
-}
-
 
 /* Skip layout+paint for whole off-screen files; a skipped body is
    sized by the inline computed contain-intrinsic-size. NEVER move

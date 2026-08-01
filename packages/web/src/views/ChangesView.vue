@@ -627,36 +627,6 @@ const rootStyle = computed(() => ({
   }
 }
 
-.letter {
-  flex: none;
-  width: 1ch;
-  font-weight: 700;
-}
-
-.letter[data-status='modified'] {
-  color: var(--status-modified);
-}
-
-.letter[data-status='added'] {
-  color: var(--status-added);
-}
-
-.letter[data-status='deleted'] {
-  color: var(--status-deleted);
-}
-
-.letter[data-status='untracked'] {
-  color: var(--status-untracked);
-}
-
-.letter[data-status='renamed'] {
-  color: var(--status-renamed);
-}
-
-.letter[data-status='copied'] {
-  color: var(--status-copied);
-}
-
 .path {
   min-width: 0;
   overflow: hidden;
