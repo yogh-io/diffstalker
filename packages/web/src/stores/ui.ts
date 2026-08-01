@@ -133,6 +133,22 @@ export const useUiStore = defineStore('ui', () => {
     activeStackKey.value = key;
   }
 
+  /**
+   * A one-shot "put this anchor on screen" request, for the URL layer:
+   * restoring a link's file selects it in the store, but the stacked diff
+   * only scrolls when the view is TOLD to. It cannot be a watcher on
+   * activeStackKey — the scroll-spy writes that key back as the user
+   * scrolls, so a view scrolling on every change would fight them. The
+   * seq makes a repeat request for the same key distinct.
+   */
+  const stackScrollRequest = shallowRef<{ key: string; seq: number } | null>(null);
+  let stackScrollSeq = 0;
+
+  function requestStackScroll(key: string): void {
+    stackScrollSeq += 1;
+    stackScrollRequest.value = { key, seq: stackScrollSeq };
+  }
+
   // --- Overlays (finder / help) ---
 
   function openOverlay(name: OverlayName): void {
@@ -159,6 +175,7 @@ export const useUiStore = defineStore('ui', () => {
     wrapEnabled,
     flashedFile,
     activeStackKey,
+    stackScrollRequest,
     init,
     setTheme,
     setActiveView,
@@ -169,6 +186,7 @@ export const useUiStore = defineStore('ui', () => {
     toggleWrap,
     flashFile,
     setActiveStackKey,
+    requestStackScroll,
     openOverlay,
     toggleOverlay,
     closeOverlay,

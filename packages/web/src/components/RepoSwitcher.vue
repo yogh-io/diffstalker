@@ -11,6 +11,7 @@
 import { computed, watch } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useUiStore } from '../stores/ui';
+import { beginUserNav } from '../composables/useUrlSync';
 import { useRepoOpen } from '../composables/useRepoOpen';
 import { useActiveWorktrees } from '../composables/useActiveWorktrees';
 import { useWorktreeStore, type WorktreeProject } from '../stores/worktrees';
@@ -146,12 +147,16 @@ function bestWorktreePath(project: WorktreeProject): string {
  * else switch to its first open worktree; the header select refines. */
 function pickProject(project: RepoProject): void {
   const active = project.repos.find((repo) => repo.id === daemon.activeRepoId);
-  void activate(active ?? project.repos[0]);
+  const target = active ?? project.repos[0];
+  beginUserNav({ repo: target.path });
+  void activate(target);
   open.value = false;
 }
 
 async function pickRecentProject(project: WorktreeProject): Promise<void> {
-  const ok = await openByPath(bestWorktreePath(project));
+  const path = bestWorktreePath(project);
+  beginUserNav({ repo: path });
+  const ok = await openByPath(path);
   if (ok) open.value = false;
 }
 </script>

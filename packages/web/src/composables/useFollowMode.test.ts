@@ -144,6 +144,26 @@ describe('follow enabled', () => {
     expect(explorer.rows.map((row) => row.entry.path)).toEqual(['src', 'src/main.ts']);
   });
 
+  test('a Back the user just pressed holds an incoming follow event off', async () => {
+    const { daemon, repo, ui } = await setup();
+    ui.setActiveView('history');
+
+    // What App does when a popped entry names a repo.
+    daemon.suspendFollowNavigation(1500);
+    await emitFollowChange(daemon, '/other/src/main.ts');
+
+    // Nothing moved — but the event is recorded, so the header stays honest.
+    expect(repo.repoId).toBe('r1');
+    expect(ui.activeView).toBe('history');
+    expect(daemon.lastFollowChange?.path).toBe('/other/src/main.ts');
+
+    // Once the grace period is over, following resumes.
+    daemon.suspendFollowNavigation(0);
+    await emitFollowChange(daemon, '/other/src/main.ts');
+    expect(repo.repoId).toBe('r2');
+    expect(ui.activeView).toBe('explorer');
+  });
+
   test('a followed repo ROOT: switches the repo, keeps the current view', async () => {
     const { daemon, repo, explorer, ui } = await setup();
     ui.setActiveView('history');

@@ -13,6 +13,7 @@
  * line, like any other failed reveal.
  */
 
+import { beginUserNav } from '../composables/useUrlSync';
 import { useUiStore } from '../stores/ui';
 import { useExplorerStore } from '../stores/explorer';
 
@@ -22,6 +23,9 @@ const ui = useUiStore();
 const explorer = useExplorerStore();
 
 function open(): void {
+  // One gesture: the view change and the reveal it triggers land in the
+  // same history entry.
+  beginUserNav({ view: 'explorer' });
   ui.setActiveView('explorer');
   // The store action never rejects — failures land in explorer.error.
   void explorer.revealFile(props.path);

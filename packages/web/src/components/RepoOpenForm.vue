@@ -11,6 +11,7 @@
 import { computed, ref, useId } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore } from '../stores/repo';
+import { beginUserNav } from '../composables/useUrlSync';
 import { useRepoOpen } from '../composables/useRepoOpen';
 
 const emit = defineEmits<{ opened: [] }>();
@@ -37,6 +38,10 @@ const inputId = useId();
 async function submit(): Promise<void> {
   if (busy.value) return;
   busy.value = true;
+  // The daemon normalizes the path it is handed (a worktree root, a
+  // trailing slash); a normalization that changes it simply misses the
+  // match and the open replaces instead of pushing.
+  beginUserNav({ repo: path.value });
   const ok = await openByPath(path.value);
   busy.value = false;
   if (ok) {

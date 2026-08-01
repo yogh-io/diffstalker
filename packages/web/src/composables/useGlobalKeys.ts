@@ -22,6 +22,7 @@
 
 import { onBeforeUnmount, onMounted } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
+import { beginUserNav } from './useUrlSync';
 import { useUiStore, VIEWS } from '../stores/ui';
 import type { ViewName } from '../prefs';
 
@@ -112,7 +113,10 @@ export function useGlobalKeys(): void {
     if (handleDisplayToggle(event.key)) return;
 
     const view = VIEW_KEYS[event.key];
-    if (view !== undefined) ui.setActiveView(view);
+    if (view !== undefined) {
+      beginUserNav({ view });
+      ui.setActiveView(view);
+    }
   }
 
   onMounted(() => window.addEventListener('keydown', onKeydown));

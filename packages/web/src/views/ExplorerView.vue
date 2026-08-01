@@ -22,6 +22,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
+import { beginUserNav } from '../composables/useUrlSync';
 import { useExplorerStore } from '../stores/explorer';
 import type { ExplorerRow } from '../stores/explorer';
 import { statusLetter } from '../utils/format';
@@ -82,6 +83,7 @@ watch(
 
 function activate(row: ExplorerRow): void {
   focusedPath.value = row.entry.path;
+  beginUserNav({ view: 'explorer' });
   if (row.entry.type === 'dir') {
     void toggleDir(row.entry.path);
   } else {

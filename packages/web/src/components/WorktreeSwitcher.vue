@@ -28,6 +28,7 @@
  */
 
 import { computed, ref, watch } from 'vue';
+import { beginUserNav } from '../composables/useUrlSync';
 import { useRepoOpen } from '../composables/useRepoOpen';
 import { useWorktreeStore } from '../stores/worktrees';
 import { useActiveWorktrees } from '../composables/useActiveWorktrees';
@@ -150,7 +151,10 @@ function worktreeMeta(worktree: WorktreeInfo): string {
 }
 
 function pick(worktree: WorktreeInfo): void {
-  if (worktree.path !== currentPath.value) void openByPath(worktree.path);
+  if (worktree.path !== currentPath.value) {
+    beginUserNav({ repo: worktree.path });
+    void openByPath(worktree.path);
+  }
   open.value = false;
 }
 </script>

@@ -100,8 +100,12 @@ export function useFollowMode(): void {
     chain = chain.then(async () => {
       const next = pending;
       pending = null;
-      // The toggle may have flipped off while this waited in the queue.
+      // The toggle may have flipped off while this waited in the queue —
+      // and a Back the user pressed a moment ago holds navigation off for
+      // its grace period (the event stays recorded, so the header is still
+      // honest about what the editor is on).
       if (next === null || !daemon.followEnabled) return;
+      if (daemon.followNavigationSuspended()) return;
       try {
         await onFollowChange(next);
       } catch {

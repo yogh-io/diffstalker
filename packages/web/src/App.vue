@@ -128,6 +128,9 @@ onUnmounted(() => {
 // no manual escape. A bounded fallback opens repos[0] once the wait
 // exceeds FOLLOW_FALLBACK_MS.
 const FOLLOW_FALLBACK_MS = 3000;
+
+/** How long a restored place is protected from an incoming follow event. */
+const FOLLOW_GRACE_MS = 1500;
 let autoActivateArmed = true;
 let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -178,6 +181,10 @@ const pendingAnchor = ref<{ view: ViewName; at: string } | null>(null);
  */
 async function applyUrlState(state: UrlState, ctx: RestoreContext): Promise<void> {
   if (state.view === null && state.repo === null) return;
+  // Landing somewhere by Back/Forward holds follow mode off briefly: an
+  // editor save arriving right after would otherwise yank the user
+  // straight back out of the place they just navigated to.
+  if (state.repo !== null) daemon.suspendFollowNavigation(FOLLOW_GRACE_MS);
   const coldLoad = daemon.activeRepoId === null;
   if (coldLoad && state.view !== null) ui.setActiveView(state.view);
 
@@ -250,6 +257,7 @@ function applyChangesAnchor(at: string | null): void {
   if (!match) return; // committed, discarded, gone: ordinary churn
   repo.selectFile(match);
   ui.setActiveStackKey(workingDiffKey(match));
+  ui.requestStackScroll(workingDiffKey(match));
 }
 
 /**
@@ -292,7 +300,9 @@ async function applyCompareAnchor(state: UrlState, ctx: RestoreContext): Promise
     return;
   }
   const index = files.findIndex((f) => f.path === state.at);
-  if (index !== -1) repo.selectCompareFile(index);
+  if (index === -1) return;
+  repo.selectCompareFile(index);
+  ui.requestStackScroll(state.at);
 }
 
 // The parked anchor lands when its data does. Both watchers check the view
@@ -315,7 +325,9 @@ watch(
     if (parked?.view !== 'compare' || ui.activeView !== 'compare' || !compareDiff) return;
     pendingAnchor.value = null;
     const index = compareDiff.files.findIndex((f) => f.path === parked.at);
-    if (index !== -1) repo.selectCompareFile(index);
+    if (index === -1) return;
+    repo.selectCompareFile(index);
+    ui.requestStackScroll(parked.at);
   }
 );
 
