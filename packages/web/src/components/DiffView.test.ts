@@ -8,8 +8,9 @@
  * viewer stance: the diff is READ-ONLY — no hunk-staging buttons exist.
  */
 
-import { describe, test, expect, vi, afterEach } from 'vitest';
+import { describe, test, expect, vi, afterEach, beforeEach } from 'vitest';
 import { mount } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 import DiffView from './DiffView.vue';
 import type { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
 
@@ -49,6 +50,12 @@ function mountDiff(
 ) {
   return mount(DiffView, { props: { diff, ...props } });
 }
+
+// The file-section header embeds ViewFileButton, which reads the ui and
+// explorer stores — every mount needs an active pinia.
+beforeEach(() => {
+  setActivePinia(createPinia());
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -128,7 +135,7 @@ describe('file section headers (multi-file diffs)', () => {
   test('a multi-file diff renders one header per file section, in order', () => {
     const wrapper = mountDiff(twoFileDiff);
     const headers = wrapper.findAll('[data-testid="file-section-header"]');
-    expect(headers.map((h) => h.text())).toEqual(['src/foo.ts', 'src/bar.ts']);
+    expect(headers.map((h) => h.find('.file-path').text())).toEqual(['src/foo.ts', 'src/bar.ts']);
     // The hunk-header sticky offset class rides along.
     expect(wrapper.find('[data-testid="diff-view"]').classes()).toContain('with-file-headers');
   });
@@ -146,7 +153,7 @@ describe('file section headers (multi-file diffs)', () => {
     const wrapper = mountDiff(single, { showFileHeaders: true });
     const headers = wrapper.findAll('[data-testid="file-section-header"]');
     expect(headers).toHaveLength(1);
-    expect(headers[0].text()).toBe('a.ts');
+    expect(headers[0].find('.file-path').text()).toBe('a.ts');
   });
 
   test('a single-file diff without the prop has no sticky-offset class either', () => {

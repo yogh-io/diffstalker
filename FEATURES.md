@@ -731,6 +731,10 @@ git operations.
   takes the uncommitted color. Costs +1px per file and gives back 1px per
   hunk (the hunk seams were doubled hairlines), so a multi-hunk file is net
   shorter than before.
+- "view file" button in every diff header (Changes, Journal, History,
+  Compare): jumps from a file's diff to the file itself in the Explorer —
+  the tree expands down to it and its content opens, the same reveal the
+  fuzzy finder and follow mode use.
 - **Explorer** — a VS Code-style lazy file tree with git-status decoration
   (dotfile / ignored / changed-only toggles) beside syntax-highlighted file
   content (highlight.js) with binary / truncated / too-large states.

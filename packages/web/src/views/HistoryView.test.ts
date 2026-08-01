@@ -268,7 +268,7 @@ describe('commit detail', () => {
 
     // The commit diff renders with one sticky header per file section.
     const headers = detail.findAll('[data-testid="file-section-header"]');
-    expect(headers.map((h) => h.text())).toEqual(['src/foo.ts', 'src/bar.ts']);
+    expect(headers.map((h) => h.find('.file-path').text())).toEqual(['src/foo.ts', 'src/bar.ts']);
     expect(detail.find('.row.del .content').text()).toBe('old foo');
   });
 

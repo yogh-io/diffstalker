@@ -242,6 +242,7 @@ import {
   type StackSection,
 } from '../composables/useStackScroll';
 import DiffView from './DiffView.vue';
+import ViewFileButton from './ViewFileButton.vue';
 import WrapToggle from './WrapToggle.vue';
 
 const props = defineProps<{
@@ -1106,6 +1107,7 @@ defineExpose({
         </button>
         <span class="letter mono" :data-status="item.status">{{ statusLetter(item.status) }}</span>
         <span class="path mono" :title="item.path">{{ item.path }}</span>
+        <ViewFileButton :path="item.path" />
         <span v-if="item.uncommitted" class="uncommitted-tag mono">[uncommitted]</span>
         <span class="stats mono">
           <span v-if="item.stats.insertions" class="count-add">+{{ item.stats.insertions }}</span>

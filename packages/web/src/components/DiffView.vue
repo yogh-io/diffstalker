@@ -50,6 +50,7 @@ import type { DiffContentRow, DiffFileSection, DiffHunkGroup } from '../utils/di
 import { diffLanguage, syntaxPieces } from '../utils/diffHighlight';
 import { splitRows } from '../utils/diffSplit';
 import DiffLineContent from './DiffLineContent.vue';
+import ViewFileButton from './ViewFileButton.vue';
 
 const props = defineProps<{
   diff: DiffResult | null;
@@ -256,7 +257,12 @@ onBeforeUnmount(() => {
   >
     <section v-for="s in model.sections" :key="s.key" class="file-section">
       <div v-if="showHeaders && s.filePath" class="file-header" data-testid="file-section-header">
-        <span class="pin-x">{{ s.filePath }}</span>
+        <!-- Path and button inside ONE .pin-x: two sticky siblings would
+             both pin to left:0 and overlap once scrolled horizontally. -->
+        <span class="pin-x"
+          ><span class="file-path">{{ s.filePath }}</span
+          ><ViewFileButton :path="s.filePath"
+        /></span>
       </div>
       <div v-for="(note, i) in s.notes" :key="i" class="file-note">
         <span class="pin-x">{{ note }}</span>
@@ -442,6 +448,12 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--border);
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* Scoped styles reach a child component's ROOT element, which is the
+   button itself — the gap after the path lives here, not in the button. */
+.file-header .view-file {
+  margin-left: 0.5rem;
 }
 
 .file-note {
