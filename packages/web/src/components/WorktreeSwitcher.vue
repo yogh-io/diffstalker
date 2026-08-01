@@ -184,10 +184,10 @@ onBeforeUnmount(() => {
       @click="open = !open"
     >
       <span class="wt-name">{{ basename(currentPath) }}</span>
-      <span class="caret" aria-hidden="true">&#9662;</span>
+      <span class="caret popover-caret" aria-hidden="true">&#9662;</span>
     </button>
 
-    <div v-if="open" class="panel" data-testid="worktree-options">
+    <div v-if="open" class="panel popover-panel" data-testid="worktree-options">
       <template v-if="recentWorktrees.length">
         <p v-if="showSectionLabels" class="group-label">Recent</p>
         <button
@@ -262,28 +262,14 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.caret {
-  color: var(--text-dim);
-  font-size: var(--fs-micro);
-}
-
 .panel {
-  position: absolute;
-  top: calc(100% + 0.375rem);
-  left: 0;
-  z-index: 20;
+  /* Shared box in style.css (.popover-panel); the rest is this menu's own:
+     it is the one that can outgrow the viewport. */
   width: 18rem;
-  max-width: 80vw;
   max-height: 60vh;
   overflow-y: auto;
   padding: 0.375rem;
-  display: flex;
-  flex-direction: column;
   gap: 0.125rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
 }
 
 /* Matches RepoSwitcher's section headings so the two panels read alike. */

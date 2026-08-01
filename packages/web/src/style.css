@@ -147,16 +147,6 @@ input::placeholder {
   max-width: 64rem;
 }
 
-.view-eyebrow {
-  margin: 0 0 0.25rem;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-
 .view-title {
   margin: 0;
   font-size: var(--fs-title);
@@ -182,19 +172,6 @@ input::placeholder {
   font-size: var(--fs-small);
 }
 
-.view-action {
-  display: inline-block;
-  padding: 0.375rem 0.875rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface-raised);
-  font-size: var(--fs-base);
-}
-
-.view-action:hover:not(:disabled) {
-  border-color: var(--text-dim);
-}
-
 /* Diff-language inline counts, used across the chrome. */
 .count-add {
   color: var(--add);
@@ -212,6 +189,36 @@ input::placeholder {
 .uncommitted-tag {
   flex: none;
   color: var(--uncommitted);
+  font-size: var(--fs-micro);
+}
+
+/* The header's two dropdowns (repo, worktree) — the only popovers in the app,
+   and adjacent siblings in AppHeader, so any drift in offset or elevation
+   shows as two menus that do not line up. Each keeps only what genuinely
+   differs: width, padding, gap, and WorktreeSwitcher's max-height/overflow
+   (RepoSwitcher has no cap today, and giving it one would change how a long
+   repo list scrolls).
+
+   The shadow stays a literal rather than a --shadow-menu token: after this
+   merge it has exactly one consumer, and a one-consumer token advertises
+   itself for reuse on .overlay-dialog — a scrimmed modal at z-index 100 with
+   different geometry, which is precisely the merge to avoid. */
+.popover-panel {
+  position: absolute;
+  top: calc(100% + 0.375rem);
+  left: 0;
+  z-index: 20;
+  max-width: 80vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+
+.popover-caret {
+  color: var(--text-dim);
   font-size: var(--fs-micro);
 }
 

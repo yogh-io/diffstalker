@@ -183,10 +183,10 @@ onBeforeUnmount(() => {
       @click="open = !open"
     >
       <span class="repo-label mono">{{ triggerLabel }}</span>
-      <span class="caret" aria-hidden="true">&#9662;</span>
+      <span class="caret popover-caret" aria-hidden="true">&#9662;</span>
     </button>
 
-    <div v-if="open" class="panel">
+    <div v-if="open" class="panel popover-panel">
       <RepoOpenForm @opened="open = false" />
 
       <div v-if="openProjects.length" class="group" data-testid="open-repos">
@@ -264,26 +264,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.caret {
-  color: var(--text-dim);
-  font-size: var(--fs-micro);
-}
-
 .panel {
-  position: absolute;
-  top: calc(100% + 0.375rem);
-  left: 0;
-  z-index: 20;
+  /* Shared box in style.css (.popover-panel); only the size differs. */
   width: 24rem;
-  max-width: 80vw;
   padding: 0.75rem;
-  display: flex;
-  flex-direction: column;
   gap: 0.75rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
 }
 
 .group {
