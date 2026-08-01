@@ -14,9 +14,16 @@
  * throw every HttpError it is ever going to throw BEFORE it calls
  * `sendBytes`, or a failure after the first write reaches the client as a
  * truncated 200 that the browser will happily try to decode.
+ *
+ * Only an HttpError's message reaches the client. Everything else is a
+ * failure nobody wrote a message for, so its message is whatever threw it
+ * — a git command line, an absolute path, an errno — and the daemon is
+ * reachable from a browser. That detail goes to stderr, where it is what a
+ * developer needs, and the client gets a status and nothing else.
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { error as logError } from '@diffstalker/core/utils/logger';
 import { toWire } from './serialize.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -201,9 +208,14 @@ export class Router {
         res.end();
         return;
       }
-      const status = err instanceof HttpError ? err.status : 500;
-      const message = err instanceof Error ? err.message : String(err);
-      sendJson(res, status, { error: message });
+      if (err instanceof HttpError) {
+        sendJson(res, err.status, { error: err.message });
+        return;
+      }
+      // Not a failure any route described, so the message is the raw one from
+      // whatever broke. It stays server-side (see the module comment).
+      logError(`${req.method ?? 'GET'} ${req.url ?? '/'}`, err);
+      sendJson(res, 500, { error: 'Internal server error' });
     }
   }
 }

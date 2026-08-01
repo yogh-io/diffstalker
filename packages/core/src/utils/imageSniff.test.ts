@@ -13,9 +13,12 @@ import {
   sniffImage,
   sniffWindow,
   IMAGE_HEADER_WINDOW,
+  MAX_ANIMATED_PIXELS,
   MAX_GIF_BYTES,
   MAX_ICC_BYTES,
   MAX_IMAGE_BYTES,
+  MAX_IMAGE_DIMENSION,
+  MAX_IMAGE_PIXELS,
   type ImageRefusal,
   type SniffResult,
 } from './imageSniff.js';
@@ -432,6 +435,84 @@ describe('sniffImage — GIF structure', () => {
     expect(refusalOf(sniff(bytes))).toBe('too-many-pixels');
   });
 
+  it('refuses a huge frame rect behind a tiny logical screen', () => {
+    // The header claims 2x2, so a check that only reads the header waves this
+    // through. The frame itself claims 9000x9000, which is what a decoder
+    // allocates before compositing and clipping.
+    const bytes = concat(gifHeader(2, 2), gifFrame(9000, 9000), GIF_TRAILER);
+    expect(refusalOf(sniff(bytes))).toBe('too-many-pixels');
+  });
+
+  it('refuses a frame rect inside the per-side cap but over the pixel budget', () => {
+    // 8192x8192 passes the per-side cap and is 67 MPix, twice the animated cap.
+    const bytes = concat(
+      gifHeader(2, 2),
+      gifFrame(MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION),
+      GIF_TRAILER
+    );
+    expect(refusalOf(sniff(bytes))).toBe('too-many-pixels');
+  });
+
+  it('refuses a single rect over the per-image cap, with the animated cap still in credit', () => {
+    // A 135-byte file: a 1x1 logical screen and one 8000x4000 rect. Both sides
+    // are under the per-side cap and 32 MPix is under the animated cap, so only
+    // the per-image cap stands between this and ~128 MB of RGBA in the renderer
+    // — twice what a still image of the same shape is allowed to cost.
+    const bytes = concat(gifHeader(1, 1), gifFrame(8000, 4000), GIF_TRAILER);
+    expect(8000 * 4000).toBeGreaterThan(MAX_IMAGE_PIXELS);
+    expect(8000 * 4000).toBeLessThan(MAX_ANIMATED_PIXELS);
+    expect(refusalOf(sniff(bytes))).toBe('too-many-pixels');
+  });
+
+  it('refuses a rect one row over the per-image cap', () => {
+    expect(4096 * 4097).toBeGreaterThan(MAX_IMAGE_PIXELS);
+    const bytes = concat(gifHeader(2, 2), gifFrame(4096, 4097), GIF_TRAILER);
+    expect(refusalOf(sniff(bytes))).toBe('too-many-pixels');
+  });
+
+  it('accepts a rect exactly at the per-image cap', () => {
+    expect(4096 * 4096).toBe(MAX_IMAGE_PIXELS);
+    const bytes = concat(gifHeader(2, 2), gifFrame(4096, 4096), GIF_TRAILER);
+    expect(sniff(bytes).ok).toBe(true);
+  });
+
+  it('refuses frame rects that accumulate past the animated-pixel budget', () => {
+    // Each frame is well under every single-frame cap; the sum is 49 MPix.
+    const bytes = concat(gifHeader(2, 2), repeat(gifFrame(700, 700), 100), GIF_TRAILER);
+    expect(refusalOf(sniff(bytes))).toBe('too-many-pixels');
+  });
+
+  it('accepts two per-image-cap rects that land exactly on the animated cap', () => {
+    expect(2 * MAX_IMAGE_PIXELS).toBe(MAX_ANIMATED_PIXELS);
+    const bytes = concat(gifHeader(2, 2), repeat(gifFrame(4096, 4096), 2), GIF_TRAILER);
+    expect(sniff(bytes).ok).toBe(true);
+  });
+
+  it('refuses a third such rect, which puts the sum past the animated cap', () => {
+    const bytes = concat(gifHeader(2, 2), repeat(gifFrame(4096, 4096), 3), GIF_TRAILER);
+    expect(refusalOf(sniff(bytes))).toBe('too-many-pixels');
+  });
+
+  it('accepts a frame rect at the per-side cap when the area stays cheap', () => {
+    const bytes = concat(gifHeader(2, 2), gifFrame(MAX_IMAGE_DIMENSION, 1), GIF_TRAILER);
+    expect(sniff(bytes).ok).toBe(true);
+  });
+
+  it('accepts a zero-sided frame rect: it decodes to nothing', () => {
+    const bytes = concat(gifHeader(2, 2), gifFrame(0, 0), GIF_TRAILER);
+    expect(sniff(bytes).ok).toBe(true);
+  });
+
+  it('refuses a truncation at every byte of an image descriptor', () => {
+    // The rect is read at descriptor+5 and +7, inside the same 10-byte bounds
+    // check the flags byte already had, so no cut can reach past the buffer.
+    const bytes = concat(gifHeader(2, 2), gifFrame(2, 2), GIF_TRAILER);
+    const descriptorAt = 13;
+    for (let cut = descriptorAt; cut < descriptorAt + 10; cut++) {
+      expect(refusalOf(sniff(bytes.slice(0, cut)))).toBe('malformed');
+    }
+  });
+
   it('refuses a GIF dimension bomb and a zero side', () => {
     expect(refusalOf(sniff(concat(gifHeader(60_000, 60_000), GIF_TRAILER)))).toBe(
       'too-many-pixels'
@@ -547,6 +628,7 @@ describe('sniffImage — caps and robustness', () => {
       REAL_GIF,
       buildJpeg(JFIF_APP0, sof(0xc0, 8, 8)),
       concat(gifHeader(4, 4), repeat(gifFrame(4, 4), 4), GIF_TRAILER),
+      concat(gifHeader(2, 2), gifFrame(9000, 9000), GIF_TRAILER),
       concat(str('RIFF'), u32be(64), str('WEBPVP8 ')),
     ];
     for (const fixture of fixtures) {

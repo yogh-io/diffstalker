@@ -374,10 +374,47 @@ describe('readFileForDisplay media verdicts', () => {
     expect(bytesRead).toBeLessThanOrEqual(64);
   });
 
+  it('calls a large non-image binary a binary, not a file too large', async () => {
+    // A tarball is 'not-an-image' just like a big README is, and only the NUL
+    // scan tells them apart. It gets the binary note with no reason attached,
+    // which is what it is — "File too large to display" would be a lie about a
+    // file that was never displayable.
+    const bytes = Buffer.concat([Buffer.from('PK\x03\x04'), Buffer.alloc(2 * 1024 * 1024)]);
+    writeBytes('bundle.zip', bytes);
+    const file = await readFileForDisplay(repoPath, 'bundle.zip');
+
+    expect(file.tooLarge).toBe(true);
+    expect(file.media?.refusal).toBe('not-an-image');
+    expect(file.media?.image).toBeNull();
+  });
+
   it('keeps the refusal on a large file whose bytes said something', async () => {
     const bytes = Buffer.concat([webpFile(), Buffer.alloc(2 * 1024 * 1024)]);
     writeBytes('big.webp', bytes);
     const file = await readFileForDisplay(repoPath, 'big.webp');
+
+    expect(file.tooLarge).toBe(true);
+    expect(file.media?.refusal).toBe('unsupported-format');
+  });
+
+  it('leaves a large TEXT file too large even when its head matches a vetoed signature', async () => {
+    // 'BM' is the two-byte BMP signature the sniffer itself calls weak, so a
+    // big text file can open with it by accident. A refusal is about
+    // rendering, not about being binary, and it must not outrank tooLarge for
+    // a file with no NUL in sight — a client reads any media as "not text".
+    writeBytes('bm-note.txt', Buffer.from(`BM${'x'.repeat(2 * 1024 * 1024)}`));
+    const file = await readFileForDisplay(repoPath, 'bm-note.txt');
+
+    expect(file.tooLarge).toBe(true);
+    expect(file.binary).toBe(false);
+    expect(file.media).toBeUndefined();
+  });
+
+  it('still names the refusal on a large file that really is binary', async () => {
+    // The other side of the same rule: same signature, but NUL bytes make it
+    // a binary we can name a reason for.
+    writeBytes('big.bmp', Buffer.concat([Buffer.from('BM'), Buffer.alloc(2 * 1024 * 1024)]));
+    const file = await readFileForDisplay(repoPath, 'big.bmp');
 
     expect(file.tooLarge).toBe(true);
     expect(file.media?.refusal).toBe('unsupported-format');

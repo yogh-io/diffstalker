@@ -1,6 +1,7 @@
 /**
- * A counting semaphore with a bounded wait queue. The blob route holds one
- * slot for the whole time it spawns git or holds an fd open.
+ * A counting semaphore with a bounded wait queue. Both byte routes hold one
+ * slot from before the first git spawn or fs open until their response is
+ * finished on the socket.
  *
  * Serving repo bytes is the one endpoint a single page can aim a hundred
  * requests at without trying: every changed image in a diff is an `<img>`,
@@ -9,14 +10,23 @@
  * decide whether it is allowed to answer at all. Unbounded, one viewport
  * becomes gigabytes of resident memory and a process table full of git.
  *
+ * A slot is what bounds RESIDENT BYTES, not just reads, and that is why the
+ * routes keep it until the response is written rather than until the read is
+ * done. The buffer stays alive while the client drains it, so an earlier
+ * release would leave the concurrency limit measuring nothing: a slow reader
+ * could push request after request through the gate and hold a live buffer
+ * behind each one.
+ *
  * Bounding the QUEUE as well as the concurrency is what turns a flood into a
  * refusal rather than a slow death. Past the queue limit `acquire` hands back
- * nothing to await, so the caller answers 503 immediately: a flood costs a
- * status line instead of a held-open request with a live buffer behind it.
+ * nothing to await, so the caller answers 503 immediately instead of parking
+ * one more request in memory.
  *
- * It lives in its own module so the queueing is unit-testable directly.
- * Racing real HTTP requests to observe a queue is a flaky test that proves
- * less than the arithmetic below.
+ * It lives in its own module so the queueing arithmetic is unit-testable
+ * directly — racing real HTTP requests to observe a full queue proves less and
+ * flakes more. Giving a slot BACK is the opposite case: it hangs off response
+ * and request events, which no unit test of this file can see, so the routes
+ * test that half against a real server with a real client that walks away.
  */
 
 /** Give the slot back. Idempotent: a second call does nothing. */
@@ -34,10 +44,14 @@ export interface BlobSemaphore {
   readonly queued: number;
 }
 
-/** Concurrent blob reads. Four git processes is already generous for one UI. */
+/** Blob requests in flight. Four git processes is already generous for one UI. */
 export const BLOB_CONCURRENCY = 4;
 
-/** Waiting requests. Roughly one large diff's worth of images. */
+/**
+ * Waiting requests. One changed binary file costs up to three of them — a
+ * `/media` for the verdict plus a `/blob` for each side — so this is roughly
+ * twenty changed images queued behind the four in flight.
+ */
 export const BLOB_QUEUE_LIMIT = 64;
 
 export function createBlobSemaphore(

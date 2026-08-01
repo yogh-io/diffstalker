@@ -3,6 +3,7 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import type { IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { sniffImage } from '@diffstalker/core/utils/imageSniff';
 import {
   isLoopbackHostname,
   isLoopbackAddress,
@@ -20,7 +21,15 @@ function req(method: string, headers: Record<string, string>): IncomingMessage {
 
 describe('isLoopbackHostname', () => {
   test('accepts loopback names and addresses', () => {
-    for (const h of ['localhost', '127.0.0.1', '127.1.2.3', '::1', 'diffstalker.localhost']) {
+    for (const h of [
+      'localhost',
+      '127.0.0.1',
+      '127.1.2.3',
+      '127.0.0.0',
+      '127.255.255.255',
+      '::1',
+      'diffstalker.localhost',
+    ]) {
       expect(isLoopbackHostname(h)).toBe(true);
     }
   });
@@ -29,11 +38,35 @@ describe('isLoopbackHostname', () => {
       expect(isLoopbackHostname(h)).toBe(false);
     }
   });
+  test('rejects a public domain that merely STARTS with a loopback ip', () => {
+    // The whole DNS-rebinding defense: 127.0.0.1.evil.com is registrable, and a
+    // prefix match on '127.' would make an attacker page same-origin.
+    for (const h of ['127.0.0.1.evil.com', '127.evil.com', '127.0.0.1.', '127.0.0.1x']) {
+      expect(isLoopbackHostname(h)).toBe(false);
+    }
+  });
+  test('rejects malformed octets', () => {
+    for (const h of ['1270.0.0.1', '127.0.0.256', '127.0.0', '127.0.0.1.1', '127..0.1', '127']) {
+      expect(isLoopbackHostname(h)).toBe(false);
+    }
+  });
+  test('rejects a bare .localhost and a name outside that TLD', () => {
+    expect(isLoopbackHostname('.localhost')).toBe(false);
+    expect(isLoopbackHostname('mylocalhost')).toBe(false);
+    expect(isLoopbackHostname('localhost.attacker.tld')).toBe(false);
+  });
+  test('rejects an IPv6 loopback spelling the URL parser does not canonicalize', () => {
+    // ::ffff:127.0.0.1 normalizes to ::ffff:7f00:1, not ::1. Failing closed on
+    // it is deliberate — nothing reaches the daemon under that name.
+    expect(isLoopbackHostname('::ffff:7f00:1')).toBe(false);
+    expect(isLoopbackHostname('::2')).toBe(false);
+  });
 });
 
 describe('isLoopbackAddress / shouldGuard', () => {
   test('loopback TCP binds are guarded', () => {
     expect(isLoopbackAddress('127.0.0.1')).toBe(true);
+    expect(isLoopbackAddress('127.255.255.255')).toBe(true);
     expect(isLoopbackAddress('::1')).toBe(true);
     expect(shouldGuard({ address: '127.0.0.1', family: 'IPv4', port: 7337 })).toBe(true);
   });
@@ -63,6 +96,30 @@ describe('guardRequest — Host allow-list (DNS rebinding)', () => {
   });
   test('blocks a Host that merely embeds localhost', () => {
     expect(guardRequest(req('GET', { host: 'localhost.evil.com' }))?.status).toBe(421);
+  });
+  test('blocks a public domain prefixed with a loopback ip', () => {
+    // The rebinding hole a '127.' prefix match leaves open: this name is
+    // registrable, resolves wherever the attacker points it, and would
+    // otherwise be same-origin with the daemon.
+    expect(guardRequest(req('GET', { host: '127.0.0.1.evil.com:7337' }))?.status).toBe(421);
+    expect(guardRequest(req('GET', { host: '127.0.0.1x:7337' }))?.status).toBe(421);
+    expect(guardRequest(req('GET', { host: '1270.0.0.1:7337' }))?.status).toBe(421);
+    expect(guardRequest(req('GET', { host: '127.0.0.256:7337' }))?.status).toBe(421);
+  });
+  test('allows loopback ip spellings the URL parser canonicalizes', () => {
+    // The Host header is normalized before the allow-list sees it, so these
+    // reach the same '127.0.0.1' / '::1' the exact match expects.
+    expect(guardRequest(req('GET', { host: '127.1:7337' }))).toBeNull();
+    expect(guardRequest(req('GET', { host: '2130706433:7337' }))).toBeNull();
+    expect(guardRequest(req('GET', { host: '[0:0:0:0:0:0:0:1]:7337' }))).toBeNull();
+  });
+  test('blocks a mutation whose Origin only prefixes a loopback ip', () => {
+    const blocked = guardRequest(
+      // The scheme is irrelevant to the check; https matches the neighbouring
+      // cross-origin tests and keeps the clear-text-protocol lint quiet.
+      req('POST', { host: '127.0.0.1:7337', origin: 'https://127.0.0.1.evil.com' })
+    );
+    expect(blocked?.status).toBe(403);
   });
 });
 
@@ -195,6 +252,130 @@ describe('SECURITY_HEADERS', () => {
   });
 });
 
+/**
+ * The complete list of content types repo bytes can ever be served as.
+ *
+ * A repo blob's content-type is whatever `sniffImage` returns for the exact
+ * buffer about to be written — `blobHeaders` copies `info.mime` verbatim and
+ * has nothing else to offer — so this table IS the policy. It lives next to
+ * the other security assertions because widening it is a security decision,
+ * not a table edit: `staticFiles.ts` maps `.svg`, `.html` and `.wasm` for the
+ * SPA's own assets, and every one of those would be same-origin code if it
+ * ever reached repo content.
+ */
+describe('repo-blob content types', () => {
+  function bytes(...values: number[]): Uint8Array {
+    return Uint8Array.from(values);
+  }
+
+  function text(value: string): Uint8Array {
+    return Uint8Array.from(value, (c) => c.charCodeAt(0));
+  }
+
+  function join(...parts: Uint8Array[]): Uint8Array {
+    const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+    let at = 0;
+    for (const part of parts) {
+      out.set(part, at);
+      at += part.length;
+    }
+    return out;
+  }
+
+  function u32be(value: number): Uint8Array {
+    return bytes((value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff);
+  }
+
+  function pngChunk(type: string, data: Uint8Array): Uint8Array {
+    return join(u32be(data.length), text(type), data, bytes(0, 0, 0, 0));
+  }
+
+  /** 1x1 truecolour+alpha PNG header, then the chunk that ends the metadata. */
+  const PNG = join(
+    bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+    pngChunk('IHDR', join(u32be(1), u32be(1), bytes(8, 6, 0, 0, 0))),
+    pngChunk('IDAT', bytes(0x78, 0x9c, 0x63, 0x00))
+  );
+
+  /** SOI, a JFIF APP0, then a baseline SOF0 carrying 1x1. */
+  const JPEG = join(
+    bytes(0xff, 0xd8),
+    bytes(0xff, 0xe0, 0x00, 0x10),
+    join(text('JFIF'), bytes(0, 1, 1, 0, 0, 1, 0, 1, 0, 0)),
+    bytes(0xff, 0xc0, 0x00, 0x0b, 8, 0, 1, 0, 1, 1, 1, 0x11, 0),
+    bytes(0xff, 0xd9)
+  );
+
+  /** The canonical 1x1 GIF every encoder emits. */
+  const GIF = Uint8Array.from(
+    Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64')
+  );
+
+  const ALLOWED: Array<[string, Uint8Array, string]> = [
+    ['png', PNG, 'image/png'],
+    ['jpeg', JPEG, 'image/jpeg'],
+    ['gif', GIF, 'image/gif'],
+  ];
+
+  /**
+   * One sample per family the VETO list names, by the magic a browser would
+   * type it from. SVG, HTML and XML have no magic at all, which is exactly why
+   * they must never be typed from a name.
+   */
+  const REFUSED: Array<[string, Uint8Array]> = [
+    ['svg', text('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>')],
+    ['html', text('<!DOCTYPE html><html><body><script>alert(1)</script></body></html>')],
+    ['xml', text('<?xml version="1.0"?><root><a/></root>')],
+    ['pdf', text('%PDF-1.7\n1 0 obj\n<< /OpenAction << /S /JavaScript >> >>\n')],
+    ['woff2', text('wOF2\0\0\0\0')],
+    ['ttf', bytes(0x00, 0x01, 0x00, 0x00, 0, 0, 0, 0)],
+    ['wasm', bytes(0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00)],
+    ['mp4', join(u32be(24), text('ftypisom'), new Uint8Array(12))],
+    ['webm', bytes(0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00, 0x00, 0x00)],
+    ['webp', join(text('RIFF'), u32be(24), text('WEBPVP8 '), new Uint8Array(8))],
+  ];
+
+  function mimeFor(sample: Uint8Array): string | null {
+    const result = sniffImage(sample, sample.length, true);
+    return result.ok ? result.info.mime : null;
+  }
+
+  test('the table has exactly three entries, all of them images', () => {
+    const served = ALLOWED.map(([, sample]) => mimeFor(sample));
+    expect(served).toEqual(ALLOWED.map(([, , mime]) => mime));
+    expect(new Set(served).size).toBe(3);
+  });
+
+  test('no svg, html, xml, pdf, font, wasm or video entry exists', () => {
+    const served = new Set(ALLOWED.map(([, sample]) => mimeFor(sample)));
+    for (const forbidden of [
+      'image/svg+xml',
+      'text/html',
+      'application/xhtml+xml',
+      'text/xml',
+      'application/xml',
+      'application/pdf',
+      'font/woff2',
+      'font/ttf',
+      'application/font-woff',
+      'application/wasm',
+      'video/mp4',
+      'video/webm',
+      'audio/mpeg',
+      'image/webp',
+      'application/octet-stream',
+    ]) {
+      expect(served).not.toContain(forbidden);
+    }
+  });
+
+  test('every refused family sniffs to nothing, so it has no type to serve', () => {
+    for (const [label, sample] of REFUSED) {
+      expect([label, mimeFor(sample)]).toEqual([label, null]);
+    }
+  });
+});
+
 describe('security headers over the wire', () => {
   let daemon: Daemon;
   let baseUrl: string;
@@ -224,5 +405,12 @@ describe('security headers over the wire', () => {
       expect(res.headers.get('x-content-type-options')).toBe('nosniff');
       expect(res.headers.get('content-security-policy')).toContain("frame-src 'none'");
     }
+  });
+
+  test('a rebinding Host prefixed with a loopback ip is refused over the wire', async () => {
+    // Same-origin from http://127.0.0.1.evil.com would defeat every read
+    // control at once, so pin it at the socket, not just at the predicate.
+    const res = await fetch(`${baseUrl}/health`, { headers: { host: '127.0.0.1.evil.com' } });
+    expect(res.status).toBe(421);
   });
 });

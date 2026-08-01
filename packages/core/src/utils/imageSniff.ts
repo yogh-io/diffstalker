@@ -33,6 +33,30 @@
  * gigabytes of RGBA. The dimension and pixel caps are the real DoS control;
  * the byte cap only bounds what we read.
  *
+ * What the pixel budget covers. PNG and JPEG declare one frame, so the header
+ * dimensions are the whole decode. GIF declares dimensions twice: the logical
+ * screen in the header, and a rect on every frame's image descriptor. A frame
+ * rect may legally be bigger than the screen — browsers composite into the
+ * screen and clip — but a decoder still allocates and decodes the rect, so both
+ * are checked against the same budget: every rect against the per-side and
+ * per-image caps a still image gets, and the sum of the rects against the
+ * animated-pixel cap on top. What is NOT covered is the LZW stream inside a
+ * frame; we never decompress, so the declared rect is what bounds a frame.
+ *
+ * What the pixel budget does not cover: progressive JPEG scans. SOF2 is
+ * allowed and the number of SOS scans is not capped, so decode cost is
+ * pixels x scans while only pixels are capped. That is a decision, not an
+ * oversight. The segment walk stops at the first SOF; everything after it is
+ * entropy-coded data that is not length-prefixed, so counting scans means
+ * byte-scanning the whole file for markers instead of stepping length-prefixed
+ * structures. And PNG/JPEG are decided from a 64 KiB prefix, so for exactly the
+ * large files that would matter the count is not available at all — capping
+ * only when the whole file happens to be in hand would accept a file through
+ * one route and refuse it through another, which is worse than not capping. The
+ * residual cost is a slow decode in the browser's own sandboxed renderer, never
+ * work in the daemon, and it is bounded by the 8 MiB byte cap because every
+ * scan carries its own header.
+ *
  * Why every walk is capped twice. Each walk is bounds-checked against the
  * buffer AND limited to a fixed number of iterations. A hostile length field
  * that overruns, or a block stream crafted to make no progress, must end in a
@@ -74,10 +98,10 @@ export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 export const MAX_GIF_BYTES = 2 * 1024 * 1024;
 /** Pixels per side. */
 export const MAX_IMAGE_DIMENSION = 8192;
-/** 16 MPix, width * height. */
+/** 16 MPix, width * height. Charged to any one image, and to any one GIF frame rect. */
 export const MAX_IMAGE_PIXELS = 16_777_216;
 export const MAX_GIF_FRAMES = 256;
-/** 32 MPix, frames * width * height. */
+/** 32 MPix over a whole GIF: frames * screen, and the sum of the frame rects. */
 export const MAX_ANIMATED_PIXELS = 33_554_432;
 /** 64 KiB, PNG iCCP payload / cumulative JPEG APP2 run. */
 export const MAX_ICC_BYTES = 65_536;
@@ -421,11 +445,15 @@ const GIF_EXTENSION = 0x21;
 /**
  * Cursor for the GIF walk. `left` is one shared iteration budget spent by both
  * the block walker and the sub-block walker, so however the block stream nests
- * the total work stays bounded.
+ * the total work stays bounded. `pixels` sums the frame rects and `overBudget`
+ * records that a rect broke a cap, so the pixel budget covers the frames and
+ * not just the logical screen.
  */
 interface GifCursor {
   pos: number;
   left: number;
+  pixels: number;
+  overBudget: boolean;
 }
 
 /** Colour table size in bytes from a packed flags byte, or 0 when absent. */
@@ -445,11 +473,20 @@ function sniffGif(bytes: Uint8Array, declaredSize: number, complete: boolean): S
   const sizeRefusal = checkDimensions(width, height);
   if (sizeRefusal) return fail(sizeRefusal);
 
-  const cursor: GifCursor = { pos: 13 + colorTableBytes(bytes[10]), left: MAX_GIF_BLOCKS };
+  const cursor: GifCursor = {
+    pos: 13 + colorTableBytes(bytes[10]),
+    left: MAX_GIF_BLOCKS,
+    pixels: 0,
+    overBudget: false,
+  };
   const frames = walkGifBlocks(bytes, cursor);
   if (frames === null) return fail('malformed');
   if (frames < 1) return fail('malformed');
   if (frames > MAX_GIF_FRAMES) return fail('too-many-pixels');
+  // The screen and the frame rects are two claims about the same decode, so
+  // both are charged: the rects during the walk, the screen times the frame
+  // count here.
+  if (cursor.overBudget) return fail('too-many-pixels');
   if (frames * width * height > MAX_ANIMATED_PIXELS) return fail('too-many-pixels');
 
   const info: ImageInfo = {
@@ -464,11 +501,11 @@ function sniffGif(bytes: Uint8Array, declaredSize: number, complete: boolean): S
 }
 
 /**
- * Walk the whole block stream to the trailer, counting image descriptors.
- * Returns the frame count, or null when the stream is malformed, truncated or
- * outruns the shared budget. Refusing on anything unexpected is what keeps the
- * frame count honest — a stream we cannot fully parse tells us nothing about
- * how many frames a decoder would find.
+ * Walk the whole block stream to the trailer, counting image descriptors and
+ * summing their rects. Returns the frame count, or null when the stream is
+ * malformed, truncated or outruns the shared budget. Refusing on anything
+ * unexpected is what keeps the frame count honest — a stream we cannot fully
+ * parse tells us nothing about how many frames a decoder would find.
  */
 function walkGifBlocks(bytes: Uint8Array, cursor: GifCursor): number | null {
   let frames = 0;
@@ -480,9 +517,11 @@ function walkGifBlocks(bytes: Uint8Array, cursor: GifCursor): number | null {
     const isFrame = id === GIF_IMAGE_DESCRIPTOR;
     const stepped = isFrame ? skipGifImage(bytes, cursor) : skipGifExtension(bytes, cursor, id);
     if (!stepped) return null;
-    // Stop as soon as the frame budget is blown; the caller turns the count
-    // into a refusal, so there is no reason to keep walking.
+    // Stop as soon as a budget is blown; the caller turns the count and the
+    // flag into a refusal, so there is no reason to keep walking. Pixels only
+    // ever accumulate, so walking on cannot bring the file back under.
     if (isFrame && ++frames > MAX_GIF_FRAMES) return frames;
+    if (cursor.overBudget) return frames;
   }
   return null;
 }
@@ -499,13 +538,39 @@ function skipGifExtension(bytes: Uint8Array, cursor: GifCursor, id: number): boo
   return skipSubBlocks(bytes, cursor);
 }
 
-/** Image descriptor: id, left, top, width, height (2 bytes each), packed flags. */
+/**
+ * Image descriptor: id, left, top, width, height (2 bytes each), packed flags.
+ * The rect is charged to the pixel budget before the walk moves on — the whole
+ * 10-byte descriptor is bounds-checked in one go, so reading the rect adds no
+ * new read that could run off the end.
+ */
 function skipGifImage(bytes: Uint8Array, cursor: GifCursor): boolean {
   if (cursor.pos + 10 > bytes.length) return false;
+  chargeGifFrame(cursor, readU16LE(bytes, cursor.pos + 5), readU16LE(bytes, cursor.pos + 7));
   const flags = bytes[cursor.pos + 9];
   // descriptor + optional local colour table + LZW minimum code size
   cursor.pos += 10 + colorTableBytes(flags) + 1;
   return skipSubBlocks(bytes, cursor);
+}
+
+/**
+ * Charge one frame rect to the budget. One rect is one allocation in the
+ * decoder, so on its own it may cost no more than a still image: the per-side
+ * cap AND the per-image pixel cap. The running sum is then held to the animated
+ * cap on top, which is what bounds the file as a whole.
+ *
+ * A zero-sided rect is not a refusal here the way a zero-sided logical screen
+ * is: it decodes to nothing, and the screen check has already established the
+ * file has a canvas.
+ */
+function chargeGifFrame(cursor: GifCursor, width: number, height: number): void {
+  const pixels = width * height;
+  if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION || pixels > MAX_IMAGE_PIXELS) {
+    cursor.overBudget = true;
+    return;
+  }
+  cursor.pixels += pixels;
+  if (cursor.pixels > MAX_ANIMATED_PIXELS) cursor.overBudget = true;
 }
 
 /** A chain of length-prefixed sub-blocks ended by a zero length byte. */

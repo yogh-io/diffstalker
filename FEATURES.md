@@ -765,7 +765,11 @@ git operations.
   navigates the browser to repository bytes is exactly the threat the design
   exists to prevent. Anything that is not one of the three formats keeps the
   plain note plus the reason (`no preview (format not rendered)`,
-  `over the 16 MP preview cap`, and so on).
+  `no preview (over the preview pixel budget: 8192 px per side, 16 MP per
+  image, 256 frames, or 33 MP across an animation)`, and so on). A refusal
+  names every cap that can produce it, because the reason code carries no
+  number: telling someone refused for frame count about a pixel cap that was
+  never applied to their file is worse than saying nothing.
 - **Image diffs in Changes** — a changed PNG/JPEG/GIF renders as a fixed-height
   card with both versions instead of "Binary file — no text diff to show".
   Three modes, chosen once for the whole app and remembered: **Side by side**

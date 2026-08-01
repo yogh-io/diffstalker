@@ -11,20 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Images are shown, in the Explorer and in a diff.** A PNG, JPEG or GIF
   opens as a picture on a checkerboard stage instead of the "Binary file"
-  note, with its format, pixel size and frame count in the header and a
-  `1:1` toggle between shrink-to-fit and actual size. In Changes, a changed
-  image renders as a fixed-height card with both versions, in **Side by
-  side**, **Swipe** or **Onion** mode (pure CSS, no canvas), and the meta
-  line always states both byte sizes, both short object ids and the byte
-  delta — plus "metadata only" when the pixel dimensions match but the bytes
-  do not, because two identical-looking images can differ in EXIF or ICC and
-  a reviewer must never conclude "nothing changed" from the picture alone.
-  Web UI only; the terminal UI cannot draw pixels.
+  note, with its format and pixel size in the header — plus a frame count
+  for an animated GIF — and a `1:1` toggle between shrink-to-fit and actual
+  size. In Changes, a changed image renders as a fixed-height card with both
+  versions, in **Side by side**, **Swipe** or **Onion** mode (pure CSS, no
+  canvas); swipe and onion need two pictures of the same shape, so they fall
+  back to side by side when the two sides differ in size. The meta line
+  carries what the picture cannot: each side's byte size, its short object id
+  (or "working tree" for an uncommitted file), the byte delta when both sides
+  exist and differ, and a "may be metadata only" hint when the pixel
+  dimensions match but the bytes do not — because two identical-looking
+  images can differ in EXIF or ICC and a reviewer must never conclude
+  "nothing changed" from the picture alone. Web UI only; the terminal UI
+  cannot draw pixels.
 - **Two new daemon endpoints, `GET /repos/:id/blob` and
   `GET /repos/:id/media`**, on every listener. `/media` resolves the old and
   new side of a changed image server-side (renames included) and reports
   bytes, object id, dimensions or a refusal code; `/blob` serves the bytes
-  themselves, and only ever to an `<img src>`. **Only PNG, JPEG and GIF are
+  themselves, and only to an `<img>` — a browser that names any other fetch
+  destination, or a cross-site one, is refused. **Only PNG, JPEG and GIF are
   served, and the content type comes from magic bytes** re-derived from the
   exact buffer being written, on every request — never from the extension, a
   query parameter, or a cached verdict, because a repo file called
@@ -32,10 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agree with its name. Everything else gets zero bytes and a refusal. The
   daemon never decodes, transcodes or strips metadata: validation is
   fixed-offset reads and bounded walks, no image library enters the tree, and
-  the browser stays the sandbox. Caps are enforced before any byte is read —
-  8 MiB (2 MiB for GIF), 8192 px per side, 16 MPix, 256 frames — with the
-  pixel budget as the real control, since a 300-byte PNG can declare
-  60000×60000. See `packages/daemon/README.md`.
+  the browser stays the sandbox. The byte cap is checked before a byte is
+  read, the pixel and frame caps before a byte is written — 8 MiB (2 MiB for
+  GIF), 8192 px per side, 16 MPix, 256 frames — with the pixel budget as the
+  real control, since a 300-byte PNG can declare 60000×60000. A GIF is
+  charged frame by frame as well as in total: a frame's rectangle may legally
+  be bigger than the picture it composites into, and a decoder allocates the
+  rectangle. See `packages/daemon/README.md`.
 - **One daemon serves the terminal UI and the browser at once.** `--socket`
   and `--port` are no longer mutually exclusive: the unix socket is the
   daemon's identity and is always bound (unless `--no-socket`), and `--port`
@@ -68,22 +76,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `/repos/:id/tree` now refuse any path whose normalized form contains a
   `.git` segment (`.git/config`, `./.git/config`, `src/../.git/config`,
   `.GIT/config`, `worktrees/x/.git/config`) and any path whose real location
-  lands at or under the repository's absolute git dir — which also catches a
-  symlink pointing into it, a linked worktree, a bare repo and a submodule's
-  `.git` file. `/tree` drops the git directory from listings even with
+  lands at or under this repository's **own** absolute git dir — which also
+  catches a symlink pointing into it, the git dir of a linked worktree, and a
+  submodule's `.git` file. Only those two rules are enforced: a repository
+  committed into the working tree under some other name is still browsable,
+  because it is tracked repo content, not the git dir of the repo being
+  served. `/tree` drops the git directory from listings even with
   `hidden=true`. This was reachable before and served `.git/config`, which
-  carries tokens embedded in remote URLs. Validation now happens on
-  `path.relative(root, path.resolve(root, rel))` rather than the raw string,
-  which is what the four spellings above all bypassed.
+  carries tokens embedded in remote URLs. The segment check runs on
+  `path.relative(root, path.resolve(root, rel))`, over every segment, case
+  insensitively and with trailing dots and spaces stripped; a check on the
+  raw string's first segment misses all four spellings after the first.
+- **`GET /repos/:id/tree?dir=.` is now a 400.** Path validation refuses a
+  path whose normalized form is empty, and only `dir=` (the empty string) is
+  special-cased as the repository root. The web UI sends the empty string, so
+  nothing in it changes; a REST caller that spells the root as `.` — or as
+  anything else that normalizes to it, like `src/..` — must send the empty
+  string instead.
+- **A large binary in the Explorer reads as "Binary file", not "File too
+  large to display".** The 1 MB cap is the *text* cap, so it used to be
+  reported for a 2 MB tarball as if a bigger budget would have shown you
+  something — but a tarball was never displayable text. Whether a file over
+  the cap is binary is now decided by the same NUL scan every other file
+  gets, and only a binary one is called binary. Large *text* files are
+  unchanged: a 2 MB README still reads as too large, which is the truth
+  about it.
+- **Tighter response headers on every daemon response.** The CSP gains
+  `frame-src`, `child-src`, `media-src`, `worker-src` and `form-action`, all
+  `'none'`, and `Cross-Origin-Resource-Policy: same-origin` is now set. The
+  UI has no iframe, no media element, no worker and no form, so spelling them
+  out costs nothing and makes a regression that adds one fail loudly.
+  `img-src` stays `'self' data:` — deliberately no `blob:`, since a `blob:`
+  URL inherits the page's origin.
 
 ### Fixed
 
+- **A host name that merely begins with `127.` is no longer taken for
+  loopback.** The daemon checks the `Host` header on every request so that a
+  name an attacker owns cannot be pointed at the daemon's port and become
+  same-origin with it — a DNS rebinding attack, which would hand a visited
+  page the whole API. The check tested `startsWith('127.')`, and
+  `127.0.0.1.evil.com` starts with `127.`. Only real loopback names are
+  accepted now: an address in `127.0.0.0/8`, `::1`, `localhost`, and names
+  under `.localhost`. This is pre-existing behaviour in the shipped daemon,
+  not something the image endpoints introduced — it was found while reviewing
+  them, and it applies to every route.
+- **A 500 no longer tells the browser what git was asked and what it
+  answered.** An error no route classified had its message copied into the
+  response body, and a failed git call carries the whole command line and
+  git's stderr with it — absolute paths, branch and remote names, object ids.
+  An unexpected 500 now says only that the request failed; the detail is the
+  daemon's to report, not the browser's to read. Deliberate errors are
+  unchanged: a 400, 404, 413 or 415 still says exactly what was wrong,
+  because the caller needs that.
 - **A renamed file now says where it came from.** `FileEntry.originalPath` was
   declared and read — the terminal file lists have always had an `← old/path`
   suffix for it — but `getStatus` never populated it, so the suffix never
   appeared and the pre-rename blob had no route back. It is now filled from
-  git's own rename record on the index side (the working-tree column never
-  carries `R`, so only the staged entry can carry it). This is also what lets
+  git's own rename/copy record on the index side (the working-tree column
+  never carries `R` or `C`, so only the staged entry can carry it). This lets
   a renamed image resolve its old side: HEAD has never heard of the new name.
 - **An untracked binary file no longer renders as mojibake.** A newly added
   PNG is the most common image in a diff, and `getDiffForUntracked` read

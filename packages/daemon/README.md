@@ -317,9 +317,9 @@ Enforced before any byte is written, and again on the buffer being written:
 MAX_IMAGE_BYTES     = 8 MiB    any allowed format
 MAX_GIF_BYTES       = 2 MiB    GIF only, bounds the frame walk
 MAX_IMAGE_DIMENSION = 8192     px per side
-MAX_IMAGE_PIXELS    = 16 MPix  width * height
+MAX_IMAGE_PIXELS    = 16 MPix  width * height, and any one GIF frame rect
 MAX_GIF_FRAMES      = 256
-MAX_ANIMATED_PIXELS = 32 MPix  frames * width * height
+MAX_ANIMATED_PIXELS = 32 MPix  frames * screen, and the sum of the frame rects
 MAX_ICC_BYTES       = 64 KiB   PNG iCCP / JPEG APP2 run
 ```
 
@@ -328,9 +328,36 @@ is unbounded, so a 300-byte PNG can declare 60000×60000 and cost the renderer
 gigabytes of RGBA. `MAX_FILE_SIZE` (1 MiB) is untouched — that is the *text*
 cap for `/file`.
 
-Concurrency is bounded too: 4 blob reads in flight per daemon with a queue of
-64 waiters, then 503. One budget for the whole daemon, shared by every
-listener.
+A GIF declares its dimensions twice — the logical screen in the header, and a
+rectangle on every frame's image descriptor — and a rect may legally be bigger
+than the screen it composites into. So both are charged: every rect against the
+per-side and per-image caps a still image gets, and the sum of the rects against
+the animated cap on top. Checking the header alone would let a 1×1 GIF carry an
+8000×4000 frame.
+
+Concurrency is bounded too: 4 requests in flight per daemon with a queue of 64
+waiters, then 503. One budget for the whole daemon, shared by every listener
+**and by both endpoints** — `/media` inspects up to two sides, so it costs the
+same spawns and the same buffers as `/blob` and takes the same slot. One
+changed binary file costs up to three of those requests: a `/media` for the
+verdict plus a `/blob` per side.
+
+A slot is held until the response is finished on the socket, not just until the
+read is done: the bytes stay resident while the client drains them, so an
+earlier release would bound reads and leave memory unbounded. The release is
+wired to the request **and** the response, because the two runtimes report the
+end differently — node destroys the response when a client aborts, while bun
+signals the abort only on the request. Every path either ends the response or
+destroys the request, so the slot always comes back.
+
+The two endpoints read different amounts, but they always reach the **same
+verdict** about what a file is. `/media` only reports that verdict, so it reads
+the window that decides the file and no more — a 64 KiB header for PNG and
+JPEG, the whole file for a GIF, whose frame walk spans it. When that window is
+inconclusive (a JPEG whose frame header sits behind a maximal EXIF segment, say)
+the read is extended to the whole blob, which `MAX_IMAGE_BYTES` already bounds,
+so `/media` never refuses a file `/blob` would serve. Only `/blob` reads the
+bytes it is going to write.
 
 ### Refusals
 
@@ -340,7 +367,7 @@ listener.
 | 403 | `Sec-Fetch-Site` present and cross-site, or `Sec-Fetch-Dest` present and not `image` (`/blob` only — `/media` is JSON and the SPA's own `fetch` sends `Sec-Fetch-Dest: empty`). Both absent passes, so `curl` and the Node client are unaffected |
 | 404 | unknown repo, or the path does not exist on that side. `/media` also 404s a path with no status entry |
 | 413 | over the byte, dimension, pixel or frame cap |
-| 415 | not allow-listed, or the signature matched and the structure failed |
+| 415 | not allow-listed, or the signature matched and the structure failed. An APNG lands here too: it is not over any budget, it is a format we refuse |
 | 421 | non-loopback `Host` (the global origin guard) |
 | 503 | the blob queue overflowed |
 

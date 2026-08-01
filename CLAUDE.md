@@ -261,7 +261,7 @@ When building UI structures with rows (diff views, file lists), always use a sin
 
 ### Pre-commit Hook
 
-A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 18 pre-existing sonarjs cognitive-complexity warnings are expected (6 in packages/core + 11 in packages/cli + 1 in packages/web; daemon and client 0), 0 errors.
+A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 20 pre-existing warnings are expected (6 in packages/core + 11 in packages/cli + 3 in packages/web; daemon and client 0), 0 errors. 18 of them are sonarjs cognitive-complexity; web's 3 are 1 cognitive-complexity plus 2 `vue/one-component-per-file` from the two inline test components in `src/composables/useActiveRowScroll.test.ts`.
 
 ### Architecture Layering (dependency-cruiser)
 

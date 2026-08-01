@@ -16,12 +16,21 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { blobUrl, mediaUrl } from '@diffstalker/core/utils/blobRef';
+import { IMAGE_HEADER_WINDOW } from '@diffstalker/core/utils/imageSniff';
 import { createDaemon, Daemon } from './server.js';
-import { createBlobSemaphore } from './blobSemaphore.js';
+import { createBlobSemaphore, BLOB_CONCURRENCY, type BlobSemaphore } from './blobSemaphore.js';
+import { Router } from './router.js';
+import { registerBlobRoutes } from './routes/blob.js';
+import type { RouteDeps } from './routes/shared.js';
 import { createFixtureRepo, removeFixtureRepo, writeFixtureFile, gitExec } from './test-helpers.js';
+
+/** Slack for the fixed-size peek the route takes before it picks a window. */
+const PEEK_ALLOWANCE = 64;
 
 const FIXTURE = 'daemon-blob';
 const SOCKET = path.join(os.tmpdir(), `diffstalkerd-blob-${process.pid}.sock`);
@@ -156,8 +165,27 @@ const APNG = buildPng(ihdr(4, 4), pngChunk('acTL', concat(u32be(3), u32be(0))), 
 /** Over MAX_IMAGE_BYTES (8 MiB): refused on size alone, before any read. */
 const OVERSIZED_PNG = concat(buildPng(ihdr(64, 64), PNG_IDAT), new Uint8Array(9 * 1024 * 1024));
 
+/**
+ * A servable PNG that is megabytes long, with its IHDR and IDAT in the first
+ * few dozen bytes. Everything after the first IDAT is pixels as far as the
+ * sniffer is concerned, so this file is decided by its header — which is the
+ * whole point of the /media read budget.
+ */
+const BIG_PNG = concat(buildPng(ihdr(64, 64), PNG_IDAT), new Uint8Array(4 * 1024 * 1024));
+
 /** Over MAX_GIF_BYTES (2 MiB): a valid GIF that is simply too big to walk. */
 const OVERSIZED_GIF = concat(STILL_GIF, new Uint8Array(3 * 1024 * 1024));
+
+/**
+ * A JPEG whose frame header sits behind a MAXIMAL EXIF segment: 65,533 bytes
+ * of APP1 payload, the largest a u16 length can describe, which puts the SOF
+ * past the 64 KiB window. Nothing exotic — that is what a camera or Photoshop
+ * writes when it embeds a thumbnail alongside the EXIF tags.
+ */
+const EXIF_JPEG = buildJpeg(
+  jpegSegment(0xe1, concat(str('Exif\0\0'), new Uint8Array(65_527))),
+  sof(9, 11)
+);
 
 function writeBytes(relPath: string, bytes: Uint8Array): void {
   fs.writeFileSync(path.join(repoPath, relPath), bytes);
@@ -211,24 +239,34 @@ async function mediaFor(relPath: string, staged: boolean): Promise<WireMediaPair
 }
 
 /**
- * Count read() calls on file handles opened for a path, so "refused without
- * being read" can be asserted instead of assumed. fs.promises.open is
- * writable under bun; the wrapper is always restored.
+ * Measure the file reads one request performs on a path: how many read()
+ * calls, and how many bytes they moved. Counting bytes is what turns "the
+ * cap did its work" from an assumption into an assertion — a refusal that
+ * read nothing and a verdict that read a header window both look the same
+ * from the outside. fs.promises.open is writable under bun; the wrapper is
+ * always restored.
  */
-async function readsFor(needle: string, fn: () => Promise<void>): Promise<number> {
+async function readsFor(
+  needle: string,
+  fn: () => Promise<void>
+): Promise<{ calls: number; bytes: number }> {
   const target = fs.promises as { open: typeof fs.promises.open };
   const realOpen = target.open;
-  let reads = 0;
+  const counted = { calls: 0, bytes: 0 };
   target.open = (async (...args: unknown[]) => {
     const handle = await (realOpen as (...a: unknown[]) => Promise<fs.promises.FileHandle>)(
       ...args
     );
     if (String(args[0]).includes(needle)) {
-      const realRead = handle.read.bind(handle) as (...a: unknown[]) => unknown;
+      const realRead = handle.read.bind(handle) as (...a: unknown[]) => Promise<{
+        bytesRead: number;
+      }>;
       Object.defineProperty(handle, 'read', {
-        value: (...readArgs: unknown[]) => {
-          reads++;
-          return realRead(...readArgs);
+        value: async (...readArgs: unknown[]) => {
+          counted.calls++;
+          const result = await realRead(...readArgs);
+          counted.bytes += result.bytesRead;
+          return result;
         },
       });
     }
@@ -239,7 +277,7 @@ async function readsFor(needle: string, fn: () => Promise<void>): Promise<number
   } finally {
     target.open = realOpen;
   }
-  return reads;
+  return counted;
 }
 
 beforeAll(async () => {
@@ -278,6 +316,11 @@ beforeAll(async () => {
   fs.rmSync(path.join(repoPath, 'gone.png')); // unstaged deletion
   gitExec(repoPath, 'mv old-name.png new-name.png'); // staged rename
   writeBytes('untracked.png', PNG_AT_HEAD);
+  // Untracked on purpose: /media needs a status entry, and these two are what
+  // the frame count and the read budget are asserted on.
+  writeBytes('untracked-anim.gif', ANIMATED_GIF);
+  writeBytes('exif.jpg', EXIF_JPEG);
+  writeBytes('big.png', BIG_PNG);
   writeBytes('huge.png', OVERSIZED_PNG);
   writeBytes('big.gif', OVERSIZED_GIF);
 
@@ -441,18 +484,19 @@ describe('GET /blob — caps and bombs', () => {
 
   test('a 9 MiB PNG is a 413 and is never read', async () => {
     // Prove the counter is live first, or "zero reads" is vacuously true.
-    const servedReads = await readsFor('logo.png', async () => {
+    const served = await readsFor('logo.png', async () => {
       expect((await blobRequest('logo.png', 'worktree')).status).toBe(200);
     });
-    expect(servedReads).toBeGreaterThan(0);
+    expect(served.calls).toBeGreaterThan(0);
 
     let status = 0;
-    const reads = await readsFor('huge.png', async () => {
+    const refused = await readsFor('huge.png', async () => {
       status = (await blobRequest('huge.png', 'worktree')).status;
     });
     expect(status).toBe(413);
     // The size came from an fstat on the open fd; not one byte was moved.
-    expect(reads).toBe(0);
+    expect(refused.calls).toBe(0);
+    expect(refused.bytes).toBe(0);
   });
 
   test('a 3 MiB GIF is a 413 (the GIF cap is tighter than the image cap)', async () => {
@@ -461,13 +505,11 @@ describe('GET /blob — caps and bombs', () => {
     expect(await errorOf(res)).toContain('too-large');
   });
 
-  test('an APNG is refused', async () => {
-    // The blueprint's order of operations puts `animation` in the 413 group
-    // with the other budget refusals, while its test list calls this a 415.
-    // The implementation follows the order of operations; the status matters
-    // far less than the fact that zero bytes come back.
+  test('an APNG is a 415: a refused format, not an oversized one', async () => {
+    // It is nowhere near a budget — it is a second animation decoder we do
+    // not serve, which is a format refusal and reads as one in the UI.
     const res = await blobRequest('apng.png', 'worktree');
-    expect(res.status).toBe(413);
+    expect(res.status).toBe(415);
     expect(await errorOf(res)).toContain('animation');
     expect(res.headers.get('content-type')).toContain('application/json');
   });
@@ -686,11 +728,17 @@ describe('GET /media — sides', () => {
   });
 
   test('an animated GIF reports its frame count', async () => {
-    // anim.gif is clean, so it has no status entry — reach it through /blob's
-    // sniff instead, which is the same verdict from the same function.
-    const res = await blobRequest('anim.gif', 'worktree');
-    expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toBe('image/gif');
+    // The count is the whole reason a GIF is walked to its trailer, and it is
+    // what the UI labels the frame badge with — so assert the number, not
+    // just that a GIF came back. untracked-anim.gif has three frames.
+    const pair = await mediaFor('untracked-anim.gif', false);
+    expect(pair.new?.image).toMatchObject({
+      format: 'gif',
+      width: 4,
+      height: 4,
+      frames: 3,
+    });
+    expect(pair.new?.refusal).toBeNull();
   });
 
   test('a non-image binary side reports a refusal instead of an image', async () => {
@@ -743,6 +791,213 @@ describe('GET /media — sides', () => {
     for (const raw of ['.git/config', '../../etc/passwd', '-foo.png']) {
       const res = await request(mediaUrl(repoId, raw, false));
       expect(res.status).toBe(400);
+    }
+  });
+});
+
+describe('the read budget', () => {
+  test('a /media verdict reads the header window, not the 4 MiB file', async () => {
+    // A verdict is all /media returns, and a PNG is decided by its header, so
+    // reading the rest would be four megabytes of resident memory per request
+    // on an endpoint any page can drive.
+    const verdict = await readsFor('big.png', async () => {
+      const pair = await mediaFor('big.png', false);
+      expect(pair.new?.image).toMatchObject({ format: 'png', width: 64, height: 64 });
+      // The size reported is the real one, whatever was read to learn it.
+      expect(pair.new?.bytes).toBe(BIG_PNG.length);
+    });
+    expect(verdict.bytes).toBeGreaterThan(0);
+    expect(verdict.bytes).toBeLessThanOrEqual(IMAGE_HEADER_WINDOW + PEEK_ALLOWANCE);
+  });
+
+  test('a header past the window is typed the same way by /media and /blob', async () => {
+    // The window decides ordinary files, but a maximal EXIF segment pushes the
+    // frame header out of it. A verdict that stopped at the window would call
+    // this header-not-found on /media while /blob served the very same bytes as
+    // a JPEG — and header-not-found has no refusal text, so the Changes stack
+    // would drop the card with no reason given.
+    const verdict = await readsFor('exif.jpg', async () => {
+      const pair = await mediaFor('exif.jpg', false);
+      expect(pair.new?.refusal).toBeNull();
+      expect(pair.new?.image).toMatchObject({ format: 'jpeg', width: 9, height: 11 });
+    });
+    // Inconclusive at the window, so the read was extended — bounded by the
+    // file, which openBlob already held under MAX_IMAGE_BYTES.
+    expect(verdict.bytes).toBe(EXIF_JPEG.length);
+
+    const res = await blobRequest('exif.jpg', 'worktree');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/jpeg');
+    expect([...(await bodyBytes(res))]).toEqual([...EXIF_JPEG]);
+  });
+
+  test('/blob still reads every byte it is going to write', async () => {
+    const served = await readsFor('big.png', async () => {
+      const res = await blobRequest('big.png', 'worktree');
+      expect(res.status).toBe(200);
+      // Drain it: the route holds its semaphore slot until the response is
+      // finished, so an undrained 4 MiB body would keep the slot.
+      expect((await bodyBytes(res)).length).toBe(BIG_PNG.length);
+    });
+    expect(served.bytes).toBeGreaterThanOrEqual(BIG_PNG.length);
+  });
+});
+
+describe('both byte routes are gated', () => {
+  /**
+   * Drive one request through a router whose gate has no slots at all.
+   *
+   * The daemon builds its own semaphore internally, so the alternative is
+   * racing 69 real requests to fill a 64-deep queue — a flaky way to ask a
+   * yes/no question. This asks the real registered handler instead.
+   */
+  async function statusWithNoSlots(pathname: string): Promise<number> {
+    const router = new Router();
+    const handle = daemon.getRepo(repoId);
+    const registry = { getRepo: (id: string) => (id === repoId ? handle : undefined) };
+    registerBlobRoutes(router, { registry } as unknown as RouteDeps, createBlobSemaphore(0, 0));
+
+    let status = 0;
+    const res = {
+      headersSent: false,
+      writeHead(code: number) {
+        status = code;
+        this.headersSent = true;
+        return this;
+      },
+      end() {
+        return this;
+      },
+      once() {
+        return this;
+      },
+    };
+    const req = { method: 'GET', url: pathname, headers: {} } as IncomingMessage;
+    await router.handle(req, res as unknown as ServerResponse);
+    return status;
+  }
+
+  interface GatedServer {
+    gate: BlobSemaphore;
+    request(pathname: string, init?: RequestInit): Promise<Response>;
+    close(): Promise<void>;
+  }
+
+  /**
+   * A second http server on its own socket, serving the real blob routes
+   * through a semaphore this test can look inside.
+   *
+   * Reading `gate.active` is what keeps the release assertions honest: from
+   * outside, a request that never reached the handler and a request whose slot
+   * came back look exactly alike. The daemon builds its semaphore internally,
+   * so borrowing the routes into a server of our own is the only way to watch
+   * the counter that a leak moves.
+   */
+  async function startGatedServer(limit: number, queueLimit: number): Promise<GatedServer> {
+    const gate = createBlobSemaphore(limit, queueLimit);
+    const router = new Router();
+    const handle = daemon.getRepo(repoId);
+    const registry = { getRepo: (id: string) => (id === repoId ? handle : undefined) };
+    registerBlobRoutes(router, { registry } as unknown as RouteDeps, gate);
+
+    const server = http.createServer((req, res) => {
+      void router.handle(req, res);
+    });
+    const socketPath = path.join(os.tmpdir(), `diffstalkerd-blob-gate-${process.pid}.sock`);
+    fs.rmSync(socketPath, { force: true });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+
+    return {
+      gate,
+      request: (pathname, init) =>
+        fetch(`http://localhost${pathname}`, { ...init, unix: socketPath } as RequestInit),
+      close: async () => {
+        server.closeAllConnections?.();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        fs.rmSync(socketPath, { force: true });
+      },
+    };
+  }
+
+  /**
+   * Poll until something is true, or fail saying what never happened. The
+   * deadline is well inside bun's own test timeout so the failure names the
+   * thing that did not happen rather than the test that ran long.
+   */
+  async function waitFor(what: string, ready: () => boolean, timeoutMs = 2000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!ready()) {
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  test('/media refuses with 503 when the gate is empty, exactly like /blob', async () => {
+    // /media is the more expensive route, not the cheaper one: it inspects up
+    // to two sides, so leaving it ungated would leave the budget meaningless.
+    expect(await statusWithNoSlots(mediaUrl(repoId, 'logo.png', false))).toBe(503);
+    expect(await statusWithNoSlots(blobUrl(repoId, { path: 'logo.png', side: 'worktree' }))).toBe(
+      503
+    );
+  });
+
+  test('a /blob refusal gives its slot back, so the gate does not silt up', async () => {
+    // Ten refusals is well past the concurrency limit, so a slot leaked on the
+    // error path would leave nothing for the request after them.
+    for (let i = 0; i < 10; i++) {
+      expect((await blobRequest('fake.png', 'worktree')).status).toBe(415);
+    }
+    const res = await blobRequest('logo.png', 'worktree', { signal: AbortSignal.timeout(5000) });
+    expect(res.status).toBe(200);
+    expect((await bodyBytes(res)).length).toBe(PNG_IN_WORKTREE.length);
+  });
+
+  test('a /media refusal gives its slot back too', async () => {
+    // /media takes its slot before it resolves the status entry, so this 404
+    // is raised with the slot in hand and the release has to happen on the
+    // throw. photo.jpg is clean and committed, so it is in no status entry.
+    for (let i = 0; i < 10; i++) {
+      const res = await request(mediaUrl(repoId, 'photo.jpg', false), {
+        signal: AbortSignal.timeout(5000),
+      });
+      expect(res.status).toBe(404);
+    }
+    const pair = await mediaFor('logo.png', false);
+    expect(pair.new?.image).toMatchObject({ width: 3, height: 3 });
+  });
+
+  test('a client that walks away mid-request gives its slot back', async () => {
+    // The one leak the other tests cannot see, and it is runtime-specific: on
+    // an abort node destroys the RESPONSE and emits `close` on it, while bun
+    // emits nothing on the response at all — the abort surfaces only on the
+    // request. Wired to the response alone, every abort keeps its slot, and
+    // BLOB_CONCURRENCY of them wedge /blob and /media for the life of the
+    // daemon. The shipped bin is node, but the documented dev daemon is bun.
+    const gated = await startGatedServer(BLOB_CONCURRENCY, 0);
+    try {
+      for (let i = 0; i < BLOB_CONCURRENCY + 1; i++) {
+        const controller = new AbortController();
+        // side=head spawns git, so the handler is still working when we abort.
+        const aborted = gated
+          .request(blobUrl(repoId, { path: 'logo.png', side: 'head' }), {
+            signal: controller.signal,
+          })
+          .catch(() => null);
+        // Not decoration: if the request had already finished, the abort would
+        // prove nothing, so failing to observe the slot fails the test.
+        await waitFor('the slot to be taken', () => gated.gate.active === 1);
+        controller.abort();
+        await aborted;
+        await waitFor('the aborted request to give its slot back', () => gated.gate.active === 0);
+      }
+      // This gate has no queue at all, so one leaked slot is a 503 here.
+      const res = await gated.request(blobUrl(repoId, { path: 'logo.png', side: 'worktree' }), {
+        signal: AbortSignal.timeout(2000),
+      });
+      expect(res.status).toBe(200);
+      expect((await bodyBytes(res)).length).toBe(PNG_IN_WORKTREE.length);
+    } finally {
+      await gated.close();
     }
   });
 });

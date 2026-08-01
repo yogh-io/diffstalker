@@ -27,6 +27,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
 import ChangesView from './ChangesView.vue';
 import DiffStack from '../components/DiffStack.vue';
+import ImageDiffView from '../components/ImageDiffView.vue';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import type { StackAutoJumpTarget } from '../composables/useAutoMode';
@@ -643,6 +644,85 @@ describe('image diffs in the stack', () => {
     const section = wrapper.find('[data-testid="file-diff"]');
 
     for (const img of section.findAll('img')) await img.trigger('error');
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="image-diff"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="not-shown-note"]').text()).toContain('Binary file');
+  });
+
+  test('a fresh blob version after a decode failure gets another attempt', async () => {
+    const { wrapper, repo } = setup(
+      [IMG],
+      [['u:img.png', BINARY_DIFF]],
+      [['u:img.png', imagePair()]]
+    );
+
+    for (const img of wrapper.findAll('img')) await img.trigger('error');
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="image-diff"]').exists()).toBe(false);
+
+    // The image is fixed on disk: the state-change refetch lands a pair
+    // carrying new versions. A failure keyed by section alone would keep
+    // the note for the life of the view.
+    repo.mediaMeta = new Map([
+      [
+        'u:img.png',
+        {
+          old: imageSide({ version: 'v3' }),
+          new: imageSide({ side: 'worktree', oid: null, version: 'v4' }),
+        },
+      ],
+    ]);
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="image-diff"]').exists()).toBe(true);
+  });
+
+  test('a failure reported after a refetch blacklists the bytes that failed, not the new ones', async () => {
+    const { wrapper, repo } = setup(
+      [IMG],
+      [['u:img.png', BINARY_DIFF]],
+      [['u:img.png', imagePair()]]
+    );
+    const card = wrapper.findComponent(ImageDiffView);
+
+    // The refetch lands while the browser is still working on the old
+    // bytes, and only then does the load fail. The card reporting it is
+    // the one rendered from v1/v2 — the versions the <img> tags carried.
+    repo.mediaMeta = new Map([
+      [
+        'u:img.png',
+        {
+          old: imageSide({ version: 'v3' }),
+          new: imageSide({ side: 'worktree', oid: null, version: 'v4' }),
+        },
+      ],
+    ]);
+    card.vm.$emit('fail');
+    await wrapper.vm.$nextTick();
+
+    // Reading the store at error time would have blacklisted v3/v4 here.
+    expect(wrapper.find('[data-testid="image-diff"]').exists()).toBe(true);
+
+    // ...and the failure really was recorded, against v1/v2.
+    repo.mediaMeta = new Map([['u:img.png', imagePair()]]);
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="image-diff"]').exists()).toBe(false);
+  });
+
+  test('the SAME bytes failing again stay a note — no retry loop', async () => {
+    const { wrapper, repo } = setup(
+      [IMG],
+      [['u:img.png', BINARY_DIFF]],
+      [['u:img.png', imagePair()]]
+    );
+
+    for (const img of wrapper.findAll('img')) await img.trigger('error');
+    await wrapper.vm.$nextTick();
+
+    // A state-change re-asks and the daemon answers with the same
+    // versions: a fresh object, but the same bytes, so still no card.
+    repo.mediaMeta = new Map([['u:img.png', imagePair()]]);
     await wrapper.vm.$nextTick();
 
     expect(wrapper.find('[data-testid="image-diff"]').exists()).toBe(false);

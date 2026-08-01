@@ -24,10 +24,6 @@ import type { GitStatusMap } from './explorerStatus.js';
 export { buildGitStatusMap } from './explorerStatus.js';
 export type { GitStatusMap } from './explorerStatus.js';
 
-// The NUL scan lives in utils/ now (git/diff.ts needs it too), but it used to
-// be private to this module, so it stays reachable from here.
-export { isBinaryContent };
-
 /**
  * Maximum file size served as TEXT (larger files get tooLarge). It is only
  * the text cap: an image is decided by the image caps in utils/imageSniff,
@@ -301,10 +297,16 @@ async function classifyOpenFile(
   if (result.ok) return notTextFile(size, media);
 
   if (size > MAX_FILE_SIZE) {
-    // 'not-an-image' is the sniffer saying it recognised nothing, which is
-    // also what a big text file looks like. Carrying it would tell a client
-    // "not text" about a file we never established anything about.
-    return tooLargeFile(size, result.refusal === 'not-an-image' ? undefined : media);
+    // A media verdict on an oversized file only makes sense when the file is
+    // really binary, because a client reads any media as "this is not text"
+    // and shows the binary note instead of "File too large". The NUL scan over
+    // the window we already read is the whole test, and the refusal says
+    // nothing about it either way: a refusal is about rendering, and BM, II*\0
+    // and MM\0* are two- and four-byte signatures a big TEXT file can open
+    // with by accident. So a 2 MiB tarball is a binary we cannot preview, and
+    // a 2 MiB README is a file too large — even though the sniffer says
+    // 'not-an-image' to both.
+    return tooLargeFile(size, isBinaryContent(head) ? media : undefined);
   }
 
   const buffer =

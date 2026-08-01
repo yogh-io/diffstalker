@@ -72,19 +72,55 @@ function originHostname(origin: string): string | null {
   }
 }
 
-/** A loopback hostname: localhost, any 127.x, ::1, or a *.localhost name. */
+/**
+ * An exact dotted-quad IPv4 inside 127.0.0.0/8.
+ *
+ * Exact octets, never a `startsWith('127.')` prefix: `127.0.0.1.evil.com` is a
+ * registrable PUBLIC domain name, so a prefix test hands an attacker exactly
+ * the same-origin position the Host allow-list exists to deny.
+ */
+function isLoopbackIpv4(hostname: string): boolean {
+  const octets = hostname.split('.');
+  if (octets.length !== 4) return false;
+  if (!octets.every((o) => /^\d{1,3}$/.test(o) && Number(o) <= 255)) return false;
+  return octets[0] === '127';
+}
+
+/**
+ * A non-empty label under the `.localhost` TLD. RFC 6761 reserves that TLD and
+ * the public DNS root never delegates it, so — unlike a `127.` prefix — a name
+ * under it cannot be registered and rebound by an attacker. The length test
+ * rejects the degenerate bare `.localhost`, which the URL parser will hand
+ * back verbatim.
+ */
+function isUnderLocalhostTld(hostname: string): boolean {
+  const suffix = '.localhost';
+  return hostname.length > suffix.length && hostname.endsWith(suffix);
+}
+
+/**
+ * A loopback hostname: localhost, a name under .localhost, 127.0.0.0/8, or ::1.
+ *
+ * Both callers pass a hostname the URL parser has already normalized, which is
+ * what makes the exact comparisons enough: it lowercases, and it folds every
+ * numeric IPv4 spelling (`127.1`, `2130706433`, `0x7f.0.0.1`) and every IPv6
+ * spelling (`0:0:0:0:0:0:0:1`) onto one canonical form. A loopback spelling it
+ * does NOT fold — `::ffff:127.0.0.1` stays `::ffff:7f00:1` — is rejected. That
+ * is deliberate: nothing reaches the daemon under that name, and failing
+ * closed on an exotic spelling costs nothing.
+ */
 export function isLoopbackHostname(hostname: string): boolean {
   return (
     hostname === 'localhost' ||
     hostname === '::1' ||
-    hostname.endsWith('.localhost') ||
-    hostname.startsWith('127.')
+    isUnderLocalhostTld(hostname) ||
+    isLoopbackIpv4(hostname)
   );
 }
 
 /** A loopback bind address, as reported by server.address(). */
 export function isLoopbackAddress(address: string): boolean {
-  return address === '127.0.0.1' || address === '::1' || address.startsWith('127.');
+  return address === '::1' || isLoopbackIpv4(address);
 }
 
 /**

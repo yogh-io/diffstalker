@@ -207,20 +207,28 @@ export const HUGE_FILE_CHANGED_LINES = 1500;
  * collapse is unchanged.
  *
  * Binary files never get a diff body and never get the huge gate. They
- * render one of two FIXED-HEIGHT strips where the body would be: the
- * plain "Binary file" note, or — when the parent lists the section in
- * `mediaKeys` — the `media` slot, which the Changes view fills with an
- * image card. Auto-mode jumps land on the section top of gated/binary
- * files without expanding anything.
+ * render a FIXED-HEIGHT strip where the body would be: the plain "Binary
+ * file" note, or — when the parent lists the section in `mediaKeys` —
+ * the `media` slot, which the Changes view fills with an image card.
+ * Auto-mode jumps land on the section top of gated/binary files without
+ * expanding anything.
  *
- * Both strips are measured into their OWN height slot (see stripHeight).
- * That is not tidiness: a height slot is memoized once and then reused
- * for every unmeasured section of that kind, so two body shapes sharing
- * one slot desync every section offset below the first mismatch,
- * compounding as (N-1) x delta — which surfaces as the scroll spy naming
- * the wrong file. The media card must therefore be a fixed height in
- * every state (loading, loaded, failed, every mode), which is what keeps
- * the memoized constant honest.
+ * Every strip SHAPE is measured into its OWN height slot (see
+ * stripHeight): the binary note, the large-file notice, the media card,
+ * the "Load diff" gate. That is not tidiness: a height slot is memoized
+ * once and then reused for every unmeasured section of that kind, so two
+ * body shapes sharing one slot desync every section offset below the
+ * first mismatch, compounding as (N-1) x delta — which surfaces as the
+ * scroll spy naming the wrong file.
+ *
+ * Which is why every strip is a FIXED height by construction, not by
+ * hope. The media card sizes its three bands from CSS variables, so it is
+ * the same height loading, loaded, failed and in every mode. The notes
+ * are clamped to a single line: the large-file notice embeds a per-file
+ * size and line count ("Large file — diff not shown (18.3 MB, 121,285
+ * lines)"), which left to wrap would make two large sections different
+ * heights on a narrow card — and the second one would be sized by the
+ * first one's text. The full text stays reachable as the strip's title.
  */
 
 import {
@@ -532,18 +540,31 @@ let stackChrome: {
   headerH?: number;
   gap?: number;
   borderY?: number;
-  notShownNoteH?: number;
+  notShownBinaryH?: number;
+  notShownLargeH?: number;
   notShownMediaH?: number;
   loadDiffH?: number;
   toolbarH?: number;
 } = {};
 
-/** The strip slots stripHeight memoizes, one per BODY SHAPE. */
-type StripSlot = 'notShownNoteH' | 'notShownMediaH' | 'loadDiffH';
+/**
+ * The strip slots stripHeight memoizes, one per BODY SHAPE.
+ *
+ * The two withheld-diff notes are two shapes, not one: "Binary file — no
+ * text diff to show." is a fixed sentence, while the large-file notice
+ * embeds the measured size and line count ("Large file — diff not shown
+ * (18.3 MB, 121,285 lines)") and so differs from file to file. Both are
+ * clamped to one line (see .not-shown-note), which is what makes a single
+ * memoized height true for either — and they keep separate slots so that
+ * the clamp is the only thing holding, never "the first note measured
+ * happened to be the same height as the rest".
+ */
+type StripSlot = 'notShownBinaryH' | 'notShownLargeH' | 'notShownMediaH' | 'loadDiffH';
 
 /** The DOM selector each strip slot measures. */
 const STRIP_SELECTOR: Record<StripSlot, string> = {
-  notShownNoteH: '.not-shown-note',
+  notShownBinaryH: '.not-shown-binary',
+  notShownLargeH: '.not-shown-large',
   notShownMediaH: '.not-shown-media',
   loadDiffH: '.load-diff',
 };
@@ -634,7 +655,7 @@ function chromeGap(): number | null {
  * The reuse is the whole point (it keeps the offset rebuild free of DOM
  * reads) and also the whole danger: every strip sharing a slot must be
  * the same height in every state, which is why each BODY SHAPE gets its
- * own slot rather than one "not shown" slot for both. A shape that
+ * own slot rather than one shared "not shown" slot. A shape that
  * borrowed another's slot would misplace every section below the first
  * mismatch, compounding down the stack.
  */
@@ -651,14 +672,25 @@ function stripHeight(slot: StripSlot, key: string): number | null {
  * Which fixed strip this section renders where a body would be, or null
  * when it renders a real body. THE ONE PLACE that choice is made, so the
  * height model, the DEV guard and the template can never disagree about
- * which slot a section belongs to — and two body shapes (the note and
- * the much taller media card) can never share one memoized height.
+ * which slot a section belongs to — and no two body shapes (the two
+ * note kinds, the much taller media card) can share one memoized height.
  */
 function stripSlotFor(item: StackFile): StripSlot | null {
-  if (notShownFor(item) !== null) {
-    return isMediaSection(item) ? 'notShownMediaH' : 'notShownNoteH';
+  const notShown = notShownFor(item);
+  if (notShown !== null) {
+    if (isMediaSection(item)) return 'notShownMediaH';
+    return notShown.kind === 'binary' ? 'notShownBinaryH' : 'notShownLargeH';
   }
   return isUnloaded(item) ? 'loadDiffH' : null;
+}
+
+/**
+ * The note's kind class — the measurement hook stripSlotFor picks by.
+ * Styling stays on the shared .not-shown-note; only the height slots are
+ * per kind.
+ */
+function notShownClass(item: StackFile): string {
+  return notShownFor(item)?.kind === 'binary' ? 'not-shown-binary' : 'not-shown-large';
 }
 
 /**
@@ -1001,18 +1033,6 @@ function assertBodyHeights(): void {
 }
 
 /**
- * DEV guard for SECTION geometry, which assertBodyHeights does not cover: it
- * checks bodies, so chrome that sits outside a body — the card's border, and
- * above all the --sep-block gutter — has no net at all.
- *
- * Compares the LAST section's real offsetTop against the model's arithmetic
- * top. The last one specifically: a per-section error compounds as (N-1) x
- * delta, so section 0 or 1 proves nothing and the last is where a stale gap is
- * unmissable. A stale chromeGap after a layout-mode step is exactly the bug
- * this catches, and it is otherwise silent — jumps still land, because they
- * read live offsetTop.
- */
-/**
  * The strip half of the section-geometry guard: every RENDERED strip must
  * be exactly the height its slot memoized. A slot is measured once from
  * whichever section rendered it first and then reused sight-unseen, so a
@@ -1039,6 +1059,18 @@ function assertStripHeights(): void {
   }
 }
 
+/**
+ * DEV guard for SECTION geometry, which assertBodyHeights does not cover: it
+ * checks bodies, so chrome that sits outside a body — the card's border, and
+ * above all the --sep-block gutter — has no net at all.
+ *
+ * Compares the LAST section's real offsetTop against the model's arithmetic
+ * top. The last one specifically: a per-section error compounds as (N-1) x
+ * delta, so section 0 or 1 proves nothing and the last is where a stale gap is
+ * unmissable. A stale chromeGap after a layout-mode step is exactly the bug
+ * this catches, and it is otherwise silent — jumps still land, because they
+ * read live offsetTop.
+ */
 function assertSectionOffsets(): void {
   assertStripHeights();
   const model = sectionHeightModel();
@@ -1272,11 +1304,15 @@ defineExpose({
       <!-- Withheld diff (binary with no metadata, or over the daemon's
            per-file size cap): placeholder-only — never bytes, never a
            diff body, no "Load diff" (there is no content to reveal).
-           See notShownFor. -->
+           See notShownFor. The title is what the one-line clamp costs:
+           the large-file notice's size and line count stay readable when
+           the card is too narrow for them. -->
       <div
         v-else-if="notShownFor(item)"
         v-show="!item.collapsed"
         class="not-shown-note"
+        :class="notShownClass(item)"
+        :title="notShownFor(item)?.note"
         data-testid="not-shown-note"
       >
         {{ notShownFor(item)?.note }}
@@ -1590,12 +1626,25 @@ defineExpose({
   background: var(--bg);
 }
 
-/* Withheld diff: the whole body is this note — no bytes, no "Load diff". */
+/* Withheld diff: the whole body is this note — no bytes, no "Load diff".
+   The kind classes (.not-shown-binary / .not-shown-large) carry no style;
+   they exist so the two notes get their own memoized height slot.
+
+   ONE LINE, ALWAYS. The large-file notice carries a per-file size and line
+   count, so on a narrow card two of them would wrap to different heights —
+   and a strip's height is measured once per slot and then reused for every
+   section of that kind, sight-unseen, which turns that difference into a
+   compounding section-offset error (the scroll spy naming the wrong file).
+   Clamping to a single line makes the memoized constant true at any card
+   width; the full text stays on the element's title. */
 .not-shown-note {
   padding: 0.75rem;
   color: var(--text-dim);
   font-size: var(--fs-small);
   background: var(--bg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Huge-file gate: a quiet strip where the body would be. */

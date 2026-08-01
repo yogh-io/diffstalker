@@ -388,6 +388,27 @@ describe('images in the content pane', () => {
     expect(wrapper.find('[data-testid="file-too-large"]').exists()).toBe(false);
   });
 
+  // The other half of the same branch order, and the contract the daemon
+  // holds up its end of: media present on an oversized file means the bytes
+  // really are binary, so the note wins over "too large". A big TEXT file
+  // that happens to open with a weak signature (BM, II*\0) carries NO media
+  // and lands on "too large" — see readFileForDisplay in core.
+  test('a tooLarge file WITH a refusal reads as a binary we cannot preview', async () => {
+    serveFile(
+      imageFile(
+        { image: null, refusal: 'unsupported-format', version: 'webp-1' },
+        { binary: false, tooLarge: true, size: 2 * 1024 * 1024 }
+      )
+    );
+    const { wrapper } = await mountView();
+    await openImage(wrapper);
+
+    expect(wrapper.find('[data-testid="file-too-large"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="file-binary"]').text()).toBe(
+      'Binary file — 2.0 MB · no preview (format not rendered)'
+    );
+  });
+
   test('a refused format keeps the note and names the reason', async () => {
     serveFile(imageFile({ image: null, refusal: 'unsupported-format', version: 'webp-1' }));
     const { wrapper } = await mountView();

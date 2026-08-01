@@ -107,9 +107,14 @@ describe('web-mode API surface', () => {
   });
 
   test('the media metadata route IS routed', async () => {
+    // file.txt is modified but unstaged (the stage test above put it back), so
+    // this reaches the handler and answers with a real pair. A status, not a
+    // missing error string: a route that 500'd would pass "not Unknown route".
     const res = await req(WEB_SOCKET, 'GET', `/repos/${repoId}/media?path=file.txt&staged=0`);
-    const json = (await res.json()) as { error?: string };
-    expect(json.error ?? '').not.toContain('Unknown route');
+    expect(res.status).toBe(200);
+    const pair = (await res.json()) as { new?: { refusal?: string } };
+    // Text is not an image, so the verdict is a refusal rather than an error.
+    expect(pair.new?.refusal).toBe('not-an-image');
   });
 
   const cliOnly: Array<[string, string, unknown]> = [
@@ -149,8 +154,9 @@ describe('full-mode API surface', () => {
     const blob = await req(FULL_SOCKET, 'GET', `/repos/${repoId}/blob?path=file.txt&side=head`);
     expect(blob.status).toBe(415);
     const media = await req(FULL_SOCKET, 'GET', `/repos/${repoId}/media?path=file.txt&staged=0`);
-    const json = (await media.json()) as { error?: string };
-    expect(json.error ?? '').not.toContain('Unknown route');
+    expect(media.status).toBe(200);
+    const pair = (await media.json()) as { new?: { refusal?: string } };
+    expect(pair.new?.refusal).toBe('not-an-image');
   });
 
   test('push route IS registered in full mode', async () => {

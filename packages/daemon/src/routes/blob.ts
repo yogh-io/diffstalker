@@ -36,6 +36,13 @@
  * `guardImageSubresource` runs on /blob and NEVER on /media: it demands
  * `Sec-Fetch-Dest: image`, and the SPA's own `fetch()` for /media sends
  * `Sec-Fetch-Dest: empty`.
+ *
+ * **Both routes are gated, and both hold their slot to the last byte.**
+ * /media is not the cheap one: it inspects up to two sides, so it costs the
+ * same git spawns and the same buffers as /blob. GET is exempt from the CSRF
+ * checks by design and a repo id is a hash of a path, so any page the user
+ * visits can aim requests at a `--port` daemon — which is what the semaphore,
+ * not the origin guard, is there for.
  */
 
 import {
@@ -43,10 +50,12 @@ import {
   BlobTooLargeError,
   NotRegularBlobError,
   UnsafeBlobPathError,
+  type BlobHandle,
 } from '@diffstalker/core/git/blob';
 import {
   sniffImage,
-  MAX_GIF_BYTES,
+  sniffWindow,
+  IMAGE_HEADER_WINDOW,
   MAX_IMAGE_BYTES,
   type ImageInfo,
   type ImageMime,
@@ -55,6 +64,7 @@ import {
 } from '@diffstalker/core/utils/imageSniff';
 import type { BlobSide } from '@diffstalker/core/utils/blobRef';
 import type { FileEntry } from '@diffstalker/core/git/status';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Router, HttpError, sendJson, sendBytes } from '../router.js';
 import { guardImageSubresource } from '../security.js';
 import type { BlobSemaphore } from '../blobSemaphore.js';
@@ -103,25 +113,34 @@ interface InspectedBlob {
   sniff: SniffResult;
 }
 
-const BLOB_SIDES: readonly string[] = ['worktree', 'index', 'head'];
-
-/**
- * "GIF8", the prefix shared by GIF87a and GIF89a.
- *
- * This decides how many bytes to READ, nothing else — `sniffImage` owns the
- * verdict. A GIF is only valid when the whole file is in hand, which is why
- * it has a tighter byte cap; reading 8 MiB of a file we would refuse at 2 is
- * pointless work. A wrong guess here can only change the read size: a file
- * whose first four bytes are these is either a GIF or nothing we serve.
- */
-const GIF_MAGIC = [0x47, 0x49, 0x46, 0x38];
-
-function isGifMagic(peek: Uint8Array): boolean {
-  return GIF_MAGIC.every((byte, i) => peek[i] === byte);
+/** A prefix of a blob and the verdict those bytes produced. */
+interface TypedBytes {
+  bytes: Uint8Array;
+  sniff: SniffResult;
 }
 
+const BLOB_SIDES: readonly string[] = ['worktree', 'index', 'head'];
+
+/** Enough to recognise every signature the sniffer knows; the longest is 12 bytes. */
+const PEEK_BYTES = 16;
+
+/**
+ * How much of a blob each route needs in hand once it has been typed.
+ *
+ * /media only ever reports a verdict, so it asks for nothing beyond the window
+ * that decides the file: pulling the other 8 MiB of a photo off disk to report
+ * its width is resident memory bought for nothing, on a plain GET any page can
+ * drive. /blob writes what it read, so it needs every byte.
+ *
+ * This is a floor on the read, never a ceiling — `readAndType` reads whatever
+ * it takes to reach a verdict either way, which is what keeps the two routes
+ * from ever disagreeing about what a file is.
+ */
+const VERDICT_BUDGET = IMAGE_HEADER_WINDOW;
+const WHOLE_BLOB_BUDGET = MAX_IMAGE_BYTES;
+
 /** Refusals that mean "too big to be worth decoding", as opposed to "not allowed". */
-const OVERSIZE_REFUSALS: readonly ImageRefusal[] = ['too-large', 'too-many-pixels', 'animation'];
+const OVERSIZE_REFUSALS: readonly ImageRefusal[] = ['too-large', 'too-many-pixels'];
 
 function requirePathParam(query: URLSearchParams): string {
   const raw = query.get('path');
@@ -164,33 +183,72 @@ function throwBlobError(err: unknown): never {
 }
 
 /**
- * Open one side, read at most the cap for its format, type the bytes, close.
- * The single place bytes are read and typed, so /blob and /media can never
- * disagree about what a file is.
+ * Read `want` bytes and say what they are.
  *
- * `complete` is whether the buffer really is the whole file. It normally is
- * (openBlob already refused anything over MAX_IMAGE_BYTES), and claiming it
- * unconditionally would be a lie in the two cases where it is not: a GIF over
- * its own cap, and a file that shrank between the size check and the read.
- * Both then have to be refused, which is exactly what a truthful `false` does.
+ * `complete` is whether the buffer really is the whole file, and it is read
+ * off the buffer rather than asserted. Claiming it unconditionally would be a
+ * lie for a GIF over its own cap, for a file that shrank between the size
+ * check and the read, and for anything typed from a header window — and each
+ * of those has to be refused, which is exactly what a truthful `false` gets.
+ */
+async function typeBytes(handle: BlobHandle, want: number): Promise<TypedBytes> {
+  const bytes = await handle.read(want);
+  return { bytes, sniff: sniffImage(bytes, handle.size, bytes.length >= handle.size) };
+}
+
+/**
+ * Read as much of a blob as it takes to type it, and no more.
+ *
+ * `sniffWindow` owns the "how much decides this file" question: a 64 KiB
+ * header for PNG and JPEG, the whole file for a GIF, whose frame walk spans
+ * it. That window settles ordinary files, and it is all a /media verdict has
+ * to read.
+ *
+ * `header-not-found` is the one verdict that means "more bytes would decide
+ * this", and it is not exotic: a JPEG carrying a maximal EXIF APP1 pushes its
+ * SOF past 64 KiB, which is what a camera or Photoshop writes when it embeds a
+ * thumbnail. So the window is extended to the whole blob and the file is typed
+ * again. That extension is what makes the verdict independent of who asked:
+ * /media and /blob run the same read and reach the same answer, and a card in
+ * the Changes stack can never be dropped for a file /blob would have served.
+ *
+ * Everything here is bounded. The extension reads at most `size`, which
+ * `openBlob` already refused if it was over MAX_IMAGE_BYTES, and the caller
+ * holds a semaphore slot across the whole thing.
+ */
+async function readAndType(handle: BlobHandle, budget: number): Promise<TypedBytes> {
+  const { size } = handle;
+  const peek = await handle.read(PEEK_BYTES);
+
+  // A GIF over its own cap is refused on declared size alone, so the peek is
+  // already the whole answer and nothing more is read.
+  const early = sniffImage(peek, size, peek.length >= size);
+  if (!early.ok && early.refusal === 'too-large') return { bytes: peek, sniff: early };
+
+  const window = Math.min(sniffWindow(peek, size), size);
+  const typed = await typeBytes(handle, Math.max(window, Math.min(budget, size)));
+  if (typed.sniff.ok || typed.sniff.refusal !== 'header-not-found') return typed;
+  if (typed.bytes.length >= size) return typed;
+  return typeBytes(handle, size);
+}
+
+/**
+ * Open one side, type it, close. The single place bytes are read and typed,
+ * and — because `readAndType` extends past `budget` whenever the window was
+ * inconclusive — the single place the verdict is decided, so /blob and /media
+ * cannot disagree about what a file is.
  */
 async function inspectBlob(
   repoPath: string,
   side: BlobSide,
-  relPath: string
+  relPath: string,
+  budget: number
 ): Promise<InspectedBlob | null> {
   const handle = await openBlob(repoPath, side, relPath, MAX_IMAGE_BYTES);
   if (handle === null) return null;
   try {
-    const peek = await handle.read(GIF_MAGIC.length);
-    const bytes = await handle.read(isGifMagic(peek) ? MAX_GIF_BYTES : MAX_IMAGE_BYTES);
-    return {
-      bytes,
-      size: handle.size,
-      oid: handle.oid,
-      version: handle.version,
-      sniff: sniffImage(bytes, handle.size, bytes.length >= handle.size),
-    };
+    const { bytes, sniff } = await readAndType(handle, budget);
+    return { bytes, size: handle.size, oid: handle.oid, version: handle.version, sniff };
   } finally {
     await handle.close();
   }
@@ -229,7 +287,11 @@ function blobHeaders(side: BlobSide, mime: ImageMime, oid: string | null): Recor
   return headers;
 }
 
-/** A refused image: over a budget is a 413, anything else a 415. Zero bytes either way. */
+/**
+ * A refused image: over a budget is a 413, anything else a 415. Zero bytes
+ * either way. An APNG is a 415, not a 413: it is not over any budget, it is a
+ * format we refuse to serve, and the UI says so in those words.
+ */
 function refusalError(refusal: ImageRefusal): HttpError {
   const status = OVERSIZE_REFUSALS.includes(refusal) ? 413 : 415;
   return new HttpError(status, `Image not served: ${refusal}`);
@@ -279,7 +341,7 @@ async function describeSide(handle: RepoHandle, ref: SideRef): Promise<MediaSide
 
   let inspected: InspectedBlob | null;
   try {
-    inspected = await inspectBlob(handle.path, ref.side, rel);
+    inspected = await inspectBlob(handle.path, ref.side, rel, VERDICT_BUDGET);
   } catch (err) {
     // An over-cap file is real and worth reporting a size for; anything that
     // is not a regular blob simply has nothing to show.
@@ -299,14 +361,76 @@ async function describeSide(handle: RepoHandle, ref: SideRef): Promise<MediaSide
   };
 }
 
+/**
+ * Whether this request is already over, on either runtime.
+ *
+ * `res.destroyed` alone is not an answer: bun leaves it `undefined` on an
+ * aborted response. The request object is destroyed on both, so it is the one
+ * that gets asked.
+ */
+function requestIsOver(req: IncomingMessage, res: ServerResponse): boolean {
+  return res.writableEnded || res.destroyed === true || req.destroyed === true;
+}
+
+/**
+ * Take a slot for the whole request, or refuse now. A full queue is a 503,
+ * never a wait.
+ *
+ * The slot is held until the RESPONSE is finished, not until the read is
+ * done. `sendBytes` hands an up-to-8-MiB buffer to `res.end()`, and that
+ * buffer stays resident until the client has drained it, so a release at the
+ * end of the handler would bound reads while leaving memory unbounded: a slow
+ * reader could push request after request through the gate, each leaving a
+ * live buffer behind it.
+ *
+ * What the release is wired to is BOTH objects, because node and bun do not
+ * agree on which one reports the end. A request that we answer ends the
+ * response, and both runtimes emit `finish` on it. A request whose client
+ * walks away before we answer is the divergence: node destroys the response
+ * and emits `close` on it, while bun emits nothing on the response at all —
+ * the abort surfaces only on the request, as `close`. Listening to the
+ * response alone therefore leaks a slot per abort under bun, and four of those
+ * wedge both routes for the life of the daemon. So the guarantee is stated in
+ * terms of the pair: every path either ends the response or destroys the
+ * request, both runtimes emit an event for whichever happened, and the release
+ * is idempotent, so the first one to arrive is the one that counts.
+ *
+ * Returns false when the client is already gone. Then the slot goes straight
+ * back and the route stops rather than working for nobody.
+ */
+async function holdSlot(
+  gate: BlobSemaphore,
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<boolean> {
+  const slot = gate.acquire();
+  if (slot === null) {
+    throw new HttpError(503, 'Too many image requests in flight');
+  }
+  const release = await slot;
+  res.once('finish', release);
+  res.once('close', release);
+  req.once('close', release);
+  if (requestIsOver(req, res)) {
+    release();
+    return false;
+  }
+  return true;
+}
+
 export function registerBlobRoutes(router: Router, deps: RouteDeps, gate: BlobSemaphore): void {
   const { registry } = deps;
 
-  router.get('/repos/:id/media', async ({ params, query, res }) => {
+  router.get('/repos/:id/media', async ({ params, query, req, res }) => {
     const handle = requireRepo(registry, params.id);
     const staged = requireStagedParam(query);
     const rel = requireRepoRelPath(handle.path, requirePathParam(query));
     await requireRealRepoPath(handle, rel);
+
+    // The same gate as /blob, taken before the first spawn: describing a pair
+    // is two sides, so this is the more expensive of the two routes, not the
+    // cheaper one.
+    if (!(await holdSlot(gate, req, res))) return;
 
     const entry = await resolveFileEntry(handle.manager.workingTree, rel, staged);
     const sides = sidesFor(entry, staged);
@@ -330,22 +454,16 @@ export function registerBlobRoutes(router: Router, deps: RouteDeps, gate: BlobSe
     const rel = requireRepoRelPath(handle.path, requirePathParam(query));
     await requireRealRepoPath(handle, rel);
 
-    // 3. A slot BEFORE anything is spawned or opened. A full queue is a 503,
-    //    not a wait.
-    const slot = gate.acquire();
-    if (slot === null) {
-      throw new HttpError(503, 'Too many image requests in flight');
-    }
-    const release = await slot;
+    // 3. A slot BEFORE anything is spawned or opened, held until the last
+    //    byte is out.
+    if (!(await holdSlot(gate, req, res))) return;
 
-    // 4-7. Read and type the bytes, then give the slot and the handle back.
+    // 4-7. Read and type the bytes, then give the handle back.
     let inspected: InspectedBlob | null;
     try {
-      inspected = await inspectBlob(handle.path, side, rel);
+      inspected = await inspectBlob(handle.path, side, rel, WHOLE_BLOB_BUDGET);
     } catch (err) {
       throwBlobError(err);
-    } finally {
-      release();
     }
 
     if (inspected === null) {

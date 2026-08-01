@@ -149,7 +149,7 @@ watch(
   () => {
     ui.setActiveStackKey(null);
     collapsedFiles.clear();
-    failedMediaKeys.clear();
+    failedMediaVersions.clear();
   }
 );
 
@@ -188,8 +188,25 @@ const stackFiles = computed<StackFile[]>(() => {
  */
 const MEDIA_WINDOW = 5;
 
-/** Sections whose picture the browser gave up on: back to the plain note. */
-const failedMediaKeys = reactive(new Set<string>());
+/**
+ * Sections whose picture the browser gave up on: back to the plain note.
+ *
+ * Keyed by the section AND the blob versions it failed on, never by the
+ * section alone. Fix the image on disk and the state-change refetch lands
+ * a pair with fresh versions, which is a different token — so the card
+ * gets one more attempt, while the blob that actually is broken never
+ * retries in a loop (its token never changes).
+ */
+const failedMediaVersions = reactive(new Set<string>());
+
+/**
+ * What a failure is about: the section plus both sides' blob versions.
+ * Joined on NUL, which appears in neither a git path nor a version (an
+ * oid, or size-mtime for the worktree side), so tokens cannot collide.
+ */
+function mediaFailToken(key: string, pair: MediaPair): string {
+  return `${key}\u0000${pair.old?.version ?? ''}\u0000${pair.new?.version ?? ''}`;
+}
 
 /**
  * The binary sections worth asking about: expanded, and inside the
@@ -235,7 +252,7 @@ watch(
 const mediaKeys = computed(() => {
   const keys = new Set<string>();
   for (const [key, pair] of repo.mediaMeta) {
-    if (failedMediaKeys.has(key)) continue;
+    if (failedMediaVersions.has(mediaFailToken(key, pair))) continue;
     if (pair.old?.image || pair.new?.image) keys.add(key);
   }
   return keys;
@@ -252,9 +269,24 @@ function mediaPairFor(key: string): MediaPair {
   return repo.mediaMeta.get(key) ?? NO_MEDIA;
 }
 
-/** Neither side decoded: drop the card, the note tells the truth again. */
-function onMediaFail(key: string): void {
-  failedMediaKeys.add(key);
+/**
+ * The `fail` listener for ONE card — neither side decoded, so drop the
+ * card and let the note tell the truth again for THESE bytes.
+ *
+ * The pair is read HERE, while the card is being rendered, and the
+ * returned closure carries it: the failure must be recorded against the
+ * versions the <img> tags were actually built from. Reading the store
+ * inside the handler instead would read it at ERROR time — and a
+ * state-change refetch landing while the browser was still loading the
+ * old bytes would blacklist the fresh, possibly perfectly good, versions
+ * for the old ones' failure, leaving the section a note until yet another
+ * change. That is also why the template hands this to `v-on` as an
+ * object: a `@fail="…"` expression is evaluated when the event fires, not
+ * when the card is rendered.
+ */
+function mediaFailHandler(key: string): () => void {
+  const pair = mediaPairFor(key);
+  return () => failedMediaVersions.add(mediaFailToken(key, pair));
 }
 
 // --- Jump navigation ---
@@ -598,13 +630,17 @@ const rootStyle = computed(() => ({
       @toggle-collapse="toggleFileCollapsed"
     >
       <!-- The picture card for a binary section. Only reached for keys
-           mediaKeys vouched for, so the pair is always there. -->
+           mediaKeys vouched for, so the pair is always there.
+
+           The fail listener is built during THIS render (v-on with an
+           object, not `@fail="…"`) so it carries the pair this card was
+           rendered from. See mediaFailHandler. -->
       <template #media="{ file }">
         <ImageDiffView
           v-if="repo.repoId !== null"
           :pair="mediaPairFor(file.key)"
           :repo-id="repo.repoId"
-          @fail="onMediaFail(file.key)"
+          v-on="{ fail: mediaFailHandler(file.key) }"
         />
       </template>
     </DiffStack>

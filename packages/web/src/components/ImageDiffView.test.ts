@@ -238,7 +238,7 @@ describe('refusals and decode failures', () => {
     });
 
     expect(wrapper.find('[data-testid="image-old"] [data-testid="image-refused"]').text()).toBe(
-      'No preview (over the 8 MB preview cap)'
+      'No preview (over the preview size cap: 8 MB, or 2 MB for GIF)'
     );
     expect(wrapper.find('[data-testid="image-new"] img').exists()).toBe(true);
     // The refused side is still described: its byte size is the change.

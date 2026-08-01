@@ -29,6 +29,13 @@ const INNER = Buffer.from([0x01, 0x00, 0x02]);
 const WEIRD = Buffer.from([0x77, 0x00, 0x88]);
 
 /**
+ * Bigger than a pipe read, so reading it spans several chunks: a handle that
+ * serves a peek and then the rest has to resume where it stopped, not restart.
+ * Every byte value appears, so a decode would show up as a mismatch.
+ */
+const BIG = Buffer.from(Array.from({ length: 256 * 1024 }, (_, i) => (i * 7 + 13) % 256));
+
+/**
  * A committed filename that spells out a whole extra `ls-files --stage`
  * record. With `-z` the record separator is a NUL, so this is data — but only
  * if the parser really splits on NUL and never on newline.
@@ -64,6 +71,7 @@ beforeAll(() => {
   writeBytes(repoPath, 'ok.bin', V1);
   writeBytes(repoPath, 'clean.bin', CLEAN);
   writeBytes(repoPath, 'gone.bin', GONE);
+  writeBytes(repoPath, 'big.bin', BIG);
   writeBytes(repoPath, 'dir/inner.bin', INNER);
   writeBytes(repoPath, FORGED_NAME, WEIRD);
   const cleanOid = gitExec(repoPath, 'hash-object clean.bin').trim();
@@ -155,6 +163,23 @@ describe('openBlob — working tree', () => {
     await handle.close();
   });
 
+  it('reads the file once across a peek and a full read', async () => {
+    // The route peeks four bytes for GIF magic before it picks a cap. The
+    // handle keeps that peek, so the file is not pulled off disk twice.
+    const { result, bytesRead } = await withFdMeter(async () => {
+      const handle = await openBlob(repoPath, 'worktree', 'ok.bin', 4096);
+      if (handle === null) throw new Error('expected a handle');
+      const peek = Buffer.from(await handle.read(4));
+      const all = Buffer.from(await handle.read(4096));
+      await handle.close();
+      return { peek, all };
+    });
+
+    expect(result.peek).toEqual(V3.subarray(0, 4));
+    expect(result.all).toEqual(V3);
+    expect(bytesRead).toBe(V3.length);
+  });
+
   it('returns null for a missing path and for one deleted from the tree', async () => {
     expect(await openBlob(repoPath, 'worktree', 'nope.bin', 4096)).toBeNull();
     expect(await openBlob(repoPath, 'worktree', 'gone.bin', 4096)).toBeNull();
@@ -240,6 +265,21 @@ describe('openBlob — index and HEAD', () => {
     expect(await openBlob(unbornPath, 'head', 'staged.bin', 4096)).toBeNull();
     // Same repo, same path: the index side still has the bytes.
     expect((await readAll(unbornPath, 'index', 'staged.bin')).bytes).toEqual(STAGED);
+  });
+
+  it('propagates a real git failure instead of calling it an unborn HEAD', async () => {
+    // Only "HEAD names no commit" may read as an empty side. A directory that
+    // is not a repo at all is a failure, and swallowing it would surface as a
+    // 404 "no such blob" with the real reason gone.
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-not-a-repo-'));
+    try {
+      const err = await caught(() => openBlob(outside, 'head', 'staged.bin', 4096));
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(NotRegularBlobError);
+      expect(String((err as Error).message)).toContain('git');
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it('refuses an over-cap blob on both git sides', async () => {
@@ -342,18 +382,24 @@ describe('openBlob — record parsing', () => {
 });
 
 /**
- * Put a fake `git` first on PATH that records its argv and then execs the
- * real one. Nothing else can prove what actually reached the process — the
- * point of the exercise is that the caller's path is an operand, never an
- * option, and never a pathspec.
+ * Put a stand-in `git` first on PATH for the duration of `body`. The script
+ * factory gets the real git's path and the throwaway directory it lives in.
  */
-function setupGitProbe(): { dir: string; logPath: string } {
+async function withFakeGit(
+  script: (realGit: string, dir: string) => string,
+  body: () => Promise<void>
+): Promise<void> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-git-probe-'));
   const realGit = execSync('command -v git', { encoding: 'utf-8' }).trim();
-  const logPath = path.join(dir, 'argv.log');
-  const script = `#!/bin/sh\nprintf '%s\\0' '--call--' "$@" >> '${logPath}'\nexec '${realGit}' "$@"\n`;
-  fs.writeFileSync(path.join(dir, 'git'), script, { mode: 0o755 });
-  return { dir, logPath };
+  fs.writeFileSync(path.join(dir, 'git'), script(realGit, dir), { mode: 0o755 });
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath ?? ''}`;
+  try {
+    await body();
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function readCalls(logPath: string): string[][] {
@@ -368,15 +414,65 @@ function readCalls(logPath: string): string[][] {
   return calls;
 }
 
+/**
+ * Run `body` with a `git` that records its argv and then execs the real one.
+ * Nothing else can prove what actually reached the process — the point of the
+ * exercise is that the caller's path is an operand, never an option, and never
+ * a pathspec.
+ */
 async function withGitProbe(body: (calls: () => string[][]) => Promise<void>): Promise<void> {
-  const probe = setupGitProbe();
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${probe.dir}:${originalPath ?? ''}`;
+  let logPath = '';
+  await withFakeGit(
+    (realGit, dir) => {
+      logPath = path.join(dir, 'argv.log');
+      return `#!/bin/sh\nprintf '%s\\0' '--call--' "$@" >> '${logPath}'\nexec '${realGit}' "$@"\n`;
+    },
+    () => body(() => readCalls(logPath))
+  );
+}
+
+/**
+ * Run `body` with a `git` whose `cat-file blob` never stops writing; every
+ * other subcommand is the real one, so sizes and modes still come from the
+ * fixture repo. A read that waits for the object to end simply never returns
+ * here, which is what makes this a real test of the read budget rather than of
+ * the returned length.
+ */
+function withStreamingGit(body: () => Promise<void>): Promise<void> {
+  return withFakeGit(
+    (realGit) =>
+      `#!/bin/sh\nfor arg in "$@"; do\n  if [ "$arg" = "blob" ]; then exec cat /dev/zero; fi\ndone\nexec '${realGit}' "$@"\n`,
+    body
+  );
+}
+
+/**
+ * Count the bytes `body` pulls off disk, by wrapping every file handle it
+ * opens. The returned bytes alone cannot tell one bounded read from two.
+ */
+async function withFdMeter<T>(body: () => Promise<T>): Promise<{ result: T; bytesRead: number }> {
+  type OpenFn = typeof fs.promises.open;
+  const realOpen: OpenFn = fs.promises.open;
+  let bytesRead = 0;
+
+  const wrapped = (async (...args: Parameters<OpenFn>) => {
+    const handle = await realOpen(...args);
+    const realRead = handle.read.bind(handle) as typeof handle.read;
+    Object.defineProperty(handle, 'read', {
+      value: async (...readArgs: Parameters<typeof handle.read>) => {
+        const result = await realRead(...readArgs);
+        bytesRead += result.bytesRead;
+        return result;
+      },
+    });
+    return handle;
+  }) as OpenFn;
+
+  (fs.promises as { open: OpenFn }).open = wrapped;
   try {
-    await body(() => readCalls(probe.logPath));
+    return { result: await body(), bytesRead };
   } finally {
-    process.env.PATH = originalPath;
-    fs.rmSync(probe.dir, { recursive: true, force: true });
+    (fs.promises as { open: OpenFn }).open = realOpen;
   }
 }
 
@@ -455,6 +551,77 @@ describe('openBlob — git argv', () => {
       expect(await caught(() => openBlob(modesPath, 'head', 'link', 4096))).toBeInstanceOf(
         NotRegularBlobError
       );
+      const fetched = calls().filter((args) => args.includes('cat-file') && args.includes('blob'));
+      expect(fetched).toEqual([]);
+    });
+  });
+});
+
+describe('openBlob — read budget', () => {
+  it('stops a git-side read at n, whatever the object is', async () => {
+    // git here writes zeros forever, so only a read that stops at its own
+    // budget ever returns. The old code sized its buffer from the handle's
+    // cap, so a 5 MiB GIF was transferred in full before it could be refused.
+    await withStreamingGit(async () => {
+      const handle = await openBlob(repoPath, 'head', 'ok.bin', 4096);
+      if (handle === null) throw new Error('expected a handle');
+
+      // Zeros, not V1: proof the endless stand-in really served this read.
+      expect(Buffer.from(await handle.read(4))).toEqual(Buffer.alloc(4));
+      // n above the object size clamps to the size git reported.
+      expect(Buffer.from(await handle.read(4096))).toEqual(Buffer.alloc(V1.length));
+      expect(Buffer.from(await handle.read(0))).toEqual(Buffer.alloc(0));
+      await handle.close();
+    });
+  });
+
+  /** Only the calls that transfer an object; `cat-file -s` asks for a size. */
+  const fetches = (calls: string[][]): string[][] =>
+    calls.filter((args) => args.includes('cat-file') && args.includes('blob'));
+
+  it('fetches a git blob once across a peek and a full read', async () => {
+    // The git-side twin of the working tree's fd meter. The route peeks for
+    // GIF magic before it picks a cap, and that peek used to cost a whole
+    // second `cat-file` — on the one route whose semaphore exists because a
+    // viewport must not become a process table full of git.
+    for (const side of ['head', 'index'] as BlobSide[]) {
+      await withGitProbe(async (calls) => {
+        const handle = await openBlob(repoPath, side, 'clean.bin', 4096);
+        if (handle === null) throw new Error('expected a handle');
+        const peek = Buffer.from(await handle.read(4));
+        const all = Buffer.from(await handle.read(4096));
+        await handle.close();
+
+        expect(peek).toEqual(CLEAN.subarray(0, 4));
+        expect(all).toEqual(CLEAN);
+        expect(fetches(calls()).length).toBe(1);
+      });
+    }
+  });
+
+  it('resumes one fetch across a peek and a multi-chunk read', async () => {
+    // A blob larger than one pipe read: the second read has to pick the same
+    // child back up mid-object. A handle that restarts instead still returns
+    // the right bytes, so only the spawn count catches it.
+    await withGitProbe(async (calls) => {
+      const handle = await openBlob(repoPath, 'head', 'big.bin', BIG.length);
+      if (handle === null) throw new Error('expected a handle');
+      const peek = Buffer.from(await handle.read(16));
+      const all = Buffer.from(await handle.read(BIG.length));
+      await handle.close();
+
+      expect(peek).toEqual(BIG.subarray(0, 16));
+      expect(all).toEqual(BIG);
+      expect(fetches(calls()).length).toBe(1);
+    });
+  });
+
+  it('spawns nothing for a zero-length git read', async () => {
+    await withGitProbe(async (calls) => {
+      const handle = await openBlob(repoPath, 'head', 'ok.bin', 4096);
+      if (handle === null) throw new Error('expected a handle');
+      expect(Buffer.from(await handle.read(0))).toEqual(Buffer.alloc(0));
+      await handle.close();
       const fetched = calls().filter((args) => args.includes('cat-file') && args.includes('blob'));
       expect(fetched).toEqual([]);
     });

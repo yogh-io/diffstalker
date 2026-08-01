@@ -33,9 +33,22 @@
  *
  * The size of every side is known before a single byte is read, so an
  * over-cap file costs one metadata call and no transfer.
+ *
+ * **Reads are bounded by what was asked for.** `read(n)` transfers at most `n`
+ * bytes on every side: the working tree reads that many from the fd, and the
+ * git sides read that many off `cat-file`'s pipe and then pause it. A caller
+ * that peeks and then asks for only what the peek says it needs — the blob
+ * route reads 16 bytes, then just the window that decides that format —
+ * really does read less.
+ *
+ * **And a peek plus a read is one pass, on both sides.** The fd stays open and
+ * the `cat-file` child stays alive between reads, so a bigger second read
+ * continues where the first stopped instead of starting the file over. The
+ * price is that `close()` is not optional on either side: it releases the fd
+ * and kills a git that would otherwise sit paused on a pipe.
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
@@ -88,11 +101,18 @@ export interface BlobHandle {
   /** Cache key: the oid, or `${size}-${mtimeMs}` for the worktree side. */
   version: string;
   /**
-   * At most `n` bytes, always from the start. Reads the SAME fd (worktree) or
-   * the SAME oid (index/HEAD) that was checked at open, and never touches the
-   * path again — so what was sized and typed is what comes back.
+   * At most `n` bytes, always from the start, and never more than `n`
+   * transferred. Reads the SAME fd (worktree) or the SAME oid (index/HEAD)
+   * that was checked at open, and never touches the path again — so what was
+   * sized and typed is what comes back.
+   *
+   * The handle keeps the longest prefix it has already fetched, so calling
+   * `read` twice returns the same bytes twice and a small peek followed by a
+   * big read costs one pass over the bytes, not two. One read at a time, and
+   * none after `close()`.
    */
   read(n: number): Promise<Uint8Array>;
+  /** Release the fd and drop the buffered prefix. */
   close(): Promise<void>;
 }
 
@@ -188,21 +208,32 @@ function headerFieldsFor(records: Buffer[], relPath: string): string[] | null {
   return null;
 }
 
-/** The commit HEAD names, or null when HEAD is unborn. */
+/** Exit code of `rev-parse --verify --quiet` when its argument names no object. */
+const REV_PARSE_NO_SUCH_REV = 1;
+
+/**
+ * The commit HEAD names, or null when HEAD is unborn.
+ *
+ * `--quiet` is what makes the two cases tellable apart: with it, rev-parse
+ * exits 1 and says nothing when HEAD simply names no commit (a repo with no
+ * commit yet), while every real failure — not a repo, an unreadable object
+ * store, a bad config — still exits 128, and a timeout kills the process with
+ * no exit code at all. Only the first is "this side has no bytes"; the rest
+ * are propagated, because reporting a broken repo as an empty HEAD would turn
+ * it into a 404 and hide the actual problem.
+ */
 async function headCommit(repoPath: string): Promise<string | null> {
   let oid: string;
   try {
     const out = await runGit(
       repoPath,
-      ['rev-parse', '--verify', '--end-of-options', 'HEAD^{commit}'],
+      ['rev-parse', '--verify', '--quiet', '--end-of-options', 'HEAD^{commit}'],
       METADATA_MAX_BUFFER
     );
     oid = out.toString('utf8').trim();
-  } catch {
-    // A repo with no commit yet: rev-parse exits non-zero. That is "this side
-    // has no bytes", not a failure, so the caller gets null like any other
-    // missing path.
-    return null;
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code === REV_PARSE_NO_SUCH_REV) return null;
+    throw err;
   }
   return OID_PATTERN.test(oid) ? oid : null;
 }
@@ -253,27 +284,220 @@ async function blobSize(repoPath: string, oid: string, relPath: string): Promise
   return parseSize(out.toString('utf8').trim(), relPath);
 }
 
+/** The one empty read, so a zero-length read allocates nothing. */
+const NO_BYTES = Buffer.alloc(0);
+
 /**
- * Read from a fixed position every time, so repeated reads of one handle are
- * idempotent and a caller can never advance past what was sized. A regular
- * file may hand back a short read, hence the loop.
+ * Read `length` bytes from `position`. A regular file may hand back a short
+ * read, hence the loop; a read of nothing means the file ended early (it
+ * shrank under us), and then what is really there is returned rather than a
+ * tail padded with zeroes.
  */
-async function readFromFd(
+async function readAt(
   handle: fs.promises.FileHandle,
-  size: number,
-  n: number
-): Promise<Uint8Array> {
-  const want = Math.max(0, Math.min(n, size));
-  const buffer = Buffer.alloc(want);
+  position: number,
+  length: number
+): Promise<Buffer> {
+  const buffer = Buffer.alloc(length);
   let filled = 0;
-  while (filled < want) {
-    const { bytesRead } = await handle.read(buffer, filled, want - filled, filled);
-    // The file shrank under us. Return what is really there rather than
-    // padding the tail with zeroes.
+  while (filled < length) {
+    const { bytesRead } = await handle.read(buffer, filled, length - filled, position + filled);
     if (bytesRead === 0) break;
     filled += bytesRead;
   }
-  return buffer.subarray(0, filled);
+  return filled === length ? buffer : buffer.subarray(0, filled);
+}
+
+interface PrefixReader {
+  read(n: number): Promise<Uint8Array>;
+  release(): void;
+}
+
+/**
+ * Serve every read from the longest prefix fetched so far, and go back to the
+ * source only when a caller asks for more than that.
+ *
+ * Two properties fall out of it. A read never transfers more than the caller
+ * asked for, so the caller's cap really is the bound on the work — the route
+ * peeks a few bytes to see which signature it is holding, then asks for the
+ * window that decides that format, and /media stops there rather than pulling
+ * the other 8 MiB of a photo off disk to report its width. And a peek followed
+ * by a larger read costs one pass over the bytes instead of two, on both sides:
+ * every `extend` gets what is already held and is expected to fetch only the
+ * difference.
+ *
+ * `extend(want, have)` returns a prefix of at most `want` bytes starting with
+ * `have`; anything shorter than `want` means the source has no more to give,
+ * and there is no point asking again.
+ */
+function prefixReader(
+  size: number,
+  extend: (want: number, have: Buffer) => Promise<Buffer>
+): PrefixReader {
+  let have: Buffer = NO_BYTES;
+  let exhausted = false;
+  return {
+    async read(n: number): Promise<Uint8Array> {
+      const want = Math.max(0, Math.min(n, size));
+      if (want > have.length && !exhausted) {
+        const grown = await extend(want, have);
+        exhausted = grown.length < want;
+        have = grown;
+      }
+      return have.subarray(0, Math.min(want, have.length));
+    },
+    release(): void {
+      have = NO_BYTES;
+      exhausted = false;
+    },
+  };
+}
+
+interface BlobStream {
+  /** At most `want` bytes from the start, fetching only what is still missing. */
+  read(want: number): Promise<Buffer>;
+  /** Drop the buffered bytes and kill the child. Not optional. */
+  release(): void;
+}
+
+/**
+ * One `git cat-file blob`, read in as many bites as the caller takes.
+ *
+ * `execFile`'s maxBuffer cannot express a budget: it is a kill-and-fail
+ * threshold, so asking for four bytes of a 5 MiB blob with it would be an
+ * error rather than a short read, and sizing it for the whole object — which
+ * is what this used to do — transfers the whole object no matter how little
+ * the caller allowed. Spawning hands us the pipe itself: take what was asked
+ * for and pause it, so an 8 MiB photo costs a 64 KiB read when a 64 KiB header
+ * is all the caller will look at.
+ *
+ * The child then STAYS, paused, and a larger read resumes the same pipe where
+ * the last one stopped. Re-running `cat-file` instead would be correct — a
+ * blob is addressed by its content, so a refetch cannot return different bytes
+ * — but it doubles the process count on exactly the route whose semaphore
+ * exists because one viewport must not become a process table full of git.
+ * Peek-then-read is one child here, the same one pass the fd side gets.
+ *
+ * A paused pipe fills and then git blocks on its next write, which is the
+ * point: an unread blob costs one pipe buffer, not a resident copy. It also
+ * means `release()` must run — see the module comment.
+ *
+ * The pipe reads in chunks, so a 16-byte peek really takes one chunk, and the
+ * whole chunk is kept: those bytes are already paid for and the next read
+ * starts from them.
+ */
+function catFileStream(repoPath: string, oid: string): BlobStream {
+  let child: ReturnType<typeof spawn> | null = null;
+  const chunks: Buffer[] = [];
+  let total = 0;
+  let stdoutEnded = false;
+  let exit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let failure: Error | null = null;
+  let released = false;
+  let waiter: {
+    want: number;
+    resolve: (bytes: Buffer) => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
+
+  /** Nothing more will arrive: stdout is done AND the process is gone. */
+  const drained = (): boolean => stdoutEnded && exit !== null;
+
+  /** Collapse to one buffer so repeated reads do not re-concat the chunks. */
+  const collapse = (): Buffer => {
+    if (chunks.length !== 1) {
+      const joined = Buffer.concat(chunks, total);
+      chunks.length = 0;
+      chunks.push(joined);
+    }
+    return chunks[0];
+  };
+
+  function wake(): void {
+    if (waiter === null) return;
+    // A non-zero exit is only ours to report while a read is waiting on it; a
+    // signal means we did the killing, in release() or on the timeout.
+    if (failure === null && drained() && exit?.signal === null && exit.code !== 0) {
+      failure = new Error(`git cat-file blob failed for ${oid} (exit ${exit.code ?? 'null'})`);
+    }
+    if (failure === null && total < waiter.want && !drained()) return;
+
+    const settled = waiter;
+    waiter = null;
+    clearTimeout(settled.timer);
+    // Nobody is asking any more, so stop pulling the object into memory.
+    child?.stdout?.pause();
+    if (failure !== null) settled.reject(failure);
+    else settled.resolve(collapse().subarray(0, Math.min(settled.want, total)));
+  }
+
+  function fail(err: Error): void {
+    failure ??= err;
+    wake();
+  }
+
+  function start(): void {
+    const spawned = spawn('git', [...GIT_PREFIX, 'cat-file', 'blob', oid], {
+      cwd: repoPath,
+      env: gitEnv(),
+      // stderr goes nowhere: nothing here reads it, and a pipe nobody drains
+      // is a pipe git can block on forever.
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
+    });
+    child = spawned;
+    spawned.stdout?.on('data', (chunk: Buffer) => {
+      // A chunk already in flight when release() ran must not refill the
+      // buffer it just emptied.
+      if (released) return;
+      chunks.push(chunk);
+      total += chunk.length;
+      wake();
+    });
+    spawned.stdout?.on('end', () => {
+      stdoutEnded = true;
+      wake();
+    });
+    spawned.stdout?.on('error', fail);
+    spawned.on('error', fail);
+    spawned.on('close', (code, signal) => {
+      exit = { code, signal };
+      wake();
+    });
+  }
+
+  return {
+    read(want: number): Promise<Buffer> {
+      if (failure !== null) return Promise.reject(failure);
+      if (released) return Promise.reject(new Error(`read after close for ${oid}`));
+      if (want <= total || drained()) {
+        return Promise.resolve(collapse().subarray(0, Math.min(want, total)));
+      }
+      // One reader at a time: a second one would replace the first's waiter and
+      // leave that promise hanging for good.
+      if (waiter !== null) return Promise.reject(new Error(`concurrent read of ${oid}`));
+
+      return new Promise<Buffer>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          child?.kill('SIGKILL');
+          fail(new Error(`git cat-file blob timed out for ${oid}`));
+        }, GIT_TIMEOUT_MS);
+        waiter = { want, resolve, reject, timer };
+        // Resuming can emit synchronously, so the waiter is in place first.
+        if (child === null) start();
+        else child.stdout?.resume();
+      });
+    },
+    release(): void {
+      released = true;
+      if (waiter !== null) fail(new Error(`git cat-file blob closed while reading ${oid}`));
+      chunks.length = 0;
+      total = 0;
+      child?.kill('SIGKILL');
+      child = null;
+    },
+  };
 }
 
 /** ENOENT/ENOTDIR mean "no such file on this side", which is not an error. */
@@ -305,12 +529,22 @@ async function openWorktreeBlob(
     if (stats.size > maxBytes) throw new BlobTooLargeError(relPath, stats.size);
 
     const size = stats.size;
+    // Each extension reads only the part that is missing, from the position
+    // right after what we hold, so a peek plus a full read is one pass over
+    // the file.
+    const reader = prefixReader(size, async (want, have) => {
+      const tail = await readAt(handle, have.length, want - have.length);
+      return have.length === 0 ? tail : Buffer.concat([have, tail]);
+    });
     return {
       oid: null,
       size,
       version: `${size}-${stats.mtimeMs}`,
-      read: (n) => readFromFd(handle, size, n),
-      close: () => handle.close(),
+      read: (n) => reader.read(n),
+      close: () => {
+        reader.release();
+        return handle.close();
+      },
     };
   } catch (err) {
     // Do not leak the fd when the checks refuse the file. A failure to close
@@ -347,20 +581,19 @@ async function openGitBlob(
       : parseSize(entry.sizeText, relPath);
   if (size > maxBytes) throw new BlobTooLargeError(relPath, size);
 
-  // The bytes are fetched on the first read, not at open, so refusing an
-  // over-cap or wrong-mode blob costs no transfer at all. Once fetched they
-  // are kept, so a second read cannot resolve a different object.
-  let bytes: Buffer | null = null;
+  // Nothing is spawned at open, so refusing an over-cap or wrong-mode blob
+  // costs no transfer at all — and every read that follows takes only the
+  // bytes it asked for from the one child, never the handle's whole cap.
+  const stream = catFileStream(repoPath, oid);
+  const reader = prefixReader(size, (want) => stream.read(want));
   return {
     oid,
     size,
     version: oid,
-    async read(n: number): Promise<Uint8Array> {
-      bytes ??= await runGit(repoPath, ['cat-file', 'blob', oid], maxBytes + 4096);
-      return bytes.subarray(0, Math.max(0, Math.min(n, bytes.length)));
-    },
+    read: (n) => reader.read(n),
     close(): Promise<void> {
-      bytes = null;
+      reader.release();
+      stream.release();
       return Promise.resolve();
     },
   };
