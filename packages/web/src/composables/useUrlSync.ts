@@ -225,11 +225,14 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
    * entry the user is leaving — and Back would return them to a fileless
    * explorer. Skip it; the next write, with the new repo, is the truthful
    * one. Nothing else clears the file while the repo stays put (the
-   * explorer has no close-file action).
+   * explorer has no close-file action; a popped entry that closes one is
+   * excluded here, and needs no write anyway — the URL is already what it
+   * says).
    */
   function isRepoSwitchFlicker(next: WrittenState): boolean {
     return (
       written !== null &&
+      !applyingPop &&
       next.file === null &&
       written.file !== null &&
       next.repoRel === written.repoRel &&

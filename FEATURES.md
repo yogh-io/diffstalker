@@ -764,11 +764,11 @@ git operations.
   `/` as `:` so the view keyword keeps a fixed position. Any such link
   reloads into exactly that state (the daemon serves the SPA for any
   non-API path): the repo opens, the tree expands down to the file, the
-  file opens. Switching repo, view or compare base pushes a browser
-  history entry, so Back and Forward walk through what you looked at
-  instead of leaving the app; stepping through files in the Explorer only
-  rewrites the URL, so a tree walk (or follow mode tracking an editor)
-  cannot bury the entries worth going back to.
+  file opens. Landing on a new path pushes a browser history entry —
+  another repo, view, compare base or Explorer file — so Back and Forward
+  walk through what you looked at instead of leaving the app. Back into an
+  Explorer entry re-reveals its file. Follow mode's reveals count too: with
+  follow on, tracking an editor writes one entry per file it lands on.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.

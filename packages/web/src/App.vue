@@ -166,6 +166,11 @@ async function applyUrlRepo(repoRel: string, base: string | null): Promise<void>
  * POST would release and re-take the ref and remount the view for nothing.
  * The reveal waits a tick after an open so the explorer store's repo-switch
  * reset has flushed (same ordering useFollowMode needs).
+ *
+ * An explorer URL with NO file closes the open one. Leaving it would make
+ * Back stop at the first file the user opened: the entry says "no file", the
+ * app would still show one, and the truthful rewrite would put the file back
+ * into that entry — one step short of where Back was going.
  */
 async function applyUrlState(state: UrlState): Promise<void> {
   if (state.view) ui.setActiveView(state.view);
@@ -178,7 +183,8 @@ async function applyUrlState(state: UrlState): Promise<void> {
     await applyUrlRepo(state.repoRel, state.base);
     await nextTick();
   }
-  if (state.file !== null && state.file !== explorer.selectedPath) {
+  if (state.view === 'explorer' && state.file === null) explorer.clearSelection();
+  else if (state.file !== null && state.file !== explorer.selectedPath) {
     await explorer.revealFile(state.file);
   }
 }
