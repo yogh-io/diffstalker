@@ -1294,8 +1294,18 @@ defineExpose({
   /* The gutter, and the main separator now that cards are --surface against
      a --bg page. 0.75rem was barely wider than a row, so three stacked cards
      still scanned as one ruled region. Read as a band of page background,
-     not as spacing. chromeGap() measures this at runtime, so the height
-     model follows any change here with no code edit. */
+     not as spacing.
+
+     MUST STAY A CONSTANT until the invalidation is built. chromeGap() reads
+     this once and memoizes it in stackChrome, and stackChrome is cleared at
+     exactly one place — inside measureProbe, AFTER an epsilon bail that
+     compares font metrics only. Nothing here is viewport-dependent, so a
+     resize returns at that bail and never reaches the reset. Make this value
+     depend on the viewport and useStackScroll keeps rebuilding offsets from
+     the stale gap: error (N-1) x delta, compounding down the stack, showing
+     up as the scroll-spy naming the wrong file. Jumps still land (they read
+     live offsetTop), there is no warning, and assertBodyHeights checks bodies
+     only. */
   margin-top: 2rem;
 }
 
