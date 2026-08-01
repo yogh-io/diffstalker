@@ -35,6 +35,20 @@ const UI_PORT = 17337; // Vite dev server (what you open)
 const DAEMON_PORT = 17338; // dev daemon (API only; Vite proxies to it)
 const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
 const FOLLOW = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'diffstalker', 'target');
+/**
+ * The dev daemon's unix socket — deliberately NOT the XDG default, which
+ * belongs to the released daemon on :7337. $DIFFSTALKER_SOCKET is not
+ * consulted here: that variable selects which daemon a CLIENT attaches to,
+ * and honouring it would drag the dev daemon back onto whatever socket the
+ * user pointed their TUI at — reintroducing the collision it exists to avoid.
+ */
+const DEV_SOCKET =
+  process.env.DIFFSTALKER_DEV_SOCKET ??
+  join(
+    process.env.XDG_RUNTIME_DIR || join(homedir(), '.cache'),
+    'diffstalker',
+    'diffstalkerd-dev.sock'
+  );
 const repos = process.argv.slice(2).map((p) => resolve(p));
 
 const children: ReturnType<typeof spawn>[] = [];
@@ -75,10 +89,30 @@ for (const [name, port] of [
 // 1. dev daemon from source (API only — Vite serves the UI): watched +
 //    inspectable. No --web-root: the daemon logs one API-only line and
 //    serves the API; the SPA comes from Vite.
+//
+//    On its OWN socket, which is what makes the side-by-side promise above
+//    true. Without --socket the daemon falls back to the XDG default, the
+//    exact path the released :7337 daemon binds (systemd user unit, or a
+//    TUI-spawned one) — so it would exit with "diffstalkerd already running"
+//    the moment anything else is up. A dev socket also keeps `diffstalker`
+//    (the TUI) attaching to the RELEASED daemon by default, which is the
+//    right side to be on: point it here deliberately with
+//    `diffstalker --socket $DIFFSTALKER_DEV_SOCKET` when you want dev.
 console.log(`serve: dev daemon on ${DAEMON_URL}   (Bun inspector below)`);
+console.log(`serve: dev socket ${DEV_SOCKET}`);
 const daemon = spawn(
   'bun',
-  ['--inspect', '--watch', 'packages/daemon/src/index.ts', '--port', String(DAEMON_PORT), '--follow-file', FOLLOW],
+  [
+    '--inspect',
+    '--watch',
+    'packages/daemon/src/index.ts',
+    '--port',
+    String(DAEMON_PORT),
+    '--socket',
+    DEV_SOCKET,
+    '--follow-file',
+    FOLLOW,
+  ],
   { cwd: ROOT, stdio: 'inherit' }
 );
 children.push(daemon);
