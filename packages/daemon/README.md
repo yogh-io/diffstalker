@@ -30,6 +30,9 @@ Options:
 
 ```
 --socket PATH        Bind a unix socket at PATH
+--instance NAME      Bind <NAME>.sock in the runtime dir, so several daemons
+                     can run side by side (clients select it with the same
+                     name: diffstalker --instance NAME)
                      (default: $XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock)
 --no-socket          Do not bind a unix socket (requires --port)
 --port N             Also bind TCP port N (loopback only) for the web UI.

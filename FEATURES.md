@@ -735,6 +735,13 @@ git operations.
   Compare): jumps from a file's diff to the file itself in the Explorer —
   the tree expands down to it and its content opens, the same reveal the
   fuzzy finder and follow mode use.
+- Consistent panel separation across every split view: the index panel and the
+  payload beside it are separated by page background, not a rule. Each payload
+  is a card (a diff stack's files, Explorer's file contents, History's commit
+  diff), so all four tabs read the same way. The gutter between file cards
+  steps with the layout: wide on a desktop, collapsing to the inline gutter
+  when the panes stack, which gives back about one diff row per file boundary
+  on a phone.
 - **Explorer** — a VS Code-style lazy file tree with git-status decoration
   (dotfile / ignored / changed-only toggles) beside syntax-highlighted file
   content (highlight.js) with binary / truncated / too-large states.
@@ -900,6 +907,12 @@ git operations.
 
 - The web build ships inside the published `diffstalkerd` tarball (it is not a
   separately published package).
+- Several daemons can run side by side: `diffstalkerd --instance NAME` binds
+  `<NAME>.sock` in the runtime dir instead of the shared default, and clients
+  pick it with the same word (`diffstalker --instance NAME`, or
+  `$DIFFSTALKER_INSTANCE`). An explicit `--socket`/`$DIFFSTALKER_SOCKET` path
+  still wins, since a path is already unambiguous. This is how the dev server
+  (`bun run serve`) coexists with a released daemon on the default socket.
 - No authentication; the daemon binds loopback only (unix socket, or `--port`
   on `127.0.0.1` — there is no routable-bind option). On a port it runs an
   origin guard (Host allow-list + cross-site/CSRF rejection) and serves a

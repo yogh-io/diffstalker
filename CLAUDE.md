@@ -48,7 +48,7 @@ bun run metrics       # Code quality metrics report (scripts/collect-metrics.ts,
 
 ### Running
 
-`diffstalker` (the CLI) auto-spawns the daemon: on launch it looks for a live `diffstalkerd` on the socket (`--socket PATH`, then `$DIFFSTALKER_SOCKET`, then `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock`), attaches if one answers, and otherwise spawns one that outlives the TUI. The CLI never stops the daemon; on exit it just releases its repos (`DELETE /repos`, refcounted).
+`diffstalker` (the CLI) auto-spawns the daemon: on launch it looks for a live `diffstalkerd` on the socket (`--socket PATH`, then `$DIFFSTALKER_SOCKET`, then `--instance NAME` / `$DIFFSTALKER_INSTANCE` naming `<NAME>.sock`, then `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock`), attaches if one answers, and otherwise spawns one that outlives the TUI. The CLI never stops the daemon; on exit it just releases its repos (`DELETE /repos`, refcounted).
 
 To run the daemon standalone (for a non-TUI client, or to keep it warm):
 
@@ -58,7 +58,7 @@ node packages/daemon/dist/index.js          # after bun run build
 diffstalkerd --socket /path/to.sock         # explicit socket
 ```
 
-By default the daemon binds a unix socket at `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock` (dir `0700`, socket `0600`) and refuses to start if `XDG_RUNTIME_DIR` is unset; use `--socket PATH` or `--port N` to override. See `packages/daemon/README.md` for the full endpoint table and follow-mode notes.
+By default the daemon binds a unix socket at `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock` (dir `0700`, socket `0600`) and refuses to start if `XDG_RUNTIME_DIR` is unset; use `--socket PATH`, `--instance NAME` (binds `<NAME>.sock` so several daemons can coexist) or `--port N` to override. See `packages/daemon/README.md` for the full endpoint table and follow-mode notes.
 
 ## Releasing
 

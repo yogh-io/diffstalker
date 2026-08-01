@@ -245,6 +245,7 @@ Terminal UI config: `~/.config/diffstalker/config.json`
 ```
   -f, --follow [FILE]  Watch file for repo paths
   -s, --socket PATH    diffstalkerd socket to attach to or spawn on
+      --instance NAME  Attach to the daemon named NAME (spawns it if absent)
   -d, --debug          Log path changes to stderr
   -h, --help           Show help
 ```
@@ -253,6 +254,7 @@ Terminal UI config: `~/.config/diffstalker/config.json`
 ```
   --port N             Bind TCP port N (loopback only) and serve the web UI at GET /
   --socket PATH        Bind a unix socket instead of a port
+  --instance NAME      Bind <NAME>.sock, so several daemons can coexist
   --no-follow          Disable follow mode
   --follow-file PATH   Hook file to watch (default: ~/.cache/diffstalker/target)
 ```
