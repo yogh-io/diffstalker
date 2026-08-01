@@ -44,6 +44,7 @@ import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
 import { registerStackAutoJump } from '../composables/useAutoMode';
+import { useActiveRowScroll } from '../composables/useActiveRowScroll';
 import DiffStack, { HUGE_FILE_CHANGED_LINES, type StackFile } from '../components/DiffStack.vue';
 
 const repo = useRepoStore();
@@ -242,33 +243,16 @@ watch(
 // --- Keep the active row visible (spy-driven) ---
 
 const filesColEl = ref<HTMLElement | null>(null);
-/** Suppress list auto-scroll while the pointer is inside it. */
-const pointerInList = ref(false);
 
-/**
- * Nearest-edge scroll of the active row inside the files column. Manual
- * math on the column's scrollTop — never scrollIntoView, which would
- * also scroll every ancestor.
- */
-function scrollActiveRowIntoView(): void {
-  const scroller = filesColEl.value;
-  const list = listEl.value;
-  if (!scroller || !list) return;
-  const idx = activeIndex();
-  if (idx < 0) return;
-  const row = list.querySelectorAll<HTMLElement>('.file-row')[idx];
-  if (!row) return;
-  const outer = scroller.getBoundingClientRect();
-  const inner = row.getBoundingClientRect();
-  if (inner.top < outer.top) scroller.scrollTop += inner.top - outer.top;
-  else if (inner.bottom > outer.bottom) scroller.scrollTop += inner.bottom - outer.bottom;
-}
-
-watch(
+/** Keep the active row visible in the files column (see useActiveRowScroll). */
+const { onPointerEnter, onPointerLeave } = useActiveRowScroll(
+  filesColEl,
   () => ui.activeStackKey,
   () => {
-    if (pointerInList.value) return;
-    void nextTick(scrollActiveRowIntoView);
+    const list = listEl.value;
+    const idx = activeIndex();
+    if (!list || idx < 0) return null;
+    return list.querySelectorAll<HTMLElement>('.file-row')[idx] ?? null;
   }
 );
 
@@ -389,8 +373,8 @@ const rootStyle = computed(() => ({
       ref="filesColEl"
       class="files-col"
       aria-label="Changed files"
-      @pointerenter="pointerInList = true"
-      @pointerleave="pointerInList = false"
+      @pointerenter="onPointerEnter"
+      @pointerleave="onPointerLeave"
     >
       <p v-if="repo.shared.isLoading" class="panel-note">Loading status…</p>
       <p v-else-if="!status" class="panel-note">No status yet.</p>

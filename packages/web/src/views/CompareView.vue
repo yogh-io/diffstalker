@@ -35,6 +35,7 @@ import { TOP_MIN, TOP_MAX } from '../prefs';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
+import { useActiveRowScroll } from '../composables/useActiveRowScroll';
 import DiffStack, { type StackFile } from '../components/DiffStack.vue';
 
 const repo = useRepoStore();
@@ -219,8 +220,7 @@ function moveFileSelection(delta: number): void {
 // indicator is identical whether you click a row or scroll onto its diff
 // (mirrors ChangesView, which already does this). ---
 
-/** Suppress the band auto-scroll while the pointer is inside the list. */
-const pointerInList = ref(false);
+
 
 /**
  * DiffStack scroll-spy: the diffs scrolled onto a new file. Select it via
@@ -233,28 +233,15 @@ function onActiveFile(key: string): void {
   if (index !== -1) repo.selectCompareFile(index);
 }
 
-/**
- * Nearest-edge scroll of the selected row into the file band — manual
- * scrollTop math on the band, never scrollIntoView (which would scroll
- * every ancestor).
- */
-function scrollActiveRowIntoView(): void {
-  const scroller = filesEl.value;
-  const index = selectedFileIndex.value;
-  if (!scroller || index === null) return;
-  const row = scroller.querySelector<HTMLElement>(`.file-row[data-file-index="${index}"]`);
-  if (!row) return;
-  const outer = scroller.getBoundingClientRect();
-  const inner = row.getBoundingClientRect();
-  if (inner.top < outer.top) scroller.scrollTop += inner.top - outer.top;
-  else if (inner.bottom > outer.bottom) scroller.scrollTop += inner.bottom - outer.bottom;
-}
-
-watch(
+/** Keep the selected row visible in the file band (see useActiveRowScroll). */
+const { onPointerEnter, onPointerLeave } = useActiveRowScroll(
+  filesEl,
   () => selectedFileIndex.value,
   () => {
-    if (pointerInList.value) return;
-    void nextTick(scrollActiveRowIntoView);
+    const scroller = filesEl.value;
+    const index = selectedFileIndex.value;
+    if (!scroller || index === null) return null;
+    return scroller.querySelector<HTMLElement>(`.file-row[data-file-index="${index}"]`);
   }
 );
 
@@ -473,8 +460,8 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
           role="listbox"
           aria-label="Changed files"
           data-testid="compare-files"
-          @pointerenter="pointerInList = true"
-          @pointerleave="pointerInList = false"
+          @pointerenter="onPointerEnter"
+          @pointerleave="onPointerLeave"
         >
           <template v-for="row in renderRows" :key="`${row.type}:${row.fullPath}`">
             <!-- role=presentation: only file rows are listbox options.
