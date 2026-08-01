@@ -365,24 +365,8 @@ export const useRepoStore = defineStore('repo', () => {
 
   // --- Lifecycle ---
 
-  /**
-   * Open a repo — the SOLE place a repo ref is taken (POST /repos) — and
-   * subscribe to its SSE stream. Resets all per-repo state first. After a
-   * successful open, the previous repo's ref is released: net-zero on a
-   * switch (release old, hold new) AND on a re-open of the same repo (the
-   * POST bumped it to 2, the release brings it back to 1). A superseded
-   * open (a newer open() started while this one's POST was in flight)
-   * releases the ref it just acquired instead — no refcount leaks under
-   * churn. Returns the opened ref, or null when the open failed or was
-   * superseded. When the daemon refuses the path, the store lands in
-   * not-a-repo mode: repoId stays null, the reason sits in shared.error,
-   * and every operation below no-ops. A connection error routes into the
-   * reconnect loop instead.
-   */
-  async function open(path: string): Promise<RepoRef | null> {
-    const gen = ++generation;
-    // Adopt a directly-assigned repoId (tests) into the held tracking.
-    heldRepoId ??= repoId.value;
+  /** Drop everything that belongs to the repo being left behind. */
+  function resetForNewRepo(): void {
     subscription?.close();
     subscription = null;
     clearTimers();
@@ -401,8 +385,6 @@ export const useRepoStore = defineStore('repo', () => {
     appliedSeqByKey.clear();
     pendingChangedFiles.clear();
 
-    repoId.value = null;
-    repoPath.value = path;
     shared.value = initialShared();
     workingDiffs.value = { byKey: new Map(), seq: 0 };
     selection.value = initialSelection();
@@ -414,6 +396,35 @@ export const useRepoStore = defineStore('repo', () => {
     journalRestarted.value = false;
     compare.value = initialCompare();
     selectedCompareBase.value = null;
+  }
+
+  /**
+   * Open a repo — the SOLE place a repo ref is taken (POST /repos) — and
+   * subscribe to its SSE stream. After a successful open, the previous
+   * repo's ref is released: net-zero on a switch (release old, hold new)
+   * AND on a re-open of the same repo (the POST bumped it to 2, the
+   * release brings it back to 1). A superseded open (a newer open()
+   * started while this one's POST was in flight) releases the ref it just
+   * acquired instead — no refcount leaks under churn. Returns the opened
+   * ref, or null when the open failed or was superseded.
+   *
+   * NOTHING is torn down until the POST answers. A refusal (the path is
+   * gone, or is not a repo) then costs nothing: the repo on screen keeps
+   * its id, its path, its state and its live stream, and the reason lands
+   * in shared.error. Wiping first — as this did — left repoId null while
+   * the rest of the app still named the old repo, so its view rendered
+   * over empty stores and every URL/id-derived thing disagreed about
+   * which repo was open.
+   *
+   * A connection error is different in kind: the daemon is unreachable,
+   * not the repo bad, so the store commits to the requested path (repoId
+   * null, repoPath = path) and the reconnect loop retries THAT — the repo
+   * the user asked for, not the one they were leaving.
+   */
+  async function open(path: string): Promise<RepoRef | null> {
+    const gen = ++generation;
+    // Adopt a directly-assigned repoId (tests) into the held tracking.
+    heldRepoId ??= repoId.value;
 
     try {
       const ref = await client.openRepo(path);
@@ -428,6 +439,7 @@ export const useRepoStore = defineStore('repo', () => {
         // re-open) must not leak a daemon-side refcount.
         client.closeRepo(heldRepoId).catch(() => {});
       }
+      resetForNewRepo();
       heldRepoId = ref.id;
       repoId.value = ref.id;
       repoPath.value = ref.path;
@@ -436,11 +448,16 @@ export const useRepoStore = defineStore('repo', () => {
     } catch (err) {
       if (gen !== generation) return null;
       if (isConnectionError(err)) {
-        // Daemon unreachable mid-open: one calm line + background retry,
-        // not a raw transport error with no recovery.
+        // Daemon unreachable mid-open: commit to the requested path so
+        // recovery retries it, then one calm line + background retry.
+        resetForNewRepo();
+        repoId.value = null;
+        repoPath.value = path;
         handleConnectionLoss();
         return null;
       }
+      // Refused: nothing moved. The previous repo is still open, still
+      // streaming, still on screen — only the reason is new.
       shared.value = { ...shared.value, error: errorMessage(err), isLoading: false };
       return null;
     }
@@ -1026,7 +1043,22 @@ export const useRepoStore = defineStore('repo', () => {
     try {
       const commits = await client.history(id, count);
       if (gen !== generation) return;
-      history.value = { commits, selectedCommit: null, commitDiff: null, isLoading: false };
+      // Re-anchor the selection by hash instead of dropping it. A reload
+      // runs on EVERY state-change (a file save is enough), and a dropped
+      // selection is a real loss now that it is addressable: the URL would
+      // lose its commit, and a Back to that entry would land on the list.
+      // A commit that is gone (rebased away) selects nothing, as before.
+      const previous = history.value.selectedCommit;
+      const reanchored =
+        previous === null ? null : (commits.find((c) => c.hash === previous.hash) ?? null);
+      history.value = {
+        commits,
+        selectedCommit: reanchored,
+        // Same commit, same diff — refetching it would blank the pane for
+        // a round trip on every save.
+        commitDiff: reanchored === null ? null : history.value.commitDiff,
+        isLoading: false,
+      };
     } catch (err) {
       if (gen !== generation) return;
       history.value = { ...history.value, isLoading: false };
@@ -1048,6 +1080,28 @@ export const useRepoStore = defineStore('repo', () => {
       // Transient (e.g. mid-rebase): keep the previous commits visible.
     } finally {
       historyPullInFlight = false;
+    }
+  }
+
+  /**
+   * Resolve ONE commit by hash, for a link that names a commit the loaded
+   * log does not contain (older than the page, or on a cold load before
+   * anything was pulled). Null when it does not resolve — rebased away, or
+   * the daemon is unreachable. Deliberately not "load a bigger page until
+   * it appears": loadHistory re-pulls the WHOLE log at the new count and
+   * clears the selection each time, so paging to find one commit is
+   * quadratic re-pulls.
+   */
+  async function resolveCommit(hash: string): Promise<CommitInfo | null> {
+    const id = repoId.value;
+    if (id === null) return null;
+    const gen = generation;
+    try {
+      const commit = await client.getCommit(id, hash);
+      return gen === generation ? commit : null;
+    } catch (err) {
+      if (isConnectionError(err)) handleConnectionLoss();
+      return null;
     }
   }
 
@@ -1515,6 +1569,7 @@ export const useRepoStore = defineStore('repo', () => {
     diffModelFor,
     // history
     loadHistory,
+    resolveCommit,
     selectHistoryCommit,
     // journal
     loadJournal,

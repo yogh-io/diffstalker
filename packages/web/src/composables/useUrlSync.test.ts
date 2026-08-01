@@ -1,7 +1,8 @@
 /**
- * useUrlSync tests: parse the clean path (repo path segments + view + an
- * optional `:`-encoded compare base), and write repo/view/base back to the
- * path — home-relative — as store state changes.
+ * useUrlSync tests: the view-first grammar (parse + write, both ways for
+ * the awkward characters), the settled-repo gate, and the entry policy —
+ * a gesture pushes once, ambient movement replaces, one hijack entry, and
+ * a restore writes nothing of its own.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -9,7 +10,9 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { defineComponent } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import {
-  parseUrlPath,
+  beginUserNav,
+  parseUrl,
+  resetUserNav,
   useUrlSync,
   type UrlState,
   type UrlSyncOptions,
@@ -23,16 +26,20 @@ import { makeFakeFetch } from '../testing/fakes';
 
 const HOME = '/home/u';
 
-function setPath(pathname: string): void {
-  window.history.replaceState(null, '', pathname);
+function setUrl(url: string): void {
+  window.history.replaceState(null, '', url);
+}
+
+function here(): string {
+  return window.location.pathname + window.location.search;
 }
 
 beforeEach(() => {
   localStorage.clear();
   setActivePinia(createPinia());
+  resetUserNav();
   syncOptions = {};
-  setPath('/');
-  // /health carries the daemon home; everything else 404s.
+  setUrl('/');
   vi.stubGlobal(
     'fetch',
     makeFakeFetch((call) =>
@@ -45,18 +52,13 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  // The history spies below live on the shared window.history — without
-  // this, spying again in the next test returns the SAME mock with the
-  // previous test's calls still on it.
+  // The history spies live on the shared window.history — without this,
+  // spying again in the next test returns the SAME mock, calls and all.
   vi.restoreAllMocks();
-  setPath('/');
+  setUrl('/');
 });
 
-/**
- * ONE harness for every mount below: `useUrlSync`'s options are handed in
- * through this slot rather than by defining a component per test (three
- * defineComponent calls in one file trip vue/one-component-per-file).
- */
+/** ONE harness for every mount: options ride in through this slot. */
 let syncOptions: UrlSyncOptions = {};
 
 const Harness = defineComponent({
@@ -80,300 +82,360 @@ function commit(hash: string): CommitInfo {
 
 /** Every UrlState field, so a test only spells out what it is about. */
 function state(part: Partial<UrlState>): UrlState {
-  return { repoRel: null, view: null, base: null, file: null, commit: null, ...part };
+  return { repo: null, view: null, at: null, base: null, ...part };
 }
 
-describe('parseUrlPath', () => {
-  test('repo path + view', () => {
-    expect(parseUrlPath('/w/calculator/fix-a/journal')).toEqual(
-      state({ repoRel: 'w/calculator/fix-a', view: 'journal' })
+describe('parseUrl', () => {
+  test('view first, then a home-relative repo', () => {
+    expect(parseUrl('/history/~/w/calculator/fix-a')).toEqual(
+      state({ repo: { homeRelative: true, path: 'w/calculator/fix-a' }, view: 'history' })
     );
   });
 
-  test('compare with a :-encoded base decodes to a slashed ref', () => {
-    expect(parseUrlPath('/w/calculator/fix-a/compare/upstream:main')).toEqual(
-      state({ repoRel: 'w/calculator/fix-a', view: 'compare', base: 'upstream/main' })
+  test('a repo outside $HOME keeps its absolute path', () => {
+    expect(parseUrl('/changes/srv/git/thing')).toEqual(
+      state({ repo: { homeRelative: false, path: 'srv/git/thing' }, view: 'changes' })
     );
   });
 
-  test('compare with no base', () => {
-    expect(parseUrlPath('/w/diffstalker/compare')).toEqual(
-      state({ repoRel: 'w/diffstalker', view: 'compare' })
+  test('a directory literally named ~ is not the home sentinel', () => {
+    // The sentinel test runs on the RAW segment, so %7E stays a directory.
+    expect(parseUrl('/changes/%7E/odd')).toEqual(
+      state({ repo: { homeRelative: false, path: '~/odd' }, view: 'changes' })
     );
   });
 
-  test('a base equal to a view keyword is still read as the base (compare checked first)', () => {
-    expect(parseUrlPath('/w/x/compare/history')).toEqual(
-      state({ repoRel: 'w/x', view: 'compare', base: 'history' })
+  test('anchors ride in the query', () => {
+    expect(parseUrl('/explorer/~/w/x', '?at=packages/web/src/App.vue')).toEqual(
+      state({
+        repo: { homeRelative: true, path: 'w/x' },
+        view: 'explorer',
+        at: 'packages/web/src/App.vue',
+      })
     );
   });
 
-  test('a worktree segment named like a (non-compare) view is not mistaken for the view', () => {
-    // repo ends in a dir called "history"; the appended view is "changes".
-    expect(parseUrlPath('/w/x/history/changes')).toEqual(
-      state({ repoRel: 'w/x/history', view: 'changes' })
+  test('compare carries base and file together', () => {
+    expect(parseUrl('/compare/~/w/x', '?base=upstream/main&at=src/a.ts')).toEqual(
+      state({
+        repo: { homeRelative: true, path: 'w/x' },
+        view: 'compare',
+        base: 'upstream/main',
+        at: 'src/a.ts',
+      })
     );
   });
 
-  test('empty path -> nothing', () => {
-    expect(parseUrlPath('/')).toEqual(state({}));
+  test('a + in a file name survives (URLSearchParams would eat it)', () => {
+    expect(parseUrl('/explorer/~/w/x', '?at=src/a+b.ts').at).toBe('src/a+b.ts');
   });
 
-  test('explorer carries the open file as a :-encoded rider', () => {
-    expect(parseUrlPath('/w/x/explorer/packages:web:src:App.vue')).toEqual(
-      state({ repoRel: 'w/x', view: 'explorer', file: 'packages/web/src/App.vue' })
+  test('a repo directory named like a view is just a directory', () => {
+    expect(parseUrl('/changes/~/w/history')).toEqual(
+      state({ repo: { homeRelative: true, path: 'w/history' }, view: 'changes' })
     );
   });
 
-  test('explorer with no file open', () => {
-    expect(parseUrlPath('/w/x/explorer')).toEqual(state({ repoRel: 'w/x', view: 'explorer' }));
+  test('nothing, junk, and a link from the old grammar all name no place', () => {
+    expect(parseUrl('/')).toEqual(state({}));
+    expect(parseUrl('/foo/bar')).toEqual(state({}));
+    expect(parseUrl('/w/diffstalker/explorer/packages:web')).toEqual(state({}));
   });
 
-  test('a file named like a view keyword is still read as the file', () => {
-    expect(parseUrlPath('/w/x/explorer/changes')).toEqual(
-      state({ repoRel: 'w/x', view: 'explorer', file: 'changes' })
-    );
-  });
-
-  test('history carries the selected commit', () => {
-    expect(parseUrlPath('/w/x/history/4d1c44a')).toEqual(
-      state({ repoRel: 'w/x', view: 'history', commit: '4d1c44a' })
-    );
-  });
-
-  test('history with no commit selected', () => {
-    expect(parseUrlPath('/w/x/history')).toEqual(state({ repoRel: 'w/x', view: 'history' }));
-  });
-
-  test('a non-hex segment after a repo dir called history is not read as a commit', () => {
-    // The commit rider must look like a hash, so this stays repo + view.
-    expect(parseUrlPath('/w/x/history/explorer')).toEqual(
-      state({ repoRel: 'w/x/history', view: 'explorer' })
+  test('a malformed escape does not throw — the address bar is untrusted', () => {
+    expect(parseUrl('/changes/~/w/%zz')).toEqual(
+      state({ repo: { homeRelative: true, path: 'w/%zz' }, view: 'changes' })
     );
   });
 });
 
-describe('writes a clean, home-relative path', () => {
-  test('home-relative repo path + view + :-encoded base', async () => {
-    const daemon = useDaemonStore();
-    const ui = useUiStore();
-    const repo = useRepoStore();
-    daemon.repos = [{ id: 'r1', path: `${HOME}/w/calculator/fix-a`, branch: 'fix-a' }];
-    daemon.activeRepoId = 'r1';
-
-    mount(Harness);
-    await flushPromises(); // home loads from /health
-    ui.setActiveView('compare');
-    repo.selectedCompareBase = 'upstream/main';
-    await flushPromises();
-
-    expect(window.location.pathname).toBe(
-      '/w/calculator/fix-a/compare/upstream:main'
-    );
-  });
-
-  test('no base segment for a non-compare view', async () => {
-    const daemon = useDaemonStore();
-    const ui = useUiStore();
-    daemon.repos = [{ id: 'r1', path: `${HOME}/w/diffstalker`, branch: 'main' }];
-    daemon.activeRepoId = 'r1';
-
-    mount(Harness);
-    await flushPromises();
-    ui.setActiveView('history');
-    await flushPromises();
-
-    expect(window.location.pathname).toBe('/w/diffstalker/history');
-  });
-
-  test('the history view carries the selected commit as its short hash', async () => {
+describe('writing the path', () => {
+  function activeRepo(path = `${HOME}/w/diffstalker`): void {
     const daemon = useDaemonStore();
     const repo = useRepoStore();
-    const ui = useUiStore();
-    daemon.repos = [{ id: 'r1', path: `${HOME}/w/diffstalker`, branch: 'main' }];
+    daemon.repos = [{ id: 'r1', path, branch: 'main' }];
     daemon.activeRepoId = 'r1';
+    repo.repoId = 'r1';
+    repo.repoPath = path;
+  }
 
+  test('no repo open is the root, not a view keyword standing alone', async () => {
     mount(Harness);
     await flushPromises();
-    ui.setActiveView('history');
-    repo.history = { ...repo.history, selectedCommit: commit('4d1c44a8014eae3032520f702a49e8a63cbac1b3') };
-    await flushPromises();
-
-    expect(window.location.pathname).toBe('/w/diffstalker/history/4d1c44a');
+    expect(here()).toBe('/');
   });
 
-  test('the explorer view carries its open file', async () => {
-    const daemon = useDaemonStore();
+  test('view first, repo home-relative', async () => {
+    activeRepo();
+    mount(Harness);
+    await flushPromises();
+    expect(here()).toBe('/changes/~/w/diffstalker');
+  });
+
+  test('a repo outside $HOME writes an absolute path', async () => {
+    activeRepo('/srv/git/thing');
+    mount(Harness);
+    await flushPromises();
+    expect(here()).toBe('/changes/srv/git/thing');
+  });
+
+  test('explorer carries its open file', async () => {
+    activeRepo();
     const explorer = useExplorerStore();
-    const ui = useUiStore();
-    daemon.repos = [{ id: 'r1', path: `${HOME}/w/diffstalker`, branch: 'main' }];
-    daemon.activeRepoId = 'r1';
-
     mount(Harness);
     await flushPromises();
-    ui.setActiveView('explorer');
+    useUiStore().setActiveView('explorer');
     explorer.selectedPath = 'packages/web/src/App.vue';
     await flushPromises();
+    expect(here()).toBe('/explorer/~/w/diffstalker?at=packages/web/src/App.vue');
+  });
 
-    expect(window.location.pathname).toBe(
-      '/w/diffstalker/explorer/packages:web:src:App.vue'
-    );
+  test('a file name with : and # and a space round-trips', async () => {
+    activeRepo();
+    const explorer = useExplorerStore();
+    mount(Harness);
+    await flushPromises();
+    useUiStore().setActiveView('explorer');
+    explorer.selectedPath = 'src/a:b #1.ts';
+    await flushPromises();
+    expect(here()).toBe('/explorer/~/w/diffstalker?at=src/a:b%20%231.ts');
+    expect(parseUrl(window.location.pathname, window.location.search).at).toBe('src/a:b #1.ts');
+  });
+
+  test('changes carries the stack key, side included', async () => {
+    activeRepo();
+    const ui = useUiStore();
+    mount(Harness);
+    await flushPromises();
+    // A row click is a gesture; an ambient anchor move would be deferred
+    // by the throttle (see the entry tests below).
+    beginUserNav({ view: 'changes' });
+    ui.setActiveStackKey('u:packages/web/src/App.vue');
+    await flushPromises();
+    expect(here()).toBe('/changes/~/w/diffstalker?at=u:packages/web/src/App.vue');
+  });
+
+  test('history carries the selected commit as its short hash', async () => {
+    activeRepo();
+    const repo = useRepoStore();
+    mount(Harness);
+    await flushPromises();
+    useUiStore().setActiveView('history');
+    repo.history = { ...repo.history, selectedCommit: commit('4d1c44a8014eae3032520f702a49') };
+    await flushPromises();
+    expect(here()).toBe('/history/~/w/diffstalker?at=4d1c44a');
+  });
+
+  test('journal carries nothing — its seqs are not stable identities', async () => {
+    activeRepo();
+    const ui = useUiStore();
+    mount(Harness);
+    await flushPromises();
+    ui.setActiveStackKey('u:a.ts');
+    ui.setActiveView('journal');
+    await flushPromises();
+    expect(here()).toBe('/journal/~/w/diffstalker');
   });
 });
 
-describe('browser history', () => {
-  /** Mount with a repo already active and the first (replacing) write done. */
-  async function mountWithRepo(): Promise<ReturnType<typeof useDaemonStore>> {
+describe('the settled-repo gate', () => {
+  test('nothing is written while repo and daemon disagree about the repo', async () => {
     const daemon = useDaemonStore();
+    const repo = useRepoStore();
+    daemon.repos = [{ id: 'r1', path: `${HOME}/w/one`, branch: 'main' }];
+    daemon.activeRepoId = 'r1';
+    repo.repoId = 'r1';
+    repo.repoPath = `${HOME}/w/one`;
+    mount(Harness);
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+    const replace = vi.spyOn(window.history, 'replaceState');
+
+    // Mid-switch: the store has let go of the old repo, the daemon has not
+    // yet been told about the new one. Every reset in between is unwritable.
+    repo.repoId = null;
+    repo.repoPath = `${HOME}/w/two`;
+    useUiStore().setActiveView('history');
+    await flushPromises();
+    expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+    expect(here()).toBe('/changes/~/w/one');
+
+    // The gate reopens: ONE write for the whole switch.
+    daemon.repos = [{ id: 'r2', path: `${HOME}/w/two`, branch: 'main' }];
+    daemon.activeRepoId = 'r2';
+    repo.repoId = 'r2';
+    await flushPromises();
+    expect(here()).toBe('/history/~/w/two');
+  });
+});
+
+describe('history entries', () => {
+  function mountActive(): void {
+    const daemon = useDaemonStore();
+    const repo = useRepoStore();
     daemon.repos = [
       { id: 'r1', path: `${HOME}/w/one`, branch: 'main' },
       { id: 'r2', path: `${HOME}/w/two`, branch: 'main' },
     ];
     daemon.activeRepoId = 'r1';
+    repo.repoId = 'r1';
+    repo.repoPath = `${HOME}/w/one`;
     mount(Harness);
-    await flushPromises();
-    return daemon;
   }
 
-  test('switching view pushes an entry', async () => {
-    await mountWithRepo();
-    const push = vi.spyOn(window.history, 'pushState');
-
-    useUiStore().setActiveView('history');
+  test('a declared gesture pushes exactly one entry, however many writes it takes', async () => {
+    mountActive();
     await flushPromises();
-
-    expect(push).toHaveBeenCalledTimes(1);
-    expect(window.location.pathname).toBe('/w/one/history');
-  });
-
-  test('switching repo pushes an entry', async () => {
-    const daemon = await mountWithRepo();
     const push = vi.spyOn(window.history, 'pushState');
-
-    daemon.activeRepoId = 'r2';
-    await flushPromises();
-
-    expect(push).toHaveBeenCalledTimes(1);
-    expect(window.location.pathname).toBe('/w/two/changes');
-  });
-
-  test('the write that first names a repo replaces — it completes the entry URL', async () => {
-    const daemon = useDaemonStore();
-    daemon.repos = [{ id: 'r1', path: `${HOME}/w/one`, branch: 'main' }];
-    mount(Harness);
-    await flushPromises(); // first write: no repo yet -> /changes
-    const push = vi.spyOn(window.history, 'pushState');
-
-    daemon.activeRepoId = 'r1'; // auto-activation landing
-    await flushPromises();
-
-    expect(push).not.toHaveBeenCalled();
-    expect(window.location.pathname).toBe('/w/one/changes');
-  });
-
-  test('a repo switch keeps the file on the entry it leaves', async () => {
-    const daemon = await mountWithRepo();
     const explorer = useExplorerStore();
+
+    // "Open this file in the explorer": a view change AND a reveal.
+    beginUserNav({ view: 'explorer' });
     useUiStore().setActiveView('explorer');
+    await flushPromises();
     explorer.selectedPath = 'src/a.ts';
     await flushPromises();
 
-    // What a switch looks like from here: the explorer store resets on the
-    // repo id (file first), the new repo lands after.
-    explorer.selectedPath = null;
-    await flushPromises();
-    expect(window.location.pathname).toBe('/w/one/explorer/src:a.ts');
-
-    daemon.activeRepoId = 'r2';
-    await flushPromises();
-    expect(window.location.pathname).toBe('/w/two/explorer');
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(here()).toBe('/explorer/~/w/one?at=src/a.ts');
   });
 
-  test('picking commits pushes an entry each', async () => {
-    await mountWithRepo();
-    const repo = useRepoStore();
-    useUiStore().setActiveView('history');
+  test('an undeclared move replaces — ambient actors never mint entries', async () => {
+    mountActive();
     await flushPromises();
     const push = vi.spyOn(window.history, 'pushState');
 
-    repo.history = { ...repo.history, selectedCommit: commit('aaaaaaa111') };
-    await flushPromises();
-    repo.history = { ...repo.history, selectedCommit: commit('bbbbbbb222') };
-    await flushPromises();
-
-    expect(push).toHaveBeenCalledTimes(2);
-    expect(window.location.pathname).toBe('/w/one/history/bbbbbbb');
-  });
-
-  test('a history reload dropping the selection writes nothing — it is re-anchored', async () => {
-    await mountWithRepo();
-    const repo = useRepoStore();
-    useUiStore().setActiveView('history');
-    repo.history = { ...repo.history, selectedCommit: commit('aaaaaaa111') };
-    await flushPromises();
-    const push = vi.spyOn(window.history, 'pushState');
-
-    // What every state-change does: reload clears the selection, then the
-    // view re-anchors it by hash.
-    repo.history = { ...repo.history, selectedCommit: null };
-    await flushPromises();
-    expect(window.location.pathname).toBe('/w/one/history/aaaaaaa');
-
-    repo.history = { ...repo.history, selectedCommit: commit('aaaaaaa111') };
+    // Follow mode's shape of change, with no gesture behind it.
+    useUiStore().setActiveView('explorer');
     await flushPromises();
 
     expect(push).not.toHaveBeenCalled();
-    expect(window.location.pathname).toBe('/w/one/history/aaaaaaa');
+    expect(here()).toBe('/explorer/~/w/one');
   });
 
-  test('opening explorer files pushes an entry each', async () => {
-    await mountWithRepo();
-    const explorer = useExplorerStore();
-    useUiStore().setActiveView('explorer');
+  test('an ambient yank away from a chosen place is undoable exactly once', async () => {
+    mountActive();
+    await flushPromises();
+    const ui = useUiStore();
+
+    beginUserNav({ view: 'history' });
+    ui.setActiveView('history');
     await flushPromises();
     const push = vi.spyOn(window.history, 'pushState');
 
+    // Follow mode drags the user into the explorer: one entry, so Back
+    // returns to the view they picked...
+    ui.setActiveView('explorer');
+    await flushPromises();
+    expect(push).toHaveBeenCalledTimes(1);
+
+    // ...and every ambient move after it is free.
+    const explorer = useExplorerStore();
     explorer.selectedPath = 'src/a.ts';
     await flushPromises();
     explorer.selectedPath = 'src/b.ts';
     await flushPromises();
+    expect(push).toHaveBeenCalledTimes(1);
+  });
 
-    expect(push).toHaveBeenCalledTimes(2);
-    expect(window.location.pathname).toBe('/w/one/explorer/src:b.ts');
+  test('a repo switch is one entry, minted when the gate reopens', async () => {
+    mountActive();
+    await flushPromises();
+    const daemon = useDaemonStore();
+    const repo = useRepoStore();
+    const push = vi.spyOn(window.history, 'pushState');
+
+    beginUserNav({ repo: `${HOME}/w/two` });
+    repo.repoId = null;
+    repo.repoPath = `${HOME}/w/two`;
+    await flushPromises();
+    repo.repoId = 'r2';
+    daemon.activeRepoId = 'r2';
+    await flushPromises();
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(here()).toBe('/changes/~/w/two');
   });
 });
 
-describe('back/forward', () => {
-  test('popstate hands the parsed entry to onPopState, and applying it pushes nothing', async () => {
+describe('back and forward', () => {
+  test('a pop hands the parsed place to onRestore, and applying it pushes nothing', async () => {
     const daemon = useDaemonStore();
+    const repo = useRepoStore();
     const ui = useUiStore();
     daemon.repos = [{ id: 'r1', path: `${HOME}/w/one`, branch: 'main' }];
     daemon.activeRepoId = 'r1';
+    repo.repoId = 'r1';
+    repo.repoPath = `${HOME}/w/one`;
 
     const seen: UrlState[] = [];
     syncOptions = {
-      onPopState: (state) => {
-        seen.push(state);
-        if (state.view) ui.setActiveView(state.view);
+      onRestore: (popped) => {
+        seen.push(popped);
+        if (popped.view) ui.setActiveView(popped.view);
       },
     };
     mount(Harness);
     await flushPromises();
 
+    beginUserNav({ view: 'history' });
     ui.setActiveView('history');
     await flushPromises();
     const push = vi.spyOn(window.history, 'pushState');
 
-    // The browser walks back: the URL is already the older entry when
-    // popstate fires.
-    setPath('/w/one/changes');
+    // The browser is already at the older entry when popstate fires.
+    setUrl('/changes/~/w/one');
     window.dispatchEvent(new PopStateEvent('popstate'));
     await flushPromises();
 
-    expect(seen).toEqual([state({ repoRel: 'w/one', view: 'changes' })]);
+    expect(seen).toEqual([
+      state({ repo: { homeRelative: true, path: 'w/one' }, view: 'changes' }),
+    ]);
     expect(ui.activeView).toBe('changes');
-    // Applying a popped entry must never stack a new one on top of it.
     expect(push).not.toHaveBeenCalled();
-    expect(window.location.pathname).toBe('/w/one/changes');
+    expect(here()).toBe('/changes/~/w/one');
+  });
+
+  test('a superseded restore stops applying and writes nothing', async () => {
+    const daemon = useDaemonStore();
+    const repo = useRepoStore();
+    const ui = useUiStore();
+    daemon.repos = [{ id: 'r1', path: `${HOME}/w/one`, branch: 'main' }];
+    daemon.activeRepoId = 'r1';
+    repo.repoId = 'r1';
+    repo.repoPath = `${HOME}/w/one`;
+
+    let release: null | (() => void) = null;
+    const releaseSlow = (): void => release?.();
+    const applied: string[] = [];
+    syncOptions = {
+      onRestore: async (popped, ctx) => {
+        if (popped.view === 'history') {
+          // The slow one: still awaiting when the next Back arrives.
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          if (ctx.isStale()) return;
+        }
+        applied.push(popped.view ?? '?');
+        if (popped.view) ui.setActiveView(popped.view);
+      },
+    };
+    mount(Harness);
+    await flushPromises();
+
+    setUrl('/history/~/w/one');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await flushPromises();
+    setUrl('/explorer/~/w/one');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await flushPromises();
+    releaseSlow();
+    await flushPromises();
+
+    // The stale restore neither applied nor wrote.
+    expect(applied).toEqual(['explorer']);
+    expect(ui.activeView).toBe('explorer');
   });
 });

@@ -192,6 +192,7 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | GET    | `/repos/:id/status`        | Shared state: status, hunk counts, stash list, in-progress operation, error, working-file mtimes (path → mtimeMs; what browser clients build mtime-based auto mode on) |
 | GET    | `/repos/:id/diff?path=&staged=` | Diff; whole tree without `path`, staged side with `staged=true`. Per-file cap: a file's diff over 256 KB or 5,000 lines is withheld — its headers are kept and its body becomes one `Large file — diff not shown (…)` line, the same shape git uses for `Binary files … differ`. Applies to every diff-bearing response (compare, commit diffs, journal) |
 | GET    | `/repos/:id/history?count=` | Commit history (`CommitInfo[]`, default 100, ISO dates) |
+| GET    | `/repos/:id/commits/:hash` | One commit by hash or short hash (404 on unknown) — what a link to a commit outside a client's loaded log resolves through |
 | GET    | `/repos/:id/commits/:hash/diff` | Diff introduced by one commit (404 on unknown hash; merge and `--allow-empty` commits are 200 with an empty diff, matching the CLI) |
 | GET    | `/repos/:id/head-message`  | HEAD commit message for amend prefill: `{message}` (`""` when the repo has no commits) |
 | GET    | `/repos/:id/branches`      | Local branches (`name`, `current`, `tracking`)   |

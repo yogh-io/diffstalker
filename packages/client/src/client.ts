@@ -242,6 +242,16 @@ export class DiffstalkerClient {
     return commits.map(reviveCommit);
   }
 
+  /** One commit by hash — a link to a commit outside the loaded log. */
+  async getCommit(id: string, hash: string): Promise<CommitInfo> {
+    return reviveCommit(
+      await this.transport.request<WireCommitInfo>(
+        'GET',
+        this.repoPath(id, `/commits/${encodeURIComponent(hash)}`)
+      )
+    );
+  }
+
   commitDiff(id: string, hash: string): Promise<DiffResult> {
     return this.transport.request(
       'GET',

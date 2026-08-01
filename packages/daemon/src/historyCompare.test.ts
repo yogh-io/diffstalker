@@ -197,6 +197,24 @@ describe('history endpoints', () => {
     expect(res.status).toBe(404);
   });
 
+  test('GET /commits/:hash resolves one commit by hash', async () => {
+    const history = (await (
+      await request(`/repos/${repoId}/history?count=1`)
+    ).json()) as WireCommit[];
+    const res = await request(`/repos/${repoId}/commits/${history[0].shortHash}`);
+    expect(res.status).toBe(200);
+    const commit = (await res.json()) as WireCommit;
+    expect(commit.hash).toBe(history[0].hash);
+    expect(commit.message).toBe(history[0].message);
+  });
+
+  test('GET /commits/:hash with an unknown hash is a 404 {error}', async () => {
+    const res = await request(`/repos/${repoId}/commits/deadbeefdead`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('deadbeefdead');
+  });
+
   test('GET /commits/:hash/diff returns the commit diff', async () => {
     const history = (await (
       await request(`/repos/${repoId}/history?count=1`)

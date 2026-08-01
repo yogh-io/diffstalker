@@ -18,7 +18,12 @@ import {
   NoCommonHistoryError,
 } from '@diffstalker/core/git/diff';
 import type { CompareDiff } from '@diffstalker/core/git/diff';
-import { getCommitHistory, getHeadMessage, getLocalBranches } from '@diffstalker/core/git/status';
+import {
+  getCommit,
+  getCommitHistory,
+  getHeadMessage,
+  getLocalBranches,
+} from '@diffstalker/core/git/status';
 import {
   getCachedBaseBranch,
   setCachedBaseBranch,
@@ -84,6 +89,19 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     // CommitInfo dates are Date objects; sendJson's toWire turns them into
     // ISO strings.
     sendJson(res, 200, await getCommitHistory(handle.path, count));
+  });
+
+  // One commit by hash — what a shared link to a commit resolves through
+  // when it names one older than any page of the log the client holds.
+  router.get('/repos/:id/commits/:hash', async ({ params, res }) => {
+    const handle = requireRepo(registry, params.id);
+    const hash = params.hash;
+    if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
+      throw new HttpError(400, `Invalid commit hash: ${hash}`);
+    }
+    const commit = await getCommit(handle.path, hash);
+    if (commit === null) throw new HttpError(404, `Unknown commit: ${hash}`);
+    sendJson(res, 200, commit);
   });
 
   router.get('/repos/:id/commits/:hash/diff', async ({ params, res }) => {

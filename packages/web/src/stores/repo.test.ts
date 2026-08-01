@@ -332,6 +332,44 @@ describe('open + applyWireState', () => {
     expect(store.repoId).toBe('r1');
   });
 
+  test('a refused open leaves the open repo intact — id, path, state and stream', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+    onRequest = (call) =>
+      call.method === 'POST' && call.url === '/repos'
+        ? { status: 400, body: { error: 'Not a git repository' } }
+        : undefined;
+
+    await store.open('/not-a-repo');
+
+    // Nothing moved: the repo on screen is still the open one.
+    expect(store.repoId).toBe('r1');
+    expect(store.repoPath).toBe('/repo');
+    expect(store.shared.status?.files).toHaveLength(1);
+    expect(store.shared.error).toBe('Not a git repository');
+    // ...and it is still streaming, so it keeps updating.
+    expect(FakeEventSource.instances).toHaveLength(1);
+    source.emit('state-change', wireState([fileEntry('a.ts'), fileEntry('b.ts')]));
+    await flush();
+    expect(store.shared.status?.files).toHaveLength(2);
+  });
+
+  test('an unreachable daemon mid-open commits to the requested path', async () => {
+    const { store } = await openStore([fileEntry('a.ts')]);
+    onRequest = (call) => {
+      if (call.method === 'POST' && call.url === '/repos') throw new TypeError('Failed to fetch');
+      return undefined;
+    };
+
+    await store.open('/other');
+
+    // The requested repo is what recovery must retry — not the one left.
+    expect(store.repoId).toBeNull();
+    expect(store.repoPath).toBe('/other');
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+    // The repo being left is gone from the store, not half-shown.
+    expect(store.shared.status).toBeNull();
+  });
+
   test('a refused open releases nothing', async () => {
     const { store } = await openStore();
     onRequest = (call) =>
