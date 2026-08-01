@@ -7,6 +7,8 @@
  * back), the stack itself (one section per file in category order,
  * workingDiffs-fed diffs, placeholders, huge-file "Load diff" gate +
  * its latch, binary placeholder-only sections, manual collapse), the
+ * image-diff wiring (which sections get a picture card, which keep the
+ * note, and which sections the view asks the daemon about at all), the
  * auto-mode jump registration (deferred mount, huge/binary section-top
  * rule, the list-click manual guard), the per-repo state reset, the
  * clean-tree state, the persisted resizer, and the viewer stance (no
@@ -18,6 +20,7 @@
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { MockInstance } from 'vitest';
 import { mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -32,6 +35,7 @@ import { stubMatchMedia } from '../testing/portrait';
 import type { RepoSharedState } from '../stores/types';
 import type { FileEntry, GitStatus } from '@diffstalker/core/git/status';
 import type { DiffResult } from '@diffstalker/core/git/diff';
+import type { MediaPair, MediaSide } from '@diffstalker/client';
 
 // Capture the auto-jump target ChangesView registers on mount.
 const autoJump = vi.hoisted(() => ({ target: null as StackAutoJumpTarget | null }));
@@ -495,6 +499,168 @@ describe('stacked diffs', () => {
     expect(section.find('[data-testid="load-diff"]').exists()).toBe(false);
     expect(section.find('.file-diff-body').exists()).toBe(false);
     expect(section.find('[data-testid="diff-view"]').exists()).toBe(false);
+  });
+});
+
+describe('image diffs in the stack', () => {
+  const IMG: FileEntry = { path: 'img.png', status: 'modified', staged: false };
+  const TAR: FileEntry = { path: 'dist.tar', status: 'modified', staged: false };
+  const TEXT: FileEntry = { path: 'a.ts', status: 'modified', staged: false, insertions: 1 };
+
+  type MockedEnsureMedia = MockInstance<(file: FileEntry, staged: boolean) => Promise<void>>;
+
+  function imageSide(overrides: Partial<MediaSide> = {}): MediaSide {
+    return {
+      path: 'img.png',
+      side: 'index',
+      bytes: 2048,
+      oid: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
+      version: 'v1',
+      image: { format: 'png', mime: 'image/png', width: 64, height: 64, bytes: 2048 },
+      refusal: null,
+      ...overrides,
+    };
+  }
+
+  /** A picture on both sides. */
+  function imagePair(): MediaPair {
+    return { old: imageSide(), new: imageSide({ side: 'worktree', oid: null, version: 'v2' }) };
+  }
+
+  /** A tarball: real bytes, no picture on either side. */
+  function refusedPair(): MediaPair {
+    const refused = { image: null, refusal: 'not-an-image' as const, path: 'dist.tar' };
+    return {
+      old: imageSide(refused),
+      new: imageSide({ ...refused, side: 'worktree', oid: null }),
+    };
+  }
+
+  function setup(
+    files: FileEntry[],
+    diffs: [string, DiffResult][],
+    media: [string, MediaPair][] = []
+  ) {
+    const repo = useRepoStore();
+    const ui = useUiStore();
+    repo.repoId = 'r1';
+    repo.shared = makeShared(files);
+    for (const [key, diff] of diffs) seedDiff(repo, key, diff);
+    repo.mediaMeta = new Map(media);
+    // The store's own fetching is tested in stores/repo.test.ts; here the
+    // question is only WHICH sections this view asks about.
+    const ensureMedia = vi.spyOn(repo, 'ensureMedia').mockResolvedValue();
+    const wrapper = mount(ChangesView, { global: { plugins: [pinia] }, attachTo: document.body });
+    return { wrapper, repo, ui, ensureMedia };
+  }
+
+  /** Paths the view asked for metadata about. */
+  function askedFor(ensureMedia: MockedEnsureMedia): string[] {
+    return ensureMedia.mock.calls.map((call) => call[0].path);
+  }
+
+  test('a binary section with image metadata renders the card instead of the note', () => {
+    const { wrapper } = setup([IMG], [['u:img.png', BINARY_DIFF]], [['u:img.png', imagePair()]]);
+    const section = wrapper.find('[data-testid="file-diff"]');
+
+    expect(section.find('[data-testid="image-diff"]').exists()).toBe(true);
+    expect(section.find('[data-testid="not-shown-media"]').exists()).toBe(true);
+    expect(section.find('[data-testid="not-shown-note"]').exists()).toBe(false);
+    // Both sides, at their own blob URLs — and still no diff body.
+    expect(section.findAll('img')).toHaveLength(2);
+    expect(section.find('.file-diff-body').exists()).toBe(false);
+  });
+
+  test('a binary section whose metadata has not landed keeps the note', () => {
+    const { wrapper } = setup([IMG], [['u:img.png', BINARY_DIFF]]);
+    const section = wrapper.find('[data-testid="file-diff"]');
+
+    expect(section.find('[data-testid="image-diff"]').exists()).toBe(false);
+    expect(section.find('[data-testid="not-shown-note"]').text()).toContain('Binary file');
+  });
+
+  test('a tarball keeps the note once its metadata lands — no picture on either side', () => {
+    const { wrapper } = setup(
+      [TAR],
+      [['u:dist.tar', BINARY_DIFF]],
+      [['u:dist.tar', refusedPair()]]
+    );
+    const section = wrapper.find('[data-testid="file-diff"]');
+
+    expect(section.find('[data-testid="image-diff"]').exists()).toBe(false);
+    expect(section.find('[data-testid="not-shown-note"]').text()).toContain('Binary file');
+  });
+
+  test('metadata is asked for binary sections only — never for a text diff', () => {
+    const { ensureMedia } = setup(
+      [TEXT, IMG, TAR],
+      [
+        ['u:a.ts', SAMPLE_DIFF],
+        ['u:img.png', BINARY_DIFF],
+        ['u:dist.tar', BINARY_DIFF],
+      ]
+    );
+
+    expect(askedFor(ensureMedia).sort()).toEqual(['dist.tar', 'img.png']);
+    // The side pair follows the section's own s:/u: key.
+    expect(ensureMedia.mock.calls[0][1]).toBe(false);
+  });
+
+  test('a collapsed section is not asked about again', async () => {
+    const { wrapper, repo, ensureMedia } = setup([IMG], [['u:img.png', BINARY_DIFF]]);
+    expect(askedFor(ensureMedia)).toEqual(['img.png']);
+
+    await wrapper.find('.collapse-btn').trigger('click');
+    ensureMedia.mockClear();
+
+    // A state-change re-runs the candidates; the collapsed one is out.
+    repo.shared = makeShared([IMG]);
+    await wrapper.vm.$nextTick();
+    expect(askedFor(ensureMedia)).toEqual([]);
+  });
+
+  test('only sections near the active one are asked about', () => {
+    const many = Array.from({ length: 14 }, (_, i) => ({
+      path: `img${i}.png`,
+      status: 'modified' as const,
+      staged: false,
+    }));
+    const { ensureMedia } = setup(
+      many,
+      many.map((file): [string, DiffResult] => [`u:${file.path}`, BINARY_DIFF])
+    );
+
+    // No active key yet means the stack is at the top: the window starts
+    // at the first section. Every pull costs the daemon two blob reads,
+    // so the far end of a long stack is left alone until it is scrolled to.
+    const asked = askedFor(ensureMedia);
+    expect(asked).toEqual(many.slice(0, 6).map((file) => file.path));
+    expect(asked).not.toContain('img13.png');
+  });
+
+  test('both sides failing to decode drops the card back to the note', async () => {
+    const { wrapper } = setup([IMG], [['u:img.png', BINARY_DIFF]], [['u:img.png', imagePair()]]);
+    const section = wrapper.find('[data-testid="file-diff"]');
+
+    for (const img of section.findAll('img')) await img.trigger('error');
+    await wrapper.vm.$nextTick();
+
+    expect(wrapper.find('[data-testid="image-diff"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="not-shown-note"]').text()).toContain('Binary file');
+  });
+
+  test('an auto jump to an image section lands on the section top and expands nothing', async () => {
+    const { wrapper } = setup([IMG], [['u:img.png', BINARY_DIFF]], [['u:img.png', imagePair()]]);
+    const scrollSpy = spyOnStackScroll(wrapper);
+
+    autoJump.target!.jump('img.png');
+    await wrapper.vm.$nextTick();
+
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+    // Unchanged rule: a binary section has no hunks to aim at, and the
+    // card is not a body that could be expanded.
+    expect(wrapper.find('[data-testid="image-diff"]').exists()).toBe(true);
+    expect(wrapper.find('.file-diff-body').exists()).toBe(false);
   });
 });
 

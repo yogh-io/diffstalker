@@ -24,6 +24,13 @@ export function isDiffMode(value: unknown): value is DiffMode {
   return typeof value === 'string' && (DIFF_MODES as readonly string[]).includes(value);
 }
 
+export const IMAGE_DIFF_MODES = ['side-by-side', 'swipe', 'onion'] as const;
+export type ImageDiffMode = (typeof IMAGE_DIFF_MODES)[number];
+
+export function isImageDiffMode(value: unknown): value is ImageDiffMode {
+  return typeof value === 'string' && (IMAGE_DIFF_MODES as readonly string[]).includes(value);
+}
+
 export interface Prefs {
   /** null = no explicit choice yet; derive from prefers-color-scheme. */
   theme: ThemeName | null;
@@ -45,6 +52,13 @@ export interface Prefs {
    * side). Global — a single app-wide toggle in the header.
    */
   diffMode: DiffMode;
+  /**
+   * How an image diff compares its two sides: 'side-by-side' (the
+   * default, and the only correct one when the sides differ in size),
+   * 'swipe' (a clip-path wipe) or 'onion' (cross-fade). Global, like
+   * diffMode — the choice belongs to the reader, not to a file.
+   */
+  imageDiffMode: ImageDiffMode;
   /**
    * Wrap long lines in diffs and the Explorer file viewer, instead of
    * horizontal scrolling. Global, off by default (matches the CLI's
@@ -94,6 +108,7 @@ function defaults(): Prefs {
     autoMode: false,
     diffSyntax: false,
     diffMode: 'unified',
+    imageDiffMode: 'side-by-side',
     wrapEnabled: false,
     changesSplit: null,
     changesTop: null,
@@ -125,6 +140,7 @@ function sanitize(raw: unknown): Prefs {
   if (typeof record.autoMode === 'boolean') prefs.autoMode = record.autoMode;
   if (typeof record.diffSyntax === 'boolean') prefs.diffSyntax = record.diffSyntax;
   if (isDiffMode(record.diffMode)) prefs.diffMode = record.diffMode;
+  if (isImageDiffMode(record.imageDiffMode)) prefs.imageDiffMode = record.imageDiffMode;
   if (typeof record.wrapEnabled === 'boolean') prefs.wrapEnabled = record.wrapEnabled;
   prefs.changesSplit = readFraction(record.changesSplit, CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX);
   for (const key of TOP_KEYS) {

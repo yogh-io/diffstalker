@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { createGit } from './gitClient.js';
 import { CommitInfo } from './status.js';
 import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
+import { isBinaryContent } from '../utils/binaryDetect.js';
 import {
   capLargeFileDiffs,
   largeDiffNotice,
@@ -165,45 +166,90 @@ function tooLargeUntrackedDiff(file: string, bytes: number): DiffResult {
   return { lines };
 }
 
+/**
+ * An untracked binary file, shaped exactly like git's own new-file binary
+ * diff. No `---`/`+++` pair: git omits those for a binary file, and every
+ * consumer keys off the "Binary files …" marker, so emitting git's wording
+ * verbatim is what puts an untracked image on the same path a tracked one
+ * already takes.
+ */
+function binaryUntrackedDiff(file: string): DiffResult {
+  const lines: DiffLine[] = [
+    { type: 'header', content: `diff --git a/${file} b/${file}` },
+    { type: 'header', content: 'new file mode 100644' },
+    { type: 'header', content: `Binary files /dev/null and b/${file} differ` },
+  ];
+  return { lines };
+}
+
+/**
+ * The path to read for an untracked file, plus its size — or null when it
+ * must not be read at all.
+ *
+ * Defense-in-depth: this branch reads the filesystem directly (git is not
+ * involved), so refuse paths that escape the repo root — lexically AND by
+ * realpath, so a symlink pointing out of the repo (e.g. at ~/.ssh) cannot
+ * leak its target the way /file and /tree already guard. Non-regular files
+ * (a FIFO, a device) are refused too: there is nothing to show, and a read
+ * could block forever.
+ *
+ * It sits in its own function so the caller stays one straight line of diff
+ * shaping; the guards are the bulk of the branching here.
+ */
+function resolveUntrackedRead(
+  repoPath: string,
+  file: string
+): { path: string; size: number } | null {
+  const root = path.resolve(repoPath);
+  const resolved = path.resolve(root, file);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    return null;
+  }
+  let real: string;
+  let realRoot: string;
+  try {
+    real = fs.realpathSync(resolved);
+    realRoot = fs.realpathSync(root);
+  } catch {
+    // Path or a link target does not resolve: nothing to serve.
+    return null;
+  }
+  if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
+    return null;
+  }
+  const stat = fs.statSync(real);
+  if (!stat.isFile()) {
+    return null;
+  }
+  return { path: resolved, size: stat.size };
+}
+
 export async function getDiffForUntracked(repoPath: string, file: string): Promise<DiffResult> {
   try {
-    // Defense-in-depth: this branch reads the filesystem directly (git is
-    // not involved), so refuse paths that escape the repo root — lexically
-    // AND by realpath, so a symlink pointing out of the repo (e.g. at
-    // ~/.ssh) cannot leak its target the way /file and /tree already guard.
-    const root = path.resolve(repoPath);
-    const resolved = path.resolve(root, file);
-    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    const target = resolveUntrackedRead(repoPath, file);
+    if (target === null) {
       return { lines: [] };
     }
-    let real: string;
-    let realRoot: string;
-    try {
-      real = fs.realpathSync(resolved);
-      realRoot = fs.realpathSync(root);
-    } catch {
-      // Path or a link target does not resolve: nothing to serve.
-      return { lines: [] };
+    // Never read a huge file into memory: it gets the same "too large"
+    // notice a tracked file's oversized diff gets, rather than an empty
+    // diff that reads as "no changes".
+    if (target.size > MAX_UNTRACKED_DIFF_BYTES) {
+      return tooLargeUntrackedDiff(file, target.size);
     }
-    if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
-      return { lines: [] };
-    }
-    // Refuse non-regular files outright (nothing to show for a FIFO or a
-    // device), and never read a huge file into memory: it gets the same
-    // "too large" notice a tracked file's oversized diff gets, rather
-    // than an empty diff that reads as "no changes".
-    const stat = fs.statSync(real);
-    if (!stat.isFile()) {
-      return { lines: [] };
-    }
-    if (stat.size > MAX_UNTRACKED_DIFF_BYTES) {
-      return tooLargeUntrackedDiff(file, stat.size);
+    // Read bytes, not text. Decoding as utf-8 first turned a newly added
+    // PNG — the commonest untracked binary there is — into a wall of
+    // replacement characters emitted as additions, and it could never reach
+    // the binary marker afterwards because the mojibake has no NUL left in
+    // it. Sniff the raw buffer, then decode only once it is known to be text.
+    const buffer = fs.readFileSync(target.path);
+    if (isBinaryContent(buffer)) {
+      return binaryUntrackedDiff(file);
     }
     // For untracked files, show the entire file as additions, shaped like
     // git's own new-file diff: the trailing newline produces no phantom
     // extra "+" line, a file NOT ending in one gets the "\ No newline"
     // marker, and an empty file has no hunk at all.
-    const content = fs.readFileSync(resolved, 'utf-8');
+    const content = buffer.toString('utf-8');
     const lines: DiffLine[] = [
       { type: 'header', content: `diff --git a/${file} b/${file}` },
       { type: 'header', content: 'new file mode 100644' },
@@ -506,9 +552,7 @@ export async function getCommitDiff(repoPath: string, hash: string): Promise<Dif
   try {
     // git show --format="" gives just the diff without commit metadata;
     // --end-of-options keeps a flag-shaped hash from being read as an option
-    const raw = capLargeFileDiffs(
-      await git.raw(['show', '--format=', '--end-of-options', hash])
-    );
+    const raw = capLargeFileDiffs(await git.raw(['show', '--format=', '--end-of-options', hash]));
     return { lines: parseDiffWithLineNumbers(raw) };
   } catch {
     return { lines: [] };

@@ -20,6 +20,7 @@ describe('loadPrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      imageDiffMode: 'side-by-side',
       wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
@@ -38,6 +39,7 @@ describe('loadPrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      imageDiffMode: 'side-by-side',
       wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
@@ -56,6 +58,7 @@ describe('loadPrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      imageDiffMode: 'side-by-side',
       wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
@@ -81,6 +84,7 @@ describe('loadPrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      imageDiffMode: 'side-by-side',
       wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
@@ -137,6 +141,17 @@ describe('loadPrefs', () => {
     expect(loadPrefs().diffMode).toBe('unified');
   });
 
+  test('imageDiffMode: keeps a known mode, drops anything else', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ imageDiffMode: 'onion' }));
+    expect(loadPrefs().imageDiffMode).toBe('onion');
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ imageDiffMode: 'difference' }));
+    expect(loadPrefs().imageDiffMode).toBe('side-by-side');
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ imageDiffMode: 3 }));
+    expect(loadPrefs().imageDiffMode).toBe('side-by-side');
+  });
+
   test('wrapEnabled: persists a stored boolean, drops anything else', () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ wrapEnabled: true }));
     expect(loadPrefs().wrapEnabled).toBe(true);
@@ -162,6 +177,7 @@ describe('loadPrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      imageDiffMode: 'side-by-side',
       wrapEnabled: false,
       changesSplit: null,
       changesTop: null,
@@ -185,6 +201,7 @@ describe('savePrefs', () => {
       autoMode: false,
       diffSyntax: false,
       diffMode: 'unified',
+      imageDiffMode: 'side-by-side',
       wrapEnabled: false,
       changesSplit: null,
       changesTop: null,

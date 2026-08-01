@@ -5,9 +5,13 @@
  * demand and the working-tree `state-change` SSE event already signals
  * changes.
  *
- * Both /tree and /file guard paths twice: lexically (../, absolute) and
- * by realpath (symlinks out of the repo), so the daemon never serves
- * host files through a repo symlink.
+ * Both /tree and /file guard paths twice: lexically (requireRepoRelPath:
+ * ../, absolute, NUL, git option/pathspec shapes, any .git segment of the
+ * normalized path) and by realpath (requireRealRepoPath: symlinks out of
+ * the repo, and anything landing in the real git directory). So the daemon
+ * never serves host files through a repo symlink, and never serves the git
+ * config — which carries credentials in remote URLs. The git directory is
+ * dropped from the listing too: it is not browsable at all.
  */
 
 import {
@@ -22,10 +26,11 @@ import {
   dropEntriesEscapingRoot,
   ensureStatus,
   fsErrorCode,
+  isGitDirSegment,
   parseBoolParam,
   requireRepo,
-  requireRealWithinRoot,
-  requireWithinRoot,
+  requireRealRepoPath,
+  requireRepoRelPath,
   type RouteDeps,
 } from './shared.js';
 
@@ -39,8 +44,10 @@ export function registerExplorerRoutes(router: Router, deps: RouteDeps): void {
     // defaults match the TUI defaults (both filtered).
     const hidden = parseBoolParam(query, 'hidden', false);
     const ignored = parseBoolParam(query, 'ignored', false);
-    requireWithinRoot(handle.path, dir);
-    await requireRealWithinRoot(handle.path, dir);
+    // The root listing carries no client path to validate; every other dir
+    // goes through the pair, and the listing walks the normalized form.
+    const rel = dir === '' ? '' : requireRepoRelPath(handle.path, dir);
+    await requireRealRepoPath(handle, rel);
     // Annotate from the manager's cached status (refreshing once when it
     // has never loaded), same source the TUI uses.
     const status = await ensureStatus(handle.manager.workingTree);
@@ -49,7 +56,7 @@ export function registerExplorerRoutes(router: Router, deps: RouteDeps): void {
     try {
       entries = await listDirectory(
         handle.path,
-        dir,
+        rel,
         { hideHidden: !hidden, hideGitignored: !ignored },
         statusMap
       );
@@ -63,7 +70,10 @@ export function registerExplorerRoutes(router: Router, deps: RouteDeps): void {
       }
       throw err;
     }
-    sendJson(res, 200, await dropEntriesEscapingRoot(handle.path, entries));
+    // hidden=true would otherwise offer .git as a browsable directory, and
+    // every path inside it is refused anyway — do not advertise it.
+    const listed = entries.filter((entry) => !isGitDirSegment(entry.name));
+    sendJson(res, 200, await dropEntriesEscapingRoot(handle.path, listed));
   });
 
   router.get('/repos/:id/file', async ({ params, query, res }) => {
@@ -72,10 +82,10 @@ export function registerExplorerRoutes(router: Router, deps: RouteDeps): void {
     if (!relPath) {
       throw new HttpError(400, 'Missing "path" query parameter');
     }
-    requireWithinRoot(handle.path, relPath);
-    await requireRealWithinRoot(handle.path, relPath);
+    const rel = requireRepoRelPath(handle.path, relPath);
+    await requireRealRepoPath(handle, rel);
     try {
-      sendJson(res, 200, await readFileForDisplay(handle.path, relPath));
+      sendJson(res, 200, await readFileForDisplay(handle.path, rel));
     } catch (err) {
       // Directories, FIFOs, sockets, devices: refused up front (a FIFO
       // read would block the event loop for every client).

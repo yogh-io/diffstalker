@@ -5,7 +5,9 @@
  * compare base pick, the single-flight reconnect loop, and the
  * per-file working-diff cache (auto-activation on the first snapshot,
  * hybrid whole-tree/per-file fetch, changed-set refetch, identity
- * preservation, seq stale-guards), the journal slice (lazy load,
+ * preservation, seq stale-guards), the on-demand image metadata
+ * (once per key, per-key invalidation on state-change, repo-switch
+ * reset, failures collapsing into shared.error), the journal slice (lazy load,
  * SSE append with seq dedupe + epoch guard, reconnect resync floored
  * on the synced watermark, epoch/prunedBefore reset handling,
  * repo-switch reset), and the pagehide unload release (keepalive
@@ -123,6 +125,23 @@ function defaultGetRoutes(url: string): FakeResponse | undefined {
   if (url.startsWith('/repos/r1/diff')) {
     // Distinguishable per-query payload for stale-guard assertions.
     return { body: diffBody(`diff:${url}`) };
+  }
+  if (url.startsWith('/repos/r1/media')) {
+    // One picture on the new side; enough to key and render from.
+    return {
+      body: {
+        old: null,
+        new: {
+          path: 'img.png',
+          side: 'worktree',
+          bytes: 2048,
+          oid: null,
+          version: 'v1',
+          image: { format: 'png', mime: 'image/png', width: 8, height: 8, bytes: 2048 },
+          refusal: null,
+        },
+      },
+    };
   }
   if (url.startsWith('/repos/r1/history')) {
     return { body: [{ hash: 'h1', message: 'm', author: 'a', date: '2026-07-01T00:00:00.000Z' }] };
@@ -713,6 +732,134 @@ describe('working-diff cache', () => {
     await flush();
     expect(rawOf(store.workingDiffs.byKey.get('u:a.ts')!)).toBe(rawA9);
     expect(store.workingDiffs.byKey.get('u:a.ts')).not.toBe(firstEntry);
+  });
+});
+
+// --- Image metadata ---
+
+describe('image metadata (mediaMeta)', () => {
+  const png = fileEntry('img.png');
+
+  function mediaCalls(): string[] {
+    return fake.callsTo('/repos/r1/media').map((call) => call.url);
+  }
+
+  test('ensureMedia lands one pair per row key, and asks only once', async () => {
+    const { store } = await openStore([png]);
+
+    await store.ensureMedia(png, false);
+    expect(mediaCalls()).toEqual(['/repos/r1/media?path=img.png&staged=0']);
+    // Keyed exactly like workingDiffs: the side prefix is part of it.
+    expect(store.mediaMeta.get('u:img.png')!.new!.path).toBe('img.png');
+
+    // A second look at the same section costs nothing.
+    await store.ensureMedia(png, false);
+    expect(mediaCalls()).toHaveLength(1);
+  });
+
+  test('the staged side is its own key and its own request', async () => {
+    const staged = fileEntry('img.png', { staged: true });
+    const { store } = await openStore([png, staged]);
+
+    await store.ensureMedia(png, false);
+    await store.ensureMedia(staged, true);
+
+    expect(mediaCalls()).toEqual([
+      '/repos/r1/media?path=img.png&staged=0',
+      '/repos/r1/media?path=img.png&staged=1',
+    ]);
+    expect([...store.mediaMeta.keys()]).toEqual(['u:img.png', 's:img.png']);
+  });
+
+  test('a state-change that touches the file re-asks — the worktree side is mutable', async () => {
+    const { store, source } = await openStore([png]);
+    await store.ensureMedia(png, false);
+    const first = store.mediaMeta.get('u:img.png');
+
+    source.emit('state-change', wireState([png], { mtimes: { 'img.png': 42 } }));
+    await flush();
+    // The card keeps its picture while the new answer is on the way:
+    // blanking it would move every section below it twice for one edit.
+    expect(store.mediaMeta.get('u:img.png')).toBe(first);
+
+    await store.ensureMedia(png, false);
+    expect(mediaCalls()).toHaveLength(2);
+  });
+
+  test('an untouched file is not re-asked on a state-change', async () => {
+    const { store, source } = await openStore([png]);
+    await store.ensureMedia(png, false);
+
+    source.emit('state-change', wireState([png]));
+    await flush();
+    await store.ensureMedia(png, false);
+    expect(mediaCalls()).toHaveLength(1);
+  });
+
+  test('a file leaving the status set loses its entry', async () => {
+    const { store, source } = await openStore([png]);
+    await store.ensureMedia(png, false);
+    expect(store.mediaMeta.size).toBe(1);
+
+    source.emit('state-change', wireState([]));
+    await flush();
+    expect(store.mediaMeta.size).toBe(0);
+
+    // And it is asked about again if it comes back.
+    source.emit('state-change', wireState([png]));
+    await flush();
+    await store.ensureMedia(png, false);
+    expect(mediaCalls()).toHaveLength(2);
+  });
+
+  test('a repo switch clears the cache — no verdict is inherited by path', async () => {
+    const { store } = await openStore([png]);
+    await store.ensureMedia(png, false);
+    expect(store.mediaMeta.size).toBe(1);
+
+    onRequest = (call) => {
+      if (call.method === 'POST' && call.url === '/repos') {
+        return { body: { id: 'r2', path: (call.body as { path: string }).path } };
+      }
+      return call.url.startsWith('/repos/r2/') ? { body: wireState() } : undefined;
+    };
+    await store.open('/repo2');
+    expect(store.mediaMeta.size).toBe(0);
+  });
+
+  test('a daemon failure lands in shared.error and never throws', async () => {
+    const { store } = await openStore([png]);
+    onRequest = (call) =>
+      call.url.startsWith('/repos/r1/media')
+        ? { status: 400, body: { error: 'Not a regular file' } }
+        : undefined;
+
+    await expect(store.ensureMedia(png, false)).resolves.toBeUndefined();
+    expect(store.shared.error).toBe('Failed to load image metadata: Not a regular file');
+    expect(store.mediaMeta.size).toBe(0);
+
+    // The gate dropped with the failure, so looking again retries.
+    onRequest = null;
+    await store.ensureMedia(png, false);
+    expect(store.mediaMeta.size).toBe(1);
+  });
+
+  test('a lost connection collapses into the one reconnect line', async () => {
+    const { store } = await openStore([png]);
+    onRequest = (call) => {
+      if (call.url.startsWith('/repos/r1/media')) throw new TypeError('Failed to fetch');
+      return undefined;
+    };
+
+    await store.ensureMedia(png, false);
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+    expect(store.mediaMeta.size).toBe(0);
+  });
+
+  test('nothing is asked for before a repo is open', async () => {
+    const store = useRepoStore();
+    await store.ensureMedia(png, false);
+    expect(fake.callsTo('/media')).toHaveLength(0);
   });
 });
 

@@ -24,6 +24,12 @@
  * placeholder. Manual per-file collapse is view-local; huge files
  * start collapsed behind DiffStack's "Load diff" gate.
  *
+ * Image diffs: a binary section whose two sides the daemon could read as
+ * pictures renders an ImageDiffView in the stack's `media` slot instead
+ * of the plain note. The metadata behind it (repo.mediaMeta) is pulled
+ * ONLY for binary sections near the active one — see mediaCandidates —
+ * because each pull costs the daemon two blob inspections.
+ *
  * Auto mode (the AUTO-SCROLL-ONLY-IN-AUTO-MODE decision): this view
  * registers a jump target with useAutoMode. ONLY auto mode may scroll
  * the stack on live edits — with it off, churn updates in place (the
@@ -37,6 +43,7 @@ import { useUiStore } from '../stores/ui';
 import { categorizeFiles } from '@diffstalker/core/view/fileCategories';
 import { shortenPath } from '@diffstalker/core/view/formatPath';
 import type { FileEntry } from '@diffstalker/core/git/status';
+import type { MediaPair } from '@diffstalker/client';
 import { statusLetter } from '../utils/format';
 import { nextIndex } from '../utils/listNav';
 import { CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX, TOP_MIN, TOP_MAX } from '../prefs';
@@ -45,7 +52,12 @@ import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
 import { registerStackAutoJump } from '../composables/useAutoMode';
 import { useActiveRowScroll } from '../composables/useActiveRowScroll';
-import DiffStack, { HUGE_FILE_CHANGED_LINES, type StackFile } from '../components/DiffStack.vue';
+import DiffStack, {
+  HUGE_FILE_CHANGED_LINES,
+  notShownForDiff,
+  type StackFile,
+} from '../components/DiffStack.vue';
+import ImageDiffView from '../components/ImageDiffView.vue';
 
 const repo = useRepoStore();
 const ui = useUiStore();
@@ -136,6 +148,7 @@ watch(
   () => {
     ui.setActiveStackKey(null);
     collapsedFiles.clear();
+    failedMediaKeys.clear();
   }
 );
 
@@ -160,6 +173,88 @@ const stackFiles = computed<StackFile[]>(() => {
     };
   });
 });
+
+// --- Image diffs (the stack's media slot) ---
+
+/**
+ * How many sections either side of the active one count as near enough
+ * to the viewport to be worth metadata. The active key IS the viewport
+ * anchor: the stack's scroll-spy writes whatever section is at the top
+ * of the scrollport into it as the reader scrolls, so a window around it
+ * follows the eye without a second observer, and it is exact from the
+ * first paint (no active key yet means the stack is at the top, and the
+ * window starts at the first section).
+ */
+const MEDIA_WINDOW = 5;
+
+/** Sections whose picture the browser gave up on: back to the plain note. */
+const failedMediaKeys = reactive(new Set<string>());
+
+/**
+ * The binary sections worth asking about: expanded, and inside the
+ * window. Every pull costs the daemon two blob inspections, so a
+ * whole-tree sweep would spend a lot to answer questions nobody asked.
+ * The binary verdict is DiffStack's own — one copy of the marker scan.
+ */
+const mediaCandidates = computed<FileEntry[]>(() => {
+  const ordered = categories.value.ordered;
+  const center = Math.max(0, activeIndex());
+  const last = Math.min(ordered.length, center + MEDIA_WINDOW + 1);
+  const out: FileEntry[] = [];
+  for (let i = Math.max(0, center - MEDIA_WINDOW); i < last; i++) {
+    const file = ordered[i];
+    const key = rowKey(file);
+    if (collapsedFiles.has(key)) continue;
+    const entry = repo.workingDiffs.byKey.get(key);
+    if (entry && notShownForDiff(entry.diff)?.kind === 'binary') out.push(file);
+  }
+  return out;
+});
+
+// One ask per candidate. ensureMedia is the gate (once per key), so this
+// re-runs freely: a state-change drops the gate for every touched file,
+// and the next run re-asks exactly those.
+watch(
+  mediaCandidates,
+  (candidates) => {
+    for (const file of candidates) {
+      void repo.ensureMedia(file, file.staged); // catches internally; never rejects
+    }
+  },
+  { immediate: true }
+);
+
+/**
+ * The sections that render a picture card. A pair with no image on
+ * either side (a tarball, a refused format) is NOT one of them — those
+ * keep the plain note, which already carries the reason in the Explorer.
+ * A fresh Set every time: DiffStack keys its anchor sandwich on the
+ * identity of this prop, so it must be replaced, never mutated.
+ */
+const mediaKeys = computed(() => {
+  const keys = new Set<string>();
+  for (const [key, pair] of repo.mediaMeta) {
+    if (failedMediaKeys.has(key)) continue;
+    if (pair.old?.image || pair.new?.image) keys.add(key);
+  }
+  return keys;
+});
+
+/**
+ * The type-level floor for the slot's `pair` binding. The slot only ever
+ * renders for a key mediaKeys vouched for, and mediaKeys is built FROM
+ * the map — so this constant is unreachable, not a fallback.
+ */
+const NO_MEDIA: MediaPair = { old: null, new: null };
+
+function mediaPairFor(key: string): MediaPair {
+  return repo.mediaMeta.get(key) ?? NO_MEDIA;
+}
+
+/** Neither side decoded: drop the card, the note tells the truth again. */
+function onMediaFail(key: string): void {
+  failedMediaKeys.add(key);
+}
 
 // --- Jump navigation ---
 
@@ -474,10 +569,22 @@ const rootStyle = computed(() => ({
       :syntax="ui.diffSyntaxEnabled"
       :mode="ui.diffMode"
       :wrap="ui.wrapEnabled"
+      :media-keys="mediaKeys"
       v-bind="payloadAttrs"
       @active-file="ui.setActiveStackKey"
       @toggle-collapse="toggleFileCollapsed"
-    />
+    >
+      <!-- The picture card for a binary section. Only reached for keys
+           mediaKeys vouched for, so the pair is always there. -->
+      <template #media="{ file }">
+        <ImageDiffView
+          v-if="repo.repoId !== null"
+          :pair="mediaPairFor(file.key)"
+          :repo-id="repo.repoId"
+          @fail="onMediaFail(file.key)"
+        />
+      </template>
+    </DiffStack>
   </div>
 </template>
 

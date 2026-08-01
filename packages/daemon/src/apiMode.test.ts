@@ -97,6 +97,21 @@ describe('web-mode API surface', () => {
     expect(res.status).toBe(200);
   });
 
+  // Image bytes are a web-UI feature, so a --port daemon is exactly the
+  // listener that must route them. Registered outside the full-mode branch.
+  test('the blob byte route IS routed', async () => {
+    const res = await req(WEB_SOCKET, 'GET', `/repos/${repoId}/blob?path=file.txt&side=head`);
+    // file.txt is text, so the allow-list refuses it — the point is 415, not
+    // an "Unknown route" 404.
+    expect(res.status).toBe(415);
+  });
+
+  test('the media metadata route IS routed', async () => {
+    const res = await req(WEB_SOCKET, 'GET', `/repos/${repoId}/media?path=file.txt&staged=0`);
+    const json = (await res.json()) as { error?: string };
+    expect(json.error ?? '').not.toContain('Unknown route');
+  });
+
   const cliOnly: Array<[string, string, unknown]> = [
     ['POST', 'commit', { message: 'x' }],
     ['POST', 'discard', { path: 'file.txt' }],
@@ -127,6 +142,14 @@ describe('full-mode API surface', () => {
     const res = await req(FULL_SOCKET, 'POST', `/repos/${repoId}/commit`, { message: '' });
     // Empty message -> validation 400; the point is it is NOT "Unknown route".
     const json = (await res.json()) as { error?: string };
+    expect(json.error ?? '').not.toContain('Unknown route');
+  });
+
+  test('the blob and media routes ARE registered in full mode too', async () => {
+    const blob = await req(FULL_SOCKET, 'GET', `/repos/${repoId}/blob?path=file.txt&side=head`);
+    expect(blob.status).toBe(415);
+    const media = await req(FULL_SOCKET, 'GET', `/repos/${repoId}/media?path=file.txt&staged=0`);
+    const json = (await media.json()) as { error?: string };
     expect(json.error ?? '').not.toContain('Unknown route');
   });
 

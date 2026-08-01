@@ -483,6 +483,14 @@ The app uses a **focus zone** system for full keyboard-only navigation with `Tab
 
 - Diff view shows "Binary file — no text diff to show." in place of a body
 - Explorer shows "Binary file" message instead of content
+- The web UI is the exception for PNG, JPEG and GIF: it renders them (see
+  [Web UI](#web-ui-browser-client)). Every other binary keeps the note, with
+  the refusal reason appended. The terminal UI cannot draw pixels and keeps
+  the note for everything.
+- An untracked binary is detected by its bytes (a NUL in the first 8 KB), not
+  by its name, so a newly added PNG gets git's own
+  `Binary files /dev/null and b/logo.png differ` marker rather than a wall of
+  decoded mojibake
 
 ### Large Files
 
@@ -747,6 +755,33 @@ git operations.
   content (highlight.js) with binary / truncated / too-large states.
   Single-child directory chains collapse onto one combined row
   (`packages/cli/src`) on expand, like the CLI's explorer.
+- **Image preview in the Explorer** — a PNG, JPEG or GIF opens as a picture on
+  a checkerboard stage instead of the "Binary file" note, with the format,
+  pixel size and (for an animated GIF) frame count in the pane header. One
+  `1:1` toggle switches between shrink-to-fit (never upscaling, so a 16×16
+  favicon stays 16×16) and actual size, where the stage scrolls. The
+  preference survives switching from image to image. There is no zoom, no pan
+  gesture, and deliberately no "open raw" / "download" link: a link that
+  navigates the browser to repository bytes is exactly the threat the design
+  exists to prevent. Anything that is not one of the three formats keeps the
+  plain note plus the reason (`no preview (format not rendered)`,
+  `over the 16 MP preview cap`, and so on).
+- **Image diffs in Changes** — a changed PNG/JPEG/GIF renders as a fixed-height
+  card with both versions instead of "Binary file — no text diff to show".
+  Three modes, chosen once for the whole app and remembered: **Side by side**
+  (the only mode that is honest when the two versions differ in size),
+  **Swipe** (one slider wipes the new version over the old) and **Onion**
+  (the slider cross-fades them). All three are pure CSS — no canvas, no
+  server-side decoding. The meta line always states both byte sizes, both
+  short object ids and the byte delta, and says "metadata only" when the
+  pixel dimensions match but the bytes do not: two identical-looking images
+  can differ in EXIF (GPS, camera serial, an embedded thumbnail) or ICC, and
+  a reviewer must never conclude "nothing changed" from the picture alone.
+  Added and deleted files show one version plus a dim plate for the missing
+  side; the card keeps the same height either way, so the stack's scroll
+  position never jumps. Only Changes has this — Compare, History and Journal
+  keep the plain note (their old side is a commit, which the viewer's
+  worktree/index/head vocabulary cannot name yet).
 
 ### Header & global
 

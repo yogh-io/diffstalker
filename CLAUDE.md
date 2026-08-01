@@ -92,6 +92,7 @@ packages/core/src/
 │   ├── gitClient.ts        # Shared simple-git instance factory
 │   ├── status.ts           # getStatus, stage/unstage, hunk staging, commits
 │   ├── diff.ts             # Diff generation/parsing, hunk extraction (extractHunkPatch)
+│   ├── blob.ts             # openBlob: raw bytes at worktree/index/head, size+mode checked first
 │   ├── explorerData.ts     # Tree listing + buildGitStatusMap for the file explorer
 │   ├── hunkTimes.ts        # Per-hunk edit timestamps
 │   ├── worktree.ts         # Worktree/bare-repo resolution and listing
@@ -110,6 +111,9 @@ packages/core/src/
 │   ├── formatPath.ts       # shortenPath, formatDate, commitFormat — pure formatters
 │   └── languageDetection.ts # getLanguageFromPath (pure map; NO emphasize/ANSI — that stays in cli)
 ├── utils/                  # logger, path utils, base-branch cache, xdg dirs
+│   ├── imageSniff.ts       # Pure magic-byte image validation (PNG/JPEG/GIF only) + the caps
+│   ├── binaryDetect.ts     # isBinaryContent: the NUL scan, shared by diff.ts and explorerData.ts
+│   └── blobRef.ts          # blobUrl/mediaUrl — the one copy of the byte-endpoint URL shape
 └── types/                  # Shared type declarations (remote)
 ```
 
@@ -134,6 +138,7 @@ packages/daemon/src/
 └── routes/                 # One module per endpoint group
     ├── health.ts, repos.ts, workingTree.ts, remote.ts
     ├── historyCompare.ts, explorer.ts, daemon.ts, shared.ts
+    ├── blob.ts             # /blob (image bytes) + /media (per-side image metadata)
 
 packages/client/src/
 ├── index.ts                # Public exports (DiffstalkerClient, wire types, isConnectionError)
@@ -250,6 +255,7 @@ When building UI structures with rows (diff views, file lists), always use a sin
 - neo-blessed truecolor only works because of the runtime patch (`applyBlessedRgbPatch()` runs before screen creation); content SGR `38;2;R;G;B` codes are otherwise downsampled (CLI)
 - Core/daemon tests must not create real chokidar watchers: construct `WorkingTreeManager` without calling `startWatching()`, and construct the daemon with follow disabled (or point `--follow-file` at a temp path). CLI tests spin up no watchers — the daemon owns them.
 - CLI tests must not hit a real daemon: `RepoSession`/`App` tests drive a fake `DiffstalkerClient`; `DaemonLifecycle` tests point at a throwaway socket and tear it down with `fuser -k <socket>` (never `pkill diffstalkerd` — that kills the user's live daemon)
+- **Repo bytes are typed from magic bytes only.** The `content-type` on `GET /repos/:id/blob` comes from matching the bytes the route is about to write against the closed three-entry PNG/JPEG/GIF table in `@diffstalker/core/utils/imageSniff`, re-derived on every request — never from `path.extname()`, never from a query parameter, never from a verdict a `/file` or `/media` response cached. `staticFiles.ts`'s `CONTENT_TYPES` (which maps `.svg`, `.html`, `.wasm`) is for the SPA's own assets and **must never be reused for repo content**: a repo file named `logo.png` holding `<svg><script>` becomes same-origin script the moment its name is believed. Adding a format is a security review, not a table edit.
 
 ## Code Quality Guidelines
 

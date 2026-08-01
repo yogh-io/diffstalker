@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Images are shown, in the Explorer and in a diff.** A PNG, JPEG or GIF
+  opens as a picture on a checkerboard stage instead of the "Binary file"
+  note, with its format, pixel size and frame count in the header and a
+  `1:1` toggle between shrink-to-fit and actual size. In Changes, a changed
+  image renders as a fixed-height card with both versions, in **Side by
+  side**, **Swipe** or **Onion** mode (pure CSS, no canvas), and the meta
+  line always states both byte sizes, both short object ids and the byte
+  delta — plus "metadata only" when the pixel dimensions match but the bytes
+  do not, because two identical-looking images can differ in EXIF or ICC and
+  a reviewer must never conclude "nothing changed" from the picture alone.
+  Web UI only; the terminal UI cannot draw pixels.
+- **Two new daemon endpoints, `GET /repos/:id/blob` and
+  `GET /repos/:id/media`**, on every listener. `/media` resolves the old and
+  new side of a changed image server-side (renames included) and reports
+  bytes, object id, dimensions or a refusal code; `/blob` serves the bytes
+  themselves, and only ever to an `<img src>`. **Only PNG, JPEG and GIF are
+  served, and the content type comes from magic bytes** re-derived from the
+  exact buffer being written, on every request — never from the extension, a
+  query parameter, or a cached verdict, because a repo file called
+  `logo.png` holding `<svg><script>` is same-origin script the moment we
+  agree with its name. Everything else gets zero bytes and a refusal. The
+  daemon never decodes, transcodes or strips metadata: validation is
+  fixed-offset reads and bounded walks, no image library enters the tree, and
+  the browser stays the sandbox. Caps are enforced before any byte is read —
+  8 MiB (2 MiB for GIF), 8192 px per side, 16 MPix, 256 frames — with the
+  pixel budget as the real control, since a 300-byte PNG can declare
+  60000×60000. See `packages/daemon/README.md`.
 - **One daemon serves the terminal UI and the browser at once.** `--socket`
   and `--port` are no longer mutually exclusive: the unix socket is the
   daemon's identity and is always bound (unless `--no-socket`), and `--port`
@@ -35,8 +62,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--no-socket` (requires `--port`) for a browser-only daemon, and `--port 0`
   to let the kernel choose a free port — the daemon reports the one it got.
 
+### Changed
+
+- **The Explorer no longer browses the git directory.** `GET /repos/:id/file`
+  and `/repos/:id/tree` now refuse any path whose normalized form contains a
+  `.git` segment (`.git/config`, `./.git/config`, `src/../.git/config`,
+  `.GIT/config`, `worktrees/x/.git/config`) and any path whose real location
+  lands at or under the repository's absolute git dir — which also catches a
+  symlink pointing into it, a linked worktree, a bare repo and a submodule's
+  `.git` file. `/tree` drops the git directory from listings even with
+  `hidden=true`. This was reachable before and served `.git/config`, which
+  carries tokens embedded in remote URLs. Validation now happens on
+  `path.relative(root, path.resolve(root, rel))` rather than the raw string,
+  which is what the four spellings above all bypassed.
+
 ### Fixed
 
+- **A renamed file now says where it came from.** `FileEntry.originalPath` was
+  declared and read — the terminal file lists have always had an `← old/path`
+  suffix for it — but `getStatus` never populated it, so the suffix never
+  appeared and the pre-rename blob had no route back. It is now filled from
+  git's own rename record on the index side (the working-tree column never
+  carries `R`, so only the staged entry can carry it). This is also what lets
+  a renamed image resolve its old side: HEAD has never heard of the new name.
+- **An untracked binary file no longer renders as mojibake.** A newly added
+  PNG is the most common image in a diff, and `getDiffForUntracked` read
+  every untracked file as UTF-8 and emitted each line as an addition — so it
+  arrived as a wall of replacement characters and never reached the binary
+  path. Untracked files are now read as bytes and classified by a NUL scan
+  (the same test the Explorer uses), and a binary one gets git's own marker,
+  `Binary files /dev/null and b/logo.png differ`. Text files are byte-for-byte
+  unchanged.
 - **The AUR package now warns before pacman's "exists in filesystem" abort.**
   Installing over a previous `npm install -g diffstalker` fails because npm's
   prefix on Arch is `/usr`, leaving `/usr/bin/diffstalker` owned by no

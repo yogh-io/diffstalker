@@ -7,13 +7,91 @@ import {
   listDirectory,
   readFileForDisplay,
   MAX_DISPLAY_LINES,
+  MAX_FILE_SIZE,
   NotRegularFileError,
 } from './explorerData.js';
+import type { FileForDisplay } from './explorerData.js';
+import { IMAGE_HEADER_WINDOW, MAX_IMAGE_BYTES } from '../utils/imageSniff.js';
 import { getStatus } from './status.js';
 import { createFixtureRepo, removeFixtureRepo, writeFixtureFile, gitExec } from './test-helpers.js';
 
 const FIXTURE = 'explorer-data-test';
 let repoPath: string;
+
+/**
+ * A structurally valid PNG: signature, IHDR, then an IDAT of `payloadSize`
+ * zero bytes. The sniffer stops at the first IDAT and never checks a CRC, so
+ * this is exactly what it inspects on a real file — and the payload lets a
+ * test pick any file size it likes.
+ */
+function pngFile(width: number, height: number, payloadSize: number): Buffer {
+  const header = Buffer.alloc(33);
+  header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  header.writeUInt32BE(13, 8);
+  header.write('IHDR', 12, 'ascii');
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(height, 20);
+  header[24] = 8; // bit depth
+  header[25] = 6; // colour type: truecolour + alpha
+  const idat = Buffer.alloc(8);
+  idat.writeUInt32BE(payloadSize, 0);
+  idat.write('IDAT', 4, 'ascii');
+  return Buffer.concat([header, idat, Buffer.alloc(payloadSize), Buffer.alloc(4)]);
+}
+
+/** Canonical 1x1 GIF, the same bytes every GIF encoder emits for it. */
+const GIF_1X1 = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+
+/** A minimal RIFF/WEBP header: a known image format that is refused. */
+function webpFile(): Buffer {
+  const bytes = Buffer.alloc(32);
+  bytes.write('RIFF', 0, 'ascii');
+  bytes.writeUInt32LE(24, 4);
+  bytes.write('WEBPVP8 ', 8, 'ascii');
+  return bytes;
+}
+
+function writeBytes(name: string, bytes: Buffer): string {
+  fs.writeFileSync(path.join(repoPath, name), bytes);
+  return name;
+}
+
+/**
+ * Run `readFileForDisplay` with fs.promises.open wrapped, so a test can prove
+ * how much was opened and read. This is the only way to assert the caps do
+ * their work BEFORE the bytes are pulled off disk — the returned flags alone
+ * cannot tell a bounded read from a full one.
+ */
+async function measureRead(
+  relPath: string
+): Promise<{ file: FileForDisplay; opens: number; bytesRead: number }> {
+  type OpenFn = typeof fs.promises.open;
+  const realOpen: OpenFn = fs.promises.open;
+  let opens = 0;
+  let bytesRead = 0;
+
+  const wrapped = (async (...args: Parameters<OpenFn>) => {
+    opens++;
+    const handle = await realOpen(...args);
+    const realRead = handle.read.bind(handle) as typeof handle.read;
+    Object.defineProperty(handle, 'read', {
+      value: async (...readArgs: Parameters<typeof handle.read>) => {
+        const result = await realRead(...readArgs);
+        bytesRead += result.bytesRead;
+        return result;
+      },
+    });
+    return handle;
+  }) as OpenFn;
+
+  (fs.promises as { open: OpenFn }).open = wrapped;
+  try {
+    const file = await readFileForDisplay(repoPath, relPath);
+    return { file, opens, bytesRead };
+  } finally {
+    (fs.promises as { open: OpenFn }).open = realOpen;
+  }
+}
 
 beforeAll(async () => {
   repoPath = createFixtureRepo(FIXTURE);
@@ -143,6 +221,11 @@ describe('readFileForDisplay', () => {
     expect(file.size).toBe(4);
   });
 
+  it('leaves plain text without a media verdict', async () => {
+    const file = await readFileForDisplay(repoPath, 'README.md');
+    expect(file.media).toBeUndefined();
+  });
+
   it('flags oversized files without reading content', async () => {
     fs.writeFileSync(path.join(repoPath, 'huge.txt'), 'x'.repeat(1024 * 1024 + 1));
     const file = await readFileForDisplay(repoPath, 'huge.txt');
@@ -180,5 +263,123 @@ describe('readFileForDisplay', () => {
     } finally {
       fs.rmSync(fifoPath, { force: true });
     }
+  });
+});
+
+describe('readFileForDisplay media verdicts', () => {
+  it('reports an image with its dimensions, mime and a version key', async () => {
+    writeBytes('logo.png', pngFile(64, 32, 128));
+    const file = await readFileForDisplay(repoPath, 'logo.png');
+
+    expect(file.binary).toBe(true);
+    expect(file.content).toBe('');
+    expect(file.tooLarge).toBe(false);
+    expect(file.media?.image).toMatchObject({
+      format: 'png',
+      mime: 'image/png',
+      width: 64,
+      height: 32,
+    });
+    expect(file.media?.refusal).toBeNull();
+    // size-mtime, so the blob URL changes the moment the bytes do.
+    expect(file.media?.version).toMatch(/^\d+-\d/);
+  });
+
+  it('reports a GIF', async () => {
+    writeBytes('dot.gif', GIF_1X1);
+    const file = await readFileForDisplay(repoPath, 'dot.gif');
+    expect(file.media?.image).toMatchObject({ format: 'gif', mime: 'image/gif' });
+  });
+
+  it('serves an image over the text cap instead of calling it too large', async () => {
+    // The ordering regression: the size check used to run first, so every
+    // image over 1 MiB came back tooLarge with no verdict and never rendered.
+    const bytes = pngFile(800, 600, 1536 * 1024);
+    writeBytes('big.png', bytes);
+    const file = await readFileForDisplay(repoPath, 'big.png');
+
+    expect(file.tooLarge).toBe(false);
+    expect(file.binary).toBe(true);
+    expect(file.size).toBe(bytes.length);
+    expect(file.size).toBeGreaterThan(MAX_FILE_SIZE);
+    expect(file.media?.image).toMatchObject({ width: 800, height: 600, bytes: bytes.length });
+  });
+
+  it('classifies a large image from a bounded window, not the whole file', async () => {
+    const bytes = pngFile(800, 600, 3 * 1024 * 1024);
+    writeBytes('huge.png', bytes);
+    const { file, bytesRead } = await measureRead('huge.png');
+
+    expect(file.media?.image).toMatchObject({ format: 'png' });
+    expect(bytesRead).toBeLessThanOrEqual(IMAGE_HEADER_WINDOW);
+    expect(bytesRead).toBeLessThan(bytes.length);
+  });
+
+  it('refuses a file past the image cap without opening it', async () => {
+    fs.writeFileSync(path.join(repoPath, 'enormous.png'), pngFile(64, 32, MAX_IMAGE_BYTES));
+    const { file, opens, bytesRead } = await measureRead('enormous.png');
+
+    expect(file.tooLarge).toBe(true);
+    expect(file.media).toBeUndefined();
+    expect(opens).toBe(0);
+    expect(bytesRead).toBe(0);
+  });
+
+  it('names a refusal for a known image format that is not served', async () => {
+    writeBytes('shot.webp', webpFile());
+    const file = await readFileForDisplay(repoPath, 'shot.webp');
+
+    expect(file.binary).toBe(true);
+    expect(file.media?.image).toBeNull();
+    expect(file.media?.refusal).toBe('unsupported-format');
+  });
+
+  it('reports not-an-image for binary bytes with no image signature', async () => {
+    writeBytes('data.bin', Buffer.from([0x01, 0x00, 0x02, 0x03]));
+    const file = await readFileForDisplay(repoPath, 'data.bin');
+
+    expect(file.binary).toBe(true);
+    expect(file.media?.refusal).toBe('not-an-image');
+  });
+
+  it('ignores the extension: an SVG named .png stays text with no image', async () => {
+    writeBytes('vector.png', Buffer.from('<svg xmlns="https://www.w3.org/2000/svg"></svg>\n'));
+    const file = await readFileForDisplay(repoPath, 'vector.png');
+
+    expect(file.binary).toBe(false);
+    expect(file.media).toBeUndefined();
+    expect(file.content).toContain('<svg');
+  });
+
+  it('still flags a large text file as too large, with no media verdict', async () => {
+    // 'not-an-image' is what a big text file looks like to the sniffer, so it
+    // must not ride along — a client reads any media as "this is not text".
+    fs.writeFileSync(path.join(repoPath, 'big.txt'), 'x'.repeat(2 * 1024 * 1024));
+    const file = await readFileForDisplay(repoPath, 'big.txt');
+
+    expect(file.tooLarge).toBe(true);
+    expect(file.content).toBe('');
+    expect(file.media).toBeUndefined();
+  });
+
+  it('refuses an oversized GIF from the peek alone', async () => {
+    // A GIF is decided on the whole file, so it has its own tighter cap. Past
+    // it the answer is settled by the declared size, and reading megabytes to
+    // be told so would be pure waste.
+    const bytes = Buffer.concat([GIF_1X1, Buffer.alloc(3 * 1024 * 1024)]);
+    writeBytes('huge.gif', bytes);
+    const { file, bytesRead } = await measureRead('huge.gif');
+
+    expect(file.media?.refusal).toBe('too-large');
+    expect(bytesRead).toBeLessThanOrEqual(64);
+  });
+
+  it('keeps the refusal on a large file whose bytes said something', async () => {
+    const bytes = Buffer.concat([webpFile(), Buffer.alloc(2 * 1024 * 1024)]);
+    writeBytes('big.webp', bytes);
+    const file = await readFileForDisplay(repoPath, 'big.webp');
+
+    expect(file.tooLarge).toBe(true);
+    expect(file.media?.refusal).toBe('unsupported-format');
   });
 });

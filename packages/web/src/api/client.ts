@@ -10,7 +10,9 @@
  *
  * Wire types are reused TYPE-ONLY from @diffstalker/client and core DTO
  * types TYPE-ONLY from @diffstalker/core — both erase at build, so no
- * node:http / node:events reaches the browser bundle.
+ * node:http / node:events reaches the browser bundle. The one runtime
+ * import from core is utils/blobRef, which is pure and import-free
+ * precisely so it can be bundled for the browser.
  *
  * Decoding: commit dates arrive as ISO strings and are revived to Date
  * (history, compare commits); hunkCounts arrive as plain {path: number}
@@ -19,12 +21,14 @@
 
 import { request, subscribe } from './transport';
 import type { SseHandle } from './transport';
+import { mediaUrl } from '@diffstalker/core/utils/blobRef';
 import type {
   FollowChangeEvent,
   FollowState,
   HealthState,
   JournalAppendEvent,
   JournalResponse,
+  MediaPair,
   RepoClosedEvent,
   RepoOpenedEvent,
   RepoRef,
@@ -39,6 +43,17 @@ import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
+
+/**
+ * The blob URL builder, re-exported so a component gets its `<img src>`
+ * from the same module as the metadata that describes it, and so the shape
+ * has exactly one definition (core's blobRef.ts) shared with the daemon.
+ *
+ * Image bytes reach the page ONLY as that `<img src>`. Nothing here fetches
+ * them: a `fetch()` to /blob sends `Sec-Fetch-Dest: empty` and the route
+ * answers 403 — that is the guard working, not something to route around.
+ */
+export { blobUrl } from '@diffstalker/core/utils/blobRef';
 
 /** Revive a wire commit: the ISO date string becomes a Date. */
 function reviveCommit(commit: WireCommitInfo): CommitInfo {
@@ -237,6 +252,23 @@ export class DiffstalkerClient {
 
   files(id: string): Promise<string[]> {
     return request('GET', this.repoPath(id, '/files'));
+  }
+
+  // --- Media ---
+
+  /**
+   * Image metadata for both sides of a changed file — sizes, oids,
+   * dimensions or a refusal — with renames already resolved by the daemon,
+   * so a caller never learns a rev vocabulary. Plain JSON over the normal
+   * transport; the bytes it points at are fetched by the browser itself
+   * from blobUrl(), never by this client.
+   *
+   * The URL comes from core's mediaUrl so the daemon, its tests and this
+   * client share one spelling — `staged` in particular is 0/1, which is
+   * the only thing the route accepts.
+   */
+  media(id: string, path: string, staged: boolean): Promise<MediaPair> {
+    return request('GET', mediaUrl(id, path, staged));
   }
 
   // --- SSE ---

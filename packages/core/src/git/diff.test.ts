@@ -104,6 +104,57 @@ describe('getDiff / getDiffForUntracked (fixture)', () => {
     expect(diff.lines.filter((l) => l.type === 'addition')).toEqual([]);
     resetRepo();
   });
+
+  /** A real 1x1 RGBA PNG — magic bytes, an IHDR and a NUL in the first bytes. */
+  const PNG_1X1_BASE64 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  function writeFixtureBytes(file: string, bytes: Buffer): void {
+    fs.writeFileSync(path.join(repoPath, file), bytes);
+  }
+
+  it("getDiffForUntracked: a binary file gets git's marker, not a wall of additions", async () => {
+    writeFixtureBytes('logo.png', Buffer.from(PNG_1X1_BASE64, 'base64'));
+    const diff = await getDiffForUntracked(repoPath, 'logo.png');
+    expect(diff.lines.map((l) => l.content)).toEqual([
+      'diff --git a/logo.png b/logo.png',
+      'new file mode 100644',
+      'Binary files /dev/null and b/logo.png differ',
+    ]);
+    // git emits no ---/+++ pair and no hunk for a binary file, and every
+    // consumer keys off the marker line, so the shape has to match exactly.
+    expect(diff.lines.every((l) => l.type === 'header')).toBe(true);
+    expect(diff.lines.filter((l) => l.type === 'addition')).toEqual([]);
+    resetRepo();
+  });
+
+  it('getDiffForUntracked: any file with a NUL is binary, whatever its name', async () => {
+    // The verdict comes from the bytes, never the extension: a .txt full of
+    // NULs is binary and a text file is text no matter what it is called.
+    writeFixtureBytes('data.txt', Buffer.from([0x68, 0x69, 0x00, 0x21]));
+    const binary = await getDiffForUntracked(repoPath, 'data.txt');
+    expect(binary.lines.some((l) => l.content.startsWith('Binary files'))).toBe(true);
+
+    writeFixtureFile(repoPath, 'notes.png', 'plain text\n');
+    const text = await getDiffForUntracked(repoPath, 'notes.png');
+    expect(text.lines.some((l) => l.content.startsWith('Binary files'))).toBe(false);
+    expect(text.lines.filter((l) => l.type === 'addition').map((l) => l.content)).toEqual([
+      '+plain text',
+    ]);
+    resetRepo();
+  });
+
+  it('getDiffForUntracked: non-ASCII text survives the byte read intact', async () => {
+    // The read is a Buffer now; the text path decodes it. Multi-byte UTF-8
+    // must come back through that decode unchanged.
+    writeFixtureFile(repoPath, 'utf8.txt', 'héllo → wörld\n日本語\n');
+    const diff = await getDiffForUntracked(repoPath, 'utf8.txt');
+    expect(diff.lines.filter((l) => l.type === 'addition').map((l) => l.content)).toEqual([
+      '+héllo → wörld',
+      '+日本語',
+    ]);
+    resetRepo();
+  });
 });
 
 describe('getCommitDiff (fixture)', () => {

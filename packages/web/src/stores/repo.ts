@@ -28,6 +28,11 @@
  *   files). Entries preserve object identity when content is unchanged
  *   (raw compared by value) so downstream render memos hit; stale
  *   responses are dropped by per-key sequence tokens;
+ * - mediaMeta is the per-file image verdict behind the Changes stack's
+ *   picture cards, keyed like workingDiffs. Purely on demand (the view
+ *   asks for the binary sections a reader can see, at concurrency 4) and
+ *   at most once per key; a state-change drops the gate for every touched
+ *   file so the mutable worktree side can never go stale;
  * - history and compare are pulled on demand and re-pulled on state-change
  *   when previously loaded;
  * - the journal (the daemon's append-only per-hunk edit chronology) is
@@ -76,6 +81,7 @@ import type { SseHandle } from '../api/transport';
 import type {
   JournalAppendEvent,
   JournalResponse,
+  MediaPair,
   RepoRef,
   WireHunkCounts,
   WireSharedState,
@@ -100,6 +106,14 @@ const RECONNECT_DELAY_MS = 1000;
 
 /** Max parallel per-file diff fetches for the working-diff cache. */
 const WORKING_DIFF_CONCURRENCY = 6;
+
+/**
+ * Max parallel /media metadata fetches. Lower than the diff queue on
+ * purpose: each one costs the daemon two blob inspections (both sides),
+ * it runs ALONGSIDE the diff queue rather than instead of it, and the
+ * requests only exist for sections the reader can actually see.
+ */
+const MEDIA_CONCURRENCY = 4;
 
 /**
  * When a state-change touches more files than this (branch switch,
@@ -149,6 +163,14 @@ export interface WorkingDiffsState {
  */
 export function workingDiffKey(file: FileEntry): string {
   return `${file.staged ? 's' : 'u'}:${file.path}`;
+}
+
+/** One queued /media fetch; `settle` releases whoever awaited ensureMedia. */
+interface MediaRequest {
+  key: string;
+  path: string;
+  staged: boolean;
+  settle: () => void;
 }
 
 /** The last snapshot workingDiffs changed-set diffing compares against. */
@@ -224,6 +246,16 @@ export const useRepoStore = defineStore('repo', () => {
    * reactivity cost) and identity-preserved when content is unchanged.
    */
   const workingDiffs = shallowRef<WorkingDiffsState>({ byKey: new Map(), seq: 0 });
+  /**
+   * Image metadata per changed file (both sides, renames already
+   * resolved by the daemon), keyed like workingDiffs so a partially
+   * staged file's two sections get their own verdicts. Filled ONLY on
+   * demand — the Changes view asks for the binary sections a reader can
+   * see — because each entry costs the daemon two blob inspections.
+   * markRaw'd: these are inert wire objects, and the pairs are handed
+   * straight to an <img src>, so deep reactivity would buy nothing.
+   */
+  const mediaMeta = shallowRef(new Map<string, MediaPair>());
   const selection = shallowRef<RepoSelectionState>(initialSelection());
   const history = shallowRef<RepoHistoryState>(initialHistory());
   /**
@@ -346,6 +378,18 @@ export const useRepoStore = defineStore('repo', () => {
    */
   let workingDiffFetchSeq = 0;
   const appliedSeqByKey = new Map<string, number>();
+  /**
+   * Keys whose /media answer is current or on its way — the "once per
+   * key" gate. A key is removed when its file leaves the status set,
+   * when a state-change touches it (so the mutable worktree side is
+   * re-asked), and when its fetch failed (so a later look retries).
+   * Separate from mediaMeta because the two answer different questions:
+   * "is there anything to draw" vs "must this be fetched again".
+   */
+  const mediaRequested = new Set<string>();
+  /** Media fetches waiting for one of the MEDIA_CONCURRENCY slots. */
+  const mediaQueue: MediaRequest[] = [];
+  let mediaWorkers = 0;
   /** Changed files coalescing in the 20ms refetch window, by row key. */
   const pendingChangedFiles = new Map<string, FileEntry>();
   let workingDiffsDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -400,11 +444,17 @@ export const useRepoStore = defineStore('repo', () => {
     workingSnapshot = null;
     appliedSeqByKey.clear();
     pendingChangedFiles.clear();
+    // Media is per-repo and keyed by path: a same-path file in the next
+    // repo must never inherit the previous repo's verdict. In-flight
+    // fetches are already fenced by the generation guard.
+    mediaRequested.clear();
+    mediaQueue.length = 0;
 
     repoId.value = null;
     repoPath.value = path;
     shared.value = initialShared();
     workingDiffs.value = { byKey: new Map(), seq: 0 };
+    mediaMeta.value = new Map();
     selection.value = initialSelection();
     history.value = initialHistory();
     journalEntries.value = [];
@@ -588,6 +638,7 @@ export const useRepoStore = defineStore('repo', () => {
       isLoading: false,
     };
     refreshSelectionAfterStatus();
+    invalidateMediaAfterState(prevSnapshot);
     if (workingDiffsActive) {
       updateWorkingDiffsAfterState(prevSnapshot);
     } else {
@@ -996,6 +1047,117 @@ export const useRepoStore = defineStore('repo', () => {
       pendingChangedFiles.clear();
       void fetchWorkingDiffsFor(batch); // catches internally; never rejects
     }, DIFF_DEBOUNCE_MS);
+  }
+
+  // --- Image metadata (per changed binary file, on demand) ---
+
+  /**
+   * Ask for one file's image metadata, at most once per key. Resolves
+   * once the answer has landed (or immediately when the key is already
+   * current), so a caller may await it; it never rejects — failures
+   * collapse into shared.error through the same displayError funnel as
+   * every other read, and connection loss enters the reconnect loop.
+   *
+   * `staged` is the SIDE PAIR to describe, not a property of the file:
+   * staged=false compares index with the working tree, staged=true
+   * compares HEAD with the index. It matches the section's own `s:`/`u:`
+   * key, which is why the cache is keyed the same way.
+   *
+   * Callers are expected to ask only for binary sections the reader can
+   * see (see ChangesView): each answer costs the daemon two blob
+   * inspections, so a whole-tree sweep would be paid for nothing.
+   */
+  function ensureMedia(file: FileEntry, staged: boolean): Promise<void> {
+    const key = workingDiffKey(file);
+    if (repoId.value === null || mediaRequested.has(key)) return Promise.resolve();
+    mediaRequested.add(key);
+    return new Promise<void>((settle) => {
+      mediaQueue.push({ key, path: file.path, staged, settle });
+      pumpMediaQueue();
+    });
+  }
+
+  /** Fill the free slots; each worker drains the queue until it is empty. */
+  function pumpMediaQueue(): void {
+    while (mediaWorkers < MEDIA_CONCURRENCY && mediaQueue.length > 0) {
+      mediaWorkers += 1;
+      void runMediaWorker(); // catches internally; never rejects
+    }
+  }
+
+  async function runMediaWorker(): Promise<void> {
+    try {
+      for (;;) {
+        const request = mediaQueue.shift();
+        if (request === undefined) return;
+        try {
+          await fetchMedia(request); // catches internally; never rejects
+        } finally {
+          // Always release the awaiter: a caller must never hang on a
+          // request that failed inside fetchMedia.
+          request.settle();
+        }
+      }
+    } finally {
+      mediaWorkers -= 1;
+    }
+  }
+
+  /**
+   * One /media pull. A response is dropped when the repo switched under
+   * it (generation) or when the key was invalidated while it was in
+   * flight (the gate no longer holds it) — landing it then would pin a
+   * verdict for bytes that have already moved on.
+   */
+  async function fetchMedia(request: MediaRequest): Promise<void> {
+    const id = repoId.value;
+    if (id === null) return;
+    const gen = generation;
+    try {
+      const pair = await client.media(id, request.path, request.staged);
+      if (gen !== generation || !mediaRequested.has(request.key)) return;
+      const byKey = new Map(mediaMeta.value);
+      byKey.set(request.key, markRaw(pair));
+      mediaMeta.value = byKey;
+    } catch (err) {
+      if (gen !== generation) return;
+      // Drop the gate so a later look at the same section retries.
+      mediaRequested.delete(request.key);
+      if (isConnectionError(err)) {
+        handleConnectionLoss();
+        return;
+      }
+      setError(`Failed to load image metadata: ${displayError(err)}`);
+    }
+  }
+
+  /**
+   * Keep the media cache honest across a state-change. Two different
+   * moves:
+   *
+   * - a file that LEFT the status set loses its entry outright (nothing
+   *   renders it any more, and a re-entry must ask again);
+   * - a file that CHANGED keeps its entry on screen but loses the gate,
+   *   so the next ensureMedia re-asks. The worktree side is mutable
+   *   bytes behind a size-mtime cache key: without this, an edited image
+   *   would keep rendering the version string it had when the section
+   *   first came into view. Stale-while-revalidate rather than eviction
+   *   — blanking the card and re-inflating it would move every section
+   *   below it twice for one edit.
+   */
+  function invalidateMediaAfterState(prev: WorkingSnapshot | null): void {
+    const next = workingSnapshot;
+    if (next === null) return;
+    const leaving = [...mediaMeta.value.keys()].filter((key) => !next.files.has(key));
+    for (const key of leaving) mediaRequested.delete(key);
+    if (leaving.length > 0) {
+      const byKey = new Map(mediaMeta.value);
+      for (const key of leaving) byKey.delete(key);
+      mediaMeta.value = byKey;
+    }
+    for (const file of computeChangedFiles(prev, next)) {
+      mediaRequested.delete(workingDiffKey(file));
+    }
   }
 
   /**
@@ -1490,6 +1652,7 @@ export const useRepoStore = defineStore('repo', () => {
     isRepo,
     shared,
     workingDiffs,
+    mediaMeta,
     selection,
     history,
     journalEntries,
@@ -1513,6 +1676,8 @@ export const useRepoStore = defineStore('repo', () => {
     // working-diff cache
     refreshAllDiffs,
     diffModelFor,
+    // image metadata (on demand, per changed binary file)
+    ensureMedia,
     // history
     loadHistory,
     selectHistoryCommit,

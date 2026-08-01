@@ -199,8 +199,10 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | GET    | `/repos/:id/compare/base`  | Effective compare base: `{base}` (persisted choice or discovered default, null when none) |
 | PUT    | `/repos/:id/compare/base`  | Persist the compare base: `{"branch": "origin/main"}` → `{base}`; the ref is validated first (400 on an unknown ref, nothing persisted) |
 | GET    | `/repos/:id/compare?base=&uncommitted=` | Base-vs-HEAD `CompareDiff` (three-dot); base defaults to the effective base — a stale persisted base falls back to the discovered default, 422 when nothing usable resolves; an explicit unknown `base` is a 400; a base with no common history is a 422; `uncommitted=true` merges working-tree changes |
-| GET    | `/repos/:id/tree?dir=&hidden=&ignored=` | One directory level (`name`, `path`, `type`), gitignored/hidden filtered by default (`hidden=true` / `ignored=true` include them, mirroring the TUI toggles), files annotated with `gitStatus` + `staged`, changed dirs with `hasChanges` (400 outside the repo root or on a file, 404 unknown dir) |
-| GET    | `/repos/:id/file?path=`    | File content for display with flags: `{content, binary, truncated, tooLarge, size, totalLines}` — binary/oversized come back with empty content and the flag set, never prose; 400 for anything that is not a regular file (directory, FIFO, device) or resolves outside the repo root |
+| GET    | `/repos/:id/tree?dir=&hidden=&ignored=` | One directory level (`name`, `path`, `type`), gitignored/hidden filtered by default (`hidden=true` / `ignored=true` include them, mirroring the TUI toggles), files annotated with `gitStatus` + `staged`, changed dirs with `hasChanges` (400 outside the repo root, on a file, or on the git directory, 404 unknown dir). The git directory is never listed, even with `hidden=true` |
+| GET    | `/repos/:id/file?path=`    | File content for display with flags: `{content, binary, truncated, tooLarge, size, totalLines, media?}` — binary/oversized come back with empty content and the flag set, never prose; `media` carries the image verdict (`{image, refusal, version}`) when the bytes say something about it; 400 for anything that is not a regular file (directory, FIFO, device), resolves outside the repo root, or addresses the git directory |
+| GET    | `/repos/:id/media?path=&staged=` | Image metadata for one changed file, both sides resolved server-side (renames included): `{old, new}`, each side `{path, side, bytes, oid, image, refusal, version}` or `null` when the file does not exist there. `staged` must be spelled `0` or `1`. 404 when the path is not in status. See [Image bytes](#image-bytes) |
+| GET    | `/repos/:id/blob?path=&side=&v=` | Raw image bytes for `<img src>`; `side` is `worktree` \| `index` \| `head`, `v` is an ignored cache key. Only PNG/JPEG/GIF, typed from magic bytes. Status-independent (no `git status`), so a clean committed image is reachable. See [Image bytes](#image-bytes) |
 | GET    | `/repos/:id/files`         | All tracked + untracked (not ignored) paths: the fuzzy-finder source |
 | GET    | `/repos/:id/journal?since=` | Append-only edit journal: `{epoch, prunedBefore, entries}`; `since=<seq>` returns only entries with a higher seq (all when omitted) |
 | GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher and `journal-append {entries}` per journal observation |
@@ -274,6 +276,82 @@ The journal store lives above the repo's manager lifecycle: closing a
 repo's last client (a browser F5) disposes the manager but keeps the
 store, so a reopen resumes the same chronology under the same epoch.
 Stores are LRU-capped daemon-wide; an open repo's store is never evicted.
+
+## Image bytes
+
+`GET /repos/:id/blob` is the only endpoint that hands raw repository bytes to a
+browser, and `GET /repos/:id/media` is the metadata that tells the web UI which
+bytes to ask for. Both are routed on **every** listener (the socket and the
+port), because the web UI is what needs them.
+
+The rule the whole design rests on: **what we say a file is comes from its
+magic bytes**, re-derived from the exact buffer the route is about to write, on
+every request. Never from the extension, never from a query parameter, never
+from a verdict an earlier `/file` or `/media` response cached. A repo file
+called `logo.png` holding `<svg><script>` is same-origin script the moment we
+agree with its name, so it gets zero bytes and a 415.
+
+### Allow-list
+
+Three formats, and nothing else is ever served:
+
+| Format | Content-Type | Structural gate |
+| ------ | ------------ | --------------- |
+| PNG (still) | `image/png` | PNG signature, `IHDR` dimensions, a legal bit-depth/colour-type pair, a bounded walk to the first `IDAT`. An `acTL` chunk (APNG) is refused — it is a second animation decoder |
+| JPEG (baseline / progressive) | `image/jpeg` | SOI plus a legal marker, a bounded segment walk to the first SOF; **SOF0/SOF1/SOF2 only** (lossless, arithmetic and hierarchical SOFs are refused) |
+| GIF (still or animated) | `image/gif` | `GIF87a`/`GIF89a`, a walk over the whole block stream counting image descriptors. Validated only with the entire file in hand, which is what `MAX_GIF_BYTES` bounds |
+
+Everything else is refused by default: SVG, HTML/XML, PDF, WebP, AVIF/HEIC,
+TIFF, BMP, ICO, JPEG XL, fonts, wasm/ELF/PE, archives, video and audio, and
+anything unrecognized or recognized-but-invalid. The daemon **never decodes,
+transcodes, re-encodes or strips metadata** — validation is fixed-offset
+integer reads and bounded walks. No image library (sharp, jimp, canvas,
+libvips) is a dependency of any package, and the browser stays the sandbox.
+
+### Caps
+
+Enforced before any byte is written, and again on the buffer being written:
+
+```
+MAX_IMAGE_BYTES     = 8 MiB    any allowed format
+MAX_GIF_BYTES       = 2 MiB    GIF only, bounds the frame walk
+MAX_IMAGE_DIMENSION = 8192     px per side
+MAX_IMAGE_PIXELS    = 16 MPix  width * height
+MAX_GIF_FRAMES      = 256
+MAX_ANIMATED_PIXELS = 32 MPix  frames * width * height
+MAX_ICC_BYTES       = 64 KiB   PNG iCCP / JPEG APP2 run
+```
+
+The **pixel budget, not the byte cap, is the real control**: compression ratio
+is unbounded, so a 300-byte PNG can declare 60000×60000 and cost the renderer
+gigabytes of RGBA. `MAX_FILE_SIZE` (1 MiB) is untouched — that is the *text*
+cap for `/file`.
+
+Concurrency is bounded too: 4 blob reads in flight per daemon with a queue of
+64 waiters, then 503. One budget for the whole daemon, shared by every
+listener.
+
+### Refusals
+
+| Status | Cause |
+| ------ | ----- |
+| 400 | empty/NUL path, a leading `-` (git option) or `:` (pathspec magic), traversal, a symlink escaping the root, any `.git` path, a non-regular file (directory, symlink, gitlink, FIFO), a bad `side`, a `staged` that is not `0`/`1` |
+| 403 | `Sec-Fetch-Site` present and cross-site, or `Sec-Fetch-Dest` present and not `image` (`/blob` only — `/media` is JSON and the SPA's own `fetch` sends `Sec-Fetch-Dest: empty`). Both absent passes, so `curl` and the Node client are unaffected |
+| 404 | unknown repo, or the path does not exist on that side. `/media` also 404s a path with no status entry |
+| 413 | over the byte, dimension, pixel or frame cap |
+| 415 | not allow-listed, or the signature matched and the structure failed |
+| 421 | non-loopback `Host` (the global origin guard) |
+| 503 | the blob queue overflowed |
+
+Every refusal writes **zero bytes** and a plain `{"error": "..."}` body.
+
+A 200 carries the magic-derived `content-type`, `content-disposition: inline`
+with **no** `filename` parameter (a repo-supplied string is never interpolated
+into a header), a re-asserted `x-content-type-options: nosniff`,
+`cross-origin-resource-policy: same-origin`, `vary: sec-fetch-site,
+sec-fetch-dest`, and either `cache-control: no-store` (`side=worktree`, whose
+bytes can change under us) or `cache-control: private, no-cache` plus an
+`etag` of the object id (`side=index|head`, which are immutable).
 
 ## Follow mode
 

@@ -1,13 +1,13 @@
 /**
  * useUiStore: app-level UI state — theme, active view, recent repos,
  * the auto-mode toggle (+ its row flash), the diff syntax-highlighting
- * toggle, the diff layout mode (unified/split), the Changes stack's
- * active section key, and the active overlay (fuzzy finder / hotkeys
- * help). Theme, view, recents, auto mode, diff syntax and diff mode
- * persist through prefs
- * (localStorage); the theme lands on <html data-theme="..."> so the
- * CSS custom-property sets select. Overlay, flash, and stack-key state
- * are session-only — never persisted.
+ * toggle, the diff layout mode (unified/split), the image-diff compare
+ * mode (side by side / swipe / onion), the Changes stack's active
+ * section key, and the active overlay (fuzzy finder / hotkeys help).
+ * Theme, view, recents, auto mode, diff syntax, diff mode and image-diff
+ * mode persist through prefs (localStorage); the theme lands on
+ * <html data-theme="..."> so the CSS custom-property sets select.
+ * Overlay, flash, and stack-key state are session-only — never persisted.
  *
  * The initial theme honors prefers-color-scheme when no explicit choice
  * is stored (dark unless the browser asks for light).
@@ -16,7 +16,7 @@
 import { shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import { loadPrefs, savePrefs, MAX_RECENT_REPOS } from '../prefs';
-import type { ViewName, DiffMode } from '../prefs';
+import type { ViewName, DiffMode, ImageDiffMode } from '../prefs';
 import type { ThemeName } from '../theme/themes';
 
 /** The rail's view entries, in order. */
@@ -58,6 +58,12 @@ export const useUiStore = defineStore('ui', () => {
   const diffSyntaxEnabled = shallowRef<boolean>(stored.diffSyntax);
   /** Diff layout: 'unified' or 'split' — app-wide, every DiffView. */
   const diffMode = shallowRef<DiffMode>(stored.diffMode);
+  /**
+   * How image diffs compare their two sides — app-wide, like diffMode.
+   * The picker lives on the image card itself (there is no room for it
+   * in the header, and it means nothing when no image is on screen).
+   */
+  const imageDiffMode = shallowRef<ImageDiffMode>(stored.imageDiffMode);
   /** Wrap long lines instead of horizontal scroll — diffs and the
    * Explorer file viewer, app-wide. */
   const wrapEnabled = shallowRef<boolean>(stored.wrapEnabled);
@@ -114,6 +120,12 @@ export const useUiStore = defineStore('ui', () => {
     savePrefs({ diffMode: diffMode.value });
   }
 
+  /** Set (not toggle): the picker is a radiogroup of three. */
+  function setImageDiffMode(mode: ImageDiffMode): void {
+    imageDiffMode.value = mode;
+    savePrefs({ imageDiffMode: mode });
+  }
+
   function toggleWrap(): void {
     wrapEnabled.value = !wrapEnabled.value;
     savePrefs({ wrapEnabled: wrapEnabled.value });
@@ -156,6 +168,7 @@ export const useUiStore = defineStore('ui', () => {
     autoModeEnabled,
     diffSyntaxEnabled,
     diffMode,
+    imageDiffMode,
     wrapEnabled,
     flashedFile,
     activeStackKey,
@@ -166,6 +179,7 @@ export const useUiStore = defineStore('ui', () => {
     toggleAutoMode,
     toggleDiffSyntax,
     toggleDiffMode,
+    setImageDiffMode,
     toggleWrap,
     flashFile,
     setActiveStackKey,

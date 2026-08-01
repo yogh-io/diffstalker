@@ -6,6 +6,14 @@
  * router turns any thrown error into a non-2xx `{error}` JSON response
  * with the right status code (the HTTP status is the success signal —
  * there is no `success` envelope).
+ *
+ * `sendBytes` is the one exception to "every response is JSON", and it
+ * carries an invariant the error handling below cannot enforce: once
+ * headers are out, `handle()` can only `res.end()` — it cannot turn a
+ * late failure into an error response. So a route that writes bytes must
+ * throw every HttpError it is ever going to throw BEFORE it calls
+ * `sendBytes`, or a failure after the first write reaches the client as a
+ * truncated 200 that the browser will happily try to decode.
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -54,6 +62,27 @@ interface Route {
 export function sendJson(res: ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(toWire(payload));
   res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(body);
+}
+
+/**
+ * Send a raw body — the only non-JSON writer in the API. Every HttpError
+ * the route can raise must already have been thrown when this is called
+ * (see the module comment).
+ *
+ * `content-length` comes from the body itself and is written last, so a
+ * caller cannot hand in a length that disagrees with the bytes. The
+ * content-type is NOT set here: the caller passes the exact type it
+ * derived from the body's magic bytes, and nothing in this file may
+ * guess one from a path or an extension.
+ */
+export function sendBytes(
+  res: ServerResponse,
+  status: number,
+  body: Uint8Array,
+  headers: Record<string, string>
+): void {
+  res.writeHead(status, { ...headers, 'content-length': String(body.byteLength) });
   res.end(body);
 }
 

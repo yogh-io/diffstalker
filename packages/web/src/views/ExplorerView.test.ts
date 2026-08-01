@@ -21,6 +21,8 @@ import { useExplorerStore } from '../stores/explorer';
 import { makeFakeFetch } from '../testing/fakes';
 import type { FakeFetch, FetchCall, FakeResponse } from '../testing/fakes';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
+import type { FileMedia } from '@diffstalker/client';
+import { blobUrl } from '../api/client';
 import { loadPrefs } from '../prefs';
 import { stubMatchMedia, addToolbarSlot } from '../testing/portrait';
 
@@ -41,6 +43,12 @@ const TS_FILE: FileForDisplay = {
   tooLarge: false,
   size: 25,
   totalLines: 3,
+};
+
+const PNG_MEDIA: FileMedia = {
+  image: { format: 'png', mime: 'image/png', width: 320, height: 200, bytes: 4096 },
+  refusal: null,
+  version: '4096-1712345678000',
 };
 
 function params(call: FetchCall): URLSearchParams {
@@ -253,6 +261,9 @@ describe('file selection and the content pane', () => {
     expect(wrapper.find('[data-testid="file-content"]').classes()).toContain('wrap');
   });
 
+  // REGRESSION GUARD. The image feature widened this branch and hung a
+  // refusal suffix off it; with no media verdict the text must stay exactly
+  // what it has always been, to the byte.
   test('a binary file shows the flag-driven note', async () => {
     onRequest = (call) =>
       call.url.includes('/file')
@@ -262,6 +273,7 @@ describe('file selection and the content pane', () => {
     await wrapper.findAll('.tree-row')[1].trigger('click');
     await flushPromises();
     expect(wrapper.find('[data-testid="file-binary"]').text()).toBe('Binary file — 2.0 KB');
+    expect(wrapper.find('[data-testid="image-refused"]').exists()).toBe(false);
   });
 
   test('a too-large file shows the flag-driven note', async () => {
@@ -307,6 +319,130 @@ describe('file selection and the content pane', () => {
     await wrapper.findAll('.tree-row')[2].trigger('click');
     await flushPromises();
     expect(wrapper.find('[data-testid="file-error"]').text()).toBe('ENOENT');
+  });
+});
+
+describe('images in the content pane', () => {
+  /** A binary FileForDisplay carrying the daemon's media verdict. */
+  function imageFile(media: FileMedia, extra: Partial<FileForDisplay> = {}): FileForDisplay {
+    return { ...TS_FILE, content: '', binary: true, size: 4096, totalLines: 0, media, ...extra };
+  }
+
+  function serveFile(body: FileForDisplay): void {
+    onRequest = (call) => (call.url.includes('/file') ? { body } : undefined);
+  }
+
+  /** Select logo.png, the plain (unchanged) file in the root listing. */
+  async function openImage(wrapper: VueWrapper): Promise<void> {
+    await wrapper.findAll('.tree-row')[1].trigger('click');
+    await flushPromises();
+  }
+
+  test('an image verdict renders the viewer with the blob URL for the worktree side', async () => {
+    serveFile(imageFile(PNG_MEDIA));
+    const { wrapper } = await mountView();
+    await openImage(wrapper);
+
+    expect(wrapper.find('[data-testid="image-view"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="image"]').attributes('src')).toBe(
+      blobUrl('r1', { path: 'logo.png', side: 'worktree', version: PNG_MEDIA.version })
+    );
+    // The picture replaces the note, it does not sit beside it.
+    expect(wrapper.find('[data-testid="file-binary"]').exists()).toBe(false);
+  });
+
+  test('the header reads out format, dimensions and size; no language chip', async () => {
+    serveFile(imageFile(PNG_MEDIA));
+    const { wrapper } = await mountView();
+    await openImage(wrapper);
+
+    expect(wrapper.find('[data-testid="file-format"]').text()).toBe('png');
+    expect(wrapper.find('[data-testid="file-dimensions"]').text()).toBe('320 × 200');
+    expect(wrapper.find('[data-testid="file-frames"]').exists()).toBe(false);
+    expect(wrapper.find('.file-size').text()).toBe('4.0 KB');
+    expect(wrapper.find('[data-testid="file-header"]').text()).toContain('logo.png');
+  });
+
+  test('an animated GIF adds the frame count', async () => {
+    serveFile(
+      imageFile({
+        image: { format: 'gif', mime: 'image/gif', width: 64, height: 64, bytes: 4096, frames: 12 },
+        refusal: null,
+        version: 'gif-1',
+      })
+    );
+    const { wrapper } = await mountView();
+    await openImage(wrapper);
+
+    expect(wrapper.find('[data-testid="file-frames"]').text()).toBe('12 frames');
+  });
+
+  // Branch order: the tooLarge flag is the 1 MiB TEXT cap. Below the image
+  // branch, every picture over it would read "File too large".
+  test('a tooLarge file WITH an image verdict still renders the viewer', async () => {
+    serveFile(imageFile(PNG_MEDIA, { binary: false, tooLarge: true, size: 3 * 1024 * 1024 }));
+    const { wrapper } = await mountView();
+    await openImage(wrapper);
+
+    expect(wrapper.find('[data-testid="image-view"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="file-too-large"]').exists()).toBe(false);
+  });
+
+  test('a refused format keeps the note and names the reason', async () => {
+    serveFile(imageFile({ image: null, refusal: 'unsupported-format', version: 'webp-1' }));
+    const { wrapper } = await mountView();
+    await openImage(wrapper);
+
+    expect(wrapper.find('[data-testid="image-view"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="image-refused"]').text()).toBe(
+      '· no preview (format not rendered)'
+    );
+    expect(wrapper.find('[data-testid="file-binary"]').text()).toBe(
+      'Binary file — 4.0 KB · no preview (format not rendered)'
+    );
+  });
+
+  test('a not-an-image verdict adds nothing to the note', async () => {
+    serveFile(imageFile({ image: null, refusal: 'not-an-image', version: 'tar-1' }));
+    const { wrapper } = await mountView();
+    await openImage(wrapper);
+
+    expect(wrapper.find('[data-testid="file-binary"]').text()).toBe('Binary file — 4.0 KB');
+    expect(wrapper.find('[data-testid="image-refused"]').exists()).toBe(false);
+  });
+
+  test('a decode failure falls back to the plain note, not to "too large"', async () => {
+    serveFile(imageFile(PNG_MEDIA, { binary: false, tooLarge: true, size: 3 * 1024 * 1024 }));
+    const { wrapper } = await mountView();
+    await openImage(wrapper);
+
+    await wrapper.find('[data-testid="image"]').trigger('error');
+
+    expect(wrapper.find('[data-testid="image-view"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="file-too-large"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="file-binary"]').text()).toBe(
+      'Binary file — 3.0 MB · preview failed to decode'
+    );
+  });
+
+  test('switching from an image to a text file leaves no <img> behind', async () => {
+    onRequest = (call) => {
+      if (!call.url.includes('/file')) return undefined;
+      return params(call).get('path') === 'logo.png'
+        ? { body: imageFile(PNG_MEDIA) }
+        : { body: TS_FILE };
+    };
+    const { wrapper } = await mountView();
+    await openImage(wrapper);
+    expect(wrapper.findAll('img')).toHaveLength(1);
+
+    await wrapper.findAll('.tree-row')[2].trigger('click'); // main.ts
+    await flushPromises();
+
+    expect(wrapper.findAll('img')).toHaveLength(0);
+    expect(wrapper.find('[data-testid="image-view"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="file-content"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="file-format"]').exists()).toBe(false);
   });
 });
 

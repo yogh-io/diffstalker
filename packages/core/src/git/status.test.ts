@@ -178,6 +178,29 @@ describe('git status operations (fixture)', () => {
       resetRepo();
     });
 
+    it('records where a renamed file came from', async () => {
+      gitExec(repoPath, 'mv initial.txt renamed.txt');
+      const status = await getStatus(repoPath);
+      const renamed = status.files.find((f) => f.path === 'renamed.txt' && f.staged);
+      expect(renamed).toBeDefined();
+      expect(renamed!.status).toBe('renamed');
+      // `path` is already the new name, so this is the only route back to the
+      // pre-rename blob — what the file lists' "<- old path" suffix and the
+      // image diff's old side both need.
+      expect(renamed!.originalPath).toBe('initial.txt');
+      gitExec(repoPath, 'reset --hard HEAD');
+      resetRepo();
+    });
+
+    it('leaves originalPath unset when nothing moved', async () => {
+      writeFixtureFile(repoPath, 'initial.txt', 'edited\n');
+      gitExec(repoPath, 'add initial.txt');
+      const status = await getStatus(repoPath);
+      const staged = status.files.find((f) => f.path === 'initial.txt' && f.staged);
+      expect(staged!.originalPath).toBeUndefined();
+      resetRepo();
+    });
+
     it('returns isRepo false for non-repo path', async () => {
       const status = await getStatus('/tmp');
       expect(status.isRepo).toBe(false);

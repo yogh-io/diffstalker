@@ -46,7 +46,13 @@ const ANCHOR_SEP = '\u0000';
  */
 const notShownCache = new WeakMap<DiffResult, DiffNotShown | null>();
 
-function notShownForDiff(diff: DiffResult): DiffNotShown | null {
+/**
+ * Exported so a parent can ask the SAME question this stack asks — the
+ * Changes view needs it to know which sections are binary (and therefore
+ * worth asking the daemon for image metadata about). A second copy of the
+ * marker scan in the view would be one more place to drift.
+ */
+export function notShownForDiff(diff: DiffResult): DiffNotShown | null {
   let cached = notShownCache.get(diff);
   if (cached === undefined) {
     cached = null;
@@ -200,10 +206,21 @@ export const HUGE_FILE_CHANGED_LINES = 1500;
  * keeps its body (never unmounted mid-view). Manual (parent-owned)
  * collapse is unchanged.
  *
- * Binary files render as a placeholder ONLY (sticky header + a "Binary
- * file" note) — never bytes, never a diff body, and never the huge
- * gate. Auto-mode jumps land on the section top of gated/binary files
- * without expanding anything.
+ * Binary files never get a diff body and never get the huge gate. They
+ * render one of two FIXED-HEIGHT strips where the body would be: the
+ * plain "Binary file" note, or — when the parent lists the section in
+ * `mediaKeys` — the `media` slot, which the Changes view fills with an
+ * image card. Auto-mode jumps land on the section top of gated/binary
+ * files without expanding anything.
+ *
+ * Both strips are measured into their OWN height slot (see stripHeight).
+ * That is not tidiness: a height slot is memoized once and then reused
+ * for every unmeasured section of that kind, so two body shapes sharing
+ * one slot desync every section offset below the first mismatch,
+ * compounding as (N-1) x delta — which surfaces as the scroll spy naming
+ * the wrong file. The media card must therefore be a fixed height in
+ * every state (loading, loaded, failed, every mode), which is what keeps
+ * the memoized constant honest.
  */
 
 import {
@@ -249,6 +266,14 @@ const props = defineProps<{
    * the DOM-read path, for the same reason.
    */
   wrap?: boolean;
+  /**
+   * Section keys whose binary placeholder is replaced by the `media`
+   * slot (an image card). The parent REPLACES this Set, never mutates
+   * it — like `files`, the watchers below key on its identity, and an
+   * in-place mutation would change the rendered heights with no anchor
+   * sandwich around it.
+   */
+  mediaKeys?: Set<string>;
 }>();
 
 const emit = defineEmits<{
@@ -270,17 +295,26 @@ function setSectionEl(key: string, el: Element | ComponentPublicInstance | null)
 // --- Withheld diffs (binary, over the size cap): placeholder-only ---
 
 /**
- * These sections are ALWAYS the placeholder note: the sticky header plus
- * one line saying why there is no diff — never bytes, never a diff body,
- * and never the huge-file "Load diff" gate (there is nothing to reveal;
- * the daemon did not send content). Two cases share this shape:
- *  - binary files, per git's own marker. Real binary rendering (image
- *    preview, size delta) is deliberately deferred to a future feature;
+ * These sections never get a diff body and never get the huge-file "Load
+ * diff" gate (there is nothing to reveal; the daemon did not send
+ * content). Two cases share the shape:
+ *  - binary files, per git's own marker. A binary section can still
+ *    carry the `media` slot instead of the note — see isMediaSection;
  *  - files over the daemon's per-file diff cap, whose note carries the
  *    measured size so the reader knows what was withheld.
  */
 function notShownFor(item: StackFile): DiffNotShown | null {
   return item.diff === null ? null : notShownForDiff(item.diff);
+}
+
+/**
+ * This section renders the `media` slot instead of the note: the parent
+ * has metadata for it AND git called it binary. The `kind` check is what
+ * keeps an over-cap TEXT file out of an image card even if a key ever
+ * leaked through.
+ */
+function isMediaSection(item: StackFile): boolean {
+  return notShownFor(item)?.kind === 'binary' && (props.mediaKeys?.has(item.key) ?? false);
 }
 
 // --- Huge files: "Load diff" gate ---
@@ -499,9 +533,20 @@ let stackChrome: {
   gap?: number;
   borderY?: number;
   notShownNoteH?: number;
+  notShownMediaH?: number;
   loadDiffH?: number;
   toolbarH?: number;
 } = {};
+
+/** The strip slots stripHeight memoizes, one per BODY SHAPE. */
+type StripSlot = 'notShownNoteH' | 'notShownMediaH' | 'loadDiffH';
+
+/** The DOM selector each strip slot measures. */
+const STRIP_SELECTOR: Record<StripSlot, string> = {
+  notShownNoteH: '.not-shown-note',
+  notShownMediaH: '.not-shown-media',
+  loadDiffH: '.load-diff',
+};
 
 /** The wrap-toggle toolbar's own height — the height model's `start`
  * offset before the first section, so the spy's arithmetic offsets
@@ -582,17 +627,38 @@ function chromeGap(): number | null {
   return stackChrome.gap;
 }
 
-function stripHeight(
-  slot: 'notShownNoteH' | 'loadDiffH',
-  key: string,
-  selector: string
-): number | null {
+/**
+ * The height of ONE fixed strip kind, measured from the first section
+ * that renders it and then reused for every other section of that kind.
+ *
+ * The reuse is the whole point (it keeps the offset rebuild free of DOM
+ * reads) and also the whole danger: every strip sharing a slot must be
+ * the same height in every state, which is why each BODY SHAPE gets its
+ * own slot rather than one "not shown" slot for both. A shape that
+ * borrowed another's slot would misplace every section below the first
+ * mismatch, compounding down the stack.
+ */
+function stripHeight(slot: StripSlot, key: string): number | null {
   if (stackChrome[slot] === undefined) {
-    const strip = sectionEls.get(key)?.querySelector<HTMLElement>(selector);
+    const strip = sectionEls.get(key)?.querySelector<HTMLElement>(STRIP_SELECTOR[slot]);
     if (!strip) return null;
     stackChrome[slot] = strip.getBoundingClientRect().height;
   }
   return stackChrome[slot] ?? null;
+}
+
+/**
+ * Which fixed strip this section renders where a body would be, or null
+ * when it renders a real body. THE ONE PLACE that choice is made, so the
+ * height model, the DEV guard and the template can never disagree about
+ * which slot a section belongs to — and two body shapes (the note and
+ * the much taller media card) can never share one memoized height.
+ */
+function stripSlotFor(item: StackFile): StripSlot | null {
+  if (notShownFor(item) !== null) {
+    return isMediaSection(item) ? 'notShownMediaH' : 'notShownNoteH';
+  }
+  return isUnloaded(item) ? 'loadDiffH' : null;
 }
 
 /**
@@ -607,12 +673,9 @@ function sectionOuterHeight(
   borderY: number
 ): number | null {
   if (item.collapsed) return borderY + headerH; // v-show hides every body variant
-  if (notShownFor(item) !== null) {
-    const h = stripHeight('notShownNoteH', item.key, '.not-shown-note');
-    return h === null ? null : borderY + headerH + h;
-  }
-  if (isUnloaded(item)) {
-    const h = stripHeight('loadDiffH', item.key, '.load-diff');
+  const slot = stripSlotFor(item);
+  if (slot !== null) {
+    const h = stripHeight(slot, item.key);
     return h === null ? null : borderY + headerH + h;
   }
   // Exact model height; the estimate branches (placeholder, empty
@@ -825,13 +888,14 @@ watch(
 // every body at a new height (split collapses each run to max(dels,
 // adds) rows, vs dels + adds unified; wrap turns fixed-height rows into
 // however-many-lines-they-wrap-to), so content above the viewport would
-// shift under the reader. Sandwich the flip in the same anchor
-// prepare/restore the files and probe-resize paths use — nothing the
-// user is looking at moves. changedEls: [null] means "a height change
-// happened somewhere; keep the anchored line put" (the probe-resize
-// path, where every body also moves).
+// shift under the reader. A mediaKeys change is the same kind of event:
+// it flips sections between the note strip and the much taller media
+// card. Sandwich all three in the same anchor prepare/restore the files
+// and probe-resize paths use — nothing the user is looking at moves.
+// changedEls: [null] means "a height change happened somewhere; keep the
+// anchored line put" (the probe-resize path, where every body also moves).
 watch(
-  () => [props.mode, props.wrap],
+  () => [props.mode, props.wrap, props.mediaKeys],
   () => {
     anchor.prepare({ survivingKeys: survivingKeys(committedFiles), changedEls: [null] });
   },
@@ -839,7 +903,7 @@ watch(
 );
 
 watch(
-  () => [props.mode, props.wrap],
+  () => [props.mode, props.wrap, props.mediaKeys],
   () => {
     anchor.restore();
     // Every body's height changed: the spy/tween offsets are stale, and
@@ -948,7 +1012,35 @@ function assertBodyHeights(): void {
  * this catches, and it is otherwise silent — jumps still land, because they
  * read live offsetTop.
  */
+/**
+ * The strip half of the section-geometry guard: every RENDERED strip must
+ * be exactly the height its slot memoized. A slot is measured once from
+ * whichever section rendered it first and then reused sight-unseen, so a
+ * strip that shrank or grew (a media card that changed height with its
+ * state, a note that wrapped onto two lines) is invisible to
+ * assertBodyHeights — which only looks at bodies — and to the offset
+ * check below, which reads the same stale constant it is checking.
+ */
+function assertStripHeights(): void {
+  for (const item of committedFiles) {
+    if (isCollapsed(item)) continue;
+    const slot = stripSlotFor(item);
+    const expected = slot === null ? undefined : stackChrome[slot];
+    if (slot === null || expected === undefined) continue;
+    const strip = sectionEls.get(item.key)?.querySelector<HTMLElement>(STRIP_SELECTOR[slot]);
+    if (!strip) continue;
+    const height = strip.getBoundingClientRect().height;
+    if (Math.abs(height - expected) > 1) {
+      console.warn(
+        `[DiffStack] ${slot} drift at ${item.key}: dom=${height}px memoized=${expected}px ` +
+          `(this slot's strip must be the SAME height in every state)`
+      );
+    }
+  }
+}
+
 function assertSectionOffsets(): void {
+  assertStripHeights();
   const model = sectionHeightModel();
   if (model === null || committedFiles.length < 2) return;
   const last = committedFiles[committedFiles.length - 1];
@@ -1163,12 +1255,26 @@ defineExpose({
           >
         </span>
       </header>
-      <!-- Withheld diff (binary, or over the daemon's per-file size
-           cap): placeholder-only, always — never bytes, never a diff
-           body, no "Load diff" (there is no content to reveal). See
-           notShownFor. -->
+      <!-- A binary file the parent has image metadata for: the media
+           slot stands where the note would. Registered with setBodyEl
+           as a belt — the RO net then reports any height change of this
+           card, which the memoized notShownMediaH slot depends on NOT
+           happening. -->
       <div
-        v-if="notShownFor(item)"
+        v-if="isMediaSection(item)"
+        v-show="!item.collapsed"
+        :ref="(el) => setBodyEl(item.key, el)"
+        class="not-shown-media"
+        data-testid="not-shown-media"
+      >
+        <slot name="media" :file="item" />
+      </div>
+      <!-- Withheld diff (binary with no metadata, or over the daemon's
+           per-file size cap): placeholder-only — never bytes, never a
+           diff body, no "Load diff" (there is no content to reveal).
+           See notShownFor. -->
+      <div
+        v-else-if="notShownFor(item)"
         v-show="!item.collapsed"
         class="not-shown-note"
         data-testid="not-shown-note"
@@ -1471,6 +1577,17 @@ defineExpose({
    from its stats so the stack doesn't jump when the diff arrives. */
 .placeholder {
   background: var(--surface);
+}
+
+/* The image card's slot. The height is set HERE, on the container, and is
+   a constant sum of the three strips ImageDiffView lays out — so the
+   memoized notShownMediaH holds no matter what the card is doing inside
+   (loading, decoded, failed, any mode), and even if the slot is empty.
+   Never make this height content-driven. */
+.not-shown-media {
+  height: calc(var(--image-meta-h) + var(--image-frame-h) + var(--image-controls-h));
+  overflow: hidden;
+  background: var(--bg);
 }
 
 /* Withheld diff: the whole body is this note — no bytes, no "Load diff". */

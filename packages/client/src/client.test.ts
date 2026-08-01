@@ -12,7 +12,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createDaemon, type Daemon } from 'diffstalkerd/src/server.ts';
 import { DiffstalkerClient, DaemonError, isConnectionError } from './index.js';
-import type { RepoRef, WireSharedState } from './index.js';
+import type { MediaPair, RepoRef, WireSharedState } from './index.js';
 import { rawFromLines } from '@diffstalker/core/git/diffParse';
 
 const SOCKET = path.join(os.tmpdir(), `diffstalker-client-test-${process.pid}.sock`);
@@ -313,6 +313,67 @@ describe('typed errors', () => {
     // Restore: unstage so the fixture ends where the test found it.
     const unstaged = await client.unstage(repoId, 'fresh.txt');
     expect(unstaged.state.status!.files.find((f) => f.path === 'fresh.txt')?.staged).toBe(false);
+  });
+});
+
+describe('media', () => {
+  /** A genuine 1x1 RGBA PNG, so the daemon's sniffer types real bytes. */
+  const REAL_PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  );
+
+  let mediaDir: string;
+  let mediaRepoId: string;
+
+  // Its own repo: this one grows a PNG and stages it, which the shared
+  // fixture's later tests would trip over.
+  beforeAll(async () => {
+    mediaDir = makeRepo('ds-client-media-');
+    fs.writeFileSync(path.join(mediaDir, 'logo.png'), REAL_PNG);
+    mediaRepoId = (await client.openRepo(mediaDir)).id;
+    await until(
+      () => client.status(mediaRepoId),
+      (state) => state.status?.files.some((f) => f.path === 'logo.png') ?? false
+    );
+  }, 20000);
+
+  test('an untracked PNG has a worktree new side and no old side', async () => {
+    const pair = await client.media(mediaRepoId, 'logo.png', false);
+    expect(pair.old).toBeNull();
+    expect(pair.new).toMatchObject({
+      path: 'logo.png',
+      side: 'worktree',
+      bytes: REAL_PNG.length,
+      // The working tree is not a git object, so it has no oid.
+      oid: null,
+      refusal: null,
+    });
+    expect(pair.new!.image).toMatchObject({
+      format: 'png',
+      mime: 'image/png',
+      width: 1,
+      height: 1,
+    });
+    // The cache key the browser hands back as `v`.
+    expect(pair.new!.version.length).toBeGreaterThan(0);
+  });
+
+  test('staged is spelled 0/1, so staged=true reaches the route and reads the index', async () => {
+    gitExec(mediaDir, 'add logo.png');
+    // A `staged=true` spelling would be a 400 here, not a slow poll.
+    const pair = await until<MediaPair>(
+      () => client.media(mediaRepoId, 'logo.png', true),
+      (p) => p.new?.side === 'index'
+    );
+    expect(pair.old).toBeNull();
+    expect(pair.new!.oid).toMatch(/^[0-9a-f]{40}$/);
+    // On a git side the version IS the oid.
+    expect(pair.new!.version).toBe(pair.new!.oid!);
+  }, 15000);
+
+  test('a path with no status entry is a 404', async () => {
+    await expectDaemonError(() => client.media(mediaRepoId, 'file.txt', false), 404);
   });
 });
 

@@ -73,6 +73,28 @@
      Anything that adopts this MUST be covered by DiffStack's invalidateBand()
      or be outside the height model entirely. */
   --sep-block: 2rem;
+
+  /* The image viewers' own tokens. Derived here rather than authored per
+     theme (the --row-selected-bg precedent): the checkerboard is a function
+     of whatever surface the active theme already defines, so every theme
+     gets a correct one for free and none of them grows a token to maintain.
+
+     The checker is what tells transparent apart from white — without it a
+     PNG with an alpha channel looks identical to one painted on the card.
+     Kept deliberately faint (12% of the dimmed text color) so it reads as a
+     backdrop and never competes with the picture on top of it. */
+  --checker-a: var(--surface);
+  --checker-b: color-mix(in srgb, var(--text-dim) 12%, var(--surface));
+  --checker-size: 16px;
+
+  /* The image diff card's three fixed strips. FIXED is the point: DiffStack
+     measures ONE height per body shape and reuses it for every section, so a
+     card whose height depended on its picture would desync every section
+     offset below it. It is also better UX — a 4000x3000 screenshot cannot
+     swallow the viewport. */
+  --image-frame-h: 22rem;
+  --image-meta-h: 1.75rem;
+  --image-controls-h: 2rem;
 }
 
 /* Stacked layout: every band is full width and vertical room is the scarce

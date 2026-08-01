@@ -1,6 +1,8 @@
 /**
  * Router body handling over a real unix socket: invalid JSON, missing
- * required fields, and the 1MB body cap.
+ * required fields, and the 1MB body cap. Plus `sendBytes` against a stub
+ * response — it needs no route and no socket, and the routes that write
+ * bytes cover it end to end.
  *
  * Self-contained: own daemon instance, own socket, no repo fixtures and no
  * dependence on other test files' ordering.
@@ -10,8 +12,10 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
+import type { ServerResponse } from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { sendBytes } from './router.js';
 import { createDaemon, Daemon } from './server.js';
 
 const SOCKET = path.join(os.tmpdir(), `diffstalkerd-router-${process.pid}.sock`);
@@ -168,4 +172,66 @@ describe('router body handling', () => {
     },
     90000
   );
+});
+
+interface StubResponse {
+  status: number | null;
+  headers: Record<string, string> | null;
+  body: Uint8Array | null;
+}
+
+function stubResponse(): { res: ServerResponse; sent: StubResponse } {
+  const sent: StubResponse = { status: null, headers: null, body: null };
+  const res = {
+    writeHead(status: number, headers: Record<string, string>) {
+      sent.status = status;
+      sent.headers = headers;
+      return this;
+    },
+    end(chunk: Uint8Array) {
+      sent.body = chunk;
+      return this;
+    },
+  };
+  return { res: res as unknown as ServerResponse, sent };
+}
+
+describe('sendBytes', () => {
+  test('writes the body unchanged with a content-length taken from it', () => {
+    const { res, sent } = stubResponse();
+    // Bytes a string round-trip would corrupt: a NUL and a lone 0xFF.
+    const body = new Uint8Array([0x89, 0x50, 0x00, 0xff]);
+
+    sendBytes(res, 200, body, { 'content-type': 'image/png' });
+
+    expect(sent.status).toBe(200);
+    expect(sent.headers).toEqual({ 'content-type': 'image/png', 'content-length': '4' });
+    expect(sent.body).toBeInstanceOf(Uint8Array);
+    expect([...(sent.body as Uint8Array)]).toEqual([0x89, 0x50, 0x00, 0xff]);
+  });
+
+  test('content-length wins over a caller-supplied one', () => {
+    const { res, sent } = stubResponse();
+
+    sendBytes(res, 200, new Uint8Array(3), { 'content-length': '9999' });
+
+    expect(sent.headers?.['content-length']).toBe('3');
+  });
+
+  test('content-length is the view length, not the backing buffer length', () => {
+    const { res, sent } = stubResponse();
+    const view = new Uint8Array(new ArrayBuffer(64), 8, 5);
+
+    sendBytes(res, 200, view, {});
+
+    expect(sent.headers?.['content-length']).toBe('5');
+  });
+
+  test('sets no content-type of its own — the caller owns it', () => {
+    const { res, sent } = stubResponse();
+
+    sendBytes(res, 200, new Uint8Array(1), { 'cache-control': 'no-store' });
+
+    expect(sent.headers).toEqual({ 'cache-control': 'no-store', 'content-length': '1' });
+  });
 });

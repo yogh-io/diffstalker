@@ -38,7 +38,9 @@ import { registerHistoryCompareRoutes } from './routes/historyCompare.js';
 import { registerJournalRoutes } from './routes/journal.js';
 import { registerRemoteRoutes } from './routes/remote.js';
 import { registerExplorerRoutes } from './routes/explorer.js';
+import { registerBlobRoutes } from './routes/blob.js';
 import { registerDaemonRoutes } from './routes/daemon.js';
+import { createBlobSemaphore } from './blobSemaphore.js';
 
 /** Which slice of the REST API a listener exposes. */
 export type ApiMode = 'full' | 'web';
@@ -183,6 +185,13 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
    * differs.
    */
   const routers = new Map<ApiMode, Router>();
+
+  // One blob semaphore for the whole daemon, not one per router: a daemon
+  // bound to both a socket and a port has two routing tables over one machine,
+  // and the git processes and open fds they would spawn come out of the same
+  // budget.
+  const blobGate = createBlobSemaphore();
+
   function routerFor(mode: ApiMode): Router {
     const cached = routers.get(mode);
     if (cached) return cached;
@@ -201,6 +210,10 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
       registerRemoteRoutes(router, deps);
     }
     registerExplorerRoutes(router, deps);
+    // Image bytes and their metadata are a web-UI feature, so they are
+    // registered for BOTH modes — a --port daemon is exactly the one that
+    // needs them.
+    registerBlobRoutes(router, deps, blobGate);
     registerDaemonRoutes(router, deps);
 
     routers.set(mode, router);

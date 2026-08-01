@@ -17,13 +17,27 @@
  * Large files: same virtualization trick as DiffView — every line row
  * carries content-visibility:auto with an intrinsic-size estimate, so
  * a 5000-line file costs layout only for what's on screen.
+ *
+ * Images: a file whose media verdict carries an `image` renders in
+ * ImageView instead of the binary note. That branch sits ABOVE both the
+ * binary and the tooLarge branches on purpose — the 1 MiB tooLarge flag
+ * is the TEXT cap, and below the image branch every picture over it
+ * would read "File too large" instead of simply showing.
+ *
+ * There is deliberately NO "open raw", "view original" or "download
+ * anyway" link on any of these states. Such a link is a top-level
+ * navigation to repo bytes on the daemon's origin — the exact threat the
+ * image feature is built to avoid (see ImageView's module comment).
+ * Bytes reach the page only as an `<img src>` subresource.
  */
 
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import type { FileForDisplay } from '@diffstalker/core/git/explorerData';
+import { REFUSAL_TEXT } from '../utils/imageRefusal';
 import { highlightContent } from '../utils/highlight';
 import { formatBytes } from '../utils/format';
 import WrapToggle from './WrapToggle.vue';
+import ImageView from './ImageView.vue';
 
 const props = defineProps<{
   /** Repo-relative path of the selected file; null = nothing selected. */
@@ -55,6 +69,37 @@ const isEmptyFile = computed(
   () =>
     props.file !== null && !props.file.binary && !props.file.tooLarge && props.file.content === ''
 );
+
+/**
+ * The browser refused to decode bytes the daemon accepted. Falls back to
+ * the plain binary note (which is why that branch is widened to
+ * `binary || media`) rather than to "too large" — one note, one testid.
+ */
+const imageFailed = ref(false);
+
+watch(
+  () => [props.path, props.file],
+  () => {
+    imageFailed.value = false;
+  }
+);
+
+/** The ` · …` tail of the binary note; empty string renders no span at all. */
+const refusalSuffix = computed(() => {
+  if (imageFailed.value) return ' · preview failed to decode';
+  const refusal = props.file?.media?.refusal ?? null;
+  const text = refusal === null ? null : REFUSAL_TEXT[refusal];
+  return text === null ? '' : ` · ${text}`;
+});
+
+/** The daemon's image verdict, when it produced one. */
+const image = computed(() => props.file?.media?.image ?? null);
+
+/** Animated GIFs only: the still ones carry no frame count. */
+const frames = computed(() => {
+  const count = image.value?.frames ?? 1;
+  return count > 1 ? count : null;
+});
 </script>
 
 <template>
@@ -62,7 +107,16 @@ const isEmptyFile = computed(
     <header v-if="path" class="pane-header mono" data-testid="file-header">
       <span class="file-path" :title="path">{{ path }}</span>
       <span class="file-meta">
+        <!-- The format chip reuses .file-lang: both answer "what is this
+             file", and they are mutually exclusive by construction — an
+             image is never highlighted. -->
         <span v-if="highlighted?.language" class="file-lang">{{ highlighted.language }}</span>
+        <span v-if="image" class="file-lang" data-testid="file-format">{{ image.format }}</span>
+        <!-- U+00D7 MULTIPLICATION SIGN, not the letter x. -->
+        <span v-if="image" class="mono" data-testid="file-dimensions"
+          >{{ image.width }} × {{ image.height }}</span
+        >
+        <span v-if="frames" data-testid="file-frames">{{ frames }} frames</span>
         <span v-if="file" class="file-size">{{ formatBytes(file.size) }}</span>
         <WrapToggle />
       </span>
@@ -79,8 +133,16 @@ const isEmptyFile = computed(
         {{ loading ? 'Loading…' : '' }}
       </p>
 
-      <p v-else-if="file.binary" class="pane-note" data-testid="file-binary">
-        Binary file — {{ formatBytes(file.size) }}
+      <ImageView
+        v-else-if="file.media?.image && !imageFailed"
+        :path="path"
+        :media="file.media"
+        @fail="imageFailed = true"
+      />
+
+      <p v-else-if="file.binary || file.media" class="pane-note" data-testid="file-binary">
+        Binary file — {{ formatBytes(file.size)
+        }}<span v-if="refusalSuffix" data-testid="image-refused">{{ refusalSuffix }}</span>
       </p>
 
       <p v-else-if="file.tooLarge" class="pane-note" data-testid="file-too-large">

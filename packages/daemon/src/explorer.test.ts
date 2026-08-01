@@ -246,6 +246,92 @@ describe('explorer endpoints', () => {
     }
   });
 
+  // Every spelling below reaches .git/config on a raw first-segment check,
+  // and that file carries credentials in remote URLs. The guard normalizes
+  // first, so they all end at the same refusal.
+  const GIT_DIR_SPELLINGS = [
+    '.git',
+    '.git/config',
+    './.git/config',
+    'src/../.git/config',
+    '.GIT/config',
+    '.git./config',
+    'worktrees/x/.git/config',
+    'src/.git/config',
+  ];
+
+  test('GET /file refuses every spelling of the git directory', async () => {
+    for (const spelling of GIT_DIR_SPELLINGS) {
+      const res = await request(`/repos/${repoId}/file?path=${encodeURIComponent(spelling)}`);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toContain('git directory');
+    }
+  });
+
+  test('GET /tree refuses every spelling of the git directory', async () => {
+    for (const spelling of GIT_DIR_SPELLINGS) {
+      const res = await request(`/repos/${repoId}/tree?dir=${encodeURIComponent(spelling)}`);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toContain('git directory');
+    }
+  });
+
+  test('GET /tree?hidden=true does not list the git directory', async () => {
+    const res = await request(`/repos/${repoId}/tree?hidden=true`);
+    expect(res.status).toBe(200);
+    const names = ((await res.json()) as WireDirEntry[]).map((e) => e.name);
+    expect(names).toContain('.gitignore'); // other dotfiles still show
+    expect(names).not.toContain('.git');
+  });
+
+  test('a symlink into the git directory is a 400 on /file and /tree', async () => {
+    // Lexically clean: only the realpath + absolute-git-dir check sees it.
+    const linkGit = path.join(repoPath, 'link_git');
+    fs.symlinkSync(path.join(repoPath, '.git'), linkGit);
+    try {
+      const file = await request(`/repos/${repoId}/file?path=link_git%2Fconfig`);
+      expect(file.status).toBe(400);
+      expect(((await file.json()) as { error: string }).error).toContain('git directory');
+
+      const tree = await request(`/repos/${repoId}/tree?dir=link_git`);
+      expect(tree.status).toBe(400);
+      expect(((await tree.json()) as { error: string }).error).toContain('git directory');
+    } finally {
+      fs.rmSync(linkGit, { force: true });
+    }
+  });
+
+  test('GET /file refuses paths git could read as an option or a pathspec', async () => {
+    const cases: [string, string][] = [
+      ['-foo.png', '"-"'], // git option injection
+      ['./-foo.png', '"-"'], // same after normalizing
+      [':(glob)**', '":"'], // pathspec magic
+      ['README.md\0.png', 'NUL'],
+      ['/etc/passwd', 'escapes'],
+      ['..', 'escapes'],
+      ['.', 'repository root'],
+    ];
+    for (const [raw, expected] of cases) {
+      const res = await request(`/repos/${repoId}/file?path=${encodeURIComponent(raw)}`);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toContain(expected);
+    }
+  });
+
+  test('GET /file with an empty path param is a 400', async () => {
+    const res = await request(`/repos/${repoId}/file?path=`);
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /tree?dir=./src normalizes rather than escaping', async () => {
+    // The normalized form is what reaches the listing, so an equivalent
+    // spelling of a legitimate directory must still work.
+    const res = await request(`/repos/${repoId}/tree?dir=${encodeURIComponent('./docs/../src')}`);
+    expect(res.status).toBe(200);
+    const entries = (await res.json()) as WireDirEntry[];
+    expect(entries.map((e) => e.path)).toContain('src/main.ts');
+  });
+
   test('a symlink staying inside the repo still works', async () => {
     const innerLink = path.join(repoPath, 'link_inner');
     fs.symlinkSync(path.join(repoPath, 'README.md'), innerLink);

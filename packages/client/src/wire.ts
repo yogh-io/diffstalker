@@ -15,7 +15,9 @@ import type {
   CommitInfo,
 } from '@diffstalker/core/git/status';
 import type { CompareDiff } from '@diffstalker/core/git/diff';
+import type { FileMedia } from '@diffstalker/core/git/explorerData';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
+import type { BlobSide } from '@diffstalker/core/utils/blobRef';
 
 // Core DTOs re-exported for consumers (type-only, erased at build).
 export type {
@@ -35,7 +37,9 @@ export type {
   CompareFileDiff,
   CompareDiffStats,
 } from '@diffstalker/core/git/diff';
-export type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
+export type { DirEntry, FileForDisplay, FileMedia } from '@diffstalker/core/git/explorerData';
+export type { BlobSide, BlobRef } from '@diffstalker/core/utils/blobRef';
+export type { ImageInfo, ImageRefusal } from '@diffstalker/core/utils/imageSniff';
 export type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 export type { RemoteOperationState, RemoteOperation } from '@diffstalker/core/types/remote';
 export type {
@@ -190,4 +194,38 @@ export interface JournalAppendEvent {
   /** Opaque store identity; compare with equality only. */
   epoch: string;
   entries: JournalEntry[];
+}
+
+/**
+ * GET /repos/:id/media?path=&staged=0|1: one side of a changed file — where
+ * its bytes are, and what the magic-byte sniffer made of them.
+ *
+ * `path` is already rename-resolved: the daemon reads the status entry and
+ * answers with the path to ask /blob for on this side, so a client never
+ * learns a rev vocabulary and never carries an originalPath of its own.
+ *
+ * `version` is the cache key to pass to blobUrl as `v` — the oid on the
+ * index/head sides, `${size}-${mtimeMs}` on the worktree side. It is empty
+ * when there is nothing to fetch (a side refused for being over the byte
+ * cap), which is also when `image` is null: never build a blob URL for a
+ * side whose `image` is null.
+ */
+export interface MediaSide extends FileMedia {
+  path: string;
+  side: BlobSide;
+  /** The blob's real size, reported even when it was refused. */
+  bytes: number;
+  /** The git object id, or null for the working tree (not a git object). */
+  oid: string | null;
+}
+
+/**
+ * Old and new sides of one changed file. A side is null when the path does
+ * not exist there, or when what is there is not a regular blob (a symlink,
+ * a gitlink, a directory) — so `{old: null, new: null}` is a legitimate
+ * answer, not an error.
+ */
+export interface MediaPair {
+  old: MediaSide | null;
+  new: MediaSide | null;
 }

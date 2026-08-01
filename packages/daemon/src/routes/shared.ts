@@ -8,6 +8,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type * as http from 'node:http';
+import { createGit } from '@diffstalker/core/git/gitClient';
 import type { FileEntry, GitStatus } from '@diffstalker/core/git/status';
 import type { RemoteOperationState } from '@diffstalker/core/managers/RemoteOperationManager';
 import type { WorkingTreeManager } from '@diffstalker/core/managers/WorkingTreeManager';
@@ -203,17 +204,64 @@ export async function resolveFileEntry(
   return entry;
 }
 
+/** True when `target` is `base` itself or lives inside it. */
+function isAtOrUnder(target: string, base: string): boolean {
+  return target === base || target.startsWith(base + path.sep);
+}
+
 /**
- * Reject a client-supplied relative path that lexically escapes the repo
- * root ("../", absolute paths) with a 400. Purely lexical — symlink
- * escapes are caught separately by requireRealWithinRoot.
+ * True for a path segment that addresses the git directory.
+ *
+ * Compared case-insensitively and with trailing dots and spaces stripped:
+ * macOS (case-insensitive HFS+/APFS) and Windows both open the same
+ * directory for ".git", ".GIT", ".git." and ".git ", so matching one
+ * spelling matches one spelling out of many. Exported because the /tree
+ * listing filters by the same rule.
  */
-export function requireWithinRoot(repoPath: string, relPath: string): void {
+export function isGitDirSegment(segment: string): boolean {
+  return segment.replace(/[. ]+$/, '').toLowerCase() === '.git';
+}
+
+/**
+ * Lexical validation of a client-supplied repo-relative path, before any fs
+ * or git call touches it. Returns the NORMALIZED relative path — that
+ * normalized form is what callers must pass on, and what every check below
+ * runs against.
+ *
+ * Checking the normalized form is the whole point: `./.git/config`,
+ * `src/../.git/config` and `worktrees/x/.git/config` all slip past a check
+ * on the raw string's first segment, and all reach the git config — which
+ * carries credentials in remote URLs.
+ *
+ * Also refused: empty, a NUL byte (truncates a C-level path), a leading "-"
+ * (git parses it as an option) and a leading ":" (git parses it as pathspec
+ * magic, so `:(glob)**` would address blobs the guards never saw).
+ */
+export function requireRepoRelPath(repoPath: string, relPath: string): string {
+  if (relPath.length === 0) {
+    throw new HttpError(400, 'Empty path');
+  }
+  if (relPath.includes('\0')) {
+    throw new HttpError(400, 'Path contains a NUL byte');
+  }
   const root = path.resolve(repoPath);
-  const resolved = path.resolve(root, relPath);
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+  const rel = path.relative(root, path.resolve(root, relPath));
+  if (rel === '') {
+    throw new HttpError(400, `Path resolves to the repository root: ${relPath}`);
+  }
+  if (path.isAbsolute(rel) || rel === '..' || rel.startsWith(`..${path.sep}`)) {
     throw new HttpError(400, `Path escapes repository root: ${relPath}`);
   }
+  if (rel.startsWith('-')) {
+    throw new HttpError(400, `Path must not start with "-": ${relPath}`);
+  }
+  if (rel.startsWith(':')) {
+    throw new HttpError(400, `Path must not start with ":": ${relPath}`);
+  }
+  if (rel.split(path.sep).some(isGitDirSegment)) {
+    throw new HttpError(400, `Path addresses the git directory: ${relPath}`);
+  }
+  return rel;
 }
 
 /** Realpath, or null when the path (or a link target) does not exist. */
@@ -226,16 +274,54 @@ async function realpathOrNull(target: string): Promise<string | null> {
 }
 
 /**
- * Reject a path whose REAL location escapes the repo root: a symlink
- * inside the repo pointing at /etc must not let /file or /tree serve host
- * files. Nonexistent paths pass (the fs read 404s them properly later).
+ * The repo's git directory, real path, resolved once per repo.
+ *
+ * A WeakMap on the handle keeps the cache alive exactly as long as the repo
+ * is open. The pending promise is cached (not just the result) so parallel
+ * requests share one git process, and it is dropped again on failure so a
+ * transient one does not poison the repo for the daemon's lifetime.
  */
-export async function requireRealWithinRoot(repoPath: string, relPath: string): Promise<void> {
-  const realRoot = await fs.promises.realpath(path.resolve(repoPath));
-  const realTarget = await realpathOrNull(path.join(repoPath, relPath));
+const gitDirCache = new WeakMap<RepoHandle, Promise<string>>();
+
+async function absoluteGitDir(handle: RepoHandle): Promise<string> {
+  let pending = gitDirCache.get(handle);
+  if (!pending) {
+    pending = (async () => {
+      const raw = await createGit(handle.path).raw(['rev-parse', '--absolute-git-dir']);
+      return await fs.promises.realpath(raw.trim());
+    })();
+    gitDirCache.set(handle, pending);
+    pending.catch(() => gitDirCache.delete(handle));
+  }
+  try {
+    return await pending;
+  } catch {
+    throw new HttpError(500, 'Cannot resolve the git directory for this repository');
+  }
+}
+
+/**
+ * Reject a path whose REAL location escapes the repo root, or lands in the
+ * repo's git directory. Run it on the normalized path returned by
+ * requireRepoRelPath — the pair is always used together, in that order.
+ *
+ * A symlink inside the repo pointing at /etc must not let /file or /tree
+ * serve host files, and one pointing at .git must not serve the config: the
+ * lexical ".git" refusal only sees spellings in the path itself, while
+ * `git rev-parse --absolute-git-dir` names the real directory, which also
+ * covers a linked worktree, a bare repo and a submodule's .git file.
+ *
+ * Nonexistent paths pass (the fs read 404s them properly later).
+ */
+export async function requireRealRepoPath(handle: RepoHandle, relPath: string): Promise<void> {
+  const realRoot = await fs.promises.realpath(path.resolve(handle.path));
+  const realTarget = await realpathOrNull(path.join(handle.path, relPath));
   if (realTarget === null) return;
-  if (realTarget !== realRoot && !realTarget.startsWith(realRoot + path.sep)) {
+  if (!isAtOrUnder(realTarget, realRoot)) {
     throw new HttpError(400, `Path escapes repository root: ${relPath}`);
+  }
+  if (isAtOrUnder(realTarget, await absoluteGitDir(handle))) {
+    throw new HttpError(400, `Path addresses the git directory: ${relPath}`);
   }
 }
 
@@ -252,7 +338,7 @@ export async function dropEntriesEscapingRoot<T extends { path: string }>(
   const kept: T[] = [];
   for (const entry of entries) {
     const real = await realpathOrNull(path.join(repoPath, entry.path));
-    if (real === null || real === realRoot || real.startsWith(realRoot + path.sep)) {
+    if (real === null || isAtOrUnder(real, realRoot)) {
       kept.push(entry);
     }
   }

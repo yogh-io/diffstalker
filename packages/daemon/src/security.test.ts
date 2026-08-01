@@ -1,14 +1,17 @@
 /* eslint-disable sonarjs/no-hardcoded-ip -- test fixtures use example IPs to
    exercise the loopback vs routable distinction. */
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import type { IncomingMessage } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import {
   isLoopbackHostname,
   isLoopbackAddress,
   shouldGuard,
   guardRequest,
+  guardImageSubresource,
   SECURITY_HEADERS,
 } from './security.js';
+import { createDaemon, Daemon } from './server.js';
 
 /** Minimal IncomingMessage stand-in: method + headers is all guardRequest reads. */
 function req(method: string, headers: Record<string, string>): IncomingMessage {
@@ -104,6 +107,63 @@ describe('guardRequest — CSRF on mutations', () => {
   });
 });
 
+describe('guardImageSubresource', () => {
+  test('allows a request with no Sec-Fetch-* headers (curl / Node client)', () => {
+    expect(guardImageSubresource(req('GET', { host: '127.0.0.1:7337' }))).toBeNull();
+  });
+  test('allows the browser <img> case: same-origin + image', () => {
+    expect(
+      guardImageSubresource(
+        req('GET', {
+          host: '127.0.0.1:7337',
+          'sec-fetch-site': 'same-origin',
+          'sec-fetch-dest': 'image',
+        })
+      )
+    ).toBeNull();
+  });
+  test('allows sec-fetch-site: none (user typed the URL) with an image dest', () => {
+    expect(
+      guardImageSubresource(
+        req('GET', { host: '127.0.0.1:7337', 'sec-fetch-site': 'none', 'sec-fetch-dest': 'image' })
+      )
+    ).toBeNull();
+  });
+  test('blocks a cross-site or same-site embed with 403', () => {
+    for (const site of ['cross-site', 'same-site']) {
+      const blocked = guardImageSubresource(
+        req('GET', { host: '127.0.0.1:7337', 'sec-fetch-site': site, 'sec-fetch-dest': 'image' })
+      );
+      expect(blocked?.status).toBe(403);
+    }
+  });
+  test('blocks every non-image destination with 403', () => {
+    for (const dest of ['document', 'iframe', 'object', 'embed', 'script', 'style', 'empty']) {
+      const blocked = guardImageSubresource(
+        req('GET', {
+          host: '127.0.0.1:7337',
+          'sec-fetch-site': 'same-origin',
+          'sec-fetch-dest': dest,
+        })
+      );
+      expect(blocked?.status).toBe(403);
+    }
+  });
+  test('rejects the SPA fetch destination — proof it must stay off JSON routes', () => {
+    // The web UI's own fetch() sends `empty`. This is why the predicate is
+    // separate from guardRequest and only ever runs on the bytes route.
+    expect(
+      guardImageSubresource(
+        req('GET', {
+          host: '127.0.0.1:7337',
+          'sec-fetch-site': 'same-origin',
+          'sec-fetch-dest': 'empty',
+        })
+      )?.status
+    ).toBe(403);
+  });
+});
+
 describe('SECURITY_HEADERS', () => {
   test('includes the hardening headers and a CSP that fits the built SPA', () => {
     expect(SECURITY_HEADERS['X-Content-Type-Options']).toBe('nosniff');
@@ -112,5 +172,57 @@ describe('SECURITY_HEADERS', () => {
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("frame-ancestors 'none'");
     expect(csp).toContain("object-src 'none'");
+  });
+  test('carries Cross-Origin-Resource-Policy (no cross-origin embedding)', () => {
+    expect(SECURITY_HEADERS['Cross-Origin-Resource-Policy']).toBe('same-origin');
+  });
+  test('the CSP spells out every capability the UI does not use', () => {
+    const csp = SECURITY_HEADERS['Content-Security-Policy'];
+    for (const directive of [
+      "frame-src 'none'",
+      "child-src 'none'",
+      "media-src 'none'",
+      "worker-src 'none'",
+      "form-action 'none'",
+    ]) {
+      expect(csp).toContain(directive);
+    }
+  });
+  test('img-src allows self and data: only — never blob:', () => {
+    const csp = SECURITY_HEADERS['Content-Security-Policy'];
+    expect(csp).toContain("img-src 'self' data:");
+    expect(csp).not.toContain('blob:');
+  });
+});
+
+describe('security headers over the wire', () => {
+  let daemon: Daemon;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    // No followFile: follow mode disabled, no watcher (test convention).
+    daemon = createDaemon({});
+    await daemon.listen({ port: 0 });
+    baseUrl = `http://127.0.0.1:${(daemon.address() as AddressInfo).port}`;
+  });
+
+  afterAll(async () => {
+    await daemon.close();
+  });
+
+  test('every response carries the headers, whatever the outcome', async () => {
+    // The choke point in server.ts runs before routing AND before the origin
+    // guard, so a 200, a 404 and a guard block are all covered.
+    const responses = [
+      await fetch(`${baseUrl}/health`),
+      await fetch(`${baseUrl}/no/such/route`),
+      await fetch(`${baseUrl}/health`, { headers: { host: 'evil.com' } }),
+    ];
+    expect(responses.map((r) => r.status)).toEqual([200, 404, 421]);
+    for (const res of responses) {
+      expect(res.headers.get('cross-origin-resource-policy')).toBe('same-origin');
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(res.headers.get('content-security-policy')).toContain("frame-src 'none'");
+    }
   });
 });

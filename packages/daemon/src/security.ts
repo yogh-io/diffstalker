@@ -23,6 +23,23 @@
  *
  * Non-browser clients (the CLI over @diffstalker/client, `curl`) send no
  * `Origin`/`Sec-Fetch-Site` and a loopback `Host`, so they pass untouched.
+ *
+ * One route needs more than that. `guardRequest` exempts GET from the
+ * `Sec-Fetch-Site`/`Origin` checks by design (a cross-origin GET cannot read
+ * its response), and `Host: 127.0.0.1` passes the loopback allow-list because
+ * an attacker page sends the real loopback Host when it targets a `--port`
+ * daemon by ip. A GET that returns image bytes is therefore reachable from any
+ * page the developer happens to visit: `<img src="http://127.0.0.1:7337/...">`
+ * leaks no bytes, but `load` vs `error` plus `naturalWidth`/`naturalHeight` is
+ * an existence-and-dimension oracle over the user's repos. Two things close
+ * that: `Cross-Origin-Resource-Policy: same-origin` (the browser drops the
+ * response before it reaches the embedding page) and `guardImageSubresource`
+ * (we refuse the request outright).
+ *
+ * `guardImageSubresource` is deliberately a SEPARATE predicate, not part of
+ * `guardRequest`. It demands `Sec-Fetch-Dest: image`, and the SPA's own
+ * `fetch()` sends `Sec-Fetch-Dest: empty` — folding it into the global guard
+ * would 403 every JSON call the web UI makes.
  */
 
 import type { AddressInfo } from 'node:net';
@@ -124,17 +141,60 @@ export function guardRequest(req: IncomingMessage): GuardBlock | null {
 }
 
 /**
+ * Extra guard for a route that answers with image bytes for a browser
+ * `<img>` (see the module comment for why the global guard is not enough).
+ * Returns a GuardBlock to reject, or null to allow. Never call it on a JSON
+ * route: the SPA's `fetch()` sends `Sec-Fetch-Dest: empty`, which this
+ * rejects.
+ *
+ * Both headers pass when absent, so `curl` and the Node client are
+ * unaffected. That is safe: `Sec-Fetch-*` are forbidden header names, so a
+ * browser always sets them and page script can never strip or forge them.
+ */
+export function guardImageSubresource(req: IncomingMessage): GuardBlock | null {
+  // Same rule as the CSRF check: only a same-origin or browser-initiated
+  // (`none`) context may ask.
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') {
+    return { status: 403, message: 'Cross-site request blocked' };
+  }
+
+  // The bytes are only ever meant for an <img>. A `document`, `iframe`,
+  // `object`, `embed`, `script` or `style` destination is someone trying to
+  // get the browser to interpret repo content, not display it.
+  const dest = req.headers['sec-fetch-dest'];
+  if (dest && dest !== 'image') {
+    return { status: 403, message: 'Request destination must be an image' };
+  }
+
+  return null;
+}
+
+/**
  * Security response headers applied to every response from one choke point
  * (server.ts). Defense-in-depth for the served SPA — a strict CSP means a
  * future markup regression cannot execute injected script, and the frame
  * directives block clickjacking. The CSP fits the built web UI: external
  * hashed script + stylesheet, same-origin fetch/SSE, inline style
  * attributes from Vue :style bindings (hence style-src 'unsafe-inline').
+ *
+ * `Cross-Origin-Resource-Policy: same-origin` makes the browser drop any
+ * response another origin embedded — the second half of the image-oracle
+ * defense described in the module comment. It costs nothing here: nothing
+ * outside the daemon's own origin is ever meant to embed a daemon response.
+ *
+ * The `'none'` directives are all "we never do this": the UI has no iframe,
+ * no <audio>/<video>, no worker, and no form. Spelling them out means a
+ * regression that adds one fails loudly instead of silently widening the
+ * attack surface. `img-src` stays `'self' data:` — it must NOT gain `blob:`,
+ * because repo image bytes are shown from a same-origin URL, and allowing
+ * blob: would let injected script build an image src the CSP cannot vet.
  */
 export const SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'no-referrer',
+  'Cross-Origin-Resource-Policy': 'same-origin',
   'Content-Security-Policy': [
     "default-src 'self'",
     "script-src 'self'",
@@ -143,6 +203,11 @@ export const SECURITY_HEADERS: Record<string, string> = {
     "font-src 'self' data:",
     "connect-src 'self'",
     "object-src 'none'",
+    "frame-src 'none'",
+    "child-src 'none'",
+    "media-src 'none'",
+    "worker-src 'none'",
+    "form-action 'none'",
     "base-uri 'self'",
     "frame-ancestors 'none'",
   ].join('; '),

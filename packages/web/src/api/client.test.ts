@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DiffstalkerClient } from './client';
+import { DiffstalkerClient, blobUrl } from './client';
 import { makeFakeFetch, FakeEventSource } from '../testing/fakes';
 import type { FakeFetch } from '../testing/fakes';
 import type { FetchCall } from '../testing/fakes';
@@ -232,6 +232,43 @@ describe('explorer', () => {
     });
     await client.file('r1', 'src/a.ts');
     expect(fake.calls[0].url).toBe('/repos/r1/file?path=src%2Fa.ts');
+  });
+});
+
+describe('media', () => {
+  const emptyPair = { old: null, new: null };
+
+  test('media asks /media with staged spelled 0/1 — the only spelling the route takes', async () => {
+    respond = () => ({ body: emptyPair });
+    await client.media('r1', 'logo.png', false);
+    await client.media('r1', 'logo.png', true);
+    expect(fake.calls.map((c) => c.url)).toEqual([
+      '/repos/r1/media?path=logo.png&staged=0',
+      '/repos/r1/media?path=logo.png&staged=1',
+    ]);
+    expect(fake.calls.every((c) => c.method === 'GET')).toBe(true);
+  });
+
+  test('media encodes the id and the path', async () => {
+    respond = () => ({ body: emptyPair });
+    await client.media('id with spaces', 'img/a b&c.png', false);
+    expect(fake.calls[0].url).toBe(
+      '/repos/id%20with%20spaces/media?path=img%2Fa%20b%26c.png&staged=0'
+    );
+  });
+
+  test('a pair of nulls is a normal answer, passed through untouched', async () => {
+    respond = () => ({ body: emptyPair });
+    await expect(client.media('r1', 'notes.txt', false)).resolves.toEqual(emptyPair);
+  });
+
+  test('blobUrl is re-exported here, so a component gets bytes and metadata from one module', () => {
+    // Bytes are fetched by the browser from this URL as an <img src>, never
+    // by the client: a fetch() to /blob is a 403 by design.
+    expect(typeof blobUrl).toBe('function');
+    expect(blobUrl('r1', { path: 'logo.png', side: 'worktree', version: '12-345' })).toBe(
+      '/repos/r1/blob?path=logo.png&side=worktree&v=12-345'
+    );
   });
 });
 

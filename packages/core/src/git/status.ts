@@ -122,10 +122,21 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
     seen.add(key);
 
     if (file.index && file.index !== ' ' && file.index !== '?') {
+      const status = parseStatusCode(file.index);
       processedFiles.push({
         path: file.path,
-        status: parseStatusCode(file.index),
+        status,
         staged: true,
+        // Where the file came from, for a rename or copy. git reports it on
+        // the index side only (the working-tree column never carries R/C: a
+        // rename is a change to the index, and any later edit shows up as a
+        // plain M on the new path), so only the staged entry can carry it.
+        // Consumers that need the pre-rename blob — the file lists' "<- old
+        // path" suffix, and /media resolving the old side of an image diff —
+        // have no other source for it: `path` is already the new name.
+        ...(file.from && (status === 'renamed' || status === 'copied')
+          ? { originalPath: file.from }
+          : {}),
       });
     }
 
