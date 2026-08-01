@@ -289,10 +289,10 @@ onBeforeUnmount(() => {
         <!-- Unified: one stacked stream of rows. -->
         <template v-if="!isSplit">
           <div v-for="row in h.rows" :key="row.key" class="row" :class="row.kind">
-            <span class="ln old">{{ row.oldLineNum ?? '' }}</span
-            ><span class="ln new">{{ row.newLineNum ?? '' }}</span
+            <span class="ln code-gutter old">{{ row.oldLineNum ?? '' }}</span
+            ><span class="ln code-gutter new">{{ row.newLineNum ?? '' }}</span
             ><span class="marker">{{ marker(row) }}</span
-            ><span class="content"><DiffLineContent :row="row" :pieces="pieces(row, s)" /></span>
+            ><span class="content code-cell"><DiffLineContent :row="row" :pieces="pieces(row, s)" /></span>
           </div>
         </template>
 
@@ -308,9 +308,9 @@ onBeforeUnmount(() => {
               class="split-line"
               :class="[sr.left ? sr.left.kind : 'empty']"
             >
-              <span class="ln">{{ sr.left?.oldLineNum ?? '' }}</span
+              <span class="ln code-gutter">{{ sr.left?.oldLineNum ?? '' }}</span
               ><span class="marker">{{ sr.left && sr.left.kind === 'del' ? '-' : '' }}</span
-              ><span class="content"
+              ><span class="content code-cell"
                 ><DiffLineContent v-if="sr.left" :row="sr.left" :pieces="sidePieces(sr.left, s)"
               /></span>
             </div>
@@ -322,9 +322,9 @@ onBeforeUnmount(() => {
               class="split-line"
               :class="[sr.right ? sr.right.kind : 'empty']"
             >
-              <span class="ln">{{ sr.right?.newLineNum ?? '' }}</span
+              <span class="ln code-gutter">{{ sr.right?.newLineNum ?? '' }}</span
               ><span class="marker">{{ sr.right && sr.right.kind === 'add' ? '+' : '' }}</span
-              ><span class="content"
+              ><span class="content code-cell"
                 ><DiffLineContent v-if="sr.right" :row="sr.right" :pieces="sidePieces(sr.right, s)"
               /></span>
             </div>
@@ -599,29 +599,10 @@ onBeforeUnmount(() => {
   content-visibility: visible;
 }
 
-.ln {
-  text-align: right;
-  padding-left: 0.75ch;
-  color: var(--diff-context-line-num);
-  user-select: none;
-}
 
 .marker {
   text-align: center;
   user-select: none;
-}
-
-.content {
-  white-space: pre;
-  tab-size: 4;
-  padding-right: 1.5ch;
-  color: var(--diff-text);
-  /* Real content: opt back in against the body-wide non-selectable
-     default so the diff text is copyable. The line-number and marker
-     gutters stay user-select:none, so a selection copies clean code
-     without the leading numbers or +/- symbols. */
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 /* Wrap mode: break onto multiple visual lines within the row instead of
@@ -638,38 +619,49 @@ onBeforeUnmount(() => {
   overflow-wrap: anywhere;
 }
 
-.row.add {
+/* Add/delete painting, shared by the unified row and the split row: they are
+   the same line in two layouts, and the two selector lists had to be edited in
+   lockstep by hand. Grouped so a new --diff-* token lands in one place. */
+.row.add,
+.split-line.add {
   background: var(--diff-add-bg);
 }
 
-.row.add .ln {
+.row.add .ln,
+.split-line.add .ln {
   color: var(--diff-add-line-num);
 }
 
-.row.add .marker {
+.row.add .marker,
+.split-line.add .marker {
   color: var(--diff-add-symbol);
   font-weight: 700;
 }
 
-.row.del {
-  background: var(--diff-del-bg);
-}
-
-.row.del .ln {
-  color: var(--diff-del-line-num);
-}
-
-.row.del .marker {
-  color: var(--diff-del-symbol);
-  font-weight: 700;
-}
-
-.row.add .word-hl {
+.row.add .word-hl,
+.split-line.add .word-hl {
   background: var(--diff-add-highlight);
   border-radius: 2px;
 }
 
-.row.del .word-hl {
+.row.del,
+.split-line.del {
+  background: var(--diff-del-bg);
+}
+
+.row.del .ln,
+.split-line.del .ln {
+  color: var(--diff-del-line-num);
+}
+
+.row.del .marker,
+.split-line.del .marker {
+  color: var(--diff-del-symbol);
+  font-weight: 700;
+}
+
+.row.del .word-hl,
+.split-line.del .word-hl {
   background: var(--diff-del-highlight);
   border-radius: 2px;
 }
@@ -733,44 +725,8 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 
-.split-line.add {
-  background: var(--diff-add-bg);
-}
-
-.split-line.add .ln {
-  color: var(--diff-add-line-num);
-}
-
-.split-line.add .marker {
-  color: var(--diff-add-symbol);
-  font-weight: 700;
-}
-
-.split-line.del {
-  background: var(--diff-del-bg);
-}
-
-.split-line.del .ln {
-  color: var(--diff-del-line-num);
-}
-
-.split-line.del .marker {
-  color: var(--diff-del-symbol);
-  font-weight: 700;
-}
-
 /* Padding cell opposite a lone add/del — a muted "nothing here" filler. */
 .split-line.empty {
   background: var(--surface);
-}
-
-.split-line.add .word-hl {
-  background: var(--diff-add-highlight);
-  border-radius: 2px;
-}
-
-.split-line.del .word-hl {
-  background: var(--diff-del-highlight);
-  border-radius: 2px;
 }
 </style>

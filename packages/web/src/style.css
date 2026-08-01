@@ -255,6 +255,30 @@ input::placeholder {
   outline-offset: -2px;
 }
 
+/* The two halves of a monospace code viewer, shared by the diff renderer and
+   the file viewer: a right-aligned line-number gutter that is NOT selectable,
+   and the code cell that IS. That split is the point — a selection copies
+   clean code without the leading numbers or +/- markers.
+
+   The `ch` units are deliberate and must not become rem: they track the mono
+   glyph so the gutter and the content stay on the same character grid. */
+.code-gutter {
+  text-align: right;
+  padding-left: 0.75ch;
+  color: var(--diff-context-line-num);
+  user-select: none;
+}
+
+.code-cell {
+  white-space: pre;
+  tab-size: 4;
+  padding-right: 1.5ch;
+  color: var(--diff-text);
+  /* Opt back in against the body-wide non-selectable default. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* The default chrome chip: a raised, bordered control. Six sites declared
    these three declarations identically.
 

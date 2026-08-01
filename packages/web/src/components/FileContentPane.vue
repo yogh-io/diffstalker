@@ -106,11 +106,11 @@ const isEmptyFile = computed(
             class="code-row"
             :data-ln="i + 1"
           >
-            <span class="ln">{{ i + 1 }}</span>
+            <span class="ln code-gutter">{{ i + 1 }}</span>
             <!-- Safe by construction: every line is escaped and
                  span-balanced by utils/highlight (see its module docs). -->
             <!-- eslint-disable-next-line vue/no-v-html -->
-            <span class="code" v-html="line"></span>
+            <span class="code code-cell" v-html="line"></span>
           </div>
         </div>
         <p v-if="file.truncated" class="truncated-note mono" data-testid="file-truncated">
@@ -249,25 +249,8 @@ const isEmptyFile = computed(
 .ln {
   position: sticky;
   left: 0;
-  text-align: right;
-  padding-left: 0.75ch;
   padding-right: 0.5ch;
   background: var(--bg);
-  color: var(--diff-context-line-num);
-  user-select: none;
-}
-
-.code {
-  white-space: pre;
-  tab-size: 4;
-  padding-right: 1.5ch;
-  color: var(--diff-text);
-  /* Real content: opt back in against the body-wide non-selectable
-     default so the file text is copyable. The .ln gutter stays
-     user-select:none, so a selection copies clean code without line
-     numbers. */
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 .code-scroll.wrap .code {
