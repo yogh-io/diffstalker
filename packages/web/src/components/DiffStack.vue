@@ -235,6 +235,7 @@ import {
   type ComponentPublicInstance,
 } from 'vue';
 import { statusLetter } from '../utils/format';
+import { usePortrait } from '../composables/useMediaQuery';
 import { useScrollAnchor, type AnchorCandidate } from '../composables/useScrollAnchor';
 import {
   useStackScroll,
@@ -831,7 +832,10 @@ watch(
       if (body) bodyHeights.set(body, body.getBoundingClientRect().height);
     }
     pendingChangedKeys = [];
-    if (import.meta.env.DEV) assertBodyHeights();
+    if (import.meta.env.DEV) {
+      assertBodyHeights();
+      assertSectionOffsets();
+    }
   },
   { flush: 'post' }
 );
@@ -863,7 +867,10 @@ watch(
     for (const body of bodyEls.values()) {
       bodyHeights.set(body, body.getBoundingClientRect().height);
     }
-    if (import.meta.env.DEV) assertBodyHeights();
+    if (import.meta.env.DEV) {
+      assertBodyHeights();
+      assertSectionOffsets();
+    }
   },
   { flush: 'post' }
 );
@@ -948,6 +955,39 @@ function assertBodyHeights(): void {
   }
 }
 
+/**
+ * DEV guard for SECTION geometry, which assertBodyHeights does not cover: it
+ * checks bodies, so chrome that sits outside a body — the card's border, and
+ * above all the --sep-block gutter — has no net at all.
+ *
+ * Compares the LAST section's real offsetTop against the model's arithmetic
+ * top. The last one specifically: a per-section error compounds as (N-1) x
+ * delta, so section 0 or 1 proves nothing and the last is where a stale gap is
+ * unmissable. A stale chromeGap after a layout-mode step is exactly the bug
+ * this catches, and it is otherwise silent — jumps still land, because they
+ * read live offsetTop.
+ */
+function assertSectionOffsets(): void {
+  const model = sectionHeightModel();
+  if (model === null || committedFiles.length < 2) return;
+  const last = committedFiles[committedFiles.length - 1];
+  const el = sectionEls.get(last.key);
+  if (!el) return;
+  let top = model.start;
+  for (const item of committedFiles) {
+    if (item.key === last.key) break;
+    const h = model.heightFor(item.key);
+    if (h === null) return; // unknowable: the model is not claiming anything
+    top += h + model.gap;
+  }
+  if (Math.abs(el.offsetTop - top) > 1) {
+    console.warn(
+      `[DiffStack] section offset drift at ${last.key}: dom=${el.offsetTop}px model=${Math.round(top)}px ` +
+        `(${committedFiles.length} sections; a stale chromeGap looks exactly like this)`
+    );
+  }
+}
+
 onMounted(() => {
   measureProbe();
   void nextTick(() => publishStackHeaderH());
@@ -999,6 +1039,32 @@ const stackScroll = useStackScroll(scrollerEl, {
   stickyOffset: STICKY_OFFSET,
   onActiveKey: (key) => emit('active-file', key),
 });
+
+/**
+ * --sep-block steps with the layout mode, and it is the ONLY cached chrome
+ * measurement that moves with the viewport. Clear that one slot and rebuild
+ * the offsets.
+ *
+ * Clears `gap` alone, never `stackChrome = {}`: every other slot (headerH,
+ * borderY, toolbarH, the strip heights) reads a frozen literal, and blanket-
+ * clearing turns an arithmetic rebuild into a forced-layout one — the exact
+ * cost the cache exists to avoid. Anything that later becomes viewport-
+ * dependent must be added here explicitly.
+ *
+ * chromeGap() stays lazy on purpose: never re-measure inside this handler,
+ * just drop the value and let the next ensureOffsets() read it on the
+ * following scroll frame, after Vue has flushed. post-flush so the new
+ * margin is in the DOM before anything reads it.
+ */
+const isStacked = usePortrait();
+watch(
+  isStacked,
+  () => {
+    stackChrome.gap = undefined;
+    stackScroll.invalidateOffsets();
+  },
+  { flush: 'post' }
+);
 
 function scrollToFile(key: string, opts?: { smooth?: boolean }): void {
   stackScroll.scrollToKey(key, opts);
@@ -1295,17 +1361,16 @@ defineExpose({
      still scanned as one ruled region. Read as a band of page background,
      not as spacing.
 
-     MUST STAY A CONSTANT until the invalidation is built. chromeGap() reads
-     this once and memoizes it in stackChrome, and stackChrome is cleared at
-     exactly one place — inside measureProbe, AFTER an epsilon bail that
-     compares font metrics only. Nothing here is viewport-dependent, so a
-     resize returns at that bail and never reaches the reset. Make this value
-     depend on the viewport and useStackScroll keeps rebuilding offsets from
-     the stale gap: error (N-1) x delta, compounding down the stack, showing
-     up as the scroll-spy naming the wrong file. Jumps still land (they read
-     live offsetTop), there is no warning, and assertBodyHeights checks bodies
-     only. */
-  margin-top: 2rem;
+     Viewport-dependent, and therefore the reason invalidateBand() exists.
+     chromeGap() reads this once and memoizes it in stackChrome, and
+     stackChrome is otherwise cleared only inside measureProbe, AFTER an
+     epsilon bail that compares font metrics — none of which move when the
+     layout mode changes. Without the explicit invalidation, useStackScroll
+     would keep rebuilding offsets from the stale gap: error (N-1) x delta,
+     compounding down the stack, showing up as the scroll-spy naming the wrong
+     file. Jumps still land (they read live offsetTop), nothing warns, and
+     assertBodyHeights covers bodies only. */
+  margin-top: var(--sep-block);
 }
 
 /* The scroll-spy's active file, outlined as one object. Zero px cost, and

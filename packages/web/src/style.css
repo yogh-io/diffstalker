@@ -49,6 +49,27 @@
      to diverge. Cards re-point --bg to this, so every descendant that paints
      var(--bg) fills with it. */
   --file-bg: var(--surface);
+
+  /* The band of page background between two independent payload objects —
+     today exactly one consumer, the gap between two file cards in the diff
+     stack. THE one viewport-dependent length in the package.
+
+     Stepped, not fluid. A clamp() would vary continuously, and the gap is the
+     one length JS memoizes (DiffStack.chromeGap), so every resize tick would
+     have to invalidate a cache to stay honest. Stepping it at the layout mode
+     the app already owns means it changes at exactly two discrete, JS-
+     observable moments, which is what makes the invalidation tractable.
+
+     Anything that adopts this MUST be covered by DiffStack's invalidateBand()
+     or be outside the height model entirely. */
+  --sep-block: 2rem;
+}
+
+/* Stacked layout: every band is full width and vertical room is the scarce
+   resource, so the gutter collapses to the inline gutter's width. On a phone
+   this is ~20px back per file boundary — about one diff row each. */
+:root[data-split='stacked'] {
+  --sep-block: var(--gutter);
 }
 
 * {
