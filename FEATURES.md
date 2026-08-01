@@ -756,6 +756,19 @@ git operations.
   open its loaded commit list becomes the authority, so the badge can never
   contradict the list it labels. No base branch to compare against shows no
   badge at all, never a misleading `(0)`.
+- **Shareable URL + browser history.** The path names what is on screen:
+  `/<home-relative-repo-path>/<view>`, plus one rider segment for the two
+  views that need it — the compare base when one is picked
+  (`/w/calc/fix-a/compare/upstream:main`) and the Explorer's open file
+  (`/w/diffstalker/explorer/packages:web:src:App.vue`). Riders write their
+  `/` as `:` so the view keyword keeps a fixed position. Any such link
+  reloads into exactly that state (the daemon serves the SPA for any
+  non-API path): the repo opens, the tree expands down to the file, the
+  file opens. Switching repo, view or compare base pushes a browser
+  history entry, so Back and Forward walk through what you looked at
+  instead of leaving the app; stepping through files in the Explorer only
+  rewrites the URL, so a tree walk (or follow mode tracking an editor)
+  cannot bury the entries worth going back to.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.

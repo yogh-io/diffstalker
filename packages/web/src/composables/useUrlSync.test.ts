@@ -8,7 +8,12 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { defineComponent } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
-import { parseUrlPath, useUrlSync, type UrlState } from './useUrlSync';
+import {
+  parseUrlPath,
+  useUrlSync,
+  type UrlState,
+  type UrlSyncOptions,
+} from './useUrlSync';
 import { useDaemonStore } from '../stores/daemon';
 import { useExplorerStore } from '../stores/explorer';
 import { useRepoStore } from '../stores/repo';
@@ -24,6 +29,7 @@ function setPath(pathname: string): void {
 beforeEach(() => {
   localStorage.clear();
   setActivePinia(createPinia());
+  syncOptions = {};
   setPath('/');
   // /health carries the daemon home; everything else 404s.
   vi.stubGlobal(
@@ -43,6 +49,20 @@ afterEach(() => {
   // previous test's calls still on it.
   vi.restoreAllMocks();
   setPath('/');
+});
+
+/**
+ * ONE harness for every mount below: `useUrlSync`'s options are handed in
+ * through this slot rather than by defining a component per test (three
+ * defineComponent calls in one file trip vue/one-component-per-file).
+ */
+let syncOptions: UrlSyncOptions = {};
+
+const Harness = defineComponent({
+  setup() {
+    useUrlSync(syncOptions);
+    return () => null;
+  },
 });
 
 describe('parseUrlPath', () => {
@@ -125,13 +145,6 @@ describe('parseUrlPath', () => {
 });
 
 describe('writes a clean, home-relative path', () => {
-  const Harness = defineComponent({
-    setup() {
-      useUrlSync();
-      return () => null;
-    },
-  });
-
   test('home-relative repo path + view + :-encoded base', async () => {
     const daemon = useDaemonStore();
     const ui = useUiStore();
@@ -184,13 +197,6 @@ describe('writes a clean, home-relative path', () => {
 });
 
 describe('browser history', () => {
-  const Harness = defineComponent({
-    setup() {
-      useUrlSync();
-      return () => null;
-    },
-  });
-
   /** Mount with a repo already active and the first (replacing) write done. */
   async function mountWithRepo(): Promise<ReturnType<typeof useDaemonStore>> {
     const daemon = useDaemonStore();
@@ -240,6 +246,24 @@ describe('browser history', () => {
     expect(window.location.pathname).toBe('/w/one/changes');
   });
 
+  test('a repo switch keeps the file on the entry it leaves', async () => {
+    const daemon = await mountWithRepo();
+    const explorer = useExplorerStore();
+    useUiStore().setActiveView('explorer');
+    explorer.selectedPath = 'src/a.ts';
+    await flushPromises();
+
+    // What a switch looks like from here: the explorer store resets on the
+    // repo id (file first), the new repo lands after.
+    explorer.selectedPath = null;
+    await flushPromises();
+    expect(window.location.pathname).toBe('/w/one/explorer/src:a.ts');
+
+    daemon.activeRepoId = 'r2';
+    await flushPromises();
+    expect(window.location.pathname).toBe('/w/two/explorer');
+  });
+
   test('opening another explorer file replaces — file steps never bury the entries', async () => {
     await mountWithRepo();
     const explorer = useExplorerStore();
@@ -265,17 +289,12 @@ describe('back/forward', () => {
     daemon.activeRepoId = 'r1';
 
     const seen: UrlState[] = [];
-    const Harness = defineComponent({
-      setup() {
-        useUrlSync({
-          onPopState: (state) => {
-            seen.push(state);
-            if (state.view) ui.setActiveView(state.view);
-          },
-        });
-        return () => null;
+    syncOptions = {
+      onPopState: (state) => {
+        seen.push(state);
+        if (state.view) ui.setActiveView(state.view);
       },
-    });
+    };
     mount(Harness);
     await flushPromises();
 

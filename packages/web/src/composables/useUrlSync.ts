@@ -136,6 +136,7 @@ interface WrittenState {
   view: ViewName;
   repoRel: string | null;
   base: string | null;
+  file: string | null;
 }
 
 export function useUrlSync(options: UrlSyncOptions = {}): {
@@ -224,6 +225,26 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     );
   }
 
+  /**
+   * A repo switch clears the explorer's open file (the store resets on the
+   * repo id) one step BEFORE the new repo lands, so for one flush the state
+   * reads "same repo, no file". Writing that would strip the file from the
+   * entry the user is leaving — and Back would return them to a fileless
+   * explorer. Skip it; the next write, with the new repo, is the truthful
+   * one. Nothing else clears the file while the repo stays put (the
+   * explorer has no close-file action).
+   */
+  function isRepoSwitchFlicker(next: WrittenState): boolean {
+    return (
+      written !== null &&
+      next.file === null &&
+      written.file !== null &&
+      next.repoRel === written.repoRel &&
+      next.view === written.view &&
+      next.base === written.base
+    );
+  }
+
   function writeUrl(): void {
     if (typeof window === 'undefined') return;
     const next: WrittenState = {
@@ -231,7 +252,9 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       view: ui.activeView,
       repoRel: currentRepoRel(),
       base: ui.activeView === COMPARE ? repo.selectedCompareBase : null,
+      file: ui.activeView === EXPLORER ? explorer.selectedPath : null,
     };
+    if (isRepoSwitchFlicker(next)) return;
     // The browser stores the path percent-encoded; buildPath does not
     // encode, so compare in encoded space rather than decoding back.
     if (encodeURI(next.path) !== window.location.pathname) {
