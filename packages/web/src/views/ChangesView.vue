@@ -417,7 +417,7 @@ const rootStyle = computed(() => ({
           <div
             v-for="file in section.files"
             :key="rowKey(file)"
-            class="file-row mono"
+            class="file-row mono list-row"
             :class="{ selected: isActive(file), flash: isFlashed(file) }"
             role="option"
             :aria-selected="isActive(file)"
@@ -574,21 +574,8 @@ const rootStyle = computed(() => ({
   padding: 0.2188rem 0.75rem;
   font-size: var(--fs-base);
   text-align: left;
-  border-left: 2px solid transparent;
-  cursor: pointer; /* was a <button>; the option div keeps the affordance */
 }
 
-.file-row:hover:not(.selected) {
-  background: var(--surface-raised);
-}
-
-/* The focus indicator — same whether you click a row or scroll its diff
-   into view. A selection-tinted row, clearly stronger than the
-   surface-raised hover, plus the accent bar and accent-colored name. */
-.file-row.selected {
-  background: var(--row-selected-bg);
-  border-left-color: var(--selection);
-}
 
 .file-row.selected .base {
   color: var(--selection);

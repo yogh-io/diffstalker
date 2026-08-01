@@ -25,6 +25,11 @@
      color-mix reads the active theme's --selection/--surface at use). */
   --row-selected-bg: color-mix(in srgb, var(--selection) 18%, var(--surface));
 
+  /* The selected-row accent bar. A token because two rows subtract it from
+     their own padding to keep text aligned, and those compensations must not
+     drift from the bar itself. */
+  --row-rail: 2px;
+
   /* Pre-probe row height: --fs-base times the 1.55 line-height DiffView and
      FileContentPane share. DiffStack's measureProbe overwrites this as an
      INLINE style on the document root once a real row is measured, and an
@@ -198,6 +203,37 @@ input::placeholder {
   color: var(--del);
   font-family: var(--font-mono);
   font-size: var(--fs-small);
+}
+
+/* A selectable row in a list — Changes' files, Compare's file tree,
+   History's commits, Explorer's tree. All four repeated this same three-part
+   treatment (transparent rail, hover, selected), two of them with a
+   byte-identical comment re-deriving the invariant --row-selected-bg above
+   already documents.
+
+   Each row keeps its own box: display, gap, padding, font-size, indent, and
+   the child accent it tints when selected. */
+.list-row {
+  border-left: var(--row-rail) solid transparent;
+  cursor: pointer;
+}
+
+.list-row:hover:not(.selected) {
+  background: var(--surface-raised);
+}
+
+.list-row.selected {
+  background: var(--row-selected-bg);
+  border-left-color: var(--selection);
+}
+
+/* Drawn INSIDE the row. These rows live in scrollers, and a ring drawn
+   outside is clipped by the container's overflow — horizontally in Explorer,
+   vertically elsewhere. Two of the four views had already discovered this and
+   fixed it locally; the other two still clipped. */
+.list-row:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: -2px;
 }
 
 /* Diff-language inline counts, used across the chrome. */

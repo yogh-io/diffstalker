@@ -310,8 +310,11 @@ function onInputKeydown(event: KeyboardEvent): void {
 }
 
 .finder-option {
-  padding: 0.25rem 1rem 0.25rem calc(1rem - 2px);
-  border-left: 2px solid transparent;
+  /* Subtracts the rail so the text lines up with unselected rows. Takes the
+     token, not .list-row: hover IS selection here (@mousemove sets it), so a
+     hover background would show under a row the keyboard has moved away from. */
+  padding: 0.25rem 1rem 0.25rem calc(1rem - var(--row-rail));
+  border-left: var(--row-rail) solid transparent;
   font-size: var(--fs-base);
   color: var(--text-dim);
   white-space: nowrap;

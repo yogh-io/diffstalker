@@ -295,7 +295,7 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
         <div v-else ref="treeEl" class="tree mono" role="tree" aria-label="Repository files">
           <template v-for="(row, index) in rows" :key="row.entry.path">
             <div
-              class="tree-row"
+              class="tree-row list-row"
               :class="[statusClass(row), { selected: row.entry.path === selectedPath }]"
               role="treeitem"
               :aria-level="row.depth + 1"
@@ -471,29 +471,17 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
   align-items: center;
   width: max-content;
   min-width: 100%;
-  padding: 0.125rem 0.625rem 0.125rem 0.5rem;
-  border-left: 2px solid transparent;
-  cursor: pointer;
+  /* Left padding subtracts the rail (0.625rem - 2px) so text aligns. */
+  padding: 0.125rem 0.625rem 0.125rem calc(0.625rem - var(--row-rail));
   font-size: var(--fs-base);
   white-space: nowrap;
   color: var(--text);
 }
 
-.tree-row:hover:not(.selected) {
-  background: var(--surface-raised);
-}
 
-.tree-row.selected {
-  background: var(--row-selected-bg);
-  border-left-color: var(--selection);
-}
 
 /* Keyboard focus ring, distinct from selection. Inset so it is not clipped
    by the scroll container's overflow. */
-.tree-row:focus-visible {
-  outline: 2px solid var(--selection);
-  outline-offset: -2px;
-}
 
 .tree-row.selected .name {
   color: var(--selection);

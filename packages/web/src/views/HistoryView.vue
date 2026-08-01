@@ -196,7 +196,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
           <div
             v-for="(commit, index) in commits"
             :key="commit.hash"
-            class="commit-row"
+            class="commit-row list-row"
             :class="{ selected: commit === selected }"
             role="option"
             :aria-selected="commit === selected"
@@ -331,26 +331,13 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   flex-direction: column;
   gap: 0.125rem;
   padding: 0.375rem 0.75rem;
-  border-left: 2px solid transparent;
-  cursor: pointer;
   font-size: var(--fs-base);
 }
 
-.commit-row:hover:not(.selected) {
-  background: var(--surface-raised);
-}
 
-.commit-row.selected {
-  background: var(--row-selected-bg);
-  border-left-color: var(--selection);
-}
 
 /* Keyboard focus ring, distinct from selection. Inset so it is not clipped
    by the scroll container's overflow. */
-.commit-row:focus-visible {
-  outline: 2px solid var(--selection);
-  outline-offset: -2px;
-}
 
 .row-top {
   display: flex;

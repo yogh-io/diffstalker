@@ -503,7 +503,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
             </div>
             <div
               v-else
-              class="file-row mono"
+              class="file-row mono list-row"
               :class="{
                 selected: selectedFileIndex === row.fileIndex,
                 uncommitted: row.file.isUncommitted,
@@ -842,21 +842,8 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   padding: 0.1875rem 0.75rem;
   padding-left: calc(0.75rem + var(--depth, 0) * 0.875rem);
   font-size: var(--fs-base);
-  border-left: 2px solid transparent;
-  cursor: pointer;
 }
 
-.file-row:hover:not(.selected) {
-  background: var(--surface-raised);
-}
-
-/* The focus indicator — same whether you click a row or scroll its diff
-   into view. A selection-tinted row, clearly stronger than the
-   surface-raised hover, plus the accent bar and accent-colored name. */
-.file-row.selected {
-  background: var(--row-selected-bg);
-  border-left-color: var(--selection);
-}
 
 .file-row .name {
   min-width: 0;
