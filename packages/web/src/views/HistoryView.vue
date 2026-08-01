@@ -317,7 +317,8 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  border-right: 1px solid var(--border);
+  /* No border-right: the diff beside it is a card now, so page background
+     separates them — the same way Changes, Compare and Explorer do it. */
   background: var(--surface);
 }
 
@@ -458,6 +459,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding-inline: var(--gutter);
 }
 
 .detail-header {
@@ -503,6 +505,14 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* A card, like a file in the diff stack and like Explorer's content pane.
+     DiffView paints var(--bg) for its rows, so against the page's own --bg it
+     had no visible edge — which is why this column needed a panel border-right
+     beside it instead. Re-pointing --bg fills the body with the card colour. */
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  --bg: var(--file-bg);
 }
 
 .detail-toolbar {

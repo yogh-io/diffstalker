@@ -42,6 +42,13 @@
      width. It was already the de-facto value at most of those sites; naming it
      is what stops the next one being authored at 1rem by accident. */
   --gutter: 0.75rem;
+
+  /* The fill of a payload card — a file's diff, a file's contents — read
+     against the page's --bg. Named separately from --surface (which is chrome:
+     headers, panels, controls) because a card is content, and the two are free
+     to diverge. Cards re-point --bg to this, so every descendant that paints
+     var(--bg) fills with it. */
+  --file-bg: var(--surface);
 }
 
 * {

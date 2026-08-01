@@ -129,6 +129,15 @@ const isEmptyFile = computed(
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* A card, exactly like a file in the diff stack: this pane paints
+     var(--bg) for its code area, so on the page's own --bg it had no visible
+     edge at all — which is why Explorer had to draw a panel border-right
+     instead. Re-pointing --bg fills the body with the card colour, and the
+     border gives it the edge the stack's cards have. overflow:hidden was
+     already here, so nothing about sticky rooting changes. */
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  --bg: var(--file-bg);
 }
 
 .pane-header {

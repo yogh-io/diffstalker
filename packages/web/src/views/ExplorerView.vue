@@ -409,7 +409,8 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
+  /* No border-right: the content pane beside it is a card now, so page
+     background separates them — the same way Changes and Compare do it. */
   background: var(--surface);
 }
 
@@ -621,6 +622,7 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  padding-inline: var(--gutter);
 }
 
 /* Portrait: rotate column → row. Full-width content below a bounded

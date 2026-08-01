@@ -1221,7 +1221,6 @@ defineExpose({
      against the page's --bg and reads as obviously separate), so it is
      proven in-app and guaranteed distinct in every theme: --bg and --surface
      differ by construction, or headers would not be visible either. */
-  --file-bg: var(--surface);
 }
 
 .stack-toolbar {
