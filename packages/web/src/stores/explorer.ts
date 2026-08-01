@@ -107,11 +107,18 @@ export const useExplorerStore = defineStore('explorer', () => {
    * over the freshly reloaded cache.
    */
   let treeGeneration = 0;
+  /**
+   * The in-flight root load, so concurrent ensureRoot callers share one
+   * fetch AND one completion (see ensureRoot). Dropped on reset: the old
+   * repo's load must not be what a new repo's first reveal waits on.
+   */
+  let rootLoad: Promise<boolean> | null = null;
 
   /** Reset all tree + selection state (repo switch). Toggles survive. */
   function reset(): void {
     generation++;
     treeGeneration++;
+    rootLoad = null;
     children.value = new Map();
     expanded.value = new Set();
     loadingDirs.value = new Set();
@@ -195,10 +202,22 @@ export const useExplorerStore = defineStore('explorer', () => {
     }
   }
 
-  /** Load the root listing once — the view calls this on activation. */
+  /**
+   * Load the root listing once — the view calls this on activation, and so
+   * does every reveal.
+   *
+   * A second caller arriving mid-flight WAITS for that load. Returning
+   * early instead (the old `rootLoading` bail) handed it a tree that is not
+   * loaded yet, and revealFile reads exactly that to decide whether to walk
+   * — so a reveal racing the view's own mount (a deep link, a popped
+   * history entry) abandoned the walk without a trace.
+   */
   async function ensureRoot(): Promise<void> {
-    if (rootLoaded.value || rootLoading.value) return;
-    await reloadTree();
+    if (rootLoaded.value) return;
+    rootLoad ??= reloadTree().finally(() => {
+      rootLoad = null;
+    });
+    await rootLoad;
   }
 
   /** Re-pull root + expanded dirs (toolbar refresh; keeps expansion). */

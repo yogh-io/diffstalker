@@ -533,14 +533,19 @@ function selectAndFocusPayload(commit: CommitInfo): void {
 }
 
 :root[data-split='stacked'] .commits-col {
+  /* No border-bottom: the resizer directly below paints its own top edge
+     (inset 0 1px 0), so a border here made the boundary three hairlines
+     inside 9px — panel edge, resizer top, resizer bottom. */
   border-right: none;
-  border-bottom: 1px solid var(--border);
 }
 
 /* A visible divider bar (not a bare drag gap) so the two stacked panes
    read as clearly separate, with a centered grab handle signalling it
    drags. */
 :root[data-split='stacked'] .row-resizer {
+  /* Paints BOTH its own edges, which is why the panels above and below draw
+     none: with a panel border-bottom as well the boundary was three hairlines
+     inside 9px. */
   height: 8px;
   cursor: row-resize;
   background: var(--surface-raised);

@@ -932,15 +932,13 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   grid-template-rows: minmax(4rem, var(--compare-top, 22vh)) 8px minmax(0, 1fr);
 }
 
-:root[data-split='stacked'] .files-col {
-  /* No border-right to clear — the base rule in style.css has none. */
-  border-bottom: 1px solid var(--border);
-}
-
 /* A visible divider bar (not a bare drag gap) so the two stacked panes
    read as clearly separate, with a centered grab handle signalling it
    drags. */
 :root[data-split='stacked'] .row-resizer {
+  /* Paints BOTH its own edges, which is why the panels above and below draw
+     none: with a panel border-bottom as well the boundary was three hairlines
+     inside 9px. */
   height: 8px;
   cursor: row-resize;
   background: var(--surface-raised);

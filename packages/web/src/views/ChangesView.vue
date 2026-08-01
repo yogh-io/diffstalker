@@ -762,14 +762,12 @@ const rootStyle = computed(() => ({
   grid-template-rows: minmax(6rem, var(--changes-top, 30vh)) 8px minmax(0, 1fr);
 }
 
-:root[data-split='stacked'] .files-col {
-  /* No border-right to clear — the base rule in style.css has none. */
-  border-bottom: 1px solid var(--border);
-}
-
 /* A visible divider bar (not a bare drag gap) so the file band and the
    diffs read as clearly separate, with a centered grab handle. */
 :root[data-split='stacked'] .resizer {
+  /* Paints BOTH its own edges, which is why the panels above and below draw
+     none: with a panel border-bottom as well the boundary was three hairlines
+     inside 9px. */
   display: block;
   width: auto;
   height: 8px;
