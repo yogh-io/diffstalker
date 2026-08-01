@@ -70,7 +70,7 @@ import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import { DaemonError, errorMessage, isConnectionError } from '../api/errors';
 import { splitDiffByFile } from '@diffstalker/core/view/splitDiffByFile';
-import { buildDiffModel } from '../utils/diffRows';
+import { diffModel } from '../utils/diffRows';
 import type { DiffModel } from '../utils/diffRows';
 import type { SseHandle } from '../api/transport';
 import type {
@@ -150,20 +150,6 @@ export interface WorkingDiffsState {
 export function workingDiffKey(file: FileEntry): string {
   return `${file.staged ? 's' : 'u'}:${file.path}`;
 }
-
-/**
- * Memoize buildDiffModel per DiffResult object: identity-preserved
- * entries (unchanged raw -> same DiffResult) re-run nothing. Module
- * scope on purpose — keyed by object identity, safe across stores.
- * One map per side: every cached DiffResult today belongs to exactly
- * one side (each entry's object comes from its own side's fetch or
- * tree split), but keying by side too makes a both-sides call safe
- * instead of silently returning the other side's model.
- */
-const diffModelMemos = {
-  staged: new WeakMap<DiffResult, DiffModel>(),
-  unstaged: new WeakMap<DiffResult, DiffModel>(),
-};
 
 /** The last snapshot workingDiffs changed-set diffing compares against. */
 interface WorkingSnapshot {
@@ -1020,13 +1006,13 @@ export const useRepoStore = defineStore('repo', () => {
    * model's section keys, so a wrong flag would collide a partially
    * staged file's two sections.
    */
+  /**
+   * The view's entry point to the shared memo in utils/diffRows. Kept as a
+   * store method because repo.test asserts it returns an identical object
+   * across an identity-preserved refetch.
+   */
   function diffModelFor(diff: DiffResult, staged: boolean): DiffModel {
-    const memo = staged ? diffModelMemos.staged : diffModelMemos.unstaged;
-    const cached = memo.get(diff);
-    if (cached) return cached;
-    const model = buildDiffModel(diff, staged);
-    memo.set(diff, model);
-    return model;
+    return diffModel(diff, staged);
   }
 
   // --- History ---

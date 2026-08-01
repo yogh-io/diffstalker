@@ -344,6 +344,35 @@ function buildSection(
  */
 export const DIFF_ROW_PX = 20;
 
+/**
+ * buildDiffModel memoized by DiffResult identity, split by staged-ness (which
+ * feeds the model's section keys). Module scope on purpose — keyed by object
+ * identity, so it is safe across stores and components.
+ *
+ * There used to be two of these: one in the repo store, one in DiffStack.
+ * ChangesView reads hunk keys out of the store's model and hands them to the
+ * stack, which resolved them against its own build — the auto-mode jump worked
+ * only because two independent memos of the same pure function happened to
+ * agree.
+ *
+ * `staged` is REQUIRED, deliberately: buildDiffModel sits right here with a
+ * defaulted `staged`, and defaulting it again is exactly the trap that would
+ * silently return the unstaged model for a staged file.
+ */
+const diffModelMemos = {
+  staged: new WeakMap<DiffResult, DiffModel>(),
+  unstaged: new WeakMap<DiffResult, DiffModel>(),
+};
+
+export function diffModel(diff: DiffResult, staged: boolean): DiffModel {
+  const memo = staged ? diffModelMemos.staged : diffModelMemos.unstaged;
+  const cached = memo.get(diff);
+  if (cached) return cached;
+  const model = buildDiffModel(diff, staged);
+  memo.set(diff, model);
+  return model;
+}
+
 export function buildDiffModel(diff: DiffResult | null, staged = false): DiffModel {
   const model: DiffModel = { sections: [], lineNumWidth: 3, rowCount: 0, notShown: null };
   if (!diff) return model;

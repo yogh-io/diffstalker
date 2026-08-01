@@ -2,7 +2,7 @@
 import type { DiffLine, DiffResult } from '@diffstalker/core/git/diff';
 import type { FileStatus } from '@diffstalker/core/git/status';
 import { LARGE_DIFF_NOTICE_PREFIX } from '@diffstalker/core/git/diffParse';
-import { buildDiffModel, DIFF_ROW_PX, type DiffModel, type DiffNotShown } from '../utils/diffRows';
+import { diffModel, DIFF_ROW_PX, type DiffNotShown } from '../utils/diffRows';
 import { splitRowCount } from '../utils/diffSplit';
 
 /**
@@ -36,25 +36,6 @@ export interface StackFile {
  * keeps composite hunk keys collision-free against file keys.
  */
 const ANCHOR_SEP = '\u0000';
-
-/**
- * buildDiffModel memoized per DiffResult identity (split by staged-ness,
- * which feeds the model's section keys). The anchor sandwich and the
- * exact-height computation both need models pre- AND post-flush; with
- * identity-preserved diffs this makes every repeat lookup free.
- */
-const modelCache = new WeakMap<DiffResult, { unstaged?: DiffModel; staged?: DiffModel }>();
-
-function modelFor(diff: DiffResult, staged: boolean): DiffModel {
-  let entry = modelCache.get(diff);
-  if (!entry) {
-    entry = {};
-    modelCache.set(diff, entry);
-  }
-  const slot = staged ? 'staged' : 'unstaged';
-  entry[slot] ??= buildDiffModel(diff, staged);
-  return entry[slot];
-}
 
 /**
  * The "no body to render" verdict per DiffResult identity: a cheap
@@ -464,7 +445,7 @@ function exactBodyHeight(item: StackFile): number | null {
   if (props.wrap) return null;
   const sizes = probeSizes.value;
   if (!sizes || !item.diff) return null;
-  const model = modelFor(item.diff, item.staged ?? false);
+  const model = diffModel(item.diff, item.staged ?? false);
   if (model.rowCount === 0) return null;
   const withHeaders = model.sections.filter((s) => s.filePath !== null).length > 1;
   // Split bodies keep .diff-scroll's always-on horizontal track (their
@@ -696,7 +677,7 @@ function anchorCandidates(): AnchorCandidate[] {
     if (!sectionEl) continue;
     out.push({ key: item.key, kind: 'file', fileKey: item.key, el: sectionEl });
     if (isCollapsed(item) || !item.diff) continue;
-    const model = modelFor(item.diff, item.staged ?? false);
+    const model = diffModel(item.diff, item.staged ?? false);
     const hunkEls = sectionEl.querySelectorAll<HTMLElement>('.hunk');
     let i = 0;
     for (const section of model.sections) {
@@ -724,7 +705,7 @@ function resolveAnchorEl(key: string): HTMLElement | null {
   const sectionEl = sectionEls.get(fileKey);
   const item = props.files.find((f) => f.key === fileKey);
   if (!sectionEl || !item?.diff || isCollapsed(item)) return null;
-  const model = modelFor(item.diff, item.staged ?? false);
+  const model = diffModel(item.diff, item.staged ?? false);
   let i = 0;
   for (const section of model.sections) {
     for (const hunk of section.hunks) {
@@ -749,7 +730,7 @@ function survivingKeys(next: StackFile[]): Set<string> {
   for (const item of next) {
     keys.add(item.key);
     if (!item.diff || isCollapsed(item)) continue; // collapsed hunks are unmeasurable
-    const model = modelFor(item.diff, item.staged ?? false);
+    const model = diffModel(item.diff, item.staged ?? false);
     for (const section of model.sections) {
       for (const hunk of section.hunks) keys.add(hunkAnchorKey(item.key, hunk.key));
     }

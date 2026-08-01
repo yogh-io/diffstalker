@@ -16,18 +16,18 @@ import type { Ref } from 'vue';
 const SCROLL_STEP = 48;
 
 /** j/k → move(±1) for a portrait band list; inert in landscape. */
-export function makeBandKeyHandler(
+export function makeBandKeyHandler<T = void>(
   isPortrait: Ref<boolean>,
-  move: (delta: number) => void
-): (event: KeyboardEvent) => void {
-  return (event: KeyboardEvent): void => {
+  move: (delta: number, row: T) => void
+): (event: KeyboardEvent, row: T) => void {
+  return (event: KeyboardEvent, row: T): void => {
     if (!isPortrait.value) return;
     if (event.key === 'j') {
       event.preventDefault();
-      move(1);
+      move(1, row);
     } else if (event.key === 'k') {
       event.preventDefault();
-      move(-1);
+      move(-1, row);
     }
   };
 }

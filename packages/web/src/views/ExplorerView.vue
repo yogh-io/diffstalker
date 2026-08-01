@@ -28,7 +28,7 @@ import { statusLetter } from '../utils/format';
 import { TOP_MIN, TOP_MAX } from '../prefs';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
-import { makePayloadKeyHandler } from '../composables/usePortraitKeys';
+import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
 import FileContentPane from '../components/FileContentPane.vue';
 
 const repo = useRepoStore();
@@ -213,16 +213,14 @@ const payloadEl = ref<HTMLElement | null>(null);
 const onPayloadKeydown = makePayloadKeyHandler(isPortrait, payloadEl);
 
 /** Portrait j/k on tree rows: move focus like Down/Up. */
-function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
-  if (!isPortrait.value) return;
-  if (event.key === 'j') {
-    event.preventDefault();
-    moveFocus(row, 1);
-  } else if (event.key === 'k') {
-    event.preventDefault();
-    moveFocus(row, -1);
-  }
-}
+/**
+ * Built ONCE here, not inline in the v-for: an inline factory would mint a
+ * fresh closure per row per render, forcing a listener patch on every keyed
+ * row.
+ */
+const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row) =>
+  moveFocus(row, delta)
+);
 </script>
 
 <template>
