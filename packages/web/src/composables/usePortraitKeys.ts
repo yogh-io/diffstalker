@@ -11,7 +11,8 @@
  * Every handler is inert in landscape — no landscape key changes.
  */
 
-import type { Ref } from 'vue';
+import { computed } from 'vue';
+import type { ComputedRef, Ref } from 'vue';
 
 const SCROLL_STEP = 48;
 
@@ -52,4 +53,38 @@ export function makePayloadKeyHandler(
       : (root.querySelector<HTMLElement>('.diff-scroll, .code-scroll') ?? root);
     scroller.scrollTop += event.key === 'j' ? SCROLL_STEP : -SCROLL_STEP;
   };
+}
+
+/**
+ * The four attributes a portrait payload region needs, as one bindable object.
+ * Every split view spelled these out identically — tabindex, role, aria-label,
+ * and the j/k handler — and usePortraitKeys already owned the handler half.
+ *
+ * Two details that bite if changed:
+ *  - The key must be the kebab 'aria-label'. Vue calls setAttribute(key, value)
+ *    verbatim, so an `ariaLabel` key emits `arialabel` and silently drops the
+ *    accessible name.
+ *  - Do NOT leave a separate @keydown beside v-bind of this object: Vue merges
+ *    duplicate listeners into an array and fires the handler twice.
+ *
+ * The handler is built ONCE outside the computed so its bound identity is
+ * stable across re-renders.
+ */
+export function portraitPayloadAttrs(
+  isPortrait: Ref<boolean>,
+  payloadEl: Ref<HTMLElement | null>,
+  label: string,
+  options?: { self?: boolean }
+): ComputedRef<{
+  tabindex?: number;
+  role?: string;
+  'aria-label'?: string;
+  onKeydown: (event: KeyboardEvent) => void;
+}> {
+  const onKeydown = makePayloadKeyHandler(isPortrait, payloadEl, options);
+  return computed(() =>
+    isPortrait.value
+      ? { tabindex: 0, role: 'region', 'aria-label': label, onKeydown }
+      : { onKeydown }
+  );
 }

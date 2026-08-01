@@ -23,7 +23,7 @@ import { TOP_MIN, TOP_MAX } from '../prefs';
 import { nextIndex } from '../utils/listNav';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
-import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
+import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
 import DiffView from '../components/DiffView.vue';
 import WrapToggle from '../components/WrapToggle.vue';
 import { errorMessage } from '../api/errors';
@@ -157,7 +157,7 @@ const split = useSplitDrag({
 
 const payloadEl = ref<HTMLElement | null>(null);
 const onRowBandKeydown = makeBandKeyHandler(isPortrait, moveSelection);
-const onPayloadKeydown = makePayloadKeyHandler(isPortrait, payloadEl);
+const payloadAttrs = portraitPayloadAttrs(isPortrait, payloadEl, 'Commit diff');
 
 /** Enter on a row: select; in portrait also hand focus to the payload. */
 function selectAndFocusPayload(commit: CommitInfo): void {
@@ -272,10 +272,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
         <div
           ref="payloadEl"
           class="detail-diff"
-          :tabindex="isPortrait ? 0 : undefined"
-          :role="isPortrait ? 'region' : undefined"
-          :aria-label="isPortrait ? 'Commit diff' : undefined"
-          @keydown="onPayloadKeydown"
+          v-bind="payloadAttrs"
         >
           <div class="detail-toolbar">
             <WrapToggle />

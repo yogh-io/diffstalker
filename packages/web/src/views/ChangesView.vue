@@ -42,7 +42,7 @@ import { nextIndex } from '../utils/listNav';
 import { CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX, TOP_MIN, TOP_MAX } from '../prefs';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
-import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
+import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
 import { registerStackAutoJump } from '../composables/useAutoMode';
 import DiffStack, { HUGE_FILE_CHANGED_LINES, type StackFile } from '../components/DiffStack.vue';
 
@@ -361,7 +361,7 @@ const split = useSplitDrag({
 
 const onRowBandKeydown = makeBandKeyHandler(isPortrait, moveSelection);
 // The stack's root is the diffs scroller — scroll it, not a nested pane.
-const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true });
+const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { self: true });
 
 /** Landscape emits exactly the pre-portrait style (only --files-col). */
 const rootStyle = computed(() => ({
@@ -490,12 +490,9 @@ const rootStyle = computed(() => ({
       :syntax="ui.diffSyntaxEnabled"
       :mode="ui.diffMode"
       :wrap="ui.wrapEnabled"
-      :tabindex="isPortrait ? 0 : undefined"
-      :role="isPortrait ? 'region' : undefined"
-      :aria-label="isPortrait ? 'File diffs' : undefined"
+      v-bind="payloadAttrs"
       @active-file="ui.setActiveStackKey"
       @toggle-collapse="toggleFileCollapsed"
-      @keydown="onPayloadKeydown"
     />
   </div>
 </template>

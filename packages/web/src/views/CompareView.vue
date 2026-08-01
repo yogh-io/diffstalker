@@ -34,7 +34,7 @@ import { nextIndex } from '../utils/listNav';
 import { TOP_MIN, TOP_MAX } from '../prefs';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
-import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
+import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
 import DiffStack, { type StackFile } from '../components/DiffStack.vue';
 
 const repo = useRepoStore();
@@ -335,7 +335,7 @@ const split = useSplitDrag({
 
 const onRowBandKeydown = makeBandKeyHandler(isPortrait, moveFileSelection);
 // The stack's root is the diffs scroller — scroll it, not a nested DiffView.
-const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true });
+const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { self: true });
 </script>
 
 <template>
@@ -569,12 +569,9 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
           :syntax="ui.diffSyntaxEnabled"
           :mode="ui.diffMode"
           :wrap="ui.wrapEnabled"
-          :tabindex="isPortrait ? 0 : undefined"
-          :role="isPortrait ? 'region' : undefined"
-          :aria-label="isPortrait ? 'File diffs' : undefined"
+          v-bind="payloadAttrs"
           @active-file="onActiveFile"
           @toggle-collapse="toggleFileCollapsed"
-          @keydown="onPayloadKeydown"
         />
       </div>
     </template>

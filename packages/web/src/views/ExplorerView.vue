@@ -28,7 +28,7 @@ import { statusLetter } from '../utils/format';
 import { TOP_MIN, TOP_MAX } from '../prefs';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
-import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
+import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
 import FileContentPane from '../components/FileContentPane.vue';
 
 const repo = useRepoStore();
@@ -210,7 +210,7 @@ const split = useSplitDrag({
 });
 
 const payloadEl = ref<HTMLElement | null>(null);
-const onPayloadKeydown = makePayloadKeyHandler(isPortrait, payloadEl);
+const payloadAttrs = portraitPayloadAttrs(isPortrait, payloadEl, 'File content');
 
 /** Portrait j/k on tree rows: move focus like Down/Up. */
 /**
@@ -377,10 +377,7 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
     <section
       ref="payloadEl"
       class="content-col"
-      :tabindex="isPortrait ? 0 : undefined"
-      :role="isPortrait ? 'region' : undefined"
-      :aria-label="isPortrait ? 'File content' : undefined"
-      @keydown="onPayloadKeydown"
+      v-bind="payloadAttrs"
     >
       <FileContentPane
         :path="selectedPath"
