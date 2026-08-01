@@ -223,9 +223,7 @@ export const useWorktreeStore = defineStore('worktrees', () => {
    * getters below key off that same path, so a switch can never leave the
    * previous repo's worktrees on screen.
    */
-  const activePath = computed(
-    () => daemon.repos.find((repo) => repo.id === daemon.activeRepoId)?.path ?? null
-  );
+  const activePath = computed(() => daemon.activeRepoPath);
 
   watch(
     activePath,

@@ -29,7 +29,7 @@ const openError = computed(() => (repo.isRepo ? null : repo.shared.error));
  * the no-repo-open empty state. Set once at mount; the form is re-created
  * each time the switcher panel opens, so it re-seeds from the active repo.
  */
-const activePath = daemon.repos.find((r) => r.id === daemon.activeRepoId)?.path ?? '';
+const activePath = daemon.activeRepoPath ?? '';
 const path = ref(activePath);
 const busy = ref(false);
 const inputId = useId();

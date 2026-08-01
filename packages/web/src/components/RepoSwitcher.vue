@@ -8,7 +8,7 @@
  * an outside click closes the panel.
  */
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, watch } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useUiStore } from '../stores/ui';
 import { useRepoOpen } from '../composables/useRepoOpen';
@@ -17,6 +17,7 @@ import { useWorktreeStore, type WorktreeProject } from '../stores/worktrees';
 import { basename } from '../utils/format';
 import RepoOpenForm from './RepoOpenForm.vue';
 import type { RepoSummary } from '@diffstalker/client';
+import { useDismissable } from '../composables/useDismissable';
 
 const daemon = useDaemonStore();
 const ui = useUiStore();
@@ -24,8 +25,10 @@ const { openByPath, activate } = useRepoOpen();
 const { hasMultiple, projectName } = useActiveWorktrees();
 const worktreeStore = useWorktreeStore();
 
-const open = ref(false);
-const rootEl = ref<HTMLElement | null>(null);
+// `open` and `rootEl` must keep these exact names: Vue matches ref="rootEl"
+// in the template against the setup variable name.
+const { open, rootEl } = useDismissable();
+
 
 const activeRepo = computed(
   () => daemon.repos.find((repo) => repo.id === daemon.activeRepoId) ?? null
@@ -151,26 +154,6 @@ async function pickRecentProject(project: WorktreeProject): Promise<void> {
   const ok = await openByPath(bestWorktreePath(project));
   if (ok) open.value = false;
 }
-
-function onDocumentPointerDown(event: MouseEvent): void {
-  if (open.value && rootEl.value && !rootEl.value.contains(event.target as Node)) {
-    open.value = false;
-  }
-}
-
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && open.value) open.value = false;
-}
-
-onMounted(() => {
-  document.addEventListener('mousedown', onDocumentPointerDown);
-  document.addEventListener('keydown', onKeydown);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onDocumentPointerDown);
-  document.removeEventListener('keydown', onKeydown);
-});
 </script>
 
 <template>

@@ -17,7 +17,7 @@
  * `followEnabled` is on.
  */
 
-import { shallowRef } from 'vue';
+import { computed, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import type { SseHandle } from '../api/transport';
@@ -282,6 +282,21 @@ export const useDaemonStore = defineStore('daemon', () => {
     return followEnabled.value;
   }
 
+  /**
+   * The active repo, and its path — the join between `repos` and
+   * `activeRepoId`, which was re-derived at four call sites. It belongs to the
+   * store that owns both halves; this store already carries a comment about a
+   * bug where a followed-repo path and the active-repo path drifted apart.
+   *
+   * NOT for resolving an arbitrary repoId (see the follow handler below, whose
+   * event.repoId is precisely the one that is NOT active yet), and not for
+   * membership tests scoped to one project's repo list.
+   */
+  const activeRepo = computed(
+    () => repos.value.find((repo) => repo.id === activeRepoId.value) ?? null
+  );
+  const activeRepoPath = computed(() => activeRepo.value?.path ?? null);
+
   return {
     // reactive state
     connection,
@@ -291,6 +306,8 @@ export const useDaemonStore = defineStore('daemon', () => {
     lastFollowChange,
     skipInitialFollow,
     activeRepoId,
+    activeRepo,
+    activeRepoPath,
     version,
     error,
     // actions

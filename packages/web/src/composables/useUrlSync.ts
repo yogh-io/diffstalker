@@ -163,9 +163,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       ? parseUrlPath(window.location.pathname)
       : { repoRel: null, view: null, base: null, file: null };
 
-  const activeRepoPath = computed(
-    () => daemon.repos.find((r) => r.id === daemon.activeRepoId)?.path ?? null
-  );
+  const activeRepoPath = computed(() => daemon.activeRepoPath);
 
   /** Absolute path for a URL repoRel (home-relative first; App falls back to
    * an absolute open if this misses, covering repos outside home). */

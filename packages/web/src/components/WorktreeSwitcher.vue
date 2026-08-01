@@ -27,20 +27,23 @@
  * picker).
  */
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRepoOpen } from '../composables/useRepoOpen';
 import { useWorktreeStore } from '../stores/worktrees';
 import { useActiveWorktrees } from '../composables/useActiveWorktrees';
 import { basename } from '../utils/format';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import type { WorktreeInfo } from '@diffstalker/client';
+import { useDismissable } from '../composables/useDismissable';
 
 const { openByPath } = useRepoOpen();
 const { activePath, worktrees, hasMultiple } = useActiveWorktrees();
 const worktreeStore = useWorktreeStore();
 
-const open = ref(false);
-const rootEl = ref<HTMLElement | null>(null);
+// `open` and `rootEl` must keep these exact names: Vue matches ref="rootEl"
+// in the template against the setup variable name.
+const { open, rootEl } = useDismissable();
+
 
 /** The active worktree's own path — the SAME value the list is keyed by,
  * so the trigger and the rows can never describe different repos. */
@@ -150,26 +153,6 @@ function pick(worktree: WorktreeInfo): void {
   if (worktree.path !== currentPath.value) void openByPath(worktree.path);
   open.value = false;
 }
-
-function onDocumentPointerDown(event: MouseEvent): void {
-  if (open.value && rootEl.value && !rootEl.value.contains(event.target as Node)) {
-    open.value = false;
-  }
-}
-
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && open.value) open.value = false;
-}
-
-onMounted(() => {
-  document.addEventListener('mousedown', onDocumentPointerDown);
-  document.addEventListener('keydown', onKeydown);
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onDocumentPointerDown);
-  document.removeEventListener('keydown', onKeydown);
-});
 </script>
 
 <template>

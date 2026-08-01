@@ -36,7 +36,7 @@ const branch = computed(() => repo.shared.status?.branch ?? null);
  * displayed it, and the current branch appeared nowhere in plain text.
  */
 const activeWorktreeLabel = computed<string | null>(() => {
-  const activePath = daemon.repos.find((r) => r.id === daemon.activeRepoId)?.path ?? null;
+  const activePath = daemon.activeRepoPath;
   return activePath === null ? null : basename(activePath);
 });
 
