@@ -912,11 +912,6 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
   color: var(--status-renamed);
 }
 
-.uncommitted-tag {
-  flex: none;
-  color: var(--uncommitted);
-  font-size: var(--fs-micro);
-}
 
 /* --- Stacked per-file diffs (right) --- */
 

@@ -24,6 +24,14 @@
      read differently from a merely-hovered one. Resolves per-theme (the
      color-mix reads the active theme's --selection/--surface at use). */
   --row-selected-bg: color-mix(in srgb, var(--selection) 18%, var(--surface));
+
+  /* Pre-probe row height: --fs-base times the 1.55 line-height DiffView and
+     FileContentPane share. DiffStack's measureProbe overwrites this as an
+     INLINE style on the document root once a real row is measured, and an
+     inline style wins — so this value is only ever what applies before the
+     first probe. It was previously written as a var() fallback at four sites.
+     The JS twin is DIFF_ROW_PX in utils/diffRows; the two still move by hand. */
+  --row-h: 1.26rem;
 }
 
 * {
@@ -194,6 +202,17 @@ input::placeholder {
 
 .count-del {
   color: var(--del);
+}
+
+/* Compare's "[uncommitted]" marker. One file has two render surfaces — the
+   tree row and the card header — and each carried its own identical copy.
+   No font-family here on purpose: DiffStack's span has `mono` and Compare's
+   parent row is `file-row mono`, so both inherit it already; hardcoding one
+   would be a new decision rather than a consolidation. */
+.uncommitted-tag {
+  flex: none;
+  color: var(--uncommitted);
+  font-size: var(--fs-micro);
 }
 
 /* --- Overlay dialogs (finder, hotkeys help) --- */

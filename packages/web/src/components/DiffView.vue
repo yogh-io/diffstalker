@@ -572,7 +572,7 @@ onBeforeUnmount(() => {
      fallback until the probe lands; the `auto` keyword lets the
      browser's remembered size win once a row has been realized. */
   content-visibility: auto;
-  contain-intrinsic-size: auto var(--row-h, 1.26rem);
+  contain-intrinsic-size: auto var(--row-h);
 }
 
 /* Wrap mode: a wrapped line's real height is no longer the constant
@@ -695,12 +695,12 @@ onBeforeUnmount(() => {
   /* Floor empty (padding) rows to a full row so both sides line up; a
      realized content row is naturally this tall (the probed --row-h),
      so this never resizes a non-empty line. */
-  min-height: var(--row-h, 1.26rem);
+  min-height: var(--row-h);
   background: var(--bg);
   /* Same virtualization contract as unified .row — the height model
      counts split rows at this same --row-h. */
   content-visibility: auto;
-  contain-intrinsic-size: auto var(--row-h, 1.26rem);
+  contain-intrinsic-size: auto var(--row-h);
 }
 
 /* No wrap-mode override here, on purpose: split's .content stays

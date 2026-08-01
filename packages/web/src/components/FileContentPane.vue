@@ -227,7 +227,7 @@ const isEmptyFile = computed(
      measureProbe on the document root) so skipped rows never drift
      from realized ones; the rem value is only the pre-probe fallback. */
   content-visibility: auto;
-  contain-intrinsic-size: auto var(--row-h, 1.26rem);
+  contain-intrinsic-size: auto var(--row-h);
 }
 
 /* Wrap mode: a wrapped row's real height is no longer the constant the

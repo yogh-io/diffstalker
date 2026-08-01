@@ -1416,11 +1416,6 @@ defineExpose({
   color: var(--status-untracked);
 }
 
-.uncommitted-tag {
-  flex: none;
-  color: var(--uncommitted);
-  font-size: var(--fs-micro);
-}
 
 /* Skip layout+paint for whole off-screen files; a skipped body is
    sized by the inline computed contain-intrinsic-size. NEVER move
