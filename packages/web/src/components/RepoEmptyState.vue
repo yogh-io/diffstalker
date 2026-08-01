@@ -30,7 +30,7 @@ const { openByPath } = useRepoOpen();
       <RepoOpenForm />
 
       <div v-if="ui.recentRepos.length" class="recents" data-testid="empty-recents">
-        <p class="recents-label">Recent</p>
+        <p class="recents-label eyebrow">Recent</p>
         <button
           v-for="path in ui.recentRepos"
           :key="path"
@@ -106,11 +106,6 @@ h1 {
 
 .recents-label {
   margin: 0 0 0.375rem;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 
 .recent-row {

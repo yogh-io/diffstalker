@@ -158,7 +158,7 @@ function pick(worktree: WorktreeInfo): void {
 <template>
   <div v-if="hasMultiple" ref="rootEl" class="wt-switcher">
     <button
-      class="wt-trigger mono"
+      class="wt-trigger mono chrome-chip"
       data-testid="worktree-select"
       aria-haspopup="true"
       :aria-expanded="open"
@@ -172,7 +172,7 @@ function pick(worktree: WorktreeInfo): void {
 
     <div v-if="open" class="panel popover-panel" data-testid="worktree-options">
       <template v-if="recentWorktrees.length">
-        <p v-if="showSectionLabels" class="group-label">Recent</p>
+        <p v-if="showSectionLabels" class="group-label eyebrow">Recent</p>
         <button
           v-for="w in recentWorktrees"
           :key="w.path"
@@ -188,7 +188,7 @@ function pick(worktree: WorktreeInfo): void {
       </template>
 
       <template v-if="staleWorktrees.length">
-        <p v-if="showSectionLabels" class="group-label">Stale</p>
+        <p v-if="showSectionLabels" class="group-label eyebrow">Stale</p>
         <button
           v-for="w in visibleStale"
           :key="w.path"
@@ -226,9 +226,6 @@ function pick(worktree: WorktreeInfo): void {
   min-width: 0;
   max-width: 16rem;
   padding: 0.25rem 0.625rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface-raised);
   color: var(--text);
   font-size: var(--fs-base);
   font-weight: 600;
@@ -255,15 +252,9 @@ function pick(worktree: WorktreeInfo): void {
   gap: 0.125rem;
 }
 
-/* Matches RepoSwitcher's section headings so the two panels read alike. */
 .group-label {
   margin: 0.25rem 0 0.125rem;
   padding: 0 0.5rem;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 
 /* Deliberately not a .wt-row: it reveals rows rather than switching to

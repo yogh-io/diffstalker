@@ -117,6 +117,25 @@ body {
   font-family: var(--font-mono);
 }
 
+/* The mono uppercase micro-label that titles a group of rows — the hotkeys
+   overlay's sections, Changes' Modified/Untracked/Staged headers, the repo
+   and worktree switchers' groups, the empty state's recents. Five copies of
+   the same five declarations; letter-spacing: 0.14em appears nowhere else in
+   the package.
+
+   TYPE ONLY. font-weight is deliberately absent: there is no h1-h6 reset, so
+   the two <h3> sites set 500 to come DOWN from UA bold while the three <p>
+   sites correctly inherit 400. Shipping a weight here would silently bold the
+   paragraphs. Each site also keeps its own margin and padding — all five
+   differ. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
 button {
   font: inherit;
   color: inherit;
@@ -234,6 +253,19 @@ input::placeholder {
 .list-row:focus-visible {
   outline: 2px solid var(--selection);
   outline-offset: -2px;
+}
+
+/* The default chrome chip: a raised, bordered control. Six sites declared
+   these three declarations identically.
+
+   Hover is deliberately NOT here — it encodes intent per call site: neutral
+   --text-dim, --accent on a form's primary action, --selection on an in-card
+   one. Variants that deliberately differ (the transparent finder button, the
+   3px tool toggles, the new-repo pill) do not adopt this. */
+.chrome-chip {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-raised);
 }
 
 /* Diff-language inline counts, used across the chrome. */

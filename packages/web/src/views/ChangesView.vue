@@ -395,7 +395,7 @@ const rootStyle = computed(() => ({
           :aria-labelledby="`files-section-${section.name.toLowerCase()}`"
           :data-testid="`section-${section.name.toLowerCase()}`"
         >
-          <h3 :id="`files-section-${section.name.toLowerCase()}`" class="section-header">
+          <h3 :id="`files-section-${section.name.toLowerCase()}`" class="section-header eyebrow">
             {{ section.name }} <span class="section-count">{{ section.files.length }}</span>
           </h3>
           <div
@@ -534,12 +534,7 @@ const rootStyle = computed(() => ({
 .section-header {
   margin: 0;
   padding: 0.25rem 0.75rem;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
   font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 
 .section-count {

@@ -159,7 +159,7 @@ async function pickRecentProject(project: WorktreeProject): Promise<void> {
 <template>
   <div ref="rootEl" class="repo-switcher">
     <button
-      class="switch-btn"
+      class="switch-btn chrome-chip"
       aria-haspopup="true"
       :aria-expanded="open"
       :title="activeRepo ? activeRepo.path : undefined"
@@ -173,7 +173,7 @@ async function pickRecentProject(project: WorktreeProject): Promise<void> {
       <RepoOpenForm @opened="open = false" />
 
       <div v-if="openProjects.length" class="group" data-testid="open-repos">
-        <p class="group-label">Open on daemon</p>
+        <p class="group-label eyebrow">Open on daemon</p>
         <button
           v-for="project in openProjects"
           :key="project.root"
@@ -193,7 +193,7 @@ async function pickRecentProject(project: WorktreeProject): Promise<void> {
       </div>
 
       <div v-if="recentProjects.length" class="group" data-testid="recent-repos">
-        <p class="group-label">Recent</p>
+        <p class="group-label eyebrow">Recent</p>
         <button
           v-for="project in recentProjects"
           :key="project.root"
@@ -224,9 +224,6 @@ async function pickRecentProject(project: WorktreeProject): Promise<void> {
   align-items: center;
   gap: 0.375rem;
   padding: 0.25rem 0.625rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface-raised);
   min-width: 0;
 }
 
@@ -262,11 +259,6 @@ async function pickRecentProject(project: WorktreeProject): Promise<void> {
 
 .group-label {
   margin: 0 0 0.25rem;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 
 .repo-row {

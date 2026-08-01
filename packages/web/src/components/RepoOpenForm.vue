@@ -59,7 +59,7 @@ async function submit(): Promise<void> {
         spellcheck="false"
         autocomplete="off"
       />
-      <button type="submit" class="open-btn" :disabled="busy || !path.trim()">Open</button>
+      <button type="submit" class="open-btn chrome-chip" :disabled="busy || !path.trim()">Open</button>
     </div>
     <p v-if="openError" class="form-error mono">{{ openError }}</p>
   </form>
@@ -85,9 +85,6 @@ input {
 
 .open-btn {
   padding: 0.375rem 0.875rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface-raised);
   white-space: nowrap;
 }
 

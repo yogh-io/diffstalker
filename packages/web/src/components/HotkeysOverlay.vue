@@ -91,7 +91,7 @@ const GROUPS: HotkeyGroup[] = [
 
       <div class="hotkeys-groups">
         <section v-for="group in GROUPS" :key="group.title" class="hotkeys-group">
-          <h3 class="group-title">{{ group.title }}</h3>
+          <h3 class="group-title eyebrow">{{ group.title }}</h3>
           <dl class="group-entries">
             <template v-for="entry in group.entries" :key="entry.keys">
               <dt><kbd class="mono">{{ entry.keys }}</kbd></dt>
@@ -148,12 +148,7 @@ const GROUPS: HotkeyGroup[] = [
 
 .group-title {
   margin: 0 0 0.375rem;
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
   font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 
 .group-entries {

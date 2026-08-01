@@ -225,12 +225,12 @@ function selectAndFocusPayload(commit: CommitInfo): void {
 
         <p v-if="loadError" class="load-error view-error" data-testid="load-error">
           {{ loadError }}
-          <button class="load-retry" data-testid="load-retry" @click="retryLoad">Retry</button>
+          <button class="load-retry chrome-chip" data-testid="load-retry" @click="retryLoad">Retry</button>
         </p>
 
         <button
           v-if="mayHaveMore"
-          class="load-more"
+          class="load-more chrome-chip"
           data-testid="load-more"
           :disabled="history.isLoading"
           @click="load(requestedCount + PAGE_SIZE)"
@@ -405,9 +405,6 @@ function selectAndFocusPayload(commit: CommitInfo): void {
 .load-retry {
   flex: none;
   padding: 0.125rem 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface-raised);
   color: var(--text);
   font-size: var(--fs-small);
 }
@@ -419,9 +416,6 @@ function selectAndFocusPayload(commit: CommitInfo): void {
 .load-more {
   margin: 0.375rem 0.75rem 0.75rem;
   padding: 0.3125rem 0.875rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface-raised);
   font-size: var(--fs-small);
   align-self: flex-start;
 }

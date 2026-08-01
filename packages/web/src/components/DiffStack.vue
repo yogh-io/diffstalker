@@ -1179,7 +1179,7 @@ defineExpose({
            the header mounts until the user asks. A distinct affordance
            from the collapse chevron on purpose. -->
       <div v-else-if="isUnloaded(item)" v-show="!item.collapsed" class="load-diff">
-        <button class="load-diff-btn mono" data-testid="load-diff" @click="loadHugeDiff(item.key)">
+        <button class="load-diff-btn mono chrome-chip" data-testid="load-diff" @click="loadHugeDiff(item.key)">
           Load diff
           <span class="load-diff-size"
             >({{ item.stats.insertions + item.stats.deletions }} changed lines)</span
@@ -1489,9 +1489,6 @@ defineExpose({
 
 .load-diff-btn {
   padding: 0.25rem 0.625rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface-raised);
   color: var(--text);
   font-size: var(--fs-small);
   cursor: pointer;
