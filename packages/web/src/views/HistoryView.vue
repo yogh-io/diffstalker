@@ -175,13 +175,13 @@ function selectAndFocusPayload(commit: CommitInfo): void {
     :style="isPortrait ? { '--history-top': `${(split.rowRatio.value * 100).toFixed(2)}%` } : undefined"
   >
     <aside class="commits-col" aria-label="Commit history">
-      <p v-if="history.isLoading && commits.length === 0" class="col-empty">Loading history…</p>
+      <p v-if="history.isLoading && commits.length === 0" class="panel-note">Loading history…</p>
       <!-- Full-pane error only when there is nothing to show; with commits
            loaded a failed re-pull stays a small inline line below the list. -->
-      <p v-else-if="loadError && commits.length === 0" class="col-empty view-error">
+      <p v-else-if="loadError && commits.length === 0" class="panel-note view-error">
         {{ loadError }}
       </p>
-      <p v-else-if="commits.length === 0" class="col-empty" data-testid="history-empty">
+      <p v-else-if="commits.length === 0" class="panel-note" data-testid="history-empty">
         No commits yet.
       </p>
 
@@ -280,10 +280,10 @@ function selectAndFocusPayload(commit: CommitInfo): void {
           <div class="detail-toolbar">
             <WrapToggle />
           </div>
-          <p v-if="detailError" class="col-empty view-error" data-testid="detail-error">
+          <p v-if="detailError" class="panel-note view-error" data-testid="detail-error">
             {{ detailError }}
           </p>
-          <p v-else-if="!history.commitDiff" class="col-empty">Loading diff…</p>
+          <p v-else-if="!history.commitDiff" class="panel-note">Loading diff…</p>
           <DiffView
             v-else
             class="detail-diffview"
@@ -295,7 +295,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
           />
         </div>
       </template>
-      <p v-else class="col-empty detail-prompt" data-testid="history-prompt">
+      <p v-else class="panel-note detail-prompt" data-testid="history-prompt">
         Select a commit to view its changes
       </p>
     </section>
@@ -320,12 +320,6 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   /* No border-right: the diff beside it is a card now, so page background
      separates them — the same way Changes, Compare and Explorer do it. */
   background: var(--surface);
-}
-
-.col-empty {
-  margin: 1rem;
-  color: var(--text-dim);
-  font-size: var(--fs-content);
 }
 
 .commit-list {

@@ -635,7 +635,7 @@ onBeforeUnmount(() => {
            entries loaded the log stays visible (appends ride SSE). -->
       <p
         v-if="loadError && rows.length === 0"
-        class="journal-empty view-error"
+        class="panel-note view-error"
         data-testid="journal-error"
       >
         {{ loadError }}
@@ -773,6 +773,11 @@ onBeforeUnmount(() => {
   padding: 0.5rem var(--gutter) 1rem;
 }
 
+/* Same body as .panel-note apart from the inline margin, which is tighter
+   because the journal has no side panel to sit against. The ERROR line does
+   NOT use this class — it takes .panel-note, because a scoped rule setting
+   color/font-size here would outrank global .view-error and render the error
+   dim sans instead of red mono, which is the bug this pass removes. */
 .journal-empty {
   margin: 1rem 0.25rem;
   color: var(--text-dim);

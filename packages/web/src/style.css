@@ -180,8 +180,21 @@ input::placeholder {
   background: var(--surface);
 }
 
+/* The muted line a panel shows when it has nothing else to show — loading,
+   empty, "select a file". Four views spelled this out under four names
+   (col-empty x2, tree-note, state-line), and because each was scoped it
+   outranked .view-error below: five ERROR lines rendered dim sans-14px
+   instead of red mono-12px, and History showed two error lines in two
+   different colours. */
+.panel-note {
+  margin: 1rem;
+  color: var(--text-dim);
+  font-size: var(--fs-content);
+}
+
+/* A pure appearance modifier: it carries no margin, so it composes onto
+   whatever supplies the box (.panel-note, .error-banner, .load-error). */
 .view-error {
-  margin: 0.75rem 0 0;
   color: var(--del);
   font-family: var(--font-mono);
   font-size: var(--fs-small);

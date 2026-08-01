@@ -407,14 +407,14 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
          store keeps compareDiff, so keep rendering it under a banner. -->
     <p
       v-if="compare.error && compareDiff"
-      class="state-line view-error error-banner"
+      class="view-error error-banner"
       data-testid="compare-error-banner"
     >
       {{ compare.error }}
     </p>
 
     <!-- Body states -->
-    <p v-if="compare.error && !compareDiff" class="state-line view-error" data-testid="compare-error">
+    <p v-if="compare.error && !compareDiff" class="panel-note view-error" data-testid="compare-error">
       {{ compare.error }}
     </p>
     <div v-else-if="compare.noBaseBranch" class="state-block" data-testid="no-base-branch">
@@ -424,12 +424,12 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
         Pick a base branch above to compare against.
       </p>
     </div>
-    <p v-else-if="compare.loading && !compareDiff" class="state-line" data-testid="compare-loading">
+    <p v-else-if="compare.loading && !compareDiff" class="panel-note" data-testid="compare-loading">
       Loading compare…
     </p>
     <p
       v-else-if="compareDiff && files.length === 0"
-      class="state-line"
+      class="panel-note"
       data-testid="compare-clean"
     >
       No changes{{ currentBranch ? ` on ${currentBranch}` : '' }} compared to
@@ -673,13 +673,7 @@ const onPayloadKeydown = makePayloadKeyHandler(isPortrait, diffsEl, { self: true
 
 /* --- Body states --- */
 
-.state-line {
-  margin: 1rem;
-  color: var(--text-dim);
-  font-size: var(--fs-content);
-}
-
-/* Defined after .state-line so its margin/padding overrides win. */
+/* Owns the whole box for an error banner: .view-error is appearance only. */
 .error-banner {
   flex: none;
   margin: 0;

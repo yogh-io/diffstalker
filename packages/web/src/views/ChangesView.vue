@@ -392,8 +392,8 @@ const rootStyle = computed(() => ({
       @pointerenter="pointerInList = true"
       @pointerleave="pointerInList = false"
     >
-      <p v-if="repo.shared.isLoading" class="col-empty">Loading status…</p>
-      <p v-else-if="!status" class="col-empty">No status yet.</p>
+      <p v-if="repo.shared.isLoading" class="panel-note">Loading status…</p>
+      <p v-else-if="!status" class="panel-note">No status yet.</p>
 
       <div
         v-else
@@ -541,12 +541,6 @@ const rootStyle = computed(() => ({
 /* --- Files column --- */
 
 /* .files-col: shared panel surface, see style.css. */
-
-.col-empty {
-  margin: 1rem;
-  color: var(--text-dim);
-  font-size: var(--fs-content);
-}
 
 .file-list {
   padding: 0.375rem 0;

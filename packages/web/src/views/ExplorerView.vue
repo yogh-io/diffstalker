@@ -280,15 +280,15 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
       </Teleport>
 
       <div class="tree-scroll">
-        <p v-if="rootLoading && rows.length === 0" class="tree-note">Loading tree…</p>
+        <p v-if="rootLoading && rows.length === 0" class="panel-note">Loading tree…</p>
         <p
           v-else-if="error && rows.length === 0"
-          class="tree-note view-error"
+          class="panel-note view-error"
           data-testid="tree-error"
         >
           {{ error }}
         </p>
-        <p v-else-if="rows.length === 0" class="tree-note" data-testid="tree-empty">
+        <p v-else-if="rows.length === 0" class="panel-note" data-testid="tree-empty">
           {{ changedOnly ? 'No changed files.' : 'Empty repository.' }}
         </p>
 
@@ -353,7 +353,7 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
           </template>
         </div>
 
-        <p v-if="error && rows.length > 0" class="tree-note view-error" data-testid="tree-error">
+        <p v-if="error && rows.length > 0" class="panel-note view-error" data-testid="tree-error">
           {{ error }}
         </p>
       </div>
@@ -458,18 +458,6 @@ function onTreeRowKeydown(event: KeyboardEvent, row: ExplorerRow): void {
   flex: 1;
   min-height: 0;
   overflow: auto;
-}
-
-.tree-note {
-  margin: 1rem;
-  color: var(--text-dim);
-  font-size: var(--fs-content);
-}
-
-.tree-note.view-error {
-  color: var(--del);
-  font-family: var(--font-mono);
-  font-size: var(--fs-small);
 }
 
 .tree {
