@@ -757,17 +757,22 @@ git operations.
   contradict the list it labels. No base branch to compare against shows no
   badge at all, never a misleading `(0)`.
 - **Shareable URL + browser history.** The path names what is on screen:
-  `/<home-relative-repo-path>/<view>`, plus one rider segment for the two
+  `/<home-relative-repo-path>/<view>`, plus one rider segment for the three
   views that need it — the compare base when one is picked
-  (`/w/calc/fix-a/compare/upstream:main`) and the Explorer's open file
-  (`/w/diffstalker/explorer/packages:web:src:App.vue`). Riders write their
-  `/` as `:` so the view keyword keeps a fixed position. Any such link
-  reloads into exactly that state (the daemon serves the SPA for any
-  non-API path): the repo opens, the tree expands down to the file, the
-  file opens. Landing on a new path pushes a browser history entry —
-  another repo, view, compare base or Explorer file — so Back and Forward
-  walk through what you looked at instead of leaving the app. Back into an
-  Explorer entry re-reveals its file. Follow mode's reveals count too: with
+  (`/w/calc/fix-a/compare/upstream:main`), the Explorer's open file
+  (`/w/diffstalker/explorer/packages:web:src:App.vue`) and History's
+  selected commit (`/w/diffstalker/history/4d1c44a`). The first two write
+  their `/` as `:` so the view keyword keeps a fixed position; the commit
+  rider must look like a hash, so a repo whose own directory is called
+  `history` still parses. Any such link reloads into exactly that state
+  (the daemon serves the SPA for any non-API path): the repo opens, the
+  tree expands down to the file and opens it, the commit's diff loads —
+  History pulls its log first if the link landed before the view did, and
+  a hash no longer in the log just leaves the detail closed. Landing on a new path pushes a browser history entry —
+  another repo, view, compare base, Explorer file or History commit — so
+  Back and Forward walk through what you looked at instead of leaving the
+  app. Back into an Explorer or History entry re-opens its file or commit,
+  and back out of one closes it again. Follow mode's reveals count too: with
   follow on, tracking an editor writes one entry per file it lands on.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),

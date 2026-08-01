@@ -187,6 +187,34 @@ async function applyUrlState(state: UrlState): Promise<void> {
   else if (state.file !== null && state.file !== explorer.selectedPath) {
     await explorer.revealFile(state.file);
   }
+  if (state.view === 'history') await applyUrlCommit(state.commit);
+}
+
+/**
+ * Select the commit a History URL names. The log is loaded first when it
+ * has not been (a cold deep link lands before HistoryView mounts), and the
+ * hash is matched as a prefix — the URL carries the short hash.
+ *
+ * A hash that is not in the loaded page (older than it, or rebased away)
+ * leaves the detail closed and the URL is rewritten to match — the same
+ * outcome the view already gives a selection that vanished under it. No
+ * commit in the URL clears the selection, so Back out of a commit closes
+ * the detail instead of stopping one step short.
+ */
+async function applyUrlCommit(hash: string | null): Promise<void> {
+  try {
+    if (hash === null) {
+      await repo.selectHistoryCommit(null);
+      return;
+    }
+    if (repo.history.selectedCommit?.hash.startsWith(hash)) return;
+    if (repo.history.commits.length === 0) await repo.loadHistory();
+    const match = repo.history.commits.find((c) => c.hash.startsWith(hash));
+    if (match) await repo.selectHistoryCommit(match);
+  } catch {
+    // A failed log pull or diff fetch is HistoryView's story to tell — it
+    // retries and shows its own line. The URL applier stays silent.
+  }
 }
 
 if (urlSync.initial.view) ui.setActiveView(urlSync.initial.view);

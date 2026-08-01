@@ -14,6 +14,7 @@ import {
   type UrlState,
   type UrlSyncOptions,
 } from './useUrlSync';
+import type { CommitInfo } from '@diffstalker/core/git/status';
 import { useDaemonStore } from '../stores/daemon';
 import { useExplorerStore } from '../stores/explorer';
 import { useRepoStore } from '../stores/repo';
@@ -65,82 +66,90 @@ const Harness = defineComponent({
   },
 });
 
+/** A CommitInfo carrying only what the URL reads off it. */
+function commit(hash: string): CommitInfo {
+  return {
+    hash,
+    shortHash: hash.slice(0, 7),
+    message: 'a commit',
+    author: 'u',
+    date: new Date(0),
+    refs: '',
+  };
+}
+
+/** Every UrlState field, so a test only spells out what it is about. */
+function state(part: Partial<UrlState>): UrlState {
+  return { repoRel: null, view: null, base: null, file: null, commit: null, ...part };
+}
+
 describe('parseUrlPath', () => {
   test('repo path + view', () => {
-    expect(parseUrlPath('/w/calculator/fix-a/history')).toEqual({
-      repoRel: 'w/calculator/fix-a',
-      view: 'history',
-      base: null,
-      file: null,
-    });
+    expect(parseUrlPath('/w/calculator/fix-a/journal')).toEqual(
+      state({ repoRel: 'w/calculator/fix-a', view: 'journal' })
+    );
   });
 
   test('compare with a :-encoded base decodes to a slashed ref', () => {
-    expect(parseUrlPath('/w/calculator/fix-a/compare/upstream:main')).toEqual({
-      repoRel: 'w/calculator/fix-a',
-      view: 'compare',
-      base: 'upstream/main',
-      file: null,
-    });
+    expect(parseUrlPath('/w/calculator/fix-a/compare/upstream:main')).toEqual(
+      state({ repoRel: 'w/calculator/fix-a', view: 'compare', base: 'upstream/main' })
+    );
   });
 
   test('compare with no base', () => {
-    expect(parseUrlPath('/w/diffstalker/compare')).toEqual({
-      repoRel: 'w/diffstalker',
-      view: 'compare',
-      base: null,
-      file: null,
-    });
+    expect(parseUrlPath('/w/diffstalker/compare')).toEqual(
+      state({ repoRel: 'w/diffstalker', view: 'compare' })
+    );
   });
 
   test('a base equal to a view keyword is still read as the base (compare checked first)', () => {
-    expect(parseUrlPath('/w/x/compare/history')).toEqual({
-      repoRel: 'w/x',
-      view: 'compare',
-      base: 'history',
-      file: null,
-    });
+    expect(parseUrlPath('/w/x/compare/history')).toEqual(
+      state({ repoRel: 'w/x', view: 'compare', base: 'history' })
+    );
   });
 
   test('a worktree segment named like a (non-compare) view is not mistaken for the view', () => {
     // repo ends in a dir called "history"; the appended view is "changes".
-    expect(parseUrlPath('/w/x/history/changes')).toEqual({
-      repoRel: 'w/x/history',
-      view: 'changes',
-      base: null,
-      file: null,
-    });
+    expect(parseUrlPath('/w/x/history/changes')).toEqual(
+      state({ repoRel: 'w/x/history', view: 'changes' })
+    );
   });
 
   test('empty path -> nothing', () => {
-    expect(parseUrlPath('/')).toEqual({ repoRel: null, view: null, base: null, file: null });
+    expect(parseUrlPath('/')).toEqual(state({}));
   });
 
   test('explorer carries the open file as a :-encoded rider', () => {
-    expect(parseUrlPath('/w/x/explorer/packages:web:src:App.vue')).toEqual({
-      repoRel: 'w/x',
-      view: 'explorer',
-      base: null,
-      file: 'packages/web/src/App.vue',
-    });
+    expect(parseUrlPath('/w/x/explorer/packages:web:src:App.vue')).toEqual(
+      state({ repoRel: 'w/x', view: 'explorer', file: 'packages/web/src/App.vue' })
+    );
   });
 
   test('explorer with no file open', () => {
-    expect(parseUrlPath('/w/x/explorer')).toEqual({
-      repoRel: 'w/x',
-      view: 'explorer',
-      base: null,
-      file: null,
-    });
+    expect(parseUrlPath('/w/x/explorer')).toEqual(state({ repoRel: 'w/x', view: 'explorer' }));
   });
 
   test('a file named like a view keyword is still read as the file', () => {
-    expect(parseUrlPath('/w/x/explorer/changes')).toEqual({
-      repoRel: 'w/x',
-      view: 'explorer',
-      base: null,
-      file: 'changes',
-    });
+    expect(parseUrlPath('/w/x/explorer/changes')).toEqual(
+      state({ repoRel: 'w/x', view: 'explorer', file: 'changes' })
+    );
+  });
+
+  test('history carries the selected commit', () => {
+    expect(parseUrlPath('/w/x/history/4d1c44a')).toEqual(
+      state({ repoRel: 'w/x', view: 'history', commit: '4d1c44a' })
+    );
+  });
+
+  test('history with no commit selected', () => {
+    expect(parseUrlPath('/w/x/history')).toEqual(state({ repoRel: 'w/x', view: 'history' }));
+  });
+
+  test('a non-hex segment after a repo dir called history is not read as a commit', () => {
+    // The commit rider must look like a hash, so this stays repo + view.
+    expect(parseUrlPath('/w/x/history/explorer')).toEqual(
+      state({ repoRel: 'w/x/history', view: 'explorer' })
+    );
   });
 });
 
@@ -175,6 +184,22 @@ describe('writes a clean, home-relative path', () => {
     await flushPromises();
 
     expect(window.location.pathname).toBe('/w/diffstalker/history');
+  });
+
+  test('the history view carries the selected commit as its short hash', async () => {
+    const daemon = useDaemonStore();
+    const repo = useRepoStore();
+    const ui = useUiStore();
+    daemon.repos = [{ id: 'r1', path: `${HOME}/w/diffstalker`, branch: 'main' }];
+    daemon.activeRepoId = 'r1';
+
+    mount(Harness);
+    await flushPromises();
+    ui.setActiveView('history');
+    repo.history = { ...repo.history, selectedCommit: commit('4d1c44a8014eae3032520f702a49e8a63cbac1b3') };
+    await flushPromises();
+
+    expect(window.location.pathname).toBe('/w/diffstalker/history/4d1c44a');
   });
 
   test('the explorer view carries its open file', async () => {
@@ -264,6 +289,43 @@ describe('browser history', () => {
     expect(window.location.pathname).toBe('/w/two/explorer');
   });
 
+  test('picking commits pushes an entry each', async () => {
+    await mountWithRepo();
+    const repo = useRepoStore();
+    useUiStore().setActiveView('history');
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+
+    repo.history = { ...repo.history, selectedCommit: commit('aaaaaaa111') };
+    await flushPromises();
+    repo.history = { ...repo.history, selectedCommit: commit('bbbbbbb222') };
+    await flushPromises();
+
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(window.location.pathname).toBe('/w/one/history/bbbbbbb');
+  });
+
+  test('a history reload dropping the selection writes nothing — it is re-anchored', async () => {
+    await mountWithRepo();
+    const repo = useRepoStore();
+    useUiStore().setActiveView('history');
+    repo.history = { ...repo.history, selectedCommit: commit('aaaaaaa111') };
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+
+    // What every state-change does: reload clears the selection, then the
+    // view re-anchors it by hash.
+    repo.history = { ...repo.history, selectedCommit: null };
+    await flushPromises();
+    expect(window.location.pathname).toBe('/w/one/history/aaaaaaa');
+
+    repo.history = { ...repo.history, selectedCommit: commit('aaaaaaa111') };
+    await flushPromises();
+
+    expect(push).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe('/w/one/history/aaaaaaa');
+  });
+
   test('opening explorer files pushes an entry each', async () => {
     await mountWithRepo();
     const explorer = useExplorerStore();
@@ -308,7 +370,7 @@ describe('back/forward', () => {
     window.dispatchEvent(new PopStateEvent('popstate'));
     await flushPromises();
 
-    expect(seen).toEqual([{ repoRel: 'w/one', view: 'changes', base: null, file: null }]);
+    expect(seen).toEqual([state({ repoRel: 'w/one', view: 'changes' })]);
     expect(ui.activeView).toBe('changes');
     // Applying a popped entry must never stack a new one on top of it.
     expect(push).not.toHaveBeenCalled();

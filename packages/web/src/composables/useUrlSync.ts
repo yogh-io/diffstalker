@@ -7,21 +7,28 @@
  *   /w/calculator/fix-bbox/compare
  *   /w/calculator/fix-bbox/compare/upstream:main      (overridden base)
  *   /w/diffstalker/explorer/packages:web:src:App.vue  (open file)
- *   /w/diffstalker/history
+ *   /w/diffstalker/history/4d1c44a                    (selected commit)
  *
  * The repo path's slashes are real path segments. Paths are stored RELATIVE
  * to the daemon's $HOME (fetched from GET /health) — a repo outside home
  * keeps its absolute path. The view is the trailing keyword.
  *
- * Two views carry one extra segment after the keyword, and both write their
- * `/` as `:` so the rider stays ONE segment and the view keyword keeps its
- * fixed position (no scanning for it, no guessing where the repo path ends):
- * `compare` carries the base branch (only when explicitly chosen — a git ref
- * can never contain `:`, so that one round-trips exactly), and `explorer`
- * carries the repo-relative file being shown. A file name containing a
- * literal `:` is the one case that does not round-trip; it is legal on Linux
- * but rare, and the cost is a failed reveal (the explorer shows its own
- * error), not a broken app.
+ * Three views carry one extra rider segment after the keyword, which keeps
+ * the view keyword at a fixed position — nothing has to scan for it or guess
+ * where the repo path ends:
+ *
+ *  - `compare`: the base branch, when one was explicitly chosen;
+ *  - `explorer`: the repo-relative file being shown;
+ *  - `history`: the selected commit's short hash.
+ *
+ * The first two write their `/` as `:` so the rider stays one segment. A ref
+ * can never contain `:`, so a base round-trips exactly; a file name with a
+ * literal `:` is the one case that does not — legal on Linux but rare, and
+ * the cost is a failed reveal (the explorer shows its own error), not a
+ * broken app. The commit rider must additionally LOOK like a hash (hex), so
+ * a repo whose own directory is called `history` still parses:
+ * `/w/x/history/changes` is the repo `w/x/history` on the Changes view, not
+ * a commit named `changes` — no view keyword is hex.
  *
  * The daemon already serves index.html for any non-API, non-file path (SPA
  * fallback), so a deep link reloads correctly. App reads `initial` once at
@@ -58,6 +65,14 @@ import type { ViewName } from '../prefs';
 
 const COMPARE: ViewName = 'compare';
 const EXPLORER: ViewName = 'explorer';
+const HISTORY: ViewName = 'history';
+
+/**
+ * What a commit rider may look like: hex, and long enough to be a hash
+ * rather than a word. This is what keeps a repo directory named `history`
+ * from swallowing the view keyword that follows it.
+ */
+const COMMIT_RE = /^[0-9a-f]{4,40}$/;
 
 /** The rider segment's stand-in for `/` (see the header comment). */
 const RIDE_SEP = ':';
@@ -86,6 +101,8 @@ export interface UrlState {
   base: string | null;
   /** Explorer: the repo-relative file being shown, when one is open. */
   file: string | null;
+  /** History: the short hash of the selected commit, when one is picked. */
+  commit: string | null;
 }
 
 /**
@@ -105,18 +122,27 @@ export function parseUrlPath(pathname: string): UrlState {
     view,
     base: null,
     file: null,
+    commit: null,
+  });
+  const rider = (view: ViewName, part: Partial<UrlState>): UrlState => ({
+    repoRel: repoUpTo(n - 2),
+    view,
+    base: null,
+    file: null,
+    commit: null,
+    ...part,
   });
 
   if (n >= 1 && last === COMPARE) return bare(COMPARE);
-  if (n >= 2 && secondLast === COMPARE) {
-    return { repoRel: repoUpTo(n - 2), view: COMPARE, base: decodeRider(last), file: null };
-  }
+  if (n >= 2 && secondLast === COMPARE) return rider(COMPARE, { base: decodeRider(last) });
   if (n >= 1 && last === EXPLORER) return bare(EXPLORER);
-  if (n >= 2 && secondLast === EXPLORER) {
-    return { repoRel: repoUpTo(n - 2), view: EXPLORER, base: null, file: decodeRider(last) };
+  if (n >= 2 && secondLast === EXPLORER) return rider(EXPLORER, { file: decodeRider(last) });
+  if (n >= 1 && last === HISTORY) return bare(HISTORY);
+  if (n >= 2 && secondLast === HISTORY && COMMIT_RE.test(last)) {
+    return rider(HISTORY, { commit: last });
   }
   if (n >= 1 && isViewName(last)) return bare(last);
-  return { repoRel: repoUpTo(n), view: null, base: null, file: null };
+  return { repoRel: repoUpTo(n), view: null, base: null, file: null, commit: null };
 }
 
 export interface UrlSyncOptions {
@@ -134,6 +160,7 @@ interface WrittenState {
   repoRel: string | null;
   base: string | null;
   file: string | null;
+  commit: string | null;
 }
 
 export function useUrlSync(options: UrlSyncOptions = {}): {
@@ -161,7 +188,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
   const initial =
     typeof window !== 'undefined'
       ? parseUrlPath(window.location.pathname)
-      : { repoRel: null, view: null, base: null, file: null };
+      : { repoRel: null, view: null, base: null, file: null, commit: null };
 
   const activeRepoPath = computed(() => daemon.activeRepoPath);
 
@@ -187,6 +214,12 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
   const currentRepoRel = (): string | null =>
     activeRepoPath.value === null ? null : toRel(activeRepoPath.value);
 
+  /** The History rider: the selected commit's short hash, or null. */
+  function selectedCommitHash(): string | null {
+    if (ui.activeView !== HISTORY) return null;
+    return repo.history.selectedCommit?.shortHash ?? null;
+  }
+
   function buildPath(): string {
     const segs: string[] = [];
     const rel = currentRepoRel();
@@ -198,6 +231,8 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     if (ui.activeView === EXPLORER && explorer.selectedPath) {
       segs.push(encodeRider(explorer.selectedPath));
     }
+    const commit = selectedCommitHash();
+    if (commit !== null) segs.push(commit);
     return '/' + segs.join('/');
   }
 
@@ -217,22 +252,30 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
   }
 
   /**
-   * A repo switch clears the explorer's open file (the store resets on the
-   * repo id) one step BEFORE the new repo lands, so for one flush the state
-   * reads "same repo, no file". Writing that would strip the file from the
-   * entry the user is leaving — and Back would return them to a fileless
-   * explorer. Skip it; the next write, with the new repo, is the truthful
-   * one. Nothing else clears the file while the repo stays put (the
-   * explorer has no close-file action; a popped entry that closes one is
-   * excluded here, and needs no write anyway — the URL is already what it
-   * says).
+   * A rider dropping to null while the repo, view and base stay put is
+   * never a navigation — it is a store reset one step ahead of the state
+   * that explains it:
+   *
+   *  - a repo switch clears the explorer's file (the store resets on the
+   *    repo id) BEFORE the new repo id lands;
+   *  - every state-change reloads the history log, which drops the selected
+   *    commit for the moment before the view re-anchors it by hash.
+   *
+   * Writing those would strip the rider from the entry the user is on, so
+   * Back would return them to a fileless explorer or an unselected commit —
+   * and, on the history side, would push an entry on every file save. Skip
+   * it; the write that follows is the truthful one. Nothing else clears
+   * either rider while the repo stays put (there is no close-file and no
+   * deselect-commit action). A popped entry that clears one is excluded:
+   * it needs no write anyway, the URL already says so.
    */
   function isRepoSwitchFlicker(next: WrittenState): boolean {
+    if (written === null || applyingPop) return false;
+    const dropped =
+      (next.file === null && written.file !== null) ||
+      (next.commit === null && written.commit !== null);
     return (
-      written !== null &&
-      !applyingPop &&
-      next.file === null &&
-      written.file !== null &&
+      dropped &&
       next.repoRel === written.repoRel &&
       next.view === written.view &&
       next.base === written.base
@@ -247,6 +290,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       repoRel: currentRepoRel(),
       base: ui.activeView === COMPARE ? repo.selectedCompareBase : null,
       file: ui.activeView === EXPLORER ? explorer.selectedPath : null,
+      commit: selectedCommitHash(),
     };
     if (isRepoSwitchFlicker(next)) return;
     // The browser stores the path percent-encoded; buildPath does not
@@ -273,6 +317,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       () => ui.activeView,
       () => repo.selectedCompareBase,
       () => explorer.selectedPath,
+      () => repo.history.selectedCommit,
     ],
     writeUrl,
     { flush: 'post' }
