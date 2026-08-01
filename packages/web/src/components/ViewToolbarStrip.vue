@@ -84,7 +84,7 @@ body > .toolbar-slot {
   flex-wrap: wrap;
   gap: 0.625rem;
   min-width: 0;
-  padding: 0.375rem 0.75rem;
+  padding: 0.375rem var(--gutter);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }

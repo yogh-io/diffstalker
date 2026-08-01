@@ -770,7 +770,7 @@ onBeforeUnmount(() => {
   /* The useScrollAnchor sandwich is the ONE compensation path; native
      anchoring would double-correct against it (and Safari has none). */
   overflow-anchor: none;
-  padding: 0.5rem 0.75rem 1rem;
+  padding: 0.5rem var(--gutter) 1rem;
 }
 
 .journal-empty {

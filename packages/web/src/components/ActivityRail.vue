@@ -131,7 +131,7 @@ const ICON_PATHS: Record<ViewName, string> = {
   gap: 0.25rem;
   width: auto;
   min-height: 2.75rem;
-  padding: 0.25rem 0.75rem;
+  padding: 0.25rem var(--gutter);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }

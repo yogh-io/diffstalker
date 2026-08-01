@@ -98,7 +98,7 @@ const version = computed(() => {
   align-items: center;
   gap: 1.25rem;
   height: 1.75rem;
-  padding: 0 1rem;
+  padding: 0 var(--gutter);
   font-size: var(--fs-small);
   color: var(--text-dim);
   background: var(--surface);

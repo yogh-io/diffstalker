@@ -145,7 +145,7 @@ const errorLine = computed(() =>
   grid-template-areas: 'identity pinned';
   align-items: center;
   column-gap: 1rem;
-  padding: 0.75rem 1rem;
+  padding: 0.75rem var(--gutter);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }

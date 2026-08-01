@@ -32,6 +32,16 @@
      first probe. It was previously written as a var() fallback at four sites.
      The JS twin is DIFF_ROW_PX in utils/diffRows; the two still move by hand. */
   --row-h: 1.26rem;
+
+  /* The inline gutter: the distance from a page edge to the content inside
+     it, and between a panel and the payload beside it. Deliberately CONSTANT
+     rather than viewport-scaled — in the stacked layout every band is
+     full-width, so a fluid inline value would step the diff stack's left edge
+     off the line the rail, the toolbar strip, the status bar and every list
+     row hold, producing a visible stagger on every phone to buy a few px of
+     width. It was already the de-facto value at most of those sites; naming it
+     is what stops the next one being authored at 1rem by accident. */
+  --gutter: 0.75rem;
 }
 
 * {

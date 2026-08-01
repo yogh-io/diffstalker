@@ -264,7 +264,7 @@ describe('browser history', () => {
     expect(window.location.pathname).toBe('/w/two/explorer');
   });
 
-  test('opening another explorer file replaces — file steps never bury the entries', async () => {
+  test('opening explorer files pushes an entry each', async () => {
     await mountWithRepo();
     const explorer = useExplorerStore();
     useUiStore().setActiveView('explorer');
@@ -276,7 +276,7 @@ describe('browser history', () => {
     explorer.selectedPath = 'src/b.ts';
     await flushPromises();
 
-    expect(push).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledTimes(2);
     expect(window.location.pathname).toBe('/w/one/explorer/src:b.ts');
   });
 });

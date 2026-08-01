@@ -28,19 +28,16 @@
  * startup (it wins over follow / first-repo), then every repo/view/base/file
  * change keeps the path in sync.
  *
- * Browser history: a change of repo, view or compare base PUSHES an entry,
- * so Back walks back through what you looked at instead of leaving the app.
- * The rest REPLACE:
+ * Browser history: every landing on a new path PUSHES an entry — another
+ * repo, view, compare base or explorer file — so Back walks back through
+ * what you looked at instead of leaving the app. Note that this counts
+ * follow mode's file reveals too: with follow on, tracking an editor writes
+ * one entry per file it lands on. Three writes REPLACE:
  *
  *  - the first write of the session (that entry IS the page you arrived on);
  *  - the write that first names a repo — the entry URL becoming complete (a
  *    deep link's repo finishing its open, the warm-daemon auto-activation, a
  *    follow target on cold load), not a navigation away from it;
- *  - a change of the explorer's open FILE. Clicking down a tree, and follow
- *    mode tracking an editor, would otherwise bury the entries worth going
- *    back to under one entry per file. The URL still always names the file
- *    (that is what makes it shareable and reload-safe) — it just doesn't
- *    stack up.
  *  - anything written while a popped entry is being applied (below).
  *
  * Back/forward: popstate parses the path and hands it to `onPopState` (App
@@ -212,17 +209,13 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
   let applyingPop = false;
 
   /**
-   * Push only for a navigation: a different repo, view or compare base. See
-   * the header comment for why the other writes replace.
+   * A different path is a navigation and gets its own entry — repo, view,
+   * compare base, explorer file alike. Only the two startup cases and a
+   * popped entry being applied replace instead (see the header comment).
    */
   function shouldPush(next: WrittenState): boolean {
     if (written === null || applyingPop) return false;
-    if (written.repoRel === null && next.repoRel !== null) return false;
-    return (
-      written.view !== next.view ||
-      written.repoRel !== next.repoRel ||
-      written.base !== next.base
-    );
+    return !(written.repoRel === null && next.repoRel !== null);
   }
 
   /**

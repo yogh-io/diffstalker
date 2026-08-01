@@ -1197,7 +1197,7 @@ defineExpose({
      INLINE axis only. Block padding here would shift every section's
      offsetTop while the height model still starts at `start: toolbarH`,
      drifting every scroll target by the padding. */
-  padding-inline: 0.75rem;
+  padding-inline: var(--gutter);
 
   /* The spine color. --border is tuned to be a hairline against --surface;
      against --bg it is far too faint to read as a file's full-height edge.
