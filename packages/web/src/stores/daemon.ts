@@ -28,6 +28,7 @@ import type {
   RepoSummary,
   VersionState,
 } from '@diffstalker/client';
+import { errorMessage } from '../api/errors';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -39,10 +40,6 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
  */
 export const FOLLOW_LOAD_ATTEMPTS = 3;
 export const FOLLOW_RETRY_DELAY_MS = 300;
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

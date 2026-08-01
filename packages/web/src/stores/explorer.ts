@@ -43,8 +43,7 @@
 import { computed, shallowRef, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
-import { isConnectionError } from '../api/errors';
-import { useRepoStore, CONNECTION_LOST_MESSAGE } from './repo';
+import { useRepoStore, displayError } from './repo';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
 
 /** One flattened tree row the view renders. */
@@ -67,10 +66,6 @@ export interface ExplorerRow {
   isExpanded: boolean;
   /** Dirs only: children fetch in flight. */
   isLoading: boolean;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export const useExplorerStore = defineStore('explorer', () => {
@@ -136,7 +131,7 @@ export const useExplorerStore = defineStore('explorer', () => {
 
   /** Collapse an error into the tree-level line (calm on connection loss). */
   function setTreeError(err: unknown): void {
-    error.value = isConnectionError(err) ? CONNECTION_LOST_MESSAGE : errorMessage(err);
+    error.value = displayError(err);
   }
 
   function fetchDir(dir: string): Promise<DirEntry[]> {
@@ -341,7 +336,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     } catch (err) {
       if (gen !== generation || selectedPath.value !== path) return;
       file.value = null;
-      fileError.value = isConnectionError(err) ? CONNECTION_LOST_MESSAGE : errorMessage(err);
+      fileError.value = displayError(err);
     } finally {
       if (gen === generation && selectedPath.value === path) fileLoading.value = false;
     }

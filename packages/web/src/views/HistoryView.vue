@@ -20,11 +20,13 @@ import { useUiStore } from '../stores/ui';
 import { formatRelativeTime, formatDateAbsolute } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import { TOP_MIN, TOP_MAX } from '../prefs';
+import { nextIndex } from '../utils/listNav';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, makePayloadKeyHandler } from '../composables/usePortraitKeys';
 import DiffView from '../components/DiffView.vue';
 import WrapToggle from '../components/WrapToggle.vue';
+import { errorMessage } from '../api/errors';
 
 const PAGE_SIZE = 100;
 
@@ -59,7 +61,7 @@ async function load(count: number): Promise<void> {
     // its visible "Loading…" state, and after a failure it reappears.
     requestedCount.value = count;
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : String(err);
+    loadError.value = errorMessage(err);
   }
 }
 
@@ -88,7 +90,7 @@ async function select(commit: CommitInfo): Promise<void> {
   try {
     await repo.selectHistoryCommit(commit);
   } catch (err) {
-    detailError.value = `Failed to load commit diff: ${err instanceof Error ? err.message : String(err)}`;
+    detailError.value = `Failed to load commit diff: ${errorMessage(err)}`;
   }
 }
 
@@ -134,14 +136,9 @@ function isTabStop(commit: CommitInfo, index: number): boolean {
 
 function moveSelection(delta: number): void {
   const list = commits.value;
-  if (list.length === 0) return;
   const current = selected.value ? list.indexOf(selected.value) : -1;
-  let next: number;
-  if (current === -1) {
-    next = delta > 0 ? 0 : list.length - 1;
-  } else {
-    next = Math.min(list.length - 1, Math.max(0, current + delta));
-  }
+  const next = nextIndex(current, delta, list.length);
+  if (next === -1) return;
   void select(list[next]);
   void nextTick(() => {
     listEl.value?.querySelectorAll<HTMLElement>('.commit-row')[next]?.focus();

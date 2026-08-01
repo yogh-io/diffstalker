@@ -29,3 +29,16 @@ export class DaemonError extends Error {
 export function isConnectionError(err: unknown): boolean {
   return !(err instanceof DaemonError);
 }
+
+/**
+ * An unknown thrown value as a display string. Declared here — beside the
+ * error taxonomy, in a module that imports nothing, so no consumer can create
+ * a cycle by reaching for it — after living as three byte-identical private
+ * copies in the repo, explorer and daemon stores plus six inline repeats.
+ *
+ * Not to be confused with api/transport.ts's own errorMessage(parsed, status),
+ * which extracts the daemon's {error} response body. Same name, different job.
+ */
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}

@@ -68,7 +68,7 @@
 import { computed, markRaw, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
-import { DaemonError, isConnectionError } from '../api/errors';
+import { DaemonError, errorMessage, isConnectionError } from '../api/errors';
 import { splitDiffByFile } from '@diffstalker/core/view/splitDiffByFile';
 import { buildDiffModel } from '../utils/diffRows';
 import type { DiffModel } from '../utils/diffRows';
@@ -179,6 +179,18 @@ interface WorkingSnapshot {
  */
 export const CONNECTION_LOST_MESSAGE = 'daemon connection lost — reconnecting…';
 
+/**
+ * A thrown value as the string to SHOW a user: connection loss collapses to
+ * the one calm reconnect line, everything else reports itself.
+ *
+ * Lives here rather than in api/errors because it needs CONNECTION_LOST_MESSAGE,
+ * and moving that constant down into api/errors would make api/errors depend on
+ * a store — a cycle dependency-cruiser fails at severity error.
+ */
+export function displayError(err: unknown): string {
+  return isConnectionError(err) ? CONNECTION_LOST_MESSAGE : errorMessage(err);
+}
+
 function initialShared(): RepoSharedState {
   return {
     status: null,
@@ -209,10 +221,6 @@ function initialCompare(): RepoCompareState {
     noBaseBranch: false,
     selection: { type: null, index: 0, diff: null },
   };
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export const useRepoStore = defineStore('repo', () => {
@@ -644,7 +652,7 @@ export const useRepoStore = defineStore('repo', () => {
         handleConnectionLoss();
         return;
       }
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   }
 

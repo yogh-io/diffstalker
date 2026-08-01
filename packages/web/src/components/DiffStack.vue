@@ -2,7 +2,7 @@
 import type { DiffLine, DiffResult } from '@diffstalker/core/git/diff';
 import type { FileStatus } from '@diffstalker/core/git/status';
 import { LARGE_DIFF_NOTICE_PREFIX } from '@diffstalker/core/git/diffParse';
-import { buildDiffModel, type DiffModel, type DiffNotShown } from '../utils/diffRows';
+import { buildDiffModel, DIFF_ROW_PX, type DiffModel, type DiffNotShown } from '../utils/diffRows';
 import { splitRowCount } from '../utils/diffSplit';
 
 /**
@@ -437,7 +437,7 @@ function measureProbe(): void {
  * lines at DiffView's row height, plus what stats don't count — a
  * header row per hunk and the surrounding context lines.
  */
-const ROW_PX = 20; // DiffView's 1.26rem row estimate at a 16px root
+const ROW_PX = DIFF_ROW_PX;
 const CONTEXT_ROWS_PER_HUNK = 7; // 1 hunk-header row + ~6 context lines
 const CHANGED_LINES_PER_HUNK = 10; // rough hunk-count guess
 const MIN_PX = 48;

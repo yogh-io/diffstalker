@@ -14,11 +14,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { Fzf } from 'fzf';
 import { DiffstalkerClient } from '../api/client';
-import { isConnectionError } from '../api/errors';
 import { useDaemonStore } from '../stores/daemon';
 import { useExplorerStore } from '../stores/explorer';
 import { useUiStore } from '../stores/ui';
-import { CONNECTION_LOST_MESSAGE } from '../stores/repo';
+import { displayError } from '../stores/repo';
 import { useFocusTrap } from '../composables/useFocusTrap';
 
 /** More than the CLI's 15 — the list scrolls; still bounded for paint cost. */
@@ -75,10 +74,7 @@ function updateResults(): void {
   if (listEl.value) listEl.value.scrollTop = 0;
 }
 
-function loadErrorMessage(err: unknown): string {
-  if (isConnectionError(err)) return CONNECTION_LOST_MESSAGE;
-  return err instanceof Error ? err.message : String(err);
-}
+const loadErrorMessage = displayError;
 
 onMounted(async () => {
   const id = daemon.activeRepoId;

@@ -30,6 +30,7 @@ import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareFileDiff } from '@diffstalker/core/git/diff';
 import { statusLetter } from '../utils/format';
+import { nextIndex } from '../utils/listNav';
 import { TOP_MIN, TOP_MAX } from '../prefs';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
@@ -201,15 +202,10 @@ function isTabStop(fileIndex: number): boolean {
 
 function moveFileSelection(delta: number): void {
   const order = treeFileOrder.value;
-  if (order.length === 0) return;
   const selected = selectedFileIndex.value;
   const current = selected !== null ? order.indexOf(selected) : -1;
-  let next: number;
-  if (current === -1) {
-    next = delta > 0 ? 0 : order.length - 1;
-  } else {
-    next = Math.min(order.length - 1, Math.max(0, current + delta));
-  }
+  const next = nextIndex(current, delta, order.length);
+  if (next === -1) return;
   selectFile(order[next]);
   void nextTick(() => {
     filesEl.value

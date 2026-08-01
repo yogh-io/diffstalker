@@ -32,12 +32,13 @@
  */
 
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
-import { useRepoStore } from '../stores/repo';
+import { useRepoStore, workingDiffKey } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import { categorizeFiles } from '@diffstalker/core/view/fileCategories';
 import { shortenPath } from '@diffstalker/core/view/formatPath';
 import type { FileEntry } from '@diffstalker/core/git/status';
 import { statusLetter } from '../utils/format';
+import { nextIndex } from '../utils/listNav';
 import { CHANGES_SPLIT_MIN, CHANGES_SPLIT_MAX, TOP_MIN, TOP_MAX } from '../prefs';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
@@ -76,10 +77,12 @@ const sections = computed(() =>
   ).filter((section) => section.files.length > 0)
 );
 
-/** Row/section key: side prefix + path — the workingDiffs cache key. */
-function rowKey(file: FileEntry): string {
-  return `${file.staged ? 's' : 'u'}:${file.path}`;
-}
+/**
+ * Row/section key. The store's own export, not a copy: it fills and prunes
+ * workingDiffs.byKey with this function, so a drifted second copy would turn
+ * every diff into a placeholder AND prune every cache entry.
+ */
+const rowKey = workingDiffKey;
 
 function isActive(file: FileEntry): boolean {
   return ui.activeStackKey === rowKey(file);
@@ -210,14 +213,8 @@ function isTabStop(file: FileEntry): boolean {
 
 function moveSelection(delta: number): void {
   const ordered = categories.value.ordered;
-  if (ordered.length === 0) return;
-  const current = activeIndex();
-  let next: number;
-  if (current === -1) {
-    next = delta > 0 ? 0 : ordered.length - 1;
-  } else {
-    next = Math.min(ordered.length - 1, Math.max(0, current + delta));
-  }
+  const next = nextIndex(activeIndex(), delta, ordered.length);
+  if (next === -1) return;
   jumpToFile(ordered[next]);
   void nextTick(() => {
     listEl.value?.querySelectorAll<HTMLElement>('.file-row')[next]?.focus();

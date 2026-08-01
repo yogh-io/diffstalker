@@ -86,8 +86,10 @@ import {
   type JournalHunkRow,
   type JournalRow,
 } from '../utils/foldEntries';
+import { DIFF_ROW_PX } from '../utils/diffRows';
 import { useScrollAnchor, type AnchorCandidate } from '../composables/useScrollAnchor';
 import DiffView from '../components/DiffView.vue';
+import { errorMessage } from '../api/errors';
 
 /** Pinned-to-head band: this close to the top, appends auto-follow. */
 const TOP_PIN_PX = 40;
@@ -253,8 +255,8 @@ function boundaryText(entry: JournalBoundaryEntry): string {
 
 // --- Bounded off-screen cost (fixed at append — no live probe) ---
 
-/** DiffView's row estimate at a 16px root (matches DiffStack's ROW_PX). */
-const ROW_PX = 20;
+/** DiffView's row estimate, shared with DiffStack — see utils/diffRows. */
+const ROW_PX = DIFF_ROW_PX;
 const BODY_MIN_PX = 48;
 const BODY_CHROME_PX = 32; // hunk header + the always-on horizontal track
 
@@ -596,7 +598,7 @@ async function loadNow(): Promise<void> {
   try {
     await repo.loadJournal();
   } catch (err) {
-    loadError.value = err instanceof Error ? err.message : String(err);
+    loadError.value = errorMessage(err);
   }
 }
 

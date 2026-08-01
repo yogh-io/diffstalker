@@ -337,6 +337,13 @@ function buildSection(
  * path staged AND unstaged yields two distinct sections. Callers where
  * staged-ness has no meaning (History, Compare) omit it.
  */
+/**
+ * DiffView's row estimate at a 16px root (1.26rem). Shared: DiffStack and
+ * JournalView both size bodies for the same rows, and JournalView used to
+ * carry its own 20 with a comment promising to match by hand.
+ */
+export const DIFF_ROW_PX = 20;
+
 export function buildDiffModel(diff: DiffResult | null, staged = false): DiffModel {
   const model: DiffModel = { sections: [], lineNumWidth: 3, rowCount: 0, notShown: null };
   if (!diff) return model;
