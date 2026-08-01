@@ -277,6 +277,24 @@ export const useDaemonStore = defineStore('daemon', () => {
     }
   }
 
+  /**
+   * Follow navigation is suspended until this timestamp (epoch ms). Back
+   * arms it: without a grace period, pressing Back and then saving in the
+   * editor half a second later silently undoes the Back — the single most
+   * common way this workflow loses a navigation. A time window beats
+   * "swallow one event", which would eat a genuine live move minutes later.
+   */
+  let followSuspendedUntil = 0;
+
+  function suspendFollowNavigation(ms: number): void {
+    followSuspendedUntil = Date.now() + ms;
+  }
+
+  /** Follow events are still RECORDED while suspended — only acted on later. */
+  function followNavigationSuspended(): boolean {
+    return Date.now() < followSuspendedUntil;
+  }
+
   function toggleFollow(): boolean {
     followEnabled.value = !followEnabled.value;
     return followEnabled.value;
@@ -305,6 +323,8 @@ export const useDaemonStore = defineStore('daemon', () => {
     followEnabled,
     lastFollowChange,
     skipInitialFollow,
+    suspendFollowNavigation,
+    followNavigationSuspended,
     activeRepoId,
     activeRepo,
     activeRepoPath,

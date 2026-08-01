@@ -322,6 +322,34 @@ export async function getCommitHistory(
   }
 }
 
+/**
+ * One commit by hash (or any rev), or null when it does not resolve.
+ * Deep links name a commit that may be far older than any page of the log
+ * a client has pulled — resolving it directly beats re-pulling the log at
+ * an ever larger count until it appears.
+ */
+export async function getCommit(repoPath: string, rev: string): Promise<CommitInfo | null> {
+  const git = createGit(repoPath);
+  try {
+    // `--no-walk <rev>`: THAT commit, not the history leading to it, and
+    // not a range — `{from, to}` with one rev is `rev..rev`, which is
+    // empty by definition.
+    const log = await git.log(['--no-walk', rev]);
+    const entry = log.all[0];
+    if (!entry) return null;
+    return {
+      hash: entry.hash,
+      shortHash: entry.hash.slice(0, 7),
+      message: entry.message.split('\n')[0],
+      author: entry.author_name,
+      date: new Date(entry.date),
+      refs: entry.refs || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Stash operations
 
 export interface StashEntry {

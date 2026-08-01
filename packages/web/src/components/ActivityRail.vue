@@ -18,6 +18,7 @@
  */
 
 import { computed } from 'vue';
+import { beginUserNav } from '../composables/useUrlSync';
 import { useUiStore, VIEWS } from '../stores/ui';
 import { useRepoStore } from '../stores/repo';
 import HeaderToggles from './HeaderToggles.vue';
@@ -74,6 +75,12 @@ const ICON_PATHS: Record<ViewName, string> = {
   compare: 'M5 13V3.5M2.8 5.7 5 3.5l2.2 2.2M11 3v9.5M8.8 10.3 11 12.5l2.2-2.2',
   explorer: 'M2 4h4l1.5 1.5H14V13H2Z',
 };
+
+/** A tab click is a navigation: it gets its own history entry. */
+function chooseView(view: ViewName): void {
+  beginUserNav({ view });
+  ui.setActiveView(view);
+}
 </script>
 
 <template>
@@ -85,7 +92,7 @@ const ICON_PATHS: Record<ViewName, string> = {
       :class="{ active: ui.activeView === view.name }"
       :aria-current="ui.activeView === view.name ? 'page' : undefined"
       :title="titleFor(view.name, view.label)"
-      @click="ui.setActiveView(view.name)"
+      @click="chooseView(view.name)"
     >
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
         <path

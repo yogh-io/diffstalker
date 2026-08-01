@@ -16,6 +16,7 @@ import { Fzf } from 'fzf';
 import { DiffstalkerClient } from '../api/client';
 import { useDaemonStore } from '../stores/daemon';
 import { useExplorerStore } from '../stores/explorer';
+import { beginUserNav } from '../composables/useUrlSync';
 import { useUiStore } from '../stores/ui';
 import { displayError } from '../stores/repo';
 import { useFocusTrap } from '../composables/useFocusTrap';
@@ -160,6 +161,7 @@ async function reveal(path: string): Promise<void> {
 /** Reveal the chosen file: Explorer view + tree reveal, then close. */
 function choose(path: string): void {
   ui.closeOverlay();
+  beginUserNav({ view: 'explorer' });
   ui.setActiveView('explorer');
   void reveal(path);
 }

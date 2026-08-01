@@ -1,58 +1,86 @@
 /**
- * useUrlSync: mirror "what is being shown" into a CLEAN, path-based URL so
- * a view is reproducible and shareable — no query string, and no
- * /home/<user> prefix.
+ * useUrlSync: the URL is the app's address bar in the literal sense — it
+ * names ONE PLACE (a repo, a view, and the one anchor you are aimed at
+ * inside it) and nothing else. Preferences, modes, expansion sets and
+ * scroll offsets are not places and never appear.
  *
- *   /<home-relative-repo-path>/<view>
- *   /w/calculator/fix-bbox/compare
- *   /w/calculator/fix-bbox/compare/upstream:main      (overridden base)
- *   /w/diffstalker/explorer/packages:web:src:App.vue  (open file)
- *   /w/diffstalker/history/4d1c44a                    (selected commit)
+ *   /<view>/<repo-segments…>[?at=…][&base=…]
+ *   /                                                  (no repo open)
+ *   /changes/~/w/diffstalker?at=u:packages/web/src/App.vue
+ *   /history/~/w/diffstalker?at=4d1c44a
+ *   /compare/~/w/calculator/fix-bbox?base=upstream/main&at=src/a.ts
+ *   /explorer/srv/git/thing?at=packages/web/src/App.vue
  *
- * The repo path's slashes are real path segments. Paths are stored RELATIVE
- * to the daemon's $HOME (fetched from GET /health) — a repo outside home
- * keeps its absolute path. The view is the trailing keyword.
+ * VIEW FIRST. Segment 0 is a view keyword from a closed set, so parsing is
+ * positional: nothing scans for where the repo path ends, a repo directory
+ * called `history` is just a directory, and no repo path can ever collide
+ * with the daemon's own API prefixes (/health, /repos, /events, /follow,
+ * /worktrees) — which a repo-first path could, and did.
  *
- * Three views carry one extra rider segment after the keyword, which keeps
- * the view keyword at a fixed position — nothing has to scan for it or guess
- * where the repo path ends:
+ * REPO. Segment 1 === `~` (tested RAW, before decoding) means the rest is
+ * relative to the daemon's $HOME; otherwise the segments ARE an absolute
+ * path. Every segment is encodeURIComponent'd on write and decoded on
+ * read, so a directory literally named `~` writes as `%7E` and does not
+ * become the sentinel. With no $HOME (GET /health failed) paths stay
+ * absolute.
  *
- *  - `compare`: the base branch, when one was explicitly chosen;
- *  - `explorer`: the repo-relative file being shown;
- *  - `history`: the selected commit's short hash.
+ * ANCHOR. `at` is the one thing the view is aimed at, per view: Changes'
+ * stack key (`u:`/`s:` + path — a partially staged file is two rows, so
+ * the side is part of the identity), History's selected commit (short
+ * hash), Compare's selected file PATH (never its list index — the list
+ * re-pulls constantly), Explorer's open file. Journal has none: its entry
+ * seqs restart on a daemon restart or a prune, so a remembered one would
+ * point at an unrelated entry. Compare also carries `base`, the EXPLICIT
+ * pick only — absent means "let the daemon detect", and a detected base is
+ * never written back, so a link records what you asked for.
  *
- * The first two write their `/` as `:` so the rider stays one segment. A ref
- * can never contain `:`, so a base round-trips exactly; a file name with a
- * literal `:` is the one case that does not — legal on Linux but rare, and
- * the cost is a failed reveal (the explorer shows its own error), not a
- * broken app. The commit rider must additionally LOOK like a hash (hex), so
- * a repo whose own directory is called `history` still parses:
- * `/w/x/history/changes` is the repo `w/x/history` on the Changes view, not
- * a commit named `changes` — no view keyword is hex.
+ * Query values are encoded with encodeURIComponent, then `%2F` and `%3A`
+ * are put back as `/` and `:` (both legal raw in a query). Reading splits
+ * on `&` and the FIRST `=` and decodes — never URLSearchParams, which
+ * turns a `+` in a filename into a space. This is what makes a path
+ * containing `:`, `#`, `%`, `&`, `+` or a space round-trip.
  *
- * The daemon already serves index.html for any non-API, non-file path (SPA
- * fallback), so a deep link reloads correctly. App reads `initial` once at
- * startup (it wins over follow / first-repo), then every repo/view/base/file
- * change keeps the path in sync.
+ * ── History entries ──────────────────────────────────────────────────
  *
- * Browser history: every landing on a new path PUSHES an entry — another
- * repo, view, compare base or explorer file — so Back walks back through
- * what you looked at instead of leaving the app. Note that this counts
- * follow mode's file reveals too: with follow on, tracking an editor writes
- * one entry per file it lands on. Three writes REPLACE:
+ * A new entry is minted for a USER GESTURE and (once) for an ambient
+ * hijack. Everything else replaces, so Back always undoes something the
+ * user actually did:
  *
- *  - the first write of the session (that entry IS the page you arrived on);
- *  - the write that first names a repo — the entry URL becoming complete (a
- *    deep link's repo finishing its open, the warm-daemon auto-activation, a
- *    follow target on cold load), not a navigation away from it;
- *  - anything written while a popped entry is being applied (below).
+ *  - GATE: nothing is written at all while the repo identity is unsettled
+ *    (repo.repoId !== daemon.activeRepoId). A switch resets the stores one
+ *    flush before the new repo id lands, so every intermediate state —
+ *    base going null, the explorer resetting, history clearing — is simply
+ *    not writable, and the switch produces exactly one entry when the gate
+ *    reopens. This replaces a pile of symptom-matching special cases.
+ *  - IDENTITY: a write equal to the current URL writes nothing (it is
+ *    still recorded, so the next decision compares against the truth).
+ *  - ATTRIBUTION: a gesture calls beginUserNav({repo, view}) declaring
+ *    where it is going; the first write that MATCHES that target pushes,
+ *    and later writes inside the same gesture replace — so "open this file
+ *    in the explorer" (a view change plus a reveal) is one entry, not two.
+ *    Matching on the target, rather than arming a one-shot flag, is what
+ *    keeps an editor-driven follow event that lands mid-gesture from
+ *    consuming the mark and pushing under the wrong name.
+ *  - HIJACK: the first ambient write that moves away from the place the
+ *    user last reached by gesture pushes ONCE, then clears the mark. Follow
+ *    mode yanking you from Changes into another repo's Explorer is
+ *    undoable exactly once, and cannot compound into one entry per file.
+ *  - Everything else — follow mode, auto mode, scroll-spy, staging moving
+ *    a row from unstaged to staged, startup resolution — replaces.
+ *  - Ambient writes that only move the ANCHOR are additionally throttled
+ *    (trailing edge, 400ms), so the scroll-spy cannot spend the main
+ *    thread on replaceState; a real push flushes the pending write first.
  *
- * Back/forward: popstate parses the path and hands it to `onPopState` (App
- * owns applying it — only App can open repos). Applying is async and lands
- * in pieces (the view immediately, the repo after a POST), so every write
- * during it replaces: an intermediate state must never push an entry of its
- * own, and the final replace leaves the URL truthful even if the repo could
- * not be reopened.
+ * ── Back / forward ───────────────────────────────────────────────────
+ *
+ * popstate parses the path and hands it to `onRestore` (App owns applying
+ * it — only App can open repos). A restore lands in pieces (the repo after
+ * a POST, the anchor after a fetch), so pushes stay disabled for its whole
+ * duration and one truthful replace closes it. Each restore carries a
+ * generation token: a superseded one (Back-Back-Back) writes nothing and
+ * stops applying, instead of racing the newer one to the finish. A cold
+ * load's deep link runs through the SAME path, so there is one applier,
+ * not two.
  */
 
 import { computed, nextTick, onScopeDispose, ref, watch } from 'vue';
@@ -63,111 +91,157 @@ import { useUiStore, VIEWS } from '../stores/ui';
 import { DiffstalkerClient } from '../api/client';
 import type { ViewName } from '../prefs';
 
-const COMPARE: ViewName = 'compare';
-const EXPLORER: ViewName = 'explorer';
-const HISTORY: ViewName = 'history';
+/** Segment 1 when the repo path is relative to the daemon's $HOME. */
+const HOME_SENTINEL = '~';
 
-/**
- * What a commit rider may look like: hex, and long enough to be a hash
- * rather than a word. This is what keeps a repo directory named `history`
- * from swallowing the view keyword that follows it.
- */
-const COMMIT_RE = /^[0-9a-f]{4,40}$/;
+/** How long a declared gesture stays open, covering its async work. */
+const NAV_INTENT_MS = 3000;
 
-/** The rider segment's stand-in for `/` (see the header comment). */
-const RIDE_SEP = ':';
-
-function encodeRider(value: string): string {
-  return value.split('/').join(RIDE_SEP);
-}
-
-function decodeRider(value: string): string {
-  return value.split(RIDE_SEP).join('/');
-}
+/** Trailing-edge budget for ambient anchor-only writes (scroll-spy). */
+const ANCHOR_THROTTLE_MS = 400;
 
 function isViewName(value: string | undefined): value is ViewName {
   return value !== undefined && VIEWS.some((v) => v.name === value);
 }
 
-function stripLeadingSlash(value: string): string {
-  return value.startsWith('/') ? value.slice(1) : value;
+/**
+ * decodeURIComponent, but a malformed escape (`%zz` — hand-typed, or a
+ * mangled paste) yields the raw text instead of throwing. The address bar
+ * is untrusted input; a URIError here would take the whole app down at
+ * startup.
+ */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** Query value encoding: `/` and `:` stay readable, everything else escapes. */
+function encodeQueryValue(value: string): string {
+  return encodeURIComponent(value).split('%2F').join('/').split('%3A').join(':');
+}
+
+/** Read a query string without URLSearchParams (which eats `+`). */
+function readQuery(search: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const part of search.replace(/^\?/, '').split('&')) {
+    if (part === '') continue;
+    const eq = part.indexOf('=');
+    const key = eq === -1 ? part : part.slice(0, eq);
+    const value = eq === -1 ? '' : part.slice(eq + 1);
+    out.set(safeDecode(key), safeDecode(value));
+  }
+  return out;
+}
+
+/** A repo named by a URL: home-relative, or an absolute path. */
+export interface UrlRepo {
+  homeRelative: boolean;
+  /** Path with no leading slash — under $HOME, or from the filesystem root. */
+  path: string;
 }
 
 export interface UrlState {
-  /** Repo path from the URL: home-relative, or absolute for a repo outside
-   * home. Null when the URL names no repo. Un-expanded (App resolves it). */
-  repoRel: string | null;
+  repo: UrlRepo | null;
   view: ViewName | null;
+  /** The view's anchor (see the header): stack key, hash, or path. */
+  at: string | null;
+  /** Compare only: the explicitly picked base branch. */
   base: string | null;
-  /** Explorer: the repo-relative file being shown, when one is open. */
-  file: string | null;
-  /** History: the short hash of the selected commit, when one is picked. */
-  commit: string | null;
+}
+
+const EMPTY_STATE: UrlState = { repo: null, view: null, at: null, base: null };
+
+/**
+ * Parse a location into the place it names. Anything that is not
+ * view-first — `/`, a stale repo-first link from the old grammar, junk —
+ * names no place at all: the app resolves normally and the first write
+ * replaces it.
+ */
+export function parseUrl(pathname: string, search: string = ''): UrlState {
+  const raw = pathname.split('/').filter(Boolean);
+  if (raw.length === 0 || !isViewName(raw[0])) return EMPTY_STATE;
+  const view = raw[0];
+  const rest = raw.slice(1);
+  const query = readQuery(search);
+  const at = query.get('at') ?? null;
+  const base = query.get('base') ?? null;
+  if (rest.length === 0) return { repo: null, view, at, base };
+  // The sentinel test runs on the RAW segment: a directory named `~` is
+  // written `%7E` and must not be read as "under $HOME".
+  const homeRelative = rest[0] === HOME_SENTINEL;
+  const segs = (homeRelative ? rest.slice(1) : rest).map(safeDecode);
+  return { repo: { homeRelative, path: segs.join('/') }, view, at, base };
+}
+
+/** Where a user gesture is going. Omit a field the gesture leaves alone. */
+export interface NavTarget {
+  /** Absolute path of the repo being navigated to. */
+  repo?: string;
+  view?: ViewName;
+}
+
+interface NavIntent extends NavTarget {
+  expires: number;
+  /** The first matching write already pushed; the rest of the gesture replaces. */
+  used: boolean;
 }
 
 /**
- * Parse the pushState path into {repoRel, view, base, file}. The view is the
- * trailing keyword, or the one before a rider segment. Checking the rider
- * positions FIRST means a rider that happens to equal a view keyword (a
- * branch named `history`, a file named `changes`) is still read as the rider.
+ * Module-level on purpose: the gestures live in components (the rail, the
+ * switchers, the finder, every list) that have no handle on App's
+ * useUrlSync instance, and there is exactly one instance to inform.
  */
-export function parseUrlPath(pathname: string): UrlState {
-  const segs = pathname.split('/').filter(Boolean).map(decodeURIComponent);
-  const n = segs.length;
-  const repoUpTo = (k: number): string | null => (k > 0 ? segs.slice(0, k).join('/') : null);
-  const last = segs[n - 1];
-  const secondLast = segs[n - 2];
-  const bare = (view: ViewName): UrlState => ({
-    repoRel: repoUpTo(n - 1),
-    view,
-    base: null,
-    file: null,
-    commit: null,
-  });
-  const rider = (view: ViewName, part: Partial<UrlState>): UrlState => ({
-    repoRel: repoUpTo(n - 2),
-    view,
-    base: null,
-    file: null,
-    commit: null,
-    ...part,
-  });
+let intent: NavIntent | null = null;
 
-  if (n >= 1 && last === COMPARE) return bare(COMPARE);
-  if (n >= 2 && secondLast === COMPARE) return rider(COMPARE, { base: decodeRider(last) });
-  if (n >= 1 && last === EXPLORER) return bare(EXPLORER);
-  if (n >= 2 && secondLast === EXPLORER) return rider(EXPLORER, { file: decodeRider(last) });
-  if (n >= 1 && last === HISTORY) return bare(HISTORY);
-  if (n >= 2 && secondLast === HISTORY && COMMIT_RE.test(last)) {
-    return rider(HISTORY, { commit: last });
-  }
-  if (n >= 1 && isViewName(last)) return bare(last);
-  return { repoRel: repoUpTo(n), view: null, base: null, file: null, commit: null };
+/**
+ * Declare that a USER GESTURE is navigating. Call it in the handler, before
+ * the state changes: the write it causes — however many flushes later, and
+ * whatever async work happens in between — becomes the one history entry
+ * for this gesture. A gesture that forgets to call this still works; its
+ * move just replaces instead of pushing.
+ */
+export function beginUserNav(target: NavTarget = {}): void {
+  intent = { ...target, expires: Date.now() + NAV_INTENT_MS, used: false };
+}
+
+/** Test seam: drop any open gesture. */
+export function resetUserNav(): void {
+  intent = null;
+}
+
+/** What the last write recorded — every decision compares against it. */
+interface Place {
+  path: string;
+  search: string;
+  repoPath: string | null;
+  view: ViewName;
+  at: string | null;
+  base: string | null;
+}
+
+export interface RestoreContext {
+  /** True once a newer restore started — stop applying and write nothing. */
+  isStale: () => boolean;
 }
 
 export interface UrlSyncOptions {
   /**
-   * Apply a popped history entry (Back/Forward). App owns this: reaching a
-   * URL can mean opening a repo, which only App's repo-open flow does.
+   * Apply a place the browser (or a deep link) asked for. App owns this:
+   * reaching a URL can mean opening a repo, which only App's repo-open
+   * flow does. Check ctx.isStale() between awaits.
    */
-  onPopState?: (state: UrlState) => Promise<void> | void;
-}
-
-/** What the last write recorded — the push/replace decision reads it. */
-interface WrittenState {
-  path: string;
-  view: ViewName;
-  repoRel: string | null;
-  base: string | null;
-  file: string | null;
-  commit: string | null;
+  onRestore?: (state: UrlState, ctx: RestoreContext) => Promise<void> | void;
 }
 
 export function useUrlSync(options: UrlSyncOptions = {}): {
   initial: UrlState;
   whenHomeReady: Promise<void>;
-  toAbsolute: (repoRel: string) => string;
-  isActiveRepo: (repoRel: string) => boolean;
+  toAbsolute: (repo: UrlRepo) => string;
+  isActiveRepo: (repo: UrlRepo) => boolean;
+  restore: (state: UrlState) => Promise<void>;
 } {
   const daemon = useDaemonStore();
   const explorer = useExplorerStore();
@@ -182,125 +256,201 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       home.value = h.home ?? null;
     })
     .catch(() => {
-      // No home from the daemon -> fall back to absolute paths.
+      // No home from the daemon -> absolute paths.
     });
 
   const initial =
-    typeof window !== 'undefined'
-      ? parseUrlPath(window.location.pathname)
-      : { repoRel: null, view: null, base: null, file: null, commit: null };
+    typeof window === 'undefined'
+      ? EMPTY_STATE
+      : parseUrl(window.location.pathname, window.location.search);
 
-  const activeRepoPath = computed(() => daemon.activeRepoPath);
-
-  /** Absolute path for a URL repoRel (home-relative first; App falls back to
-   * an absolute open if this misses, covering repos outside home). */
-  function toAbsolute(repoRel: string): string {
-    return home.value ? `${home.value}/${repoRel}` : `/${repoRel}`;
+  if (typeof window !== 'undefined' && 'scrollRestoration' in window.history) {
+    // Every position in this app is re-derived from an anchor; a
+    // browser-restored pixel offset would fight the stack's own scroll.
+    window.history.scrollRestoration = 'manual';
   }
 
-  /** URL repoRel for an absolute repo path: home-relative when under home. */
-  function toRel(abs: string): string {
-    if (home.value !== null && (abs === home.value || abs.startsWith(home.value + '/'))) {
-      return stripLeadingSlash(abs.slice(home.value.length));
+  function toAbsolute(target: UrlRepo): string {
+    if (target.homeRelative) return home.value === null ? `/${target.path}` : `${home.value}/${target.path}`;
+    return `/${target.path}`;
+  }
+
+  /** The repo the URL should name: only ever one that is actually open. */
+  const urlRepoPath = computed(() => (repo.repoId === null ? null : repo.repoPath));
+
+  function isActiveRepo(target: UrlRepo): boolean {
+    return urlRepoPath.value !== null && toAbsolute(target) === urlRepoPath.value;
+  }
+
+  /** Absolute repo path -> URL segments, `~`-prefixed when under $HOME. */
+  function repoSegments(abs: string): string[] {
+    const h = home.value;
+    const underHome = h !== null && (abs === h || abs.startsWith(h + '/'));
+    const rel = underHome ? abs.slice(h.length) : abs;
+    const segs = rel.split('/').filter(Boolean).map(encodeURIComponent);
+    return underHome ? [HOME_SENTINEL, ...segs] : segs;
+  }
+
+  /** The one thing the active view is aimed at, or null. */
+  function currentAnchor(): string | null {
+    switch (ui.activeView) {
+      case 'changes':
+        return ui.activeStackKey;
+      case 'history':
+        return repo.history.selectedCommit?.shortHash ?? null;
+      case 'compare': {
+        const { selection, compareDiff } = repo.compare;
+        if (selection.type !== 'file' || !compareDiff) return null;
+        return compareDiff.files[selection.index]?.path ?? null;
+      }
+      case 'explorer':
+        return explorer.selectedPath;
+      default:
+        return null; // journal: its seqs are not stable identities
     }
-    return stripLeadingSlash(abs);
   }
 
-  /** Is this URL repo the one already open? (Popstate skips reopening it.) */
-  function isActiveRepo(repoRel: string): boolean {
-    return activeRepoPath.value !== null && toRel(activeRepoPath.value) === repoRel;
+  /** Derive the place the app is currently showing. */
+  function derive(): Place {
+    const abs = urlRepoPath.value;
+    const view = ui.activeView;
+    const at = abs === null ? null : currentAnchor();
+    const base = abs !== null && view === 'compare' ? repo.selectedCompareBase : null;
+    if (abs === null) return { path: '/', search: '', repoPath: null, view, at: null, base: null };
+    const query: string[] = [];
+    if (base !== null) query.push(`base=${encodeQueryValue(base)}`);
+    if (at !== null) query.push(`at=${encodeQueryValue(at)}`);
+    return {
+      path: '/' + [view, ...repoSegments(abs)].join('/'),
+      search: query.length === 0 ? '' : '?' + query.join('&'),
+      repoPath: abs,
+      view,
+      at,
+      base,
+    };
   }
 
-  const currentRepoRel = (): string | null =>
-    activeRepoPath.value === null ? null : toRel(activeRepoPath.value);
-
-  /** The History rider: the selected commit's short hash, or null. */
-  function selectedCommitHash(): string | null {
-    if (ui.activeView !== HISTORY) return null;
-    return repo.history.selectedCommit?.shortHash ?? null;
+  /** `<anchor> — <view> — <repo>`, so a deep Back menu is readable. */
+  function titleFor(place: Place): string {
+    const parts: string[] = [];
+    if (place.at !== null) parts.push(place.at);
+    parts.push(place.view);
+    if (place.repoPath !== null) parts.push(place.repoPath.split('/').filter(Boolean).pop() ?? '');
+    return parts.filter(Boolean).join(' — ') || 'diffstalker';
   }
 
-  function buildPath(): string {
-    const segs: string[] = [];
-    const rel = currentRepoRel();
-    if (rel !== null) segs.push(...rel.split('/').filter(Boolean));
-    segs.push(ui.activeView);
-    if (ui.activeView === COMPARE && repo.selectedCompareBase) {
-      segs.push(encodeRider(repo.selectedCompareBase));
+  let written: Place | null = null;
+  /** True for the whole of a restore, including the writes it triggers. */
+  let restoring = false;
+  /** The place the user last reached by gesture; the hijack rule reads it. */
+  let userPlace: { repoPath: string | null; view: ViewName } | null = null;
+  /** Entry counter, stored in history.state so entries are distinguishable. */
+  let serial = 0;
+  let anchorTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function openIntent(): NavIntent | null {
+    if (intent === null) return null;
+    if (intent.expires <= Date.now()) {
+      intent = null;
+      return null;
     }
-    if (ui.activeView === EXPLORER && explorer.selectedPath) {
-      segs.push(encodeRider(explorer.selectedPath));
-    }
-    const commit = selectedCommitHash();
-    if (commit !== null) segs.push(commit);
-    return '/' + segs.join('/');
+    return intent;
   }
 
-  /** The state we last wrote; null until the first write of the session. */
-  let written: WrittenState | null = null;
-  /** True while a popped entry is being applied — every write replaces. */
-  let applyingPop = false;
-
-  /**
-   * A different path is a navigation and gets its own entry — repo, view,
-   * compare base, explorer file alike. Only the two startup cases and a
-   * popped entry being applied replace instead (see the header comment).
-   */
-  function shouldPush(next: WrittenState): boolean {
-    if (written === null || applyingPop) return false;
-    return !(written.repoRel === null && next.repoRel !== null);
+  function matchesIntent(candidate: NavIntent, next: Place): boolean {
+    if (candidate.view !== undefined && candidate.view !== next.view) return false;
+    if (candidate.repo !== undefined && candidate.repo !== next.repoPath) return false;
+    return true;
   }
 
-  /**
-   * A rider dropping to null while the repo, view and base stay put is
-   * never a navigation — it is a store reset one step ahead of the state
-   * that explains it:
-   *
-   *  - a repo switch clears the explorer's file (the store resets on the
-   *    repo id) BEFORE the new repo id lands;
-   *  - every state-change reloads the history log, which drops the selected
-   *    commit for the moment before the view re-anchors it by hash.
-   *
-   * Writing those would strip the rider from the entry the user is on, so
-   * Back would return them to a fileless explorer or an unselected commit —
-   * and, on the history side, would push an entry on every file save. Skip
-   * it; the write that follows is the truthful one. Nothing else clears
-   * either rider while the repo stays put (there is no close-file and no
-   * deselect-commit action). A popped entry that clears one is excluded:
-   * it needs no write anyway, the URL already says so.
-   */
-  function isRepoSwitchFlicker(next: WrittenState): boolean {
-    if (written === null || applyingPop) return false;
-    const dropped =
-      (next.file === null && written.file !== null) ||
-      (next.commit === null && written.commit !== null);
+  /** Only the anchor moved — the ambient case worth throttling. */
+  function anchorOnly(next: Place): boolean {
     return (
-      dropped &&
-      next.repoRel === written.repoRel &&
-      next.view === written.view &&
-      next.base === written.base
+      written !== null &&
+      written.repoPath === next.repoPath &&
+      written.view === next.view &&
+      written.base === next.base
     );
+  }
+
+  type Verdict = 'push' | 'replace' | 'defer';
+
+  function decide(next: Place): Verdict {
+    // The entry the user ARRIVED on becoming complete, and every write a
+    // restore makes on its way to the place it was asked for.
+    if (written === null || restoring) return 'replace';
+
+    const candidate = openIntent();
+    if (candidate !== null && matchesIntent(candidate, next)) {
+      if (candidate.used) return 'replace'; // same gesture, later write
+      candidate.used = true;
+      userPlace = { repoPath: next.repoPath, view: next.view };
+      return 'push';
+    }
+
+    // Ambient from here: follow mode, auto mode, the scroll-spy, a
+    // staging move, an SSE-driven reload.
+    if (
+      userPlace !== null &&
+      (userPlace.repoPath !== next.repoPath || userPlace.view !== next.view)
+    ) {
+      userPlace = null; // one entry per gesture, never a chain of them
+      return 'push';
+    }
+    return anchorOnly(next) ? 'defer' : 'replace';
+  }
+
+  function cancelDeferred(): void {
+    if (anchorTimer !== null) {
+      clearTimeout(anchorTimer);
+      anchorTimer = null;
+    }
   }
 
   function writeUrl(): void {
     if (typeof window === 'undefined') return;
-    const next: WrittenState = {
-      path: buildPath(),
-      view: ui.activeView,
-      repoRel: currentRepoRel(),
-      base: ui.activeView === COMPARE ? repo.selectedCompareBase : null,
-      file: ui.activeView === EXPLORER ? explorer.selectedPath : null,
-      commit: selectedCommitHash(),
-    };
-    if (isRepoSwitchFlicker(next)) return;
-    // The browser stores the path percent-encoded; buildPath does not
-    // encode, so compare in encoded space rather than decoding back.
-    if (encodeURI(next.path) !== window.location.pathname) {
-      if (shouldPush(next)) window.history.pushState(null, '', next.path);
-      else window.history.replaceState(window.history.state, '', next.path);
+    // GATE: the repo identity is unsettled (a switch is in flight, or a
+    // failed open left the two disagreeing). Nothing about the current
+    // state is worth recording, and every flicker lives in this window.
+    if (repo.repoId !== daemon.activeRepoId) return;
+
+    const next = derive();
+    // The title tracks the place, not the write: a restore that lands
+    // exactly where the URL already pointed writes nothing, and would
+    // otherwise leave the tab named after wherever the user came from.
+    document.title = titleFor(next);
+    const url = next.path + next.search;
+    if (url === window.location.pathname + window.location.search) {
+      written = next; // nothing to write, but this IS where we are
+      return;
     }
-    // Recorded even when nothing was written (the URL already said this):
-    // the NEXT change still has to know what the user is looking at now.
+
+    const verdict = decide(next);
+    if (verdict === 'defer') {
+      if (anchorTimer === null) {
+        anchorTimer = setTimeout(() => {
+          anchorTimer = null;
+          flushWrite(derive(), 'replace');
+        }, ANCHOR_THROTTLE_MS);
+      }
+      return;
+    }
+    // A real move supersedes any queued anchor write: letting it land
+    // afterwards would replace the fresh entry with a stale anchor.
+    cancelDeferred();
+    flushWrite(next, verdict);
+  }
+
+  function flushWrite(next: Place, verdict: 'push' | 'replace'): void {
+    const url = next.path + next.search;
+    if (url !== window.location.pathname + window.location.search) {
+      if (verdict === 'push') {
+        serial += 1;
+        window.history.pushState({ serial, place: next }, '', url);
+      } else {
+        window.history.replaceState({ serial, place: next }, '', url);
+      }
+    }
     written = next;
   }
 
@@ -311,40 +461,57 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     writeUrl();
   }
   void writeAfterHome();
+
   watch(
     [
-      activeRepoPath,
+      // The gate's two halves: a write is only allowed when they agree,
+      // and the moment they do is when a repo switch gets its one entry.
+      () => repo.repoId,
+      () => daemon.activeRepoId,
+      () => repo.repoPath,
       () => ui.activeView,
+      () => ui.activeStackKey,
       () => repo.selectedCompareBase,
-      () => explorer.selectedPath,
+      () => repo.compare.selection,
       () => repo.history.selectedCommit,
+      () => explorer.selectedPath,
     ],
     writeUrl,
     { flush: 'post' }
   );
 
-  /**
-   * Back/forward. The suppression window covers the whole application,
-   * INCLUDING the post-flush watcher writes it triggers (hence the
-   * nextTick before the final, truthful write) — every one of them has to
-   * replace, or an intermediate state would push an entry the user never
-   * navigated to and forward history would be lost.
-   */
-  async function onPopState(): Promise<void> {
-    applyingPop = true;
+  // --- Back / forward, and the cold-load deep link (one applier) ---
+
+  let restoreGen = 0;
+
+  async function restore(state: UrlState): Promise<void> {
+    const token = ++restoreGen;
+    restoring = true;
+    cancelDeferred();
     try {
-      await options.onPopState?.(parseUrlPath(window.location.pathname));
+      await options.onRestore?.(state, { isStale: () => token !== restoreGen });
     } finally {
-      await nextTick();
-      writeUrl();
-      applyingPop = false;
+      // A superseded restore leaves everything to the newer one — it must
+      // not clear the suppression out from under it, and must not write.
+      if (token === restoreGen) {
+        await nextTick();
+        writeUrl();
+        restoring = false;
+      }
     }
+  }
+
+  function onPopState(): void {
+    void restore(parseUrl(window.location.pathname, window.location.search));
   }
 
   if (typeof window !== 'undefined') {
     window.addEventListener('popstate', onPopState);
-    onScopeDispose(() => window.removeEventListener('popstate', onPopState));
+    onScopeDispose(() => {
+      window.removeEventListener('popstate', onPopState);
+      cancelDeferred();
+    });
   }
 
-  return { initial, whenHomeReady, toAbsolute, isActiveRepo };
+  return { initial, whenHomeReady, toAbsolute, isActiveRepo, restore };
 }

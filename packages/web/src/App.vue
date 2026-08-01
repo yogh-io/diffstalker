@@ -19,17 +19,21 @@
  *   level from ui.activeOverlay.
  */
 
-import { computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useDaemonStore } from './stores/daemon';
 import { useExplorerStore } from './stores/explorer';
-import { useRepoStore } from './stores/repo';
+import { useRepoStore, workingDiffKey } from './stores/repo';
 import { useUiStore } from './stores/ui';
 import { useRepoOpen } from './composables/useRepoOpen';
 import { useGlobalKeys } from './composables/useGlobalKeys';
 import { useFollowMode } from './composables/useFollowMode';
 import { useAutoMode } from './composables/useAutoMode';
 import { useSplitMode } from './composables/useMediaQuery';
-import { useUrlSync, type UrlState } from './composables/useUrlSync';
+import {
+  useUrlSync,
+  type RestoreContext,
+  type UrlState,
+} from './composables/useUrlSync';
 import AppHeader from './components/AppHeader.vue';
 import ActivityRail from './components/ActivityRail.vue';
 import ViewToolbarStrip from './components/ViewToolbarStrip.vue';
@@ -124,6 +128,9 @@ onUnmounted(() => {
 // no manual escape. A bounded fallback opens repos[0] once the wait
 // exceeds FOLLOW_FALLBACK_MS.
 const FOLLOW_FALLBACK_MS = 3000;
+
+/** How long a restored place is protected from an incoming follow event. */
+const FOLLOW_GRACE_MS = 1500;
 let autoActivateArmed = true;
 let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -140,90 +147,205 @@ function activateFirst(repos: typeof daemon.repos): void {
   void activate(repos[0]);
 }
 
-// URL state: reproduce the shown repo/view/base/file from the path, and keep
-// the path in sync as those change (useUrlSync installs the write watcher).
+// URL state: reproduce the place the path names, and keep the path in sync as
+// the app moves (useUrlSync installs the write watcher and owns the URL; this
+// level owns the app state, because only this level can open a repo).
 // A repo in the URL WINS over follow / first-repo on cold load — disarm the
-// auto-activation so they don't race it. The view is applied in setup (before
-// mount) so the first paint is the shared view. The compare base and the
-// explorer's file ride the repo once it opens.
-//
-// Back/forward hands the popped state here: only this level can open a repo
-// (useRepoOpen) — useUrlSync owns the URL, never the app state.
-const urlSync = useUrlSync({ onPopState: applyUrlState });
+// auto-activation so they don't race it.
+const urlSync = useUrlSync({ onRestore: applyUrlState });
 
-async function applyUrlRepo(repoRel: string, base: string | null): Promise<void> {
+/**
+ * An anchor whose data has not landed yet. Restoring must not block on a
+ * status snapshot or a compare pull that may never come — it records what
+ * it is aiming at and returns; the watchers below apply it when the data
+ * arrives, and drop it if the user moves first.
+ */
+const pendingAnchor = ref<{ view: ViewName; at: string } | null>(null);
+
+/**
+ * Show the place a URL names — a deep link on cold load and every Back /
+ * Forward run through here, so there is one applier, not two.
+ *
+ * Order matters: with a repo already open, the URL's repo is opened FIRST
+ * and only then the view, or the target view paints against the previous
+ * repo's data for a whole round trip. On a cold load it is the other way
+ * round — nothing is on screen to lie, and the first paint should be the
+ * view the link named. A repo already active is never re-opened: the POST
+ * would release and re-take the daemon ref and remount the view for
+ * nothing.
+ *
+ * A URL that names no place at all (`/`, or a stale link from the old
+ * grammar) is left alone deliberately. It is indistinguishable from junk,
+ * and junk must never tear down a repo; the app resolves normally and the
+ * truthful write relabels the entry.
+ */
+async function applyUrlState(state: UrlState, ctx: RestoreContext): Promise<void> {
+  if (state.view === null && state.repo === null) return;
+  // Landing somewhere by Back/Forward holds follow mode off briefly: an
+  // editor save arriving right after would otherwise yank the user
+  // straight back out of the place they just navigated to.
+  if (state.repo !== null) daemon.suspendFollowNavigation(FOLLOW_GRACE_MS);
+  const coldLoad = daemon.activeRepoId === null;
+  if (coldLoad && state.view !== null) ui.setActiveView(state.view);
+
+  if (!(await openUrlRepo(state, ctx))) return;
+
+  if (!coldLoad && state.view !== null) ui.setActiveView(state.view);
+  if (state.view === null) return;
+  await applyAnchor(state, ctx);
+}
+
+/**
+ * Open the repo a URL names, if it is not the one already open. False
+ * means "stop here": the open was refused (the app stays where it is and
+ * the store surfaces the reason) or a newer restore took over.
+ */
+async function openUrlRepo(state: UrlState, ctx: RestoreContext): Promise<boolean> {
+  if (state.repo === null || urlSync.isActiveRepo(state.repo)) return true;
   await urlSync.whenHomeReady;
-  // Home-relative first; fall back to an absolute open for a repo outside
-  // home (the URL kept its absolute path there).
-  let ok = await openByPath(urlSync.toAbsolute(repoRel));
-  if (!ok && !repoRel.startsWith('/')) ok = await openByPath('/' + repoRel);
-  if (ok && base !== null) await repo.setSelectedCompareBase(base);
+  if (ctx.isStale()) return false;
+  // One branch, no retry: the `~` sentinel already said which kind of path
+  // this is.
+  const ok = await openByPath(urlSync.toAbsolute(state.repo));
+  if (!ok || ctx.isStale()) return false;
+  // Let the stores' repo-switch resets flush before anything reads them.
+  await nextTick();
+  return !ctx.isStale();
 }
 
 /**
- * Show what a URL names: view first (it paints without waiting), then the
- * repo, then the explorer's file. A repo already open is not reopened — the
- * POST would release and re-take the ref and remount the view for nothing.
- * The reveal waits a tick after an open so the explorer store's repo-switch
- * reset has flushed (same ordering useFollowMode needs).
- *
- * An explorer URL with NO file closes the open one. Leaving it would make
- * Back stop at the first file the user opened: the entry says "no file", the
- * app would still show one, and the truthful rewrite would put the file back
- * into that entry — one step short of where Back was going.
+ * Aim the view at what the URL names. Each view's "nothing named" case
+ * CLEARS its selection — without that, Back stops one step short: the
+ * entry says "no file", the app still shows one, and the truthful rewrite
+ * puts it back into the entry the user was leaving.
  */
-async function applyUrlState(state: UrlState): Promise<void> {
-  if (state.view) ui.setActiveView(state.view);
-  if (state.repoRel === null) return;
-  if (urlSync.isActiveRepo(state.repoRel)) {
-    if (state.base !== null && state.base !== repo.selectedCompareBase) {
-      await repo.setSelectedCompareBase(state.base);
-    }
-  } else {
-    await applyUrlRepo(state.repoRel, state.base);
-    await nextTick();
-  }
-  if (state.view === 'explorer' && state.file === null) explorer.clearSelection();
-  else if (state.file !== null && state.file !== explorer.selectedPath) {
-    await explorer.revealFile(state.file);
-  }
-  if (state.view === 'history') await applyUrlCommit(state.commit);
-}
-
-/**
- * Select the commit a History URL names. The log is loaded first when it
- * has not been (a cold deep link lands before HistoryView mounts), and the
- * hash is matched as a prefix — the URL carries the short hash.
- *
- * A hash that is not in the loaded page (older than it, or rebased away)
- * leaves the detail closed and the URL is rewritten to match — the same
- * outcome the view already gives a selection that vanished under it. No
- * commit in the URL clears the selection, so Back out of a commit closes
- * the detail instead of stopping one step short.
- */
-async function applyUrlCommit(hash: string | null): Promise<void> {
-  try {
-    if (hash === null) {
-      await repo.selectHistoryCommit(null);
+async function applyAnchor(state: UrlState, ctx: RestoreContext): Promise<void> {
+  pendingAnchor.value = null;
+  switch (state.view) {
+    case 'explorer':
+      if (state.at === null) explorer.clearSelection();
+      else if (state.at !== explorer.selectedPath) await explorer.revealFile(state.at);
       return;
-    }
-    if (repo.history.selectedCommit?.hash.startsWith(hash)) return;
-    if (repo.history.commits.length === 0) await repo.loadHistory();
-    const match = repo.history.commits.find((c) => c.hash.startsWith(hash));
-    if (match) await repo.selectHistoryCommit(match);
-  } catch {
-    // A failed log pull or diff fetch is HistoryView's story to tell — it
-    // retries and shows its own line. The URL applier stays silent.
+    case 'history':
+      await applyHistoryAnchor(state.at, ctx);
+      return;
+    case 'compare':
+      await applyCompareAnchor(state, ctx);
+      return;
+    case 'changes':
+      applyChangesAnchor(state.at);
+      return;
+    default:
+      return; // journal: the repo and the view, nothing else
   }
 }
 
-if (urlSync.initial.view) ui.setActiveView(urlSync.initial.view);
-if (urlSync.initial.repoRel !== null) {
-  disarmAutoActivate();
-  // The URL repo wins over the initial follow target too (follow resumes on
-  // the next live hook change).
-  daemon.skipInitialFollow = true;
-  void applyUrlState(urlSync.initial);
+/**
+ * Changes: `at` is a stack key (`u:`/`s:` + path). An exact match wins; a
+ * miss retries the same path on the other side, because a file staged
+ * since the link was made moved from one to the other. selectFile needs
+ * the EXACT FileEntry from the current status — rows and re-anchoring are
+ * identity-based. No status yet means no files to match: park it.
+ */
+function applyChangesAnchor(at: string | null): void {
+  if (at === null) {
+    repo.selectFile(null);
+    ui.setActiveStackKey(null);
+    return;
+  }
+  const files = repo.shared.status?.files;
+  if (!files) {
+    pendingAnchor.value = { view: 'changes', at };
+    return;
+  }
+  const path = at.slice(at.indexOf(':') + 1);
+  const match =
+    files.find((f) => workingDiffKey(f) === at) ?? files.find((f) => f.path === path) ?? null;
+  if (!match) return; // committed, discarded, gone: ordinary churn
+  repo.selectFile(match);
+  ui.setActiveStackKey(workingDiffKey(match));
+  ui.requestStackScroll(workingDiffKey(match));
+}
+
+/**
+ * History: prefix-match the loaded log; a commit older than the loaded
+ * page (or on a cold load, before the view has pulled anything) is
+ * resolved by hash on its own so a deep link to an old commit works
+ * without re-pulling the whole log at a larger count.
+ */
+async function applyHistoryAnchor(hash: string | null, ctx: RestoreContext): Promise<void> {
+  if (hash === null) {
+    await repo.selectHistoryCommit(null);
+    return;
+  }
+  if (repo.history.selectedCommit?.hash.startsWith(hash)) return;
+  const match = repo.history.commits.find((c) => c.hash.startsWith(hash));
+  if (match) {
+    await repo.selectHistoryCommit(match);
+    return;
+  }
+  const commit = await repo.resolveCommit(hash);
+  if (commit === null || ctx.isStale()) return;
+  await repo.selectHistoryCommit(commit);
+}
+
+/**
+ * Compare: the base is applied BEFORE anything is pulled (it decides what
+ * is pulled), and only when it differs — setSelectedCompareBase re-pulls
+ * the whole comparison. The file anchor is a PATH, mapped to an index in
+ * the resolved file set; with no file set yet, park it.
+ */
+async function applyCompareAnchor(state: UrlState, ctx: RestoreContext): Promise<void> {
+  if (state.base !== null && state.base !== repo.selectedCompareBase) {
+    await repo.setSelectedCompareBase(state.base);
+    if (ctx.isStale()) return;
+  }
+  if (state.at === null) return;
+  const files = repo.compare.compareDiff?.files;
+  if (!files) {
+    pendingAnchor.value = { view: 'compare', at: state.at };
+    return;
+  }
+  const index = files.findIndex((f) => f.path === state.at);
+  if (index === -1) return;
+  repo.selectCompareFile(index);
+  ui.requestStackScroll(state.at);
+}
+
+// The parked anchor lands when its data does. Both watchers check the view
+// is still the one that parked it, so a user who moved on in the meantime
+// is never yanked back.
+watch(
+  () => repo.shared.status,
+  () => {
+    const parked = pendingAnchor.value;
+    if (parked?.view !== 'changes' || ui.activeView !== 'changes') return;
+    pendingAnchor.value = null;
+    applyChangesAnchor(parked.at);
+  }
+);
+
+watch(
+  () => repo.compare.compareDiff,
+  (compareDiff) => {
+    const parked = pendingAnchor.value;
+    if (parked?.view !== 'compare' || ui.activeView !== 'compare' || !compareDiff) return;
+    pendingAnchor.value = null;
+    const index = compareDiff.files.findIndex((f) => f.path === parked.at);
+    if (index === -1) return;
+    repo.selectCompareFile(index);
+    ui.requestStackScroll(parked.at);
+  }
+);
+
+if (urlSync.initial.view !== null || urlSync.initial.repo !== null) {
+  if (urlSync.initial.repo !== null) {
+    disarmAutoActivate();
+    // The URL repo wins over the initial follow target too (follow resumes on
+    // the next live hook change).
+    daemon.skipInitialFollow = true;
+  }
+  void urlSync.restore(urlSync.initial);
 }
 
 watch(

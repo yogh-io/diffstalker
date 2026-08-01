@@ -23,6 +23,7 @@
 
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
+import { beginUserNav } from '../composables/useUrlSync';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import { buildFileTree, flattenTree, type TreeRowItem } from '@diffstalker/core/view/fileTree';
@@ -92,6 +93,8 @@ const baseOptions = computed(() => {
 async function onBaseChange(event: Event): Promise<void> {
   const branch = (event.target as HTMLSelectElement).value;
   if (!branch || branch === compare.value.baseBranch) return;
+  // The most deliberate move in this view: it re-pulls the comparison.
+  beginUserNav({ view: 'compare' });
   // Read-only: the pick rides the next GET /compare as ?base=… —
   // nothing is persisted daemon-side.
   await repo.setSelectedCompareBase(branch, includeUncommitted.value);
@@ -186,6 +189,16 @@ const selectedFileIndex = computed(() =>
   compare.value.selection.type === 'file' ? compare.value.selection.index : null
 );
 
+/**
+ * Clicking or confirming a file row: a deliberate landing, so it gets its
+ * own entry. Arrow movement calls selectFile directly and stays out of the
+ * history.
+ */
+function activateFile(index: number): void {
+  beginUserNav({ view: 'compare' });
+  selectFile(index);
+}
+
 function selectFile(index: number): void {
   repo.selectCompareFile(index);
   const file = files.value[index];
@@ -193,6 +206,15 @@ function selectFile(index: number): void {
   collapsedFiles.delete(file.path); // selecting always reveals
   void nextTick(() => stackEl.value?.scrollToFile(file.path));
 }
+
+/** Same contract as Changes: a restored link lands at its file, no tween. */
+watch(
+  () => ui.stackScrollRequest,
+  (request) => {
+    if (!request) return;
+    void nextTick(() => stackEl.value?.scrollToFile(request.key, { smooth: false }));
+  }
+);
 
 /** The file row holding tabindex 0: the selected one, else the first. */
 function isTabStop(fileIndex: number): boolean {
@@ -502,11 +524,11 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
               :aria-selected="selectedFileIndex === row.fileIndex"
               :tabindex="isTabStop(row.fileIndex) ? 0 : -1"
               :title="row.file.path"
-              @click="selectFile(row.fileIndex)"
+              @click="activateFile(row.fileIndex)"
               @keydown.down.prevent="moveFileSelection(1)"
               @keydown.up.prevent="moveFileSelection(-1)"
-              @keydown.enter.prevent="selectFile(row.fileIndex)"
-              @keydown.space.prevent="selectFile(row.fileIndex)"
+              @keydown.enter.prevent="activateFile(row.fileIndex)"
+              @keydown.space.prevent="activateFile(row.fileIndex)"
               @keydown="onRowBandKeydown"
             >
               <span class="letter" :data-status="row.file.status">{{

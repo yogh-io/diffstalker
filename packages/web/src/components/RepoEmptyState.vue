@@ -6,12 +6,19 @@
  */
 
 import { useUiStore } from '../stores/ui';
+import { beginUserNav } from '../composables/useUrlSync';
 import { useRepoOpen } from '../composables/useRepoOpen';
 import { basename } from '../utils/format';
 import RepoOpenForm from './RepoOpenForm.vue';
 
 const ui = useUiStore();
 const { openByPath } = useRepoOpen();
+
+/** A recent-repo row: one gesture, one entry. */
+function openRecent(path: string): void {
+  beginUserNav({ repo: path });
+  void openByPath(path);
+}
 </script>
 
 <template>
@@ -35,7 +42,7 @@ const { openByPath } = useRepoOpen();
           v-for="path in ui.recentRepos"
           :key="path"
           class="recent-row"
-          @click="openByPath(path)"
+          @click="openRecent(path)"
         >
           <span class="name mono">{{ basename(path) }}</span>
           <span class="path mono" :title="path">{{ path }}</span>

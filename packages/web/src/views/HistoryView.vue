@@ -15,6 +15,7 @@
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
+import { beginUserNav } from '../composables/useUrlSync';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import { formatRelativeTime, formatDateAbsolute } from '@diffstalker/core/view/formatDate';
@@ -85,6 +86,12 @@ const lastSelectedHash = ref<string | null>(null);
  * detail-pane line instead of leaving "Loading diff…" hanging.
  * Connection errors resolve quietly (the store owns the reconnect line).
  */
+/** A commit row clicked or confirmed — the deliberate landing. */
+function activateCommit(commit: CommitInfo): void {
+  beginUserNav({ view: 'history' });
+  void select(commit);
+}
+
 async function select(commit: CommitInfo): Promise<void> {
   detailError.value = null;
   lastSelectedHash.value = commit.hash;
@@ -203,11 +210,11 @@ function selectAndFocusPayload(commit: CommitInfo): void {
             :aria-selected="commit === selected"
             :tabindex="isTabStop(commit, index) ? 0 : -1"
             :title="commit.hash"
-            @click="select(commit)"
+            @click="activateCommit(commit)"
             @keydown.down.prevent="moveSelection(1)"
             @keydown.up.prevent="moveSelection(-1)"
             @keydown.enter.prevent="selectAndFocusPayload(commit)"
-            @keydown.space.prevent="select(commit)"
+            @keydown.space.prevent="activateCommit(commit)"
             @keydown="onRowBandKeydown"
           >
             <span class="row-top">

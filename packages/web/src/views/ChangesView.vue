@@ -38,6 +38,7 @@
  */
 
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { beginUserNav } from '../composables/useUrlSync';
 import { useRepoStore, workingDiffKey } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import { categorizeFiles } from '@diffstalker/core/view/fileCategories';
@@ -278,9 +279,19 @@ function jumpToFile(file: FileEntry): void {
   stackEl.value?.scrollToFile(rowKey(file), { smooth: true });
 }
 
+/**
+ * Clicking or confirming a row: a deliberate landing, so it gets its own
+ * history entry. Arrow movement calls jumpToFile directly and stays out of
+ * the history — holding Down would mint one entry per row.
+ */
+function activateFile(file: FileEntry): void {
+  beginUserNav({ view: 'changes' });
+  jumpToFile(file);
+}
+
 /** Enter on a row: jump AND move focus into the target section. */
 function jumpAndFocusSection(file: FileEntry): void {
-  jumpToFile(file);
+  activateFile(file);
   void nextTick(() => stackEl.value?.focusFile(rowKey(file)));
 }
 
@@ -348,6 +359,18 @@ const { onPointerEnter, onPointerLeave } = useActiveRowScroll(
     const idx = activeIndex();
     if (!list || idx < 0) return null;
     return list.querySelectorAll<HTMLElement>('.file-row')[idx] ?? null;
+  }
+);
+
+/**
+ * A URL restore asked for a file: put it on screen WITHOUT a tween — a
+ * link opens at its anchor, it does not glide there from the top.
+ */
+watch(
+  () => ui.stackScrollRequest,
+  (request) => {
+    if (!request) return;
+    void nextTick(() => stackEl.value?.scrollToFile(request.key, { smooth: false }));
   }
 );
 
@@ -502,11 +525,11 @@ const rootStyle = computed(() => ({
             :aria-selected="isActive(file)"
             :tabindex="isTabStop(file) ? 0 : -1"
             :title="file.path"
-            @click="jumpToFile(file)"
+            @click="activateFile(file)"
             @keydown.down.prevent="moveSelection(1)"
             @keydown.up.prevent="moveSelection(-1)"
             @keydown.enter.prevent="jumpAndFocusSection(file)"
-            @keydown.space.prevent="jumpToFile(file)"
+            @keydown.space.prevent="activateFile(file)"
             @keydown="onRowBandKeydown"
           >
             <!-- Stage (+) an unstaged file, unstage (−) a staged one. At
