@@ -188,22 +188,29 @@ async function applyUrlState(state: UrlState, ctx: RestoreContext): Promise<void
   const coldLoad = daemon.activeRepoId === null;
   if (coldLoad && state.view !== null) ui.setActiveView(state.view);
 
-  if (state.repo !== null && !urlSync.isActiveRepo(state.repo)) {
-    await urlSync.whenHomeReady;
-    if (ctx.isStale()) return;
-    // One branch, no retry: the `~` sentinel already said which kind of
-    // path this is. A refused open leaves the app where it is (the store
-    // keeps the repo it has and surfaces the reason).
-    const ok = await openByPath(urlSync.toAbsolute(state.repo));
-    if (!ok || ctx.isStale()) return;
-    // Let the stores' repo-switch resets flush before anything reads them.
-    await nextTick();
-    if (ctx.isStale()) return;
-  }
+  if (!(await openUrlRepo(state, ctx))) return;
 
   if (!coldLoad && state.view !== null) ui.setActiveView(state.view);
   if (state.view === null) return;
   await applyAnchor(state, ctx);
+}
+
+/**
+ * Open the repo a URL names, if it is not the one already open. False
+ * means "stop here": the open was refused (the app stays where it is and
+ * the store surfaces the reason) or a newer restore took over.
+ */
+async function openUrlRepo(state: UrlState, ctx: RestoreContext): Promise<boolean> {
+  if (state.repo === null || urlSync.isActiveRepo(state.repo)) return true;
+  await urlSync.whenHomeReady;
+  if (ctx.isStale()) return false;
+  // One branch, no retry: the `~` sentinel already said which kind of path
+  // this is.
+  const ok = await openByPath(urlSync.toAbsolute(state.repo));
+  if (!ok || ctx.isStale()) return false;
+  // Let the stores' repo-switch resets flush before anything reads them.
+  await nextTick();
+  return !ctx.isStale();
 }
 
 /**

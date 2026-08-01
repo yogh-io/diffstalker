@@ -763,24 +763,37 @@ git operations.
   open its loaded commit list becomes the authority, so the badge can never
   contradict the list it labels. No base branch to compare against shows no
   badge at all, never a misleading `(0)`.
-- **Shareable URL + browser history.** The path names what is on screen:
-  `/<home-relative-repo-path>/<view>`, plus one rider segment for the three
-  views that need it — the compare base when one is picked
-  (`/w/calc/fix-a/compare/upstream:main`), the Explorer's open file
-  (`/w/diffstalker/explorer/packages:web:src:App.vue`) and History's
-  selected commit (`/w/diffstalker/history/4d1c44a`). The first two write
-  their `/` as `:` so the view keyword keeps a fixed position; the commit
-  rider must look like a hash, so a repo whose own directory is called
-  `history` still parses. Any such link reloads into exactly that state
-  (the daemon serves the SPA for any non-API path): the repo opens, the
-  tree expands down to the file and opens it, the commit's diff loads —
-  History pulls its log first if the link landed before the view did, and
-  a hash no longer in the log just leaves the detail closed. Landing on a new path pushes a browser history entry —
-  another repo, view, compare base, Explorer file or History commit — so
-  Back and Forward walk through what you looked at instead of leaving the
-  app. Back into an Explorer or History entry re-opens its file or commit,
-  and back out of one closes it again. Follow mode's reveals count too: with
-  follow on, tracking an editor writes one entry per file it lands on.
+- **The URL names one place.** `/<view>/<repo-segments>?at=…&base=…` — the
+  view leads, so parsing is positional and a repo directory called
+  `history` is just a directory. `~` as the first repo segment means
+  $HOME-relative (a directory literally named `~` writes as `%7E`); a repo
+  outside home keeps its absolute path. `at` is the one thing the view is
+  aimed at: Changes' file with its staged/unstaged side
+  (`?at=u:packages/web/src/App.vue`), History's commit (`?at=4d1c44a`),
+  Compare's file, the Explorer's open file. Compare also carries `base`
+  when one was explicitly picked. Journal carries none — its entry seqs
+  restart on a daemon restart, so a remembered one would point at an
+  unrelated entry. Preferences (theme, wrap, syntax, split, filters),
+  expansion sets and scroll offsets are not places and never appear.
+  Any such link reloads into exactly that state (the daemon serves the SPA
+  for any non-API path): the repo opens, the view paints, the tree expands
+  down to the file, the commit's diff loads — including a commit older than
+  the loaded log, which resolves through `GET /repos/:id/commits/:hash`.
+  What the URL cannot name any more just drops (a file that was committed,
+  a commit rebased away), which is ordinary churn, not an error.
+- **A history entry means you did something.** Back walks back through what
+  you chose, not through what happened to you. A gesture — a tab, a repo or
+  worktree switch, "view file", the finder, activating a row in any list, a
+  compare base pick — is exactly one entry, however many writes it takes
+  behind the scenes. Arrow movement inside a list is not (holding Down
+  would bury the real navigation), and neither is follow mode tracking your
+  editor, auto mode jumping to a fresh commit, the scroll-spy, or staging a
+  file. The one exception: the FIRST time an ambient actor drags you off a
+  place you picked by hand, that yank is undoable once. Back into an
+  Explorer, Changes, Compare or History entry re-opens its file or commit
+  and scrolls straight to it; back out of one closes it again. A Back also
+  holds follow mode off for 1500ms, so an editor save landing right after
+  cannot silently undo it.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.

@@ -415,6 +415,10 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     if (repo.repoId !== daemon.activeRepoId) return;
 
     const next = derive();
+    // The title tracks the place, not the write: a restore that lands
+    // exactly where the URL already pointed writes nothing, and would
+    // otherwise leave the tab named after wherever the user came from.
+    document.title = titleFor(next);
     const url = next.path + next.search;
     if (url === window.location.pathname + window.location.search) {
       written = next; // nothing to write, but this IS where we are
@@ -446,7 +450,6 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       } else {
         window.history.replaceState({ serial, place: next }, '', url);
       }
-      document.title = titleFor(next);
     }
     written = next;
   }
