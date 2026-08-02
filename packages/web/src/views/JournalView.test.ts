@@ -383,6 +383,60 @@ describe('rendering', () => {
   });
 });
 
+// The log is capped by count and bytes, not by age, and the daemon never
+// idles out — a slept laptop puts multi-day entries in one scroller. So the
+// frozen stamp (past an hour, when the live counter stops) must carry its
+// day; a bare HH:MM would claim today.
+describe('frozen timestamps', () => {
+  /** Mon 20 Jul 2026, 15:00 local — the clock every case reads from. */
+  const NOW = new Date(2026, 6, 20, 15, 0).getTime();
+
+  function timeTexts(wrapper: VueWrapper): string[] {
+    return wrapper.findAll('[data-testid="journal-entry"] .time').map((el) => el.text());
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test('under an hour still counts up live; older today freezes to HH:MM', () => {
+    const { wrapper } = mountView([
+      hunk(1, { ts: new Date(2026, 6, 20, 9, 5).getTime(), path: 'src/a.ts' }),
+      hunk(2, { ts: NOW - 5 * 60_000, path: 'src/b.ts' }),
+    ]);
+    // Newest first: the fresh one is relative, the older one is a bare clock.
+    expect(timeTexts(wrapper)).toEqual(['5 minutes ago', '09:05']);
+  });
+
+  test('a frozen stamp from an earlier day carries that day', () => {
+    const { wrapper } = mountView([
+      hunk(1, { ts: new Date(2026, 6, 18, 16, 42).getTime(), path: 'src/a.ts' }),
+      // Yesterday just before midnight — the case a bare HH:MM reads as today.
+      hunk(2, { ts: new Date(2026, 6, 19, 23, 50).getTime(), path: 'src/b.ts' }),
+    ]);
+    expect(timeTexts(wrapper)).toEqual(['Jul 19 23:50', 'Jul 18 16:42']);
+  });
+
+  test('the journal-start boundary carries its day too', () => {
+    const { wrapper } = mountView([
+      boundary(1, {
+        kind: 'journal-start',
+        label: '',
+        resolves: [],
+        ts: new Date(2026, 6, 18, 8, 0).getTime(),
+      }),
+    ]);
+    expect(wrapper.get('[data-testid="journal-boundary"] .boundary-label').text()).toBe(
+      'journal started Jul 18 08:00'
+    );
+  });
+});
+
 describe('epoch reset', () => {
   test('a journalEpoch change clears session-local state (a folded commit)', async () => {
     useRepoStore().journalEpoch = 'epoch-1';

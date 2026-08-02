@@ -9,7 +9,9 @@
  */
 
 import { createHash } from 'node:crypto';
+import * as path from 'node:path';
 import { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
+import { expandPath } from '@diffstalker/core/utils/pathUtils';
 import { createJournalStore } from '@diffstalker/core/managers/JournalManager';
 import type { JournalStore } from '@diffstalker/core/types/journal';
 import {
@@ -119,15 +121,27 @@ export class RepoRegistry {
    * Open a repo by any path: a worktree root, a subdirectory, or a bare
    * container (resolved to its most recently active worktree). Opening the
    * same normalized path twice shares one manager and bumps the refcount.
+   *
+   * A leading `~` is expanded here, at the daemon's trust boundary: this is
+   * the funnel every human-typed path arrives through (the web UI's open
+   * form, the CLI's positional paths, the follow hook file), and the daemon
+   * is loopback-only with no auth, so its home IS the user's home. A path
+   * that is still relative after expansion is refused as such — the daemon's
+   * working directory is meaningless to the client that sent the path.
    */
   async openRepo(inputPath: string): Promise<OpenResult> {
-    let root = await resolveWorktreeRoot(inputPath);
+    const requested = expandPath(inputPath);
+    if (!path.isAbsolute(requested)) {
+      throw new Error(`Repo path must be absolute: ${inputPath}`);
+    }
+
+    let root = await resolveWorktreeRoot(requested);
     if (!root) {
       // Bare container (or a path git can't place in a working tree):
       // fall back to the default worktree of whatever repo this is.
-      const worktree = pickDefaultWorktree(await listWorktrees(inputPath));
+      const worktree = pickDefaultWorktree(await listWorktrees(requested));
       if (!worktree) {
-        throw new Error(`Not a git repository: ${inputPath}`);
+        throw new Error(`Not a git repository: ${requested}`);
       }
       root = worktree.path;
     }
@@ -195,4 +209,21 @@ export class RepoRegistry {
     this.byId.clear();
     this.byPath.clear();
   }
+}
+
+/**
+ * Open a repo and warm up its status/hunk counts on first open. Every
+ * caller that opens a repo on behalf of a user wants this pair (POST /repos
+ * and the entry point's positional paths), so it lives here in one copy.
+ */
+export async function openAndWarm(
+  registry: RepoRegistry,
+  inputPath: string
+): Promise<OpenResult> {
+  const opened = await registry.openRepo(inputPath);
+  if (opened.created) {
+    // Errors land in manager state, not here.
+    opened.handle.manager.workingTree.refresh().catch(() => {});
+  }
+  return opened;
 }

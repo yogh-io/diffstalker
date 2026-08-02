@@ -368,6 +368,10 @@ input::placeholder {
   color: var(--status-copied);
 }
 
+.letter[data-status='conflicted'] {
+  color: var(--status-conflicted);
+}
+
 /* Compare's "[uncommitted]" marker. One file has two render surfaces — the
    tree row and the card header — and each carried its own identical copy.
    No font-family here on purpose: DiffStack's span has `mono` and Compare's

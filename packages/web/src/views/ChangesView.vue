@@ -125,6 +125,30 @@ function hunkIndicator(file: FileEntry): string {
   return thisCount === total ? `●${total}` : `●${thisCount}/${total}`;
 }
 
+/**
+ * An unmerged path — core marks BOTH of its rows 'conflicted'. Staging
+ * one is how you tell git the conflict IS resolved, so the + button
+ * would quietly throw away the fact that it is not; unstaging drops the
+ * conflict stages instead. Neither is offered: the button is disabled
+ * and says why. Resolving stays in the editor / terminal UI.
+ */
+function isConflicted(file: FileEntry): boolean {
+  return file.status === 'conflicted';
+}
+
+/** The button's tooltip — the reason it is dead, when it is. */
+function stageTitle(file: FileEntry): string {
+  if (isConflicted(file)) return 'Conflicted — resolve the conflict first';
+  return file.staged ? 'Unstage this file' : 'Stage this file';
+}
+
+function stageLabel(file: FileEntry): string {
+  if (isConflicted(file)) {
+    return `Cannot ${file.staged ? 'unstage' : 'stage'} ${file.path}: resolve the conflict first`;
+  }
+  return `${file.staged ? 'Unstage' : 'Stage'} ${file.path}`;
+}
+
 // --- The stack (right pane) ---
 
 const stackEl = ref<InstanceType<typeof DiffStack> | null>(null);
@@ -568,13 +592,15 @@ const rootStyle = computed(() => ({
                  the row START so it stays visible even when a long path
                  makes the row wider than the pane. Out of the
                  roving-tabindex band (tabindex -1) so it doesn't disturb
-                 j/k row nav; @click.stop keeps the row's jump from firing. -->
+                 j/k row nav; @click.stop keeps the row's jump from firing.
+                 Disabled on a conflicted path — see isConflicted. -->
             <button
               class="stage-btn"
               tabindex="-1"
               :data-testid="file.staged ? 'unstage-file' : 'stage-file'"
-              :title="file.staged ? 'Unstage this file' : 'Stage this file'"
-              :aria-label="`${file.staged ? 'Unstage' : 'Stage'} ${file.path}`"
+              :disabled="isConflicted(file)"
+              :title="stageTitle(file)"
+              :aria-label="stageLabel(file)"
               @click.stop="file.staged ? repo.unstageFile(file.path) : repo.stageFile(file.path)"
             >
               {{ file.staged ? '−' : '+' }}
@@ -806,21 +832,28 @@ const rootStyle = computed(() => ({
   cursor: pointer;
 }
 
-.stage-btn:hover {
+/* :enabled throughout — a conflicted row's button must not light up as
+   if it were still an offer. */
+.stage-btn:enabled:hover {
   color: var(--text);
   border-color: var(--text-dim);
   background: var(--surface-raised);
 }
 
-.stage-btn[data-testid='stage-file']:hover {
+.stage-btn[data-testid='stage-file']:enabled:hover {
   color: var(--accent);
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }
 
-.stage-btn[data-testid='unstage-file']:hover {
+.stage-btn[data-testid='unstage-file']:enabled:hover {
   color: var(--status-deleted);
   border-color: var(--status-deleted);
+}
+
+.stage-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* --- Resizer --- */

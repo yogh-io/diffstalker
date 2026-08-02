@@ -1,8 +1,46 @@
 #!/usr/bin/env node
+import { fileURLToPath } from 'node:url';
 import { App } from './App.js';
 import { loadConfig, resolveFollowFile } from './config.js';
-import { ensureDaemon } from './daemon/DaemonLifecycle.js';
+import { ensureDaemon, resolveDaemonBin } from './daemon/DaemonLifecycle.js';
 import { setDebug } from '@diffstalker/core/utils/logger';
+// Default import, not `{ version }`: a JSON module has only a default export,
+// so the named form throws under Node — and bin/diffstalker runs the compiled
+// dist under Node (see the same note in ui/modals/HotkeysModal.ts).
+import manifest from '../package.json' with { type: 'json' };
+
+const { version } = manifest;
+
+/**
+ * Answer --version with the number AND the paths behind it. npm, `bun link`
+ * and the AUR package all plant a `diffstalker` and a `diffstalkerd` that
+ * shadow each other, so "which one is this" is the real question here.
+ */
+function printVersion(): void {
+  let daemonBin: string;
+  try {
+    daemonBin = resolveDaemonBin();
+  } catch {
+    // Not an error to report: which daemon this install would spawn is part
+    // of the answer, and "none" is a true answer.
+    daemonBin = 'not found';
+  }
+  console.log(
+    `diffstalker ${version}\n` +
+      `  cli:     ${fileURLToPath(import.meta.url)}\n` +
+      `  daemon:  ${daemonBin}\n` +
+      `  runtime: ${process.execPath}`
+  );
+}
+
+// --version is answered before the terminal escape codes below are written,
+// so the output is clean on a pipe, and before any daemon is contacted, so
+// it still answers when no daemon can start.
+const rawArgs = process.argv.slice(2);
+if (rawArgs.includes('--version') || rawArgs.includes('-v')) {
+  printVersion();
+  process.exit(0);
+}
 
 // Cleanup function to reset terminal state on exit
 function cleanupTerminal(): void {
@@ -56,35 +94,35 @@ interface ParsedArgs {
   instance?: string;
 }
 
-function parseArgs(args: string[]): ParsedArgs {
-  const result: ParsedArgs = {};
+/**
+ * Report a bad command line and stop. Exit code 2 matches diffstalkerd, so
+ * both binaries answer the same mistake the same way.
+ */
+function usageError(message: string): never {
+  console.error(`diffstalker: ${message}`);
+  console.error("Run 'diffstalker --help' for the option list.");
+  process.exit(2);
+}
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+/**
+ * An unrecognised flag is an error, never a repo path. `--port 7337` used to
+ * be read as "open the repo at ./7337" — a silent misreading of a flag the
+ * daemon does have.
+ */
+function unknownOption(arg: string): never {
+  if (arg === '--port' || arg === '-p') {
+    usageError(
+      `unknown option ${arg}. The TUI reaches diffstalkerd over a unix socket; the\n` +
+        '  web UI is the daemon\'s, so give the port to it: `diffstalkerd --port N`.\n' +
+        '  A daemon already holding the socket must be stopped first, or the new one\n' +
+        '  started as `diffstalkerd --port N --instance NAME` (then run diffstalker\n' +
+        '  --instance NAME to share it).'
+    );
+  }
+  usageError(`unknown option ${arg}`);
+}
 
-    if (arg === '--follow' || arg === '-f') {
-      result.follow = true;
-      if (args[i + 1] && !args[i + 1].startsWith('-')) {
-        result.followFile = args[++i];
-      }
-    } else if (arg === '--debug' || arg === '-d') {
-      result.debug = true;
-    } else if (arg === '--instance') {
-      if (args[i + 1] && !args[i + 1].startsWith('-')) {
-        result.instance = args[++i];
-      } else {
-        console.error('--instance requires a name');
-        process.exit(1);
-      }
-    } else if (arg === '--socket' || arg === '-s') {
-      if (args[i + 1] && !args[i + 1].startsWith('-')) {
-        result.socket = args[++i];
-      } else {
-        console.error('Error: --socket requires a path argument');
-        process.exit(1);
-      }
-    } else if (arg === '--help' || arg === '-h') {
-      console.log(`
+const HELP = `
 diffstalker - Terminal git diff/status viewer
 
 Usage: diffstalker [options] [path]
@@ -101,6 +139,8 @@ Options:
                        sets it too.
   -d, --debug          Log path changes to stderr for debugging
   -h, --help           Show this help message
+  -v, --version        Print the version, plus which cli/daemon binaries
+                       this install actually runs, and exit
 
 Arguments:
   [path]               Path to a git repository (fixed, no watching)
@@ -131,10 +171,54 @@ Keyboard:
 Mouse:
   Click         Select file / focus pane
   Scroll        Navigate files / scroll diff
-`);
-      process.exit(0);
-    } else if (!arg.startsWith('-')) {
-      result.initialPath = arg;
+`;
+
+function parseArgs(args: string[]): ParsedArgs {
+  const result: ParsedArgs = {};
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    // A value must not look like a flag: `--socket --debug` is a missing
+    // path, not a socket named --debug.
+    const value = args[i + 1] !== undefined && !args[i + 1].startsWith('-') ? args[i + 1] : null;
+
+    switch (arg) {
+      case '--follow':
+      case '-f':
+        result.follow = true;
+        // FILE is optional here: bare --follow means the daemon's own target.
+        if (value !== null) {
+          result.followFile = value;
+          i++;
+        }
+        break;
+      case '--debug':
+      case '-d':
+        result.debug = true;
+        break;
+      case '--instance':
+        if (value === null) usageError('--instance requires a name');
+        result.instance = value;
+        i++;
+        break;
+      case '--socket':
+      case '-s':
+        if (value === null) usageError(`${arg} requires a path`);
+        result.socket = value;
+        i++;
+        break;
+      case '--help':
+      case '-h':
+        console.log(HELP);
+        process.exit(0);
+        break;
+      default:
+        if (arg.startsWith('-')) unknownOption(arg);
+        // Two paths means one of them was going to be ignored in silence.
+        if (result.initialPath !== undefined) {
+          usageError(`unexpected extra argument ${arg} (one repo path at a time)`);
+        }
+        result.initialPath = arg;
     }
   }
 

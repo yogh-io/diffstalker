@@ -666,6 +666,13 @@ onBeforeUnmount(() => {
   border-radius: 2px;
 }
 
+/* `\ No newline at end of file`: git talking about the line above, not a
+   line of the file. Dimmed so it never reads as content. */
+.row.no-newline .content,
+.split-line.no-newline .content {
+  color: var(--text-dim);
+}
+
 /* --- Split view (old | new, side by side) --- */
 
 /* Old on the left, new on the right — each side is EXACTLY half the pane,

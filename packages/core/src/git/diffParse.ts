@@ -156,17 +156,55 @@ export function capLargeFileDiffs(raw: string): string {
   return capped ? result.join('') : raw;
 }
 
-export function parseDiffLine(line: string): DiffLine {
-  if (
+/**
+ * Git's extended-header vocabulary: the lines that describe a file
+ * rather than hold its content (`git diff` docs, "Generating patch
+ * text"), plus our own large-file notice, which rides the same path.
+ *
+ * ONE list for both parsers on purpose. They used to carry a copy each,
+ * and the copies drifted: `old mode`/`new mode` were in neither, so a
+ * `chmod +x` fell through to the context branch and rendered as two
+ * lines of fake file content numbered from 0.
+ */
+function isDiffHeaderLine(line: string): boolean {
+  return (
     line.startsWith('diff --git') ||
     line.startsWith('index ') ||
     line.startsWith('---') ||
     line.startsWith('+++') ||
+    line.startsWith('old mode') ||
+    line.startsWith('new mode') ||
     line.startsWith('new file') ||
     line.startsWith('deleted file') ||
+    line.startsWith('similarity index') ||
+    line.startsWith('dissimilarity index') ||
+    line.startsWith('rename from') ||
+    line.startsWith('rename to') ||
+    line.startsWith('copy from') ||
+    line.startsWith('copy to') ||
     line.startsWith('Binary files') ||
     line.startsWith(LARGE_DIFF_NOTICE_PREFIX)
-  ) {
+  );
+}
+
+/**
+ * `\ No newline at end of file` — git's annotation ABOUT the line before
+ * it, not a line of either file. The unified format reserves a leading
+ * backslash for exactly this, so the prefix is the whole test (a real
+ * content line always starts with ' ', '+' or '-').
+ *
+ * Exported because the row builders need the same test: the marker is
+ * parsed as a numberless context line, and a view that mistakes it for
+ * one loses the del/add pairing around it. Feed it the RAW line, before
+ * getLineContent strips a context line's leading space — after the
+ * strip, a real ` \ foo` becomes `\ foo` and reads as a marker.
+ */
+export function isNoNewlineMarker(line: string): boolean {
+  return line.startsWith('\\ ');
+}
+
+export function parseDiffLine(line: string): DiffLine {
+  if (isDiffHeaderLine(line)) {
     return { type: 'header', content: line };
   }
   if (line.startsWith('@@')) {
@@ -219,20 +257,19 @@ export function parseDiffWithLineNumbers(raw: string): DiffLine[] {
   let newLineNum = 0;
 
   for (const line of lines) {
-    if (
-      line.startsWith('diff --git') ||
-      line.startsWith('index ') ||
-      line.startsWith('---') ||
-      line.startsWith('+++') ||
-      line.startsWith('new file') ||
-      line.startsWith('deleted file') ||
-      line.startsWith('Binary files') ||
-      line.startsWith(LARGE_DIFF_NOTICE_PREFIX) ||
-      line.startsWith('similarity index') ||
-      line.startsWith('rename from') ||
-      line.startsWith('rename to')
-    ) {
+    if (isDiffHeaderLine(line)) {
       result.push({ type: 'header', content: line });
+    } else if (isNoNewlineMarker(line)) {
+      // No line number, and neither counter moves: the marker annotates
+      // the preceding line instead of being one. Counting it drifted
+      // everything after it in the hunk by one on BOTH sides, which in
+      // split view made the old and new gutters disagree.
+      //
+      // Typed 'context' rather than a kind of its own: every view
+      // already draws a context row with no gutter value as a dim,
+      // numberless line, and this is the shape getDiffForUntracked
+      // emits for the same marker, so both paths agree.
+      result.push({ type: 'context', content: line });
     } else if (line.startsWith('@@')) {
       const hunkInfo = parseHunkHeader(line);
       if (hunkInfo) {

@@ -105,8 +105,8 @@ function parseOldRange(header: string): { oldStart: number; oldCount: number } |
  *
  * This OWNS its old-line accounting — it re-derives counts from the
  * header (including -0,0 and -N,0 forms), skips "\ No newline" lines
- * (which parseDiffWithLineNumbers numbers as context and would therefore
- * drift every later anchor), and classifies every body line by its RAW
+ * (the marker annotates the line before it; consuming a HEAD line for it
+ * would drift every later anchor), and classifies every body line by its RAW
  * FIRST CHARACTER, never by DiffLine.type: the parser's header-prefix
  * checks also match body lines whose CONTENT starts with "--" (a deleted
  * `--foo` comment reads as a `---` header), "++", or "\". Real ---/+++/@@

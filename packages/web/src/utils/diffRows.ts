@@ -8,7 +8,9 @@
  * consecutive deletions followed by a run of consecutive additions is
  * paired by position; similar pairs get word-level segments. The
  * pairing is shared code — pairChangeRuns from
- * core/view/diffPrimitives — not reimplemented.
+ * core/view/diffPrimitives — not reimplemented. One difference: a
+ * `\ No newline at end of file` between the two runs does not end the
+ * run here (see buildHunkRows); the CLI still breaks its pairing there.
  *
  * Grouping into per-hunk sections (instead of a flat row list) is what
  * lets the view give each hunk a sticky header that the next hunk's
@@ -25,7 +27,7 @@
 import type { DiffResult, DiffLine } from '@diffstalker/core/git/diff';
 // Runtime import, but git/diffParse is the pure parser module (no
 // simple-git, no fs) the CLI already imports for the same reason.
-import { LARGE_DIFF_NOTICE_PREFIX } from '@diffstalker/core/git/diffParse';
+import { LARGE_DIFF_NOTICE_PREFIX, isNoNewlineMarker } from '@diffstalker/core/git/diffParse';
 import { isDisplayableDiffLine } from '@diffstalker/core/view/diffFilters';
 import { getLineContent } from '@diffstalker/core/view/diffRowCalculations';
 import {
@@ -41,7 +43,14 @@ export type { WordDiffSegment } from '@diffstalker/core/view/wordDiff';
 export interface DiffContentRow {
   /** Content-stable: `${hunkKey}:${oldLineNum ?? '+' + newLineNum}`. */
   key: string;
-  kind: 'add' | 'del' | 'context';
+  /**
+   * 'no-newline' is git's `\ No newline at end of file` — an annotation
+   * about the row before it, not a line of either file. Its own kind
+   * because every other consumer has to treat it differently from a
+   * context line: it carries no line number, it is not code (so no
+   * syntax highlighting), and in split view it belongs to ONE side.
+   */
+  kind: 'add' | 'del' | 'context' | 'no-newline';
   oldLineNum?: number;
   newLineNum?: number;
   content: string;
@@ -249,35 +258,59 @@ function toContentRow(
   return { key: rowKeyFor(hunkKey, row, ordinal), ...row };
 }
 
+/**
+ * Emit one change run — consecutive deletions, then consecutive
+ * additions — into `rows`, and return the index to continue from.
+ *
+ * The old side's `\ No newline` sits BETWEEN the two runs. Stepping over
+ * it keeps them one pair: otherwise a last line rewritten in a file with
+ * no trailing newline loses its word diff, and split view puts the two
+ * versions on separate rows.
+ */
+function pushChangeRun(
+  lines: DiffLine[],
+  start: number,
+  rows: DiffContentRow[],
+  hunkKey: string
+): number {
+  let i = start;
+  const deletions: DiffLine[] = [];
+  while (i < lines.length && lines[i].type === 'deletion') deletions.push(lines[i++]);
+  const midMarker = i < lines.length && isNoNewlineMarker(lines[i].content) ? lines[i++] : null;
+  const additions: DiffLine[] = [];
+  while (i < lines.length && lines[i].type === 'addition') additions.push(lines[i++]);
+  if (deletions.length === 0 && additions.length === 0) {
+    // Not a content line (defensive; hunk bodies only hold content lines).
+    return i + 1;
+  }
+
+  const segments = pairChangeRuns(deletions, additions, cleanContent);
+  deletions.forEach((line, j) => {
+    rows.push(toContentRow(line, 'del', hunkKey, rows.length, segments.delSegments.get(j)));
+  });
+  // Back where git put it: right after the deletion it annotates.
+  if (midMarker) rows.push(toContentRow(midMarker, 'no-newline', hunkKey, rows.length));
+  additions.forEach((line, j) => {
+    rows.push(toContentRow(line, 'add', hunkKey, rows.length, segments.addSegments.get(j)));
+  });
+  return i;
+}
+
 /** Convert one hunk's body lines into content rows, pairing change runs. */
 function buildHunkRows(lines: DiffLine[], hunkKey: string): DiffContentRow[] {
   const rows: DiffContentRow[] = [];
   let i = 0;
   while (i < lines.length) {
-    if (lines[i].type === 'context') {
-      rows.push(toContentRow(lines[i], 'context', hunkKey, rows.length));
+    const line = lines[i];
+    if (isNoNewlineMarker(line.content)) {
+      rows.push(toContentRow(line, 'no-newline', hunkKey, rows.length));
       i++;
-      continue;
-    }
-
-    // A change run: consecutive deletions, then consecutive additions.
-    const deletions: DiffLine[] = [];
-    while (i < lines.length && lines[i].type === 'deletion') deletions.push(lines[i++]);
-    const additions: DiffLine[] = [];
-    while (i < lines.length && lines[i].type === 'addition') additions.push(lines[i++]);
-    if (deletions.length === 0 && additions.length === 0) {
-      // Not a content line (defensive; hunk bodies only hold content lines).
+    } else if (line.type === 'context') {
+      rows.push(toContentRow(line, 'context', hunkKey, rows.length));
       i++;
-      continue;
+    } else {
+      i = pushChangeRun(lines, i, rows, hunkKey);
     }
-
-    const segments = pairChangeRuns(deletions, additions, cleanContent);
-    deletions.forEach((line, j) => {
-      rows.push(toContentRow(line, 'del', hunkKey, rows.length, segments.delSegments.get(j)));
-    });
-    additions.forEach((line, j) => {
-      rows.push(toContentRow(line, 'add', hunkKey, rows.length, segments.addSegments.get(j)));
-    });
   }
   return rows;
 }

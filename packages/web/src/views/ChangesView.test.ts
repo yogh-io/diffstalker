@@ -904,6 +904,53 @@ describe('write stance (file-level stage/unstage only)', () => {
     expect(unstageSpy).toHaveBeenCalledWith('src/app/main.ts');
   });
 
+  // `git add` on an unmerged path is how you tell git the conflict is
+  // resolved. Offering it as a plain + would let one click claim a
+  // resolution that never happened.
+  test('a conflicted row cannot be staged, and says why', async () => {
+    const { wrapper, repo } = mountView([
+      { path: 'src/merge.ts', status: 'conflicted', staged: false },
+      { path: 'src/merge.ts', status: 'conflicted', staged: true },
+    ]);
+    const stageSpy = vi.spyOn(repo, 'stageFile').mockResolvedValue();
+    const unstageSpy = vi.spyOn(repo, 'unstageFile').mockResolvedValue();
+
+    const stageBtn = wrapper.get('[data-testid="stage-file"]');
+    expect(stageBtn.attributes('disabled')).toBeDefined();
+    expect(stageBtn.attributes('title')).toBe('Conflicted — resolve the conflict first');
+    expect(stageBtn.attributes('aria-label')).toBe(
+      'Cannot stage src/merge.ts: resolve the conflict first'
+    );
+
+    // The staged side is refused just as plainly (unstaging would drop
+    // the conflict stages).
+    const unstageBtn = wrapper.get('[data-testid="unstage-file"]');
+    expect(unstageBtn.attributes('disabled')).toBeDefined();
+    expect(unstageBtn.attributes('aria-label')).toBe(
+      'Cannot unstage src/merge.ts: resolve the conflict first'
+    );
+
+    await stageBtn.trigger('click');
+    await unstageBtn.trigger('click');
+    expect(stageSpy).not.toHaveBeenCalled();
+    expect(unstageSpy).not.toHaveBeenCalled();
+  });
+
+  test('an ordinary row keeps its live button and plain label', () => {
+    const { wrapper } = mountView();
+    const stageBtn = wrapper.get('[data-testid="stage-file"]');
+    expect(stageBtn.attributes('disabled')).toBeUndefined();
+    expect(stageBtn.attributes('title')).toBe('Stage this file');
+    expect(stageBtn.attributes('aria-label')).toBe('Stage src/app/main.ts');
+  });
+
+  test('a conflicted row shows git’s U letter', () => {
+    const { wrapper } = mountView([{ path: 'src/merge.ts', status: 'conflicted', staged: false }]);
+    const letter = wrapper.get('[data-testid="section-modified"] .file-row .letter');
+    expect(letter.text()).toBe('U');
+    expect(letter.attributes('data-status')).toBe('conflicted');
+  });
+
   test('there is NO commit column or commit controls', () => {
     const { wrapper } = mountView();
     expect(wrapper.find('[data-testid="commit-col"]').exists()).toBe(false);

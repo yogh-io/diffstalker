@@ -69,6 +69,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   250 ms health probe and the TUI would race it by spawning a second daemon.
 - `--no-socket` (requires `--port`) for a browser-only daemon, and `--port 0`
   to let the kernel choose a free port — the daemon reports the one it got.
+- **`diffstalkerd` takes repo paths on the command line.** `diffstalkerd
+  --port 7337 .` now opens that repo before the daemon starts listening, so
+  the browser has something to show the moment it connects instead of an
+  empty daemon waiting for someone to POST `/repos`. A path is expanded
+  (`~`), resolved against the current directory, and reported as it opens; a
+  path that will not open stops the daemon with a message rather than leaving
+  a half-set-up socket behind.
+- **`--version` (and `-v`) on both commands.** `diffstalkerd --version`
+  prints its version; `diffstalker --version` prints its own plus the
+  `diffstalkerd` it would spawn and the runtime it is running under — the
+  answer to "which install am I actually using" when npm, the AUR package and
+  a `bun link` checkout are all on the same machine. It answers before any
+  daemon contact, so it still works when nothing can start.
 
 ### Changed
 
@@ -108,6 +121,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   out costs nothing and makes a regression that adds one fail loudly.
   `img-src` stays `'self' data:` — deliberately no `blob:`, since a `blob:`
   URL inherits the page's origin.
+- **An unknown option is now an error, not a repo path.** `diffstalker
+  --port 7337` used to treat `--port` and `7337` as paths and try to open
+  `./7337` as a repository; the failure named a directory you never
+  mentioned. Any unrecognized argument starting with `-` now exits 2 with
+  `unknown option`, and `--port` in particular says what to do instead (give
+  it to `diffstalkerd`). A second repo path is an error too, instead of being
+  silently dropped. `--socket` and `--instance` with no value still fail,
+  now with the same message shape and exit code as every other usage error
+  (2, was 1).
+- **A relative repo path is refused instead of being resolved against the
+  wrong directory.** The daemon used to resolve a path like `../foo` against
+  **its own** working directory, which is not yours whenever you attach to a
+  daemon that was already running — so it opened a different repository, or
+  reported "Not a git repository" about a path you never typed. It now
+  requires an absolute path and says so. A leading `~` is expanded first, and
+  the not-a-repo message names the expanded path, so `~/code/x` no longer
+  fails as the literal directory `~`.
 
 ### Fixed
 
@@ -161,6 +191,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remedy, in `prepare()` and again at the end of `package()`. Detects the
   dangling symlink a stale `npm link` leaves behind, which `test -e` alone
   reports as absent.
+- **Line numbers after "\ No newline at end of file" are right again.** The
+  marker is git's note about the line above it, not a line of either file,
+  but it was counted as one — so every line after it in the hunk was
+  numbered one too high on both sides, and in side-by-side view the left and
+  right gutters stopped agreeing. It now takes no number and shifts nothing.
+  The two versions of a changed last line also stay on one row again, with
+  their word-level highlighting, instead of being split apart by the marker
+  standing between them; and the marker is shown on the side it is actually
+  about, rather than on both, so it no longer claims a missing newline for
+  the file that has one.
+- **A `chmod +x` reads as a mode change instead of two lines of file
+  content.** `old mode 100644` / `new mode 100755` were not recognized as
+  diff headers, so they were rendered as context lines of the file itself,
+  numbered from 0. Renames, copies and dissimilarity headers are recognized
+  in the same place now — there were two header lists that had drifted apart,
+  and there is one.
+- **A file with merge conflicts is marked as conflicted.** An unmerged path
+  used to read as an ordinary modify, add or delete, so nothing told you it
+  was the file holding up the merge. It now carries its own status: `U` in
+  the file lists and the Explorer, in its own colour, in both the browser and
+  the terminal. In the browser its stage/unstage button is disabled and says
+  why — `git add` on an unmerged path claims a resolution that has not
+  happened, and unstaging throws away the conflict stages.
+- **A huge untracked file no longer claims to be empty, or stalls the file
+  list.** Every untracked file was read whole just to count its lines, so a
+  405 MB log was loaded into memory and reported as `+0 −0`. Files over the
+  diff size cap (256 KB — the same cap the untracked diff already used) are
+  no longer read, and show no line counts at all rather than zeros.
+- **A refused stage or unstage stays on screen.** The message git gave back
+  was wiped by the next state change — often within a fraction of a second,
+  since staging is exactly what triggers one — so the button appeared to do
+  nothing at all. The refusal now names the action and the file (`Could not
+  stage a.ts: …`) and stays until it is genuinely over: the file reaches the
+  side you asked for, you try again, or a more urgent problem replaces it.
+- **A journal timestamp older than an hour says which day it is.** The
+  relative time ("5 minutes ago") freezes into a clock time at an hour old,
+  and that clock time was a bare `14:32` whatever day it belonged to.
+  Anything not from today now carries its date, and its year when that
+  differs too.
+
+### Internal
+
+- **Three CLI test files were never being run.** The test script globbed
+  `src/*.test.ts src/**/*.test.ts`, which the shell expands one directory
+  deep, so everything under `src/ui/widgets/` was skipped in CI and in the
+  pre-push hook. All packages now run `bun test src/`, which lets bun do the
+  discovery.
 
 ## [0.9.0] - 2026-07-28
 

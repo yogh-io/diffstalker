@@ -47,6 +47,10 @@
  * - the compare base is per-client too: selectedCompareBase rides along
  *   as GET /compare?base=… — nothing is persisted daemon-side.
  *
+ * A refused stage/unstage is the one error that OUTLIVES the next wire
+ * state: it is kept beside shared.error and re-shown until the outcome
+ * it names is reached, superseded, or retried (see the `refusal` field).
+ *
  * Everything a view reads is synchronous reactive state (shallowRefs whose
  * whole value is replaced — shallow so object identity survives, which the
  * stale-guard and selection re-anchoring depend on). Shared-state and diff
@@ -171,6 +175,17 @@ interface MediaRequest {
   path: string;
   staged: boolean;
   settle: () => void;
+}
+
+/**
+ * A mutation the daemon refused, kept alive across state-changes.
+ * `path` + `staged` record what was ASKED FOR, which is how the store
+ * knows when the refusal stopped being true (see isRefusalSettled).
+ */
+interface Refusal {
+  message: string;
+  path: string;
+  staged: boolean;
 }
 
 /** The last snapshot workingDiffs changed-set diffing compares against. */
@@ -305,6 +320,14 @@ export const useRepoStore = defineStore('repo', () => {
    * still must be released after the next successful open.
    */
   let heldRepoId: string | null = null;
+  /**
+   * The standing refusal (null when none). Held OUTSIDE shared.error
+   * because every wire state overwrites that field: without it, the
+   * next state-change — and a competing git process finishing is itself
+   * one — erased the reason the user's click failed, a tick after they
+   * read it. See errorLineFor for how the two are merged.
+   */
+  let refusal: Refusal | null = null;
   let subscription: SseHandle | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let recovering = false;
@@ -415,6 +438,8 @@ export const useRepoStore = defineStore('repo', () => {
     subscription = null;
     clearTimers();
     recovering = false;
+    // A refusal belongs to the repo it was refused in.
+    refusal = null;
     historyPullInFlight = false;
     journalLoadInFlight = false;
     journalPullInFlight = false;
@@ -572,6 +597,9 @@ export const useRepoStore = defineStore('repo', () => {
   function handleConnectionLoss(): void {
     subscription?.close();
     subscription = null;
+    // A dead daemon supersedes any standing refusal: it is the more
+    // urgent condition, and nothing can be resolved until it is back.
+    refusal = null;
     // Set the message exactly once so the header doesn't flicker on every
     // failed call; recovery clears it when a fresh snapshot lands. Also
     // drop isLoading so a pre-first-snapshot drop doesn't leave a view
@@ -651,7 +679,7 @@ export const useRepoStore = defineStore('repo', () => {
       stashList: wire.stashList,
       operationInProgress: wire.operationInProgress,
       mtimes: wire.mtimes,
-      error: wire.error,
+      error: errorLineFor(wire),
       isLoading: false,
     };
     refreshSelectionAfterStatus();
@@ -682,6 +710,64 @@ export const useRepoStore = defineStore('repo', () => {
   }
 
   /**
+   * The error line a freshly applied wire state gets.
+   *
+   * The daemon's own error always wins — it is the newest word about the
+   * repo, and it retires the refusal with it. Otherwise a refusal that is
+   * still true keeps its line, instead of being wiped by a state-change
+   * that has nothing to do with it.
+   */
+  function errorLineFor(wire: WireSharedState): string | null {
+    if (wire.error !== null) {
+      refusal = null;
+      return wire.error;
+    }
+    if (refusal !== null && isRefusalSettled(refusal, wire)) refusal = null;
+    return refusal?.message ?? null;
+  }
+
+  /**
+   * A refusal is settled once the status shows the outcome that was
+   * asked for, however it was reached — staged from the terminal, the
+   * file deleted, the conflict resolved. The button acts on ONE side (a
+   * stage on the unstaged row, an unstage on the staged one), so the
+   * asked-for outcome is that side being gone.
+   *
+   * Without this the line would outlive its cause and describe a block
+   * that no longer exists. A null status proves nothing, so it holds.
+   */
+  function isRefusalSettled(current: Refusal, wire: WireSharedState): boolean {
+    const files = wire.status?.files;
+    if (!files) return false;
+    return !files.some((f) => f.path === current.path && f.staged !== current.staged);
+  }
+
+  /**
+   * Record a refused mutation and show it. Names the action and the file
+   * so the line reads as a report of one attempt — it may outlive the
+   * state-change that follows it, and a bare git message would then read
+   * as a claim about the repo as a whole.
+   */
+  function setRefusal(path: string, staged: boolean, reason: string): void {
+    const message = `Could not ${staged ? 'stage' : 'unstage'} ${path}: ${reason}`;
+    refusal = { message, path, staged };
+    shared.value = { ...shared.value, error: message };
+  }
+
+  /**
+   * Retire the standing refusal because the user is trying again. The
+   * line goes with it only when it is still the one on screen — a newer
+   * error must not be wiped.
+   */
+  function clearRefusal(): void {
+    const current = refusal;
+    refusal = null;
+    if (current !== null && shared.value.error === current.message) {
+      shared.value = { ...shared.value, error: null };
+    }
+  }
+
+  /**
    * Stage or unstage one file by path — the ONLY working-tree mutations
    * the web UI makes. The daemon does the git op and broadcasts the fresh
    * status over the SSE stream (applyWireState's single sink), which is
@@ -692,11 +778,17 @@ export const useRepoStore = defineStore('repo', () => {
    * git refusal surface in shared.error; a connection loss enters the
    * reconnect state; a repo switch mid-flight drops the error so it can't
    * touch the new repo.
+   *
+   * A refusal is STICKY (see the `refusal` field): it survives the
+   * state-changes that follow it, so the explanation is still there when
+   * the user looks up from the click that failed.
    */
   async function setStaged(path: string, staged: boolean): Promise<void> {
     const id = repoId.value;
     if (id === null) return;
     const gen = generation;
+    // A fresh attempt supersedes the previous one's reason.
+    clearRefusal();
     try {
       if (staged) await client.stage(id, path);
       else await client.unstage(id, path);
@@ -706,7 +798,7 @@ export const useRepoStore = defineStore('repo', () => {
         handleConnectionLoss();
         return;
       }
-      setError(errorMessage(err));
+      setRefusal(path, staged, errorMessage(err));
     }
   }
 

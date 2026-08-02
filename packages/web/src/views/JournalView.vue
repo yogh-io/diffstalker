@@ -38,7 +38,8 @@ export function buildSupersededAt(entries: readonly JournalEntry[]): Map<number,
  * Rows come from foldEntries() over repo.journalEntries. Each hunk group is a
  * one-line header — a kind word on a kind-coloured rail, the path (bold file +
  * muted dir), a static "×N" churn marker when rapid saves folded, ±stats, and
- * a relative time that freezes to a wall-clock HH:MM past an hour — over a
+ * a relative time that freezes past an hour to a wall-clock stamp (HH:MM
+ * today, 'Jul 20 14:32' on an older day — the log can span days) — over a
  * reused DiffView fed the tip's single-hunk diff (a null diff falls into
  * DiffView's no-hunk note). Boundaries are slim dividers; a commit boundary is
  * clickable to fold its whole section. The store, foldEntries, and all seq
@@ -75,6 +76,7 @@ import {
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import { formatRelativeTime, formatDateAbsolute } from '@diffstalker/core/view/formatDate';
+import { formatClock } from '../utils/format';
 import type {
   JournalBoundaryEntry,
   JournalHunkEntry,
@@ -168,7 +170,7 @@ function restartTicker(): void {
   tick();
 }
 
-/** Past an hour old, freeze to a static wall-clock HH:MM so the column isn't
+/** Past an hour old, freeze to a static wall-clock stamp so the column isn't
  *  perpetually re-ticking — only the freshest rows count up live. */
 function relTime(ts: number): string {
   if (now.value - ts > 3_600_000) return clock(ts);
@@ -179,9 +181,9 @@ function absTime(ts: number): string {
   return formatDateAbsolute(new Date(ts));
 }
 
+/** HH:MM today, 'Jul 20 14:32' on any other day — see formatClock. */
 function clock(ts: number): string {
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return formatClock(ts, now.value);
 }
 
 // --- Path display: keep the file name visible on long paths ---

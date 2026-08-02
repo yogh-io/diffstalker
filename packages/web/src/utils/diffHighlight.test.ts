@@ -35,6 +35,15 @@ describe('syntaxPieces', () => {
     expect(syntaxPieces(row('const x = 1;'), null, true)).toBeNull();
   });
 
+  test('a "\\ No newline" row returns null (git prose, not code)', () => {
+    const marker: DiffContentRow = {
+      key: 'm',
+      kind: 'no-newline',
+      content: '\\ No newline at end of file',
+    };
+    expect(syntaxPieces(marker, 'typescript', true)).toBeNull();
+  });
+
   test('an over-long line returns null (hljs is ~quadratic on one huge token)', () => {
     const huge = 'a'.repeat(2001);
     expect(syntaxPieces(row(huge), 'typescript', true)).toBeNull();

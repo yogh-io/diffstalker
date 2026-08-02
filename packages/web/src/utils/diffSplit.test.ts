@@ -19,6 +19,10 @@ function del(text: string, oldNum: number): DiffContentRow {
 function add(text: string, newNum: number): DiffContentRow {
   return { key: `a${newNum}`, kind: 'add', newLineNum: newNum, content: text };
 }
+/** git's "\ No newline at end of file" — no line number on either side. */
+function marker(key: string): DiffContentRow {
+  return { key, kind: 'no-newline', content: '\\ No newline at end of file' };
+}
 
 describe('toSplitRows', () => {
   test('a context line occupies both sides (same row object)', () => {
@@ -74,6 +78,50 @@ describe('toSplitRows', () => {
     expect(split[1].left?.content).toBe('x');
     expect(split[1].right?.content).toBe('y');
     expect(split[2].right?.content).toBe('t');
+  });
+
+  describe('"\\ No newline at end of file"', () => {
+    test('a marker between the runs keeps the pair on one row, then annotates both sides', () => {
+      // The shape git emits when a file with no trailing newline has its
+      // last line edited: marker, additions, marker.
+      const rows = [del('two', 2), marker('m1'), add('TWO', 2), marker('m2')];
+      const split = toSplitRows(rows);
+      expect(split).toHaveLength(2);
+      // Was two rows (left-only, then right-only) — the pair lost its
+      // alignment because the marker ended the run.
+      expect(split[0].left?.content).toBe('two');
+      expect(split[0].right?.content).toBe('TWO');
+      expect(split[1].left?.key).toBe('m1');
+      expect(split[1].right?.key).toBe('m2');
+    });
+
+    test('only the old side lost its newline: the marker is left-only', () => {
+      const split = toSplitRows([del('two', 2), marker('m1'), add('TWO', 2)]);
+      expect(split).toHaveLength(2);
+      expect(split[1].left?.key).toBe('m1');
+      expect(split[1].right).toBeNull();
+    });
+
+    test('only the new side lost its newline: the marker is right-only', () => {
+      const split = toSplitRows([del('two', 2), add('TWO', 2), marker('m2')]);
+      expect(split).toHaveLength(2);
+      expect(split[1].left).toBeNull();
+      expect(split[1].right?.key).toBe('m2');
+    });
+
+    test('a marker after a context line belongs to both sides', () => {
+      const split = toSplitRows([ctx('last', 3, 3), marker('m')]);
+      expect(split).toHaveLength(2);
+      expect(split[1].left?.key).toBe('m');
+      expect(split[1].right?.key).toBe('m');
+    });
+
+    test('markers keep the split row keys unique', () => {
+      const keys = toSplitRows([del('two', 2), marker('m1'), add('TWO', 2), marker('m2')]).map(
+        (r) => r.key
+      );
+      expect(new Set(keys).size).toBe(keys.length);
+    });
   });
 
   test('keys are unique per row (padding side uses a placeholder)', () => {

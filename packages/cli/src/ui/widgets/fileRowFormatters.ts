@@ -1,6 +1,11 @@
 import type { FileStatus } from '@diffstalker/core/git/status';
 import { shortenPath } from '@diffstalker/core/view/formatPath';
 
+/**
+ * No `default` branch on purpose, here and in getStatusColor: an
+ * exhaustive switch makes the next FileStatus a compile error instead of
+ * a blank glyph. That is how 'conflicted' rendered as an unlabelled row.
+ */
 export function getStatusChar(status: FileStatus): string {
   switch (status) {
     case 'modified':
@@ -15,8 +20,9 @@ export function getStatusChar(status: FileStatus): string {
       return 'R';
     case 'copied':
       return 'C';
-    default:
-      return ' ';
+    // git's own porcelain letter for an unmerged path.
+    case 'conflicted':
+      return 'U';
   }
 }
 
@@ -34,8 +40,10 @@ export function getStatusColor(status: FileStatus): string {
       return 'blue';
     case 'copied':
       return 'cyan';
-    default:
-      return 'white';
+    // Bright red, not the deleted red: a conflict must not read as a
+    // deletion, and it is the one status the user has to act on.
+    case 'conflicted':
+      return 'brightred';
   }
 }
 

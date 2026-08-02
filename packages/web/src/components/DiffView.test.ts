@@ -34,6 +34,11 @@ function del(text: string, oldNum: number): DiffLine {
   return { type: 'deletion', content: `-${text}`, oldLineNum: oldNum };
 }
 
+/** The parser's shape for git's marker: context type, no line numbers. */
+function noNewline(): DiffLine {
+  return { type: 'context', content: '\\ No newline at end of file' };
+}
+
 function makeDiff(lines: DiffLine[]): DiffResult {
   return { lines };
 }
@@ -490,6 +495,76 @@ describe('split mode (the `mode` prop)', () => {
   test('syntax highlighting composes with split mode', () => {
     const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', mode: 'split', syntax: true });
     expect(wrapper.find('.split-body [class*="hljs-"]').exists()).toBe(true);
+  });
+});
+
+describe('"\\ No newline at end of file"', () => {
+  // Verbatim `git diff` shape for a file with no trailing newline whose
+  // last line was edited: a marker on each side of the change run.
+  const diff = makeDiff([
+    header('src/foo.ts'),
+    hunk('@@ -1,2 +1,2 @@'),
+    ctx('keep', 1, 1),
+    del('const x = 1;', 2),
+    noNewline(),
+    add('const x = 2;', 2),
+    noNewline(),
+  ]);
+
+  test('unified: its own dim row, no line numbers, no +/- marker', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts' });
+    const rows = wrapper.findAll('.row');
+    expect(rows.map((r) => r.classes().join(' '))).toEqual([
+      'row context',
+      'row del',
+      'row no-newline',
+      'row add',
+      'row no-newline',
+    ]);
+    const annotation = rows[2];
+    expect(annotation.find('.content').text()).toBe('\\ No newline at end of file');
+    expect(annotation.find('.ln.old').text()).toBe('');
+    expect(annotation.find('.ln.new').text()).toBe('');
+    expect(annotation.find('.marker').text()).toBe('');
+  });
+
+  test('unified: the changed last line still gets word highlighting', () => {
+    // The marker used to end the deletion run, so the pair was never
+    // compared and nothing was highlighted.
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts' });
+    expect(wrapper.find('.row.del .word-hl').exists()).toBe(true);
+    expect(wrapper.find('.row.add .word-hl').exists()).toBe(true);
+  });
+
+  test('split: the two versions stay on one row, the markers on the next', () => {
+    const wrapper = mountDiff(diff, { filePath: 'src/foo.ts', mode: 'split' });
+    const left = wrapper.findAll('.split-side.left .split-line');
+    const right = wrapper.findAll('.split-side.right .split-line');
+    // context, the pair, then one row for both sides' markers.
+    expect(left).toHaveLength(3);
+    expect(right).toHaveLength(3);
+    expect(left[1].find('.content').text()).toBe('const x = 1;');
+    expect(right[1].find('.content').text()).toBe('const x = 2;');
+    expect(left[2].classes()).toContain('no-newline');
+    expect(right[2].classes()).toContain('no-newline');
+  });
+
+  test('split: a marker for the old side only leaves the new side empty', () => {
+    const oldSideOnly = makeDiff([
+      header('src/foo.ts'),
+      hunk('@@ -1,2 +1,2 @@'),
+      ctx('keep', 1, 1),
+      del('const x = 1;', 2),
+      noNewline(),
+      add('const x = 2;', 2),
+    ]);
+    const wrapper = mountDiff(oldSideOnly, { filePath: 'src/foo.ts', mode: 'split' });
+    const left = wrapper.findAll('.split-side.left .split-line');
+    const right = wrapper.findAll('.split-side.right .split-line');
+    expect(left[2].classes()).toContain('no-newline');
+    // The new file DOES end in a newline — saying otherwise on the right
+    // would be a claim about the wrong file.
+    expect(right[2].classes()).toContain('empty');
   });
 });
 

@@ -1797,6 +1797,12 @@ describe('stageFile / unstageFile', () => {
     await expect(store.stageFile('a.ts')).resolves.toBeUndefined();
     await flush();
     expect(store.shared.error).toContain('pathspec');
+    // The line names the attempt: it may outlive the state-change that
+    // follows it, and a bare git message would then read as a claim
+    // about the repo rather than about one click.
+    expect(store.shared.error).toBe(
+      'Could not stage a.ts: fatal: pathspec did not match any files'
+    );
   });
 
   test('with no repo open, stageFile is a no-op (no request)', async () => {
@@ -1804,5 +1810,143 @@ describe('stageFile / unstageFile', () => {
     await store.stageFile('a.ts');
     await flush();
     expect(fake.callsTo('/repos/r1/stage')).toHaveLength(0);
+  });
+});
+
+// --- A refused mutation is STICKY ---
+
+/** Refuse every stage/unstage POST with `reason`. */
+function refuseMutations(reason: string): void {
+  onRequest = (call) => {
+    if (call.method === 'POST' && /\/(stage|unstage)$/.test(call.url)) {
+      return { status: 500, body: { error: reason } };
+    }
+    return undefined;
+  };
+}
+
+describe('a refused stage/unstage survives the next state-change', () => {
+  const REASON = 'fatal: Unable to create index.lock: File exists';
+  const REFUSAL = `Could not stage a.ts: ${REASON}`;
+  const UNSTAGED = { path: 'a.ts', status: 'modified' as FileStatus, staged: false };
+
+  async function refusedStage() {
+    refuseMutations(REASON);
+    const opened = await openStore([UNSTAGED]);
+    await opened.store.stageFile('a.ts');
+    await flush();
+    expect(opened.store.shared.error).toBe(REFUSAL);
+    return opened;
+  }
+
+  test('an unrelated state-change no longer erases it', async () => {
+    const { store, source } = await refusedStage();
+
+    // The competing git process finishing is itself a state-change — and
+    // it is exactly the event the message exists to explain.
+    source.emit('state-change', wireState([UNSTAGED, fileEntry('b.ts')]));
+    await flush();
+    expect(store.shared.error).toBe(REFUSAL);
+
+    // And it keeps surviving; it is not a one-shot reprieve.
+    source.emit('state-change', wireState([UNSTAGED, fileEntry('b.ts'), fileEntry('c.ts')]));
+    await flush();
+    expect(store.shared.error).toBe(REFUSAL);
+  });
+
+  test('it retires once the file reaches the side that was asked for', async () => {
+    const { store, source } = await refusedStage();
+
+    // Staged from the terminal instead: the unstaged row is gone, so the
+    // refusal has nothing left to describe.
+    source.emit('state-change', wireState([{ ...UNSTAGED, staged: true }]));
+    await flush();
+    expect(store.shared.error).toBeNull();
+  });
+
+  test('a file that leaves the working tree retires it too', async () => {
+    const { store, source } = await refusedStage();
+    source.emit('state-change', wireState([]));
+    await flush();
+    expect(store.shared.error).toBeNull();
+  });
+
+  test('an unstage refusal watches the STAGED side', async () => {
+    const staged = { path: 'a.ts', status: 'modified' as FileStatus, staged: true };
+    refuseMutations('fatal: nope');
+    const { store, source } = await openStore([staged]);
+    await store.unstageFile('a.ts');
+    await flush();
+    expect(store.shared.error).toBe('Could not unstage a.ts: fatal: nope');
+
+    // The staged row is still there — still refused, still true.
+    source.emit('state-change', wireState([staged, fileEntry('b.ts')]));
+    await flush();
+    expect(store.shared.error).toBe('Could not unstage a.ts: fatal: nope');
+
+    // Unstaged elsewhere: done.
+    source.emit('state-change', wireState([{ ...staged, staged: false }]));
+    await flush();
+    expect(store.shared.error).toBeNull();
+  });
+
+  test("the daemon's own error supersedes it, and takes it with it", async () => {
+    const { store, source } = await refusedStage();
+
+    source.emit('state-change', wireState([UNSTAGED], { error: 'watcher hiccup' }));
+    await flush();
+    expect(store.shared.error).toBe('watcher hiccup');
+
+    // Superseded for good: a later clean state does not bring it back.
+    source.emit('state-change', wireState([UNSTAGED]));
+    await flush();
+    expect(store.shared.error).toBeNull();
+  });
+
+  test('a fresh attempt clears the old line before it can go stale', async () => {
+    const { store } = await refusedStage();
+
+    onRequest = (call) =>
+      call.method === 'POST' && call.url === '/repos/r1/stage'
+        ? { body: { state: wireState([]) } }
+        : undefined;
+    await store.stageFile('a.ts');
+    await flush();
+    expect(store.shared.error).toBeNull();
+  });
+
+  test('a second refusal replaces the first', async () => {
+    const { store } = await refusedStage();
+    refuseMutations('fatal: something else');
+    await store.stageFile('a.ts');
+    await flush();
+    expect(store.shared.error).toBe('Could not stage a.ts: fatal: something else');
+  });
+
+  test('a lost connection supersedes it; recovery does not resurrect it', async () => {
+    const { store, source } = await refusedStage();
+
+    source.fail();
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+    onRequest = null;
+    await advance(1000);
+    expect(store.shared.error).toBeNull();
+  });
+
+  test('a repo switch drops it', async () => {
+    const { store } = await refusedStage();
+
+    onRequest = (call) => {
+      if (call.method === 'POST' && call.url === '/repos') {
+        return { body: { id: 'r2', path: (call.body as { path: string }).path } };
+      }
+      if (call.url.startsWith('/repos/r2/diff')) return { body: diffBody('') };
+      if (call.url.startsWith('/repos/r2/')) return { body: wireState() };
+      return undefined;
+    };
+    await store.open('/other');
+    FakeEventSource.latest().emit('snapshot', wireState());
+    await flush();
+    expect(store.shared.error).toBeNull();
   });
 });

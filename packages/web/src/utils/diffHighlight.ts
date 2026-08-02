@@ -179,7 +179,12 @@ export function syntaxPieces(
   const hit = cache.get(row);
   if (hit && hit.sig === sig) return hit.pieces;
   const pieces =
-    enabled && language !== null && row.content.length <= MAX_HIGHLIGHT_LINE_LENGTH
+    // A "\ No newline" row is git's prose, not code — highlighting it
+    // would colour the sentence as if it were part of the file.
+    enabled &&
+    row.kind !== 'no-newline' &&
+    language !== null &&
+    row.content.length <= MAX_HIGHLIGHT_LINE_LENGTH
       ? coalesce(mergePieces(highlightToRuns(row.content, language), row.segments))
       : null;
   cache.set(row, { sig, pieces });

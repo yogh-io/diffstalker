@@ -25,7 +25,7 @@ import type { AddressInfo, Socket } from 'node:net';
 import { Router, sendJson } from './router.js';
 import { createStaticHandler } from './staticFiles.js';
 import { shouldGuard, guardRequest, SECURITY_HEADERS } from './security.js';
-import { RepoRegistry, type RepoHandle } from './repoRegistry.js';
+import { RepoRegistry, openAndWarm, type RepoHandle } from './repoRegistry.js';
 import { SseHub, DaemonEventHub } from './sse.js';
 import { FollowController } from './follow.js';
 import { createVersionService, type LatestVersionFetcher } from './version.js';
@@ -66,6 +66,12 @@ export interface ListenOptions {
 export interface Daemon {
   listen(options: ListenOptions): Promise<void>;
   close(): Promise<void>;
+  /**
+   * Open a repo exactly as POST /repos does (refcounted, warmed up), for
+   * the paths the entry point was given on the command line. The ref is
+   * never released: the daemon was told to hold these repos.
+   */
+  openRepo(inputPath: string): Promise<{ id: string; path: string }>;
   /**
    * The primary bound address after listen(): AddressInfo for TCP, the path
    * for a unix socket. With several listeners this is the first one bound
@@ -353,6 +359,11 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
 
     getRepo(id: string): RepoHandle | undefined {
       return registry.getRepo(id);
+    },
+
+    async openRepo(inputPath: string): Promise<{ id: string; path: string }> {
+      const { handle } = await openAndWarm(registry, inputPath);
+      return { id: handle.id, path: handle.path };
     },
 
     async listen(opts: ListenOptions): Promise<void> {

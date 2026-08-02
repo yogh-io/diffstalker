@@ -26,6 +26,15 @@ node packages/daemon/dist/index.js          # run the compiled daemon
 packages/daemon/bin/diffstalkerd            # same, via the bin wrapper
 ```
 
+Arguments:
+
+```
+REPO_PATH...         Repository to open on startup, so a client finds it
+                     already there. Relative paths resolve against the
+                     current directory and ~ expands; a path that will not
+                     open stops the daemon before it listens
+```
+
 Options:
 
 ```
@@ -46,6 +55,7 @@ Options:
                      package ships it there. Missing dir → API-only, non-fatal)
 --no-update-check    Never ask npm which version is latest; GET /version
                      then reports the running version only
+--version, -v        Print the running version and exit
 --help, -h           Show this help
 ```
 

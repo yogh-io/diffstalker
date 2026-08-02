@@ -139,6 +139,76 @@ describe('buildDiffModel', () => {
     expect(rows[1].segments).toBeUndefined();
   });
 
+  describe('"\\ No newline at end of file"', () => {
+    /**
+     * Verbatim `git diff` shape for a file with no trailing newline
+     * whose last line was edited: git puts a marker on each side of the
+     * change run. The parser gives all three the same 'context' type,
+     * with no line numbers on the markers.
+     */
+    const rewrittenLastLine = (): DiffLine[] => [
+      { type: 'header', content: 'diff --git a/f.txt b/f.txt' },
+      { type: 'hunk', content: '@@ -1,2 +1,2 @@' },
+      { type: 'context', content: ' one', oldLineNum: 1, newLineNum: 1 },
+      { type: 'deletion', content: '-const x = 1;', oldLineNum: 2 },
+      { type: 'context', content: '\\ No newline at end of file' },
+      { type: 'addition', content: '+const x = 2;', newLineNum: 2 },
+      { type: 'context', content: '\\ No newline at end of file' },
+    ];
+
+    test('the marker gets its own kind and no line numbers', () => {
+      const rows = buildDiffModel(makeDiff(rewrittenLastLine())).sections[0].hunks[0].rows;
+      expect(rows.map((r) => r.kind)).toEqual([
+        'context',
+        'del',
+        'no-newline',
+        'add',
+        'no-newline',
+      ]);
+      expect(rows[2].content).toBe('\\ No newline at end of file');
+      expect(rows[2].oldLineNum).toBeUndefined();
+      expect(rows[2].newLineNum).toBeUndefined();
+    });
+
+    test('a marker between the runs does not break the del/add pairing', () => {
+      const rows = buildDiffModel(makeDiff(rewrittenLastLine())).sections[0].hunks[0].rows;
+      // A similar pair, so both halves carry word-diff segments.
+      // Ending the run at the marker left them unpaired.
+      expect(rows[1].segments).toBeDefined();
+      expect(rows[3].segments).toBeDefined();
+    });
+
+    test('a marker after a context line stands on its own', () => {
+      const rows = buildDiffModel(
+        makeDiff([
+          { type: 'header', content: 'diff --git a/f.txt b/f.txt' },
+          { type: 'hunk', content: '@@ -1,2 +1,2 @@' },
+          { type: 'deletion', content: '-one', oldLineNum: 1 },
+          { type: 'addition', content: '+ONE', newLineNum: 1 },
+          { type: 'context', content: ' two', oldLineNum: 2, newLineNum: 2 },
+          { type: 'context', content: '\\ No newline at end of file' },
+        ])
+      ).sections[0].hunks[0].rows;
+      expect(rows.map((r) => r.kind)).toEqual(['del', 'add', 'context', 'no-newline']);
+    });
+
+    test('real content starting with a backslash stays a normal line', () => {
+      // The test is on the RAW line, so a context line's leading space
+      // still protects `\begin{document}` from reading as a marker.
+      const rows = buildDiffModel(
+        makeDiff([
+          { type: 'header', content: 'diff --git a/p.tex b/p.tex' },
+          { type: 'hunk', content: '@@ -1,2 +1,2 @@' },
+          { type: 'context', content: ' \\begin{document}', oldLineNum: 1, newLineNum: 1 },
+          { type: 'deletion', content: '-\\section{a}', oldLineNum: 2 },
+          { type: 'addition', content: '+\\section{b}', newLineNum: 2 },
+        ])
+      ).sections[0].hunks[0].rows;
+      expect(rows.map((r) => r.kind)).toEqual(['context', 'del', 'add']);
+      expect(rows[0].content).toBe('\\begin{document}');
+    });
+  });
+
   test('detects binary diffs and records the header as a note', () => {
     const model = buildDiffModel(
       makeDiff([

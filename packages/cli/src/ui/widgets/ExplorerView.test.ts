@@ -50,6 +50,15 @@ describe('formatExplorerView rendering', () => {
     expect(out).toContain('{blue-fg}▸ {/blue-fg}');
   });
 
+  it('marks an unmerged path U in bright red', () => {
+    // It used to fall through the switch's default and render as an
+    // unlabelled, uncoloured row — the one status you must not miss.
+    const conflicted = [row(node({ name: 'clash.ts', gitStatus: 'conflicted' as FileStatus }))];
+    const out = formatExplorerView(conflicted, 0, false, WIDTH);
+    expect(out).toContain('{brightred-fg}U{/brightred-fg}');
+    expect(out).toContain('{brightred-fg}clash.ts{/brightred-fg}');
+  });
+
   it('highlights the selected+focused row with inverse cyan bold', () => {
     const out = formatExplorerView(rows, 1, true, WIDTH); // README.md selected
     expect(out).toContain('{cyan-fg}{bold}{inverse}README.md{/inverse}{/bold}{/cyan-fg}');

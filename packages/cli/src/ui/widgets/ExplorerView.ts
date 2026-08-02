@@ -30,6 +30,9 @@ function buildTreePrefix(row: ExplorerDisplayRow): string {
 
 /**
  * Get status marker for git status.
+ *
+ * Exhaustive with no `default`, like getStatusColorName below: the next
+ * FileStatus should be a compile error, not a blank marker.
  */
 function getStatusMarker(status: FileStatus | undefined): string {
   if (!status) return '';
@@ -46,8 +49,9 @@ function getStatusMarker(status: FileStatus | undefined): string {
       return 'R';
     case 'copied':
       return 'C';
-    default:
-      return '';
+    // git's own porcelain letter for an unmerged path.
+    case 'conflicted':
+      return 'U';
   }
 }
 
@@ -74,8 +78,8 @@ function getStatusColorName(status: FileStatus | undefined): string | null {
       return 'blue';
     case 'copied':
       return 'magenta';
-    default:
-      return null;
+    case 'conflicted':
+      return 'brightred';
   }
 }
 

@@ -8,6 +8,7 @@ import {
   extractHunkPatch,
   capLargeFileDiffs,
   isLargeFileDiff,
+  isNoNewlineMarker,
   largeDiffNotice,
   LARGE_DIFF_NOTICE_PREFIX,
   MAX_FILE_DIFF_BYTES,
@@ -45,6 +46,22 @@ describe('parseDiffLine', () => {
   it('parses deleted file header', () => {
     const result = parseDiffLine('deleted file mode 100644');
     expect(result.type).toBe('header');
+  });
+
+  it('parses mode-change headers', () => {
+    expect(parseDiffLine('old mode 100644').type).toBe('header');
+    expect(parseDiffLine('new mode 100755').type).toBe('header');
+  });
+
+  it('parses rename and copy headers', () => {
+    // parseDiffLine shares one header list with parseDiffWithLineNumbers;
+    // it used to carry a shorter copy that missed these.
+    expect(parseDiffLine('similarity index 95%').type).toBe('header');
+    expect(parseDiffLine('dissimilarity index 100%').type).toBe('header');
+    expect(parseDiffLine('rename from old.ts').type).toBe('header');
+    expect(parseDiffLine('rename to new.ts').type).toBe('header');
+    expect(parseDiffLine('copy from f.txt').type).toBe('header');
+    expect(parseDiffLine('copy to g.txt').type).toBe('header');
   });
 
   it('parses hunk header', () => {
@@ -197,6 +214,145 @@ rename to new.ts`;
     expect(result.filter((l) => l.type === 'header')).toHaveLength(4);
     expect(result.some((l) => l.content.includes('rename from'))).toBe(true);
     expect(result.some((l) => l.content.includes('rename to'))).toBe(true);
+  });
+
+  describe('"\\ No newline at end of file" marker', () => {
+    it('takes no line number and advances neither counter', () => {
+      const diff = `@@ -1,4 +1,4 @@
+ one
+-two
++TWO
+ three
+\\ No newline at end of file
+ four`;
+      const result = parseDiffWithLineNumbers(diff);
+
+      const three = result[4];
+      expect(three.content).toBe(' three');
+      expect(three.oldLineNum).toBe(3);
+      expect(three.newLineNum).toBe(3);
+
+      // The marker annotates the line before it; it is not a line of
+      // either file, so it carries no number at all.
+      const marker = result[5];
+      expect(marker.content).toBe('\\ No newline at end of file');
+      expect(marker.oldLineNum).toBeUndefined();
+      expect(marker.newLineNum).toBeUndefined();
+
+      // 4, not 5: the marker must not have consumed a number on either side.
+      const four = result[6];
+      expect(four.content).toBe(' four');
+      expect(four.oldLineNum).toBe(4);
+      expect(four.newLineNum).toBe(4);
+    });
+
+    it('keeps the old and new gutters agreeing after a marker (split view)', () => {
+      // Verbatim `git diff` of a file that had no trailing newline
+      // ("one\ntwo") edited to "one\nTWO\nthree\n".
+      const diff = `diff --git a/f.txt b/f.txt
+index 9ed40b4..ddc897f 100644
+--- a/f.txt
++++ b/f.txt
+@@ -1,2 +1,3 @@
+ one
+-two
+\\ No newline at end of file
++TWO
++three
+`;
+      const result = parseDiffWithLineNumbers(diff);
+      const byContent = (content: string) => result.find((l) => l.content === content)!;
+
+      // Split view puts "-two" and "+TWO" side by side; both are line 2
+      // of their own file. Counting the marker pushed "+TWO" to 3 and the
+      // two columns stopped lining up.
+      expect(byContent('-two').oldLineNum).toBe(2);
+      expect(byContent('+TWO').newLineNum).toBe(2);
+      expect(byContent('+three').newLineNum).toBe(3);
+      expect(byContent('\\ No newline at end of file').type).toBe('context');
+    });
+
+    it('isNoNewlineMarker is exported, and only matches the marker', () => {
+      // The row builders import this rather than re-deriving the test —
+      // a view that mistakes the marker for a context line loses the
+      // del/add pairing around it.
+      expect(isNoNewlineMarker('\\ No newline at end of file')).toBe(true);
+      // Raw lines only: a context line keeps its leading space, so real
+      // file content that starts with a backslash is not a marker.
+      expect(isNoNewlineMarker(' \\ No newline at end of file')).toBe(false);
+      expect(isNoNewlineMarker('-\\begin{document}')).toBe(false);
+      expect(isNoNewlineMarker('\\begin{document}')).toBe(false);
+    });
+
+    it('handles a marker on both sides of a one-line rewrite', () => {
+      const diff = `@@ -1 +1 @@
+-old
+\\ No newline at end of file
++new
+\\ No newline at end of file`;
+      const result = parseDiffWithLineNumbers(diff);
+
+      expect(result[1].oldLineNum).toBe(1); // -old
+      expect(result[3].newLineNum).toBe(1); // +new
+      const markers = result.filter((l) => l.content.startsWith('\\ '));
+      expect(markers).toHaveLength(2);
+      for (const marker of markers) {
+        expect(marker.oldLineNum).toBeUndefined();
+        expect(marker.newLineNum).toBeUndefined();
+      }
+    });
+  });
+
+  describe('mode changes', () => {
+    it('parses a mode-only diff as headers with no content lines', () => {
+      // Verbatim `git diff` of a chmod +x — no index line, no hunk.
+      const diff = `diff --git a/f.txt b/f.txt
+old mode 100644
+new mode 100755
+`;
+      const result = parseDiffWithLineNumbers(diff);
+
+      expect(result.map((l) => l.type)).toEqual(['header', 'header', 'header']);
+      // Nothing here is file content, so nothing carries a line number.
+      // The old fall-through numbered "old mode 100644" as line 0.
+      expect(result.every((l) => l.oldLineNum === undefined && l.newLineNum === undefined)).toBe(
+        true
+      );
+    });
+
+    it('parses mode lines alongside a content change without shifting the hunk', () => {
+      const diff = `diff --git a/f.txt b/f.txt
+old mode 100644
+new mode 100755
+index 4cb29ea..f04eb26
+--- a/f.txt
++++ b/f.txt
+@@ -1,3 +1,3 @@
+ one
+-two
++2
+ three`;
+      const result = parseDiffWithLineNumbers(diff);
+
+      expect(result[1].type).toBe('header');
+      expect(result[2].type).toBe('header');
+      expect(result[6].type).toBe('hunk');
+      expect(result[7].oldLineNum).toBe(1);
+      expect(result[7].newLineNum).toBe(1);
+    });
+
+    it('types copy and dissimilarity headers, not file content', () => {
+      const diff = `diff --git a/f.txt b/g.txt
+similarity index 100%
+copy from f.txt
+copy to g.txt
+diff --git a/h.txt b/h.txt
+dissimilarity index 100%
+index c827886..311db96 100644`;
+      const result = parseDiffWithLineNumbers(diff);
+
+      expect(result.every((l) => l.type === 'header')).toBe(true);
+    });
   });
 
   it('handles multiple hunks', () => {

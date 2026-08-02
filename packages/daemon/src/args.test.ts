@@ -28,14 +28,31 @@ function cleanEnv(overrides: Record<string, string> = {}): Record<string, string
 
 function runDaemon(
   args: string[],
-  overrides: Record<string, string> = {}
+  overrides: Record<string, string> = {},
+  cwd?: string
 ): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(process.execPath, [ENTRY, ...args], {
     encoding: 'utf-8',
     env: cleanEnv(overrides),
+    cwd,
     timeout: 15000,
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/** A fresh git repo with one commit, for the startup-open tests. */
+function makeRepo(dir: string): string {
+  fs.mkdirSync(dir, { recursive: true });
+  const git = (command: string): void => {
+    execSync(`git ${command}`, { cwd: dir, stdio: 'ignore' });
+  };
+  git('init --initial-branch=main');
+  git('config user.email "test@test.com"');
+  git('config user.name "Test User"');
+  fs.writeFileSync(path.join(dir, 'file.txt'), 'one\n');
+  git('add file.txt');
+  git('commit -m initial');
+  return dir;
 }
 
 describe('parseArgs error branches (exit 2 + message + usage)', () => {
@@ -115,7 +132,127 @@ describe('parseArgs error branches (exit 2 + message + usage)', () => {
     expect(result.stdout).toContain('--no-follow');
     expect(result.stdout).toContain('--web-root PATH');
     expect(result.stdout).toContain('--no-update-check');
+    // Positional repo paths and --version are part of the documented surface.
+    expect(result.stdout).toContain('REPO_PATH');
+    expect(result.stdout).toContain('--version, -v');
   });
+
+  test('an empty positional argument is refused, not read as the cwd', () => {
+    const result = runDaemon(['']);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Empty repo path argument');
+  });
+});
+
+describe('--version', () => {
+  test('prints just the running version on stdout and exits 0', () => {
+    const result = runDaemon(['--version']);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    // Just the version: no banner, no usage.
+    expect(result.stdout.trim().split('\n').length).toBe(1);
+    expect(result.stdout).not.toContain('Usage: diffstalkerd');
+  });
+
+  test('-v is the same as --version', () => {
+    expect(runDaemon(['-v']).stdout).toBe(runDaemon(['--version']).stdout);
+    expect(runDaemon(['-v']).status).toBe(0);
+  });
+
+  test('reports the version without binding anything (no XDG_RUNTIME_DIR needed)', () => {
+    // Bare `diffstalkerd` in this env exits 1 on the missing runtime dir;
+    // --version must answer before any of that.
+    const result = runDaemon(['--version']);
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('XDG_RUNTIME_DIR');
+  });
+});
+
+describe('positional repo paths', () => {
+  test('an absolute path is opened before anything is listening', async () => {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ds-open-')));
+    const socket = path.join(base, 'd.sock');
+    const repoDir = makeRepo(path.join(base, 'repo'));
+
+    try {
+      await withRunningDaemon(
+        ['--socket', socket, '--no-follow', '--no-update-check', repoDir],
+        {},
+        async (getStderr) => {
+          // Opened first, so a client that connects finds it already there.
+          expect(getStderr().indexOf(`opened ${repoDir}`)).toBeLessThan(
+            getStderr().indexOf('listening')
+          );
+
+          const res = await fetch('http://localhost/repos', { unix: socket } as RequestInit);
+          expect(res.status).toBe(200);
+          const repos = (await res.json()) as Array<{ path: string }>;
+          expect(repos.map((repo) => repo.path)).toContain(repoDir);
+        }
+      );
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  test('a relative path resolves against the current directory', async () => {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ds-open-rel-')));
+    const socket = path.join(base, 'd.sock');
+    const repoDir = makeRepo(path.join(base, 'repo'));
+
+    try {
+      await withRunningDaemon(
+        ['--socket', socket, '--no-follow', '--no-update-check', 'repo'],
+        {},
+        async () => {
+          const res = await fetch('http://localhost/repos', { unix: socket } as RequestInit);
+          const repos = (await res.json()) as Array<{ path: string }>;
+          expect(repos.map((repo) => repo.path)).toContain(repoDir);
+        },
+        base
+      );
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  test('a leading ~ expands to the daemon home', async () => {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ds-open-home-')));
+    const socket = path.join(base, 'd.sock');
+    const repoDir = makeRepo(path.join(base, 'repo'));
+
+    try {
+      await withRunningDaemon(
+        ['--socket', socket, '--no-follow', '--no-update-check', '~/repo'],
+        { HOME: base },
+        async () => {
+          const res = await fetch('http://localhost/repos', { unix: socket } as RequestInit);
+          const repos = (await res.json()) as Array<{ path: string }>;
+          expect(repos.map((repo) => repo.path)).toContain(repoDir);
+        }
+      );
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  test('a path that is not a repo is a startup failure, not a silent skip', () => {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ds-open-bad-')));
+    const socket = path.join(base, 'd.sock');
+    const notARepo = path.join(base, 'plain');
+    fs.mkdirSync(notARepo);
+
+    try {
+      const result = runDaemon(['--socket', socket, '--no-follow', notARepo]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(`cannot open ${notARepo}`);
+      expect(result.stderr).toContain('Not a git repository');
+      // Nothing came up: no socket was left behind.
+      expect(fs.existsSync(socket)).toBe(false);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 20000);
 });
 
 describe('update check', () => {
@@ -272,10 +409,12 @@ describe('dual bind (unix socket + TCP port)', () => {
 async function withRunningDaemon(
   args: string[],
   env: Record<string, string>,
-  run: (getStderr: () => string) => Promise<void>
+  run: (getStderr: () => string) => Promise<void>,
+  cwd?: string
 ): Promise<void> {
   const child = spawn(process.execPath, [ENTRY, ...args], {
     env: cleanEnv(env),
+    cwd,
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   let stderr = '';

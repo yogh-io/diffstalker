@@ -18,7 +18,9 @@ import * as path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { runtimeDir, cacheDir } from '@diffstalker/core/utils/xdg';
-import { createDaemon, ListenOptions } from './server.js';
+import { expandPath } from '@diffstalker/core/utils/pathUtils';
+import { createDaemon, type Daemon, ListenOptions } from './server.js';
+import { readCurrentVersion } from './version.js';
 
 const SOCKET_NAME = 'diffstalkerd.sock';
 
@@ -37,7 +39,13 @@ const SD_LISTEN_FDS_START = 3;
 
 const HELP = `diffstalkerd — diffstalker daemon (REST API + SSE over @diffstalker/core)
 
-Usage: diffstalkerd [options]
+Usage: diffstalkerd [options] [REPO_PATH...]
+
+Arguments:
+  REPO_PATH            Repository to open on startup, so a client finds it
+                       already there. Relative paths resolve against the
+                       current directory and ~ expands; no path means no
+                       repo is opened
 
 Options:
   --socket PATH        Bind a unix socket at PATH
@@ -57,6 +65,7 @@ Options:
                        when missing, the daemon serves the API only)
   --no-update-check    Never ask npm which version is latest; GET /version
                        then reports the running version only
+  --version, -v        Print the running version and exit
   --help, -h           Show this help
 `;
 
@@ -85,9 +94,32 @@ export interface CliOptions extends ListenOptions {
   webRoot?: string;
   /** --no-update-check: never reach out to the npm registry. */
   noUpdateCheck?: boolean;
+  /**
+   * Positional arguments: repositories to open on startup. Only ever
+   * explicit paths — the daemon never opens its own working directory,
+   * which for a systemd-launched process is whatever it happened to
+   * inherit.
+   */
+  repoPaths?: string[];
 }
 
-export function parseArgs(argv: string[]): CliOptions | 'help' {
+/**
+ * Record a positional argument: a repository to open on startup. An empty
+ * argument is rejected rather than resolved, since it would silently mean
+ * the daemon's own working directory.
+ */
+function addRepoPath(options: CliOptions, arg: string): void {
+  if (arg.startsWith('-')) {
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+  if (arg === '') {
+    throw new Error('Empty repo path argument');
+  }
+  options.repoPaths ??= [];
+  options.repoPaths.push(arg);
+}
+
+export function parseArgs(argv: string[]): CliOptions | 'help' | 'version' {
   const options: CliOptions = {};
 
   for (let i = 0; i < argv.length; i++) {
@@ -96,6 +128,9 @@ export function parseArgs(argv: string[]): CliOptions | 'help' {
       case '--help':
       case '-h':
         return 'help';
+      case '--version':
+      case '-v':
+        return 'version';
       case '--socket':
         options.socketPath = expectValue(argv, ++i, '--socket');
         break;
@@ -124,7 +159,8 @@ export function parseArgs(argv: string[]): CliOptions | 'help' {
         options.noUpdateCheck = true;
         break;
       default:
-        throw new Error(`Unknown argument: ${arg}`);
+        addRepoPath(options, arg);
+        break;
     }
   }
 
@@ -205,10 +241,36 @@ function announcePortAccess(port: number): void {
   console.error(`diffstalkerd: web UI at http://diffstalker.localhost:${port}/`);
 }
 
+/**
+ * Open the repositories named on the command line, before anything is
+ * listening: a client that connects then finds them in GET /repos instead
+ * of an empty "type an absolute path" form.
+ *
+ * The paths are the user's, typed in a shell, so ~ expands and a relative
+ * path resolves against the current directory. A path that will not open is
+ * fatal — the daemon was told to serve it, and starting without it would
+ * hand the user the same empty form with the reason buried in a log line.
+ */
+async function openStartupRepos(daemon: Daemon, repoPaths: string[]): Promise<void> {
+  for (const raw of repoPaths) {
+    const repoPath = path.resolve(expandPath(raw));
+    try {
+      const opened = await daemon.openRepo(repoPath);
+      console.error(`diffstalkerd opened ${opened.path}`);
+    } catch (err) {
+      console.error(
+        `diffstalkerd: cannot open ${repoPath}: ${err instanceof Error ? err.message : String(err)}`
+      );
+      await daemon.close().catch(() => {});
+      process.exit(1);
+    }
+  }
+}
+
 async function main(): Promise<void> {
   process.title = 'diffstalkerd';
 
-  let options: CliOptions | 'help';
+  let options: CliOptions | 'help' | 'version';
   try {
     options = parseArgs(process.argv.slice(2));
   } catch (err) {
@@ -219,6 +281,18 @@ async function main(): Promise<void> {
 
   if (options === 'help') {
     console.log(HELP);
+    return;
+  }
+
+  if (options === 'version') {
+    const version = readCurrentVersion();
+    if (version === null) {
+      // The manifest a running daemon can live without (GET /version says
+      // 'unknown'); as an answer to --version there is nothing to print.
+      console.error('diffstalkerd: version unknown (package.json unreadable)');
+      process.exit(1);
+    }
+    console.log(version);
     return;
   }
 
@@ -242,6 +316,9 @@ async function main(): Promise<void> {
     webRoot,
     updateCheck: !options.noUpdateCheck,
   });
+
+  await openStartupRepos(daemon, options.repoPaths ?? []);
+
   await daemon.listen(options);
 
   // The port the kernel actually handed out, not the one asked for: --port 0

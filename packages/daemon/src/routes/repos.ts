@@ -2,6 +2,7 @@
 
 import { listWorktrees } from '@diffstalker/core/git/worktree';
 import { Router, HttpError, sendJson } from '../router.js';
+import { openAndWarm } from '../repoRegistry.js';
 import { requireRepo, requireStringField, type RouteDeps } from './shared.js';
 
 export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
@@ -20,13 +21,9 @@ export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
     const inputPath = requireStringField(body, 'path');
     let opened;
     try {
-      opened = await registry.openRepo(inputPath);
+      opened = await openAndWarm(registry, inputPath);
     } catch (err) {
       throw new HttpError(400, err instanceof Error ? err.message : String(err));
-    }
-    if (opened.created) {
-      // Warm up status/hunk counts; errors land in manager state, not here.
-      opened.handle.manager.workingTree.refresh().catch(() => {});
     }
     sendJson(res, opened.created ? 201 : 200, {
       id: opened.handle.id,

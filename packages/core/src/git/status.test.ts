@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   parseStatusCode,
+  isUnmergedPair,
   parseNumstat,
   getStatus,
   stageFile,
@@ -22,6 +23,8 @@ import {
   abortOperation,
   rebaseContinue,
 } from './status.js';
+import type { GitStatus } from './status.js';
+import { MAX_FILE_DIFF_BYTES } from './diffParse.js';
 import { createFixtureRepo, removeFixtureRepo, writeFixtureFile, gitExec } from './test-helpers.js';
 
 describe('parseStatusCode', () => {
@@ -49,10 +52,29 @@ describe('parseStatusCode', () => {
     expect(parseStatusCode('C')).toBe('copied');
   });
 
+  it('parses U as conflicted', () => {
+    expect(parseStatusCode('U')).toBe('conflicted');
+  });
+
   it('returns modified for unknown codes', () => {
-    expect(parseStatusCode('U')).toBe('modified');
     expect(parseStatusCode('X')).toBe('modified');
     expect(parseStatusCode('')).toBe('modified');
+  });
+});
+
+describe('isUnmergedPair', () => {
+  it('matches every porcelain code pair git uses for an unmerged path', () => {
+    for (const pair of ['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']) {
+      expect(isUnmergedPair(pair[0], pair[1])).toBe(true);
+    }
+  });
+
+  it('leaves ordinary code pairs alone', () => {
+    // Including the two that share a letter with an unmerged pair but are
+    // not one: a staged add ('A ') and a staged delete ('D ').
+    for (const pair of ['M ', ' M', 'MM', 'A ', 'AM', 'D ', ' D', '??', 'R ', 'C ', '  ']) {
+      expect(isUnmergedPair(pair[0], pair[1])).toBe(false);
+    }
   });
 });
 
@@ -409,6 +431,133 @@ describe('stashPop conflict detection (fixture)', () => {
     } finally {
       removeFixtureRepo(name);
     }
+  });
+});
+
+describe('unmerged paths (fixture)', () => {
+  it('reports both sides of a UU conflict as conflicted', async () => {
+    const name = 'status-conflict-uu';
+    const repoPath = makeGuardRepo(name);
+    try {
+      gitExec(repoPath, 'checkout -b side');
+      writeFixtureFile(repoPath, 'base.txt', 'side version\n');
+      gitExec(repoPath, 'commit -am "side version"');
+      gitExec(repoPath, 'checkout main');
+      writeFixtureFile(repoPath, 'base.txt', 'main version\n');
+      gitExec(repoPath, 'commit -am "main version"');
+      expect(() => gitExec(repoPath, 'merge side')).toThrow();
+      expect(gitExec(repoPath, 'status --porcelain')).toContain('UU base.txt');
+
+      const status = await getStatus(repoPath);
+      const entries = status.files.filter((f) => f.path === 'base.txt');
+      // Two entries per unmerged path on purpose (index side + worktree
+      // side) — the file lists count on that shape.
+      expect(entries.length).toBe(2);
+      expect(entries.map((f) => f.status)).toEqual(['conflicted', 'conflicted']);
+      expect(entries.map((f) => f.staged).sort()).toEqual([false, true]);
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+
+  it('reports an AA conflict as conflicted even though neither column is U', async () => {
+    const name = 'status-conflict-aa';
+    const repoPath = makeGuardRepo(name);
+    try {
+      gitExec(repoPath, 'checkout -b side');
+      writeFixtureFile(repoPath, 'both.txt', 'side version\n');
+      gitExec(repoPath, 'add both.txt');
+      gitExec(repoPath, 'commit -m "side adds both.txt"');
+      gitExec(repoPath, 'checkout main');
+      writeFixtureFile(repoPath, 'both.txt', 'main version\n');
+      gitExec(repoPath, 'add both.txt');
+      gitExec(repoPath, 'commit -m "main adds both.txt"');
+      expect(() => gitExec(repoPath, 'merge side')).toThrow();
+      expect(gitExec(repoPath, 'status --porcelain')).toContain('AA both.txt');
+
+      const status = await getStatus(repoPath);
+      const entries = status.files.filter((f) => f.path === 'both.txt');
+      expect(entries.length).toBe(2);
+      expect(entries.map((f) => f.status)).toEqual(['conflicted', 'conflicted']);
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+
+  it('leaves an ordinary partially staged file unconflicted', async () => {
+    const name = 'status-conflict-none';
+    const repoPath = makeGuardRepo(name);
+    try {
+      writeFixtureFile(repoPath, 'base.txt', 'staged edit\n');
+      gitExec(repoPath, 'add base.txt');
+      writeFixtureFile(repoPath, 'base.txt', 'staged edit\nplus unstaged\n');
+
+      const status = await getStatus(repoPath);
+      const entries = status.files.filter((f) => f.path === 'base.txt');
+      expect(entries.length).toBe(2);
+      expect(entries.map((f) => f.status)).toEqual(['modified', 'modified']);
+    } finally {
+      removeFixtureRepo(name);
+    }
+  });
+});
+
+describe('untracked line counting size cap (fixture)', () => {
+  const NAME = 'status-untracked-cap';
+  let repoPath: string;
+
+  beforeAll(() => {
+    repoPath = makeGuardRepo(NAME);
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(NAME);
+  });
+
+  /**
+   * Run getStatus with fs.promises.readFile wrapped, so a test can prove
+   * which untracked files were pulled off disk. The reported stats alone
+   * cannot tell "refused to read" from "read and found nothing".
+   */
+  async function measureStatus(): Promise<{ status: GitStatus; readPaths: string[] }> {
+    type ReadFn = typeof fs.promises.readFile;
+    const realReadFile: ReadFn = fs.promises.readFile;
+    const readPaths: string[] = [];
+    const wrapped = ((...args: Parameters<ReadFn>) => {
+      readPaths.push(String(args[0]));
+      return realReadFile(...args);
+    }) as ReadFn;
+
+    (fs.promises as { readFile: ReadFn }).readFile = wrapped;
+    try {
+      const status = await getStatus(repoPath);
+      return { status, readPaths };
+    } finally {
+      (fs.promises as { readFile: ReadFn }).readFile = realReadFile;
+    }
+  }
+
+  it('counts the lines of a small untracked file', async () => {
+    writeFixtureFile(repoPath, 'small.txt', 'one\ntwo\nthree\n');
+    const { status, readPaths } = await measureStatus();
+
+    const entry = status.files.find((f) => f.path === 'small.txt');
+    expect(entry!.status).toBe('untracked');
+    expect(entry!.insertions).toBe(3);
+    expect(entry!.deletions).toBe(0);
+    expect(readPaths.some((p) => p.endsWith('small.txt'))).toBe(true);
+  });
+
+  it('never reads an untracked file over the cap and reports no line count', async () => {
+    writeFixtureFile(repoPath, 'huge.txt', 'x\n'.repeat(MAX_FILE_DIFF_BYTES));
+    const { status, readPaths } = await measureStatus();
+
+    expect(readPaths.some((p) => p.endsWith('huge.txt'))).toBe(false);
+    const entry = status.files.find((f) => f.path === 'huge.txt');
+    expect(entry!.status).toBe('untracked');
+    // Absent, not zero: we refused to read it, so the count is unknown.
+    expect(entry!.insertions).toBeUndefined();
+    expect(entry!.deletions).toBeUndefined();
   });
 });
 

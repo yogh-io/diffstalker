@@ -46,7 +46,7 @@ diffstalker --debug             # log path changes to stderr
 ## Tests
 
 ```bash
-cd packages/cli && bun test src/*.test.ts src/**/*.test.ts
+cd packages/cli && bun run test
 ```
 
 CLI tests never touch a real daemon or spin up watchers: `RepoSession`/`App`

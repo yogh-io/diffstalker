@@ -522,6 +522,10 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
   color: var(--status-copied);
 }
 
+.tree-row.st-conflicted .name {
+  color: var(--status-conflicted);
+}
+
 .changes-dot {
   flex: none;
   margin-left: 0.75ch;
@@ -566,6 +570,10 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
 
 .tree-row.st-copied .status-letter {
   color: var(--status-copied);
+}
+
+.tree-row.st-conflicted .status-letter {
+  color: var(--status-conflicted);
 }
 
 .tree-loading {

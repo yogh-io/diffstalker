@@ -48,6 +48,8 @@ export interface ChromeColors {
   statusUntracked: string;
   statusRenamed: string;
   statusCopied: string;
+  /** An unmerged path: orange, so it reads as neither a delete nor an edit. */
+  statusConflicted: string;
   /** The CLI's magenta for uncommitted-in-compare. */
   uncommitted: string;
   /** The CLI's flash yellow for freshly-changed rows/hunks. */
@@ -108,6 +110,7 @@ const darkTheme: Theme = {
     statusUntracked: '#859089',
     statusRenamed: '#6f9fdd',
     statusCopied: '#43b3bc',
+    statusConflicted: '#d98c4a',
     uncommitted: '#c678dd',
     flash: '#e5c94b',
   },
@@ -147,6 +150,7 @@ const lightTheme: Theme = {
     statusUntracked: '#6c757d',
     statusRenamed: '#3b6fd4',
     statusCopied: '#0c7f8c',
+    statusConflicted: '#b5561d',
     uncommitted: '#9c36b5',
     flash: '#eac54f',
   },
@@ -184,6 +188,7 @@ const darkColorblindTheme: Theme = {
     statusUntracked: '#848f9a',
     statusRenamed: '#6f9fdd',
     statusCopied: '#45b8c9',
+    statusConflicted: '#d55e00',
     uncommitted: '#c678dd',
     flash: '#e5c94b',
   },
@@ -223,6 +228,7 @@ const lightColorblindTheme: Theme = {
     statusUntracked: '#6c757d',
     statusRenamed: '#3b6fd4',
     statusCopied: '#0c7f8c',
+    statusConflicted: '#a8460b',
     uncommitted: '#9c36b5',
     flash: '#eac54f',
   },
@@ -261,6 +267,7 @@ const darkAnsiTheme: Theme = {
     statusUntracked: '#7f7f7f',
     statusRenamed: '#5c5cff',
     statusCopied: '#00cdcd',
+    statusConflicted: '#ff8700',
     uncommitted: '#cd00cd',
     flash: '#ffff00',
   },
@@ -300,6 +307,7 @@ const lightAnsiTheme: Theme = {
     statusUntracked: '#7f7f7f',
     statusRenamed: '#0000ee',
     statusCopied: '#00a3a3',
+    statusConflicted: '#c85000',
     uncommitted: '#cd00cd',
     flash: '#ffff00',
   },

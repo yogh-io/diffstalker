@@ -525,10 +525,31 @@ The app uses a **focus zone** system for full keyboard-only navigation with `Tab
 - Status `R` with path and `<- original-path`
 - Both paths shown in file list
 
+### Merge Conflicts
+
+- An unmerged path carries its own status, `conflicted`, shown as `U` in the
+  file lists and the Explorer (bright red in the terminal, its own theme
+  colour in the browser)
+- The browser refuses to stage or unstage it and says why: `git add` would
+  claim a resolution that has not happened, unstaging would drop the conflict
+  stages. Resolve it in your editor, then stage
+- `shared.operationInProgress` (merge / rebase / cherry-pick / revert) says
+  the repo is stopped; the per-file status says which paths are blocking it
+
+### Files With No Trailing Newline
+
+- Git's `\ No newline at end of file` is shown as a dim annotation of the line
+  above it, with no line number and no `+`/`-` marker — it is not a line of
+  either file
+- Side by side, it appears only on the side it is about, and it does not break
+  the pairing (or the word-level highlighting) of the changed last line
+
 ### No Repository
 
 - Error shown in header if not in a git repo
 - Operations fail gracefully
+- A repository path must be absolute (a leading `~` is expanded); the daemon
+  cannot resolve a relative path, because its working directory is not yours
 
 ### Git Worktrees
 
@@ -567,11 +588,16 @@ The app uses a **focus zone** system for full keyboard-only navigation with `Tab
 
 | Argument | Description |
 |----------|-------------|
-| `[path]` | Fixed repository path |
+| `[path]` | Fixed repository path (one only; a second path is an error) |
 | `-f, --follow [FILE]` | Enable follow mode, optionally with custom file |
 | `-s, --socket PATH` | diffstalkerd socket to attach to or spawn on |
+| `--instance NAME` | Attach to (or spawn) the daemon named NAME |
 | `-d, --debug` | Enable debug logging |
 | `-h, --help` | Show help message |
+| `-v, --version` | Print the version, plus which cli/daemon binaries this install runs |
+
+An unrecognized option (anything else starting with `-`) exits 2 with
+`unknown option`; it is never taken for a repository path.
 
 ---
 

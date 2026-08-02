@@ -46,7 +46,7 @@ applies the decoded `state` for you.
 ```bash
 cd packages/client
 bun run build
-bun test src/*.test.ts src/**/*.test.ts
+bun run test
 ```
 
 See `packages/daemon/README.md` for the endpoint reference this client mirrors.

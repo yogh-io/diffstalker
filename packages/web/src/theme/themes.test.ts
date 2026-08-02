@@ -12,6 +12,7 @@ import { themes, themeOrder, isThemeName } from './themes';
 import { ANSI_COLORS, resolveColor } from './palette';
 import { buildThemeCss, installThemeStyles } from './css';
 import { themes as coreThemes } from '@diffstalker/core/view/themes';
+import type { FileStatus } from '@diffstalker/core/git/status';
 
 describe('themes', () => {
   test('the web theme record holds exactly the shared themes', () => {
@@ -69,6 +70,24 @@ describe('buildThemeCss', () => {
     for (const token of ['--bg:', '--surface:', '--accent:', '--selection:', '--flash:']) {
       const count = css.split(token).length - 1;
       expect(count).toBe(themeOrder.length);
+    }
+  });
+
+  test('every FileStatus has a colour in every theme', () => {
+    // Typed as Record<FileStatus, …> so the next union member is a
+    // compile error here: 'conflicted' shipped with no colour and the U
+    // rendered in the plain text tone, indistinguishable from chrome.
+    const vars: Record<FileStatus, string> = {
+      modified: '--status-modified:',
+      added: '--status-added:',
+      deleted: '--status-deleted:',
+      untracked: '--status-untracked:',
+      renamed: '--status-renamed:',
+      copied: '--status-copied:',
+      conflicted: '--status-conflicted:',
+    };
+    for (const token of Object.values(vars)) {
+      expect(css.split(token).length - 1).toBe(themeOrder.length);
     }
   });
 

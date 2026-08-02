@@ -4,8 +4,17 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createGit, gitEnv } from './gitClient.js';
 import { getIgnoredFiles } from './ignoreUtils.js';
+import { MAX_FILE_DIFF_BYTES } from './diffParse.js';
 
-export type FileStatus = 'modified' | 'added' | 'deleted' | 'untracked' | 'renamed' | 'copied';
+export type FileStatus =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'untracked'
+  | 'renamed'
+  | 'copied'
+  /** Unmerged path: a conflict a client must not stage or diff as an ordinary change. */
+  | 'conflicted';
 
 interface FileStats {
   insertions: number;
@@ -28,19 +37,34 @@ export function parseNumstat(output: string): Map<string, FileStats> {
   return stats;
 }
 
-// Count lines in a file (for untracked files which don't show in numstat)
-async function countFileLines(repoPath: string, filePath: string): Promise<number> {
+/** Cap on the untracked file read below: the same per-file cap the diff path
+ *  uses for an untracked file, so one threshold governs "too big to read". */
+const MAX_UNTRACKED_COUNT_BYTES = MAX_FILE_DIFF_BYTES;
+
+/**
+ * Count lines in a file (for untracked files which don't show in numstat).
+ *
+ * Returns null when the file was NOT read: not a regular file, over the
+ * size cap, or unreadable. Null means "unknown" and the caller then leaves
+ * the +/- stats off that entry — reporting 0 for a file we refused to read
+ * would show a real file as empty, and a wrong number is worse than none.
+ */
+async function countFileLines(repoPath: string, filePath: string): Promise<number | null> {
   try {
     const fullPath = path.join(repoPath, filePath);
     // Never read a non-regular file: an untracked FIFO would make this
     // readFile never resolve and wedge the refresh queue forever.
     const stats = await fs.promises.stat(fullPath);
-    if (!stats.isFile()) return 0;
+    if (!stats.isFile()) return null;
+    // Stat before reading. Slurping the whole file to count its lines put a
+    // single call at 919MB RSS for one 405MB untracked file; over the cap
+    // the file is never opened.
+    if (stats.size > MAX_UNTRACKED_COUNT_BYTES) return null;
     const content = await fs.promises.readFile(fullPath, 'utf-8');
     // Count non-empty lines
     return content.split('\n').filter((line) => line.length > 0).length;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -66,6 +90,28 @@ export interface GitStatus {
   isRepo: boolean;
 }
 
+/**
+ * The seven porcelain code pairs git uses for an unmerged path. Five carry
+ * a 'U' in one column, but 'AA' (both added) and 'DD' (both deleted) do
+ * not — read one column at a time those look like an ordinary add or
+ * delete, so the pair has to be matched as a whole.
+ */
+const UNMERGED_CODE_PAIRS = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
+
+/** True when the index + worktree code pair marks the path as unmerged. */
+export function isUnmergedPair(index: string, workingDir: string): boolean {
+  return UNMERGED_CODE_PAIRS.has(`${index}${workingDir}`);
+}
+
+/**
+ * Status for one column of a porcelain pair. An unmerged pair overrides
+ * both columns: neither side of a conflict is an ordinary change a client
+ * may stage.
+ */
+function entryStatus(code: string, conflicted: boolean): FileStatus {
+  return conflicted ? 'conflicted' : parseStatusCode(code);
+}
+
 export function parseStatusCode(code: string): FileStatus {
   switch (code) {
     case 'M':
@@ -80,6 +126,8 @@ export function parseStatusCode(code: string): FileStatus {
       return 'renamed';
     case 'C':
       return 'copied';
+    case 'U':
+      return 'conflicted';
     default:
       return 'modified';
   }
@@ -121,8 +169,12 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
     if (seen.has(key)) continue;
     seen.add(key);
 
+    // An unmerged path keeps its two entries (index side + worktree side);
+    // only the status changes, so the file lists' index math is untouched.
+    const conflicted = isUnmergedPair(file.index, file.working_dir);
+
     if (file.index && file.index !== ' ' && file.index !== '?') {
-      const status = parseStatusCode(file.index);
+      const status = entryStatus(file.index, conflicted);
       processedFiles.push({
         path: file.path,
         status,
@@ -143,7 +195,7 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
     if (file.working_dir && file.working_dir !== ' ') {
       processedFiles.push({
         path: file.path,
-        status: file.working_dir === '?' ? 'untracked' : parseStatusCode(file.working_dir),
+        status: entryStatus(file.working_dir, conflicted),
         staged: false,
       });
     }
@@ -173,7 +225,10 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
       untrackedFiles.map((f) => countFileLines(repoPath, f.path))
     );
     for (let i = 0; i < untrackedFiles.length; i++) {
-      untrackedFiles[i].insertions = lineCounts[i];
+      const count = lineCounts[i];
+      // Unknown line count: leave the stats absent rather than claim zero.
+      if (count === null) continue;
+      untrackedFiles[i].insertions = count;
       untrackedFiles[i].deletions = 0;
     }
   }

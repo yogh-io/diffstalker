@@ -43,6 +43,7 @@ function chromeVars(chrome: ChromeColors): string[] {
     `--status-untracked: ${chrome.statusUntracked};`,
     `--status-renamed: ${chrome.statusRenamed};`,
     `--status-copied: ${chrome.statusCopied};`,
+    `--status-conflicted: ${chrome.statusConflicted};`,
     `--uncommitted: ${chrome.uncommitted};`,
     `--flash: ${chrome.flash};`,
   ];
