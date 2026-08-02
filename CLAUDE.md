@@ -12,6 +12,12 @@ The git state engine now lives in a **daemon** (`diffstalkerd`): a Node http ser
 
 **IMPORTANT:** After adding a new feature, update `FEATURES.md` to document it. Keep the feature list organized by category (Views, Navigation, Operations, etc.).
 
+**Before starting a feature, read `docs/feature-review-0.9.0.md`.** The project is
+deliberately not growing features right now. That doc records what was already
+considered and rejected (and why), what is known broken and deferred, and the
+specific things that would justify revisiting. It exists so the same ground is not
+re-covered from scratch.
+
 ## Tech Stack
 
 - **TypeScript** with ESM modules, compiled with `tsc`, run with **bun** in development
