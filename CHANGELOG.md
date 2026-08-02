@@ -111,6 +111,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A named pipe in the working tree no longer freezes the daemon.** Opening a
+  FIFO blocks until something opens the other end to write, and the working-tree
+  watcher opened whatever appeared. Under `bun` that block lands on the main
+  thread, so one pipe created inside a watched repo stopped the daemon answering
+  anything at all — `/health` included — while it still looked alive. The
+  watcher now skips anything that is not a regular file or a directory. Node
+  handles the same path without trouble, so a `diffstalkerd` installed from npm
+  was never affected; `bun run dev` and `bun run serve` were.
 - **A host name that merely begins with `127.` is no longer taken for
   loopback.** The daemon checks the `Host` header on every request so that a
   name an attacker owns cannot be pointed at the daemon's port and become
