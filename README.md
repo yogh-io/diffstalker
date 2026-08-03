@@ -142,6 +142,11 @@ Because the state is one shared service, both stay live over the same event stre
 
 ## Installation
 
+**Linux.** That is what diffstalker is built and tested on. The daemon's default
+transport is a unix socket under `$XDG_RUNTIME_DIR`, so macOS (which does not set
+it) needs an explicit `--socket PATH`, and native Windows is not supported — use
+WSL2. Requires Node 20.19 or newer, and `git` on `PATH`.
+
 Web UI (the daemon that serves it):
 ```bash
 npm install -g diffstalkerd

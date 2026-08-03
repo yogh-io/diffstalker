@@ -83,6 +83,74 @@ jobs:
             ' "$names"
           done
 
+      # Install the packed tarballs with npm and BOOT them under Node.
+      #
+      # Everything above this step runs under bun, so without it CI never once
+      # executes the published Node program on the runtime its users actually
+      # have — a regression bun polyfills and Node does not would ship green.
+      #
+      # It is also the only check that catches a tarball missing dist/web. The
+      # daemon's web assets are copied in by ITS OWN build:prod; a plain
+      # `bun run build` leaves them out, and the resulting tarball installs
+      # cleanly and then dies on first run with ERR_MODULE_NOT_FOUND. Nothing
+      # else here asserts the bundle replaced the tsc output.
+      #
+      # Both the floor from `engines` and current Node, because the floor is a
+      # claim we make to consumers and nothing else tests it.
+      - name: Smoke-test the tarballs under Node
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/smoke.sh" <<'SMOKE'
+          set -euo pipefail
+          node --version
+          work=$(mktemp -d)
+          cd "$work"
+          npm init -y >/dev/null
+          npm i --no-audit --no-fund "$GITHUB_WORKSPACE"/dist-tarballs/*.tgz >/dev/null
+          export PATH="$work/node_modules/.bin:$PATH"
+
+          # The bundled web UI must be present, or GET / serves nothing.
+          test -f node_modules/diffstalkerd/dist/web/index.html \
+            || { echo "FAIL: daemon tarball has no dist/web/index.html"; exit 1; }
+
+          diffstalkerd --version
+          diffstalker --version
+
+          # Boot it the way a user does, on an explicit socket so the runner's
+          # missing XDG_RUNTIME_DIR is not what we end up testing.
+          port=7391
+          diffstalkerd --socket "$work/d.sock" --port "$port" --no-follow --no-update-check &
+          daemon=$!
+          trap 'kill "$daemon" 2>/dev/null || true' EXIT
+          for i in $(seq 1 50); do
+            curl -fsS "http://127.0.0.1:$port/health" >/dev/null 2>&1 && break
+            sleep 0.2
+          done
+          curl -fsS "http://127.0.0.1:$port/health"
+
+          # GET / must serve the SPA, and every asset it references must resolve.
+          # A files-field slip shows up here and nowhere else.
+          curl -fsS "http://127.0.0.1:$port/" -o index.html
+          grep -q '<div id="app"' index.html || { echo "FAIL: GET / is not the SPA"; exit 1; }
+          grep -oE '(src|href)="/[^"]+"' index.html | cut -d'"' -f2 | sort -u | while read -r asset; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port$asset")
+            [ "$code" = "200" ] || { echo "FAIL: asset $asset -> $code"; exit 1; }
+            echo "  ok $asset"
+          done
+          echo "smoke OK on $(node --version)"
+          SMOKE
+          chmod +x "$RUNNER_TEMP/smoke.sh"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20.19.0'
+      - run: bash "$RUNNER_TEMP/smoke.sh"
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: bash "$RUNNER_TEMP/smoke.sh"
+
       # Full suite (core + cli + daemon + client).
       - run: bun run test
 
