@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-08-03
 
 ### Added
 
@@ -233,6 +233,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- **The release gate now boots the packed tarballs under Node.** Every step
+  before it runs under bun, so nothing ever executed the published Node
+  program on the runtime its users have. The new step installs both tarballs
+  with npm into a clean directory, starts the daemon, and checks that `GET /`
+  is really the web UI and that every asset it references returns 200 — on
+  the engines floor (20.19.0) as well as current Node. It also catches a
+  daemon tarball built without `build:prod`, which ships without the web
+  assets, installs cleanly, and then fails on first run.
+- **The README states the platform.** Linux is what diffstalker is built and
+  tested on. macOS needs an explicit `--socket` because it does not set
+  `XDG_RUNTIME_DIR`, and native Windows is not supported; use WSL2.
 - **Three CLI test files were never being run.** The test script globbed
   `src/*.test.ts src/**/*.test.ts`, which the shell expands one directory
   deep, so everything under `src/ui/widgets/` was skipped in CI and in the
