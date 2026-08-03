@@ -40,6 +40,19 @@ const version = computed(() => {
   const state = daemon.version;
   if (!state || state.current === null) return null;
 
+  // The daemon under this tab was restarted on a different version, so this
+  // page's code is older than the API it is talking to. That outranks
+  // whatever npm says: a stale bundle can start failing on changed routes,
+  // and no npm hint helps with that. Never reloads on its own — this is a
+  // tool people leave open to keep looking at something.
+  if (daemon.daemonUpgraded) {
+    return {
+      status: 'stale-bundle' as const,
+      label: `v${daemon.servedBy} → v${state.current}`,
+      title: `the daemon restarted on ${state.current}; reload to match it`,
+    };
+  }
+
   const label = `v${state.current}`;
   const titles: Record<typeof state.status, string> = {
     current: `up to date with npm (${state.latest})`,
@@ -159,8 +172,11 @@ const version = computed(() => {
   cursor: default;
 }
 
-/* Only a stale version earns attention; matching npm stays quiet. */
-.version[data-state='outdated'] {
+/* Only a stale version earns attention; matching npm stays quiet. A stale
+   bundle earns the same, and for a better reason: the page is older than
+   the API it is calling. */
+.version[data-state='outdated'],
+.version[data-state='stale-bundle'] {
   color: var(--warn);
 }
 

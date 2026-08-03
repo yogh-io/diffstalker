@@ -59,6 +59,13 @@ function sameTarget(a: FollowChangeEvent, b: FollowChangeEvent | null): boolean 
   return b !== null && a.repoId === b.repoId && a.path === b.path;
 }
 
+/**
+ * How often a connected tab re-asks the daemon for version state. The daemon
+ * caches npm's answer for six hours, so anything under that only costs a
+ * local request; hourly keeps the indicator honest without being chatty.
+ */
+export const VERSION_POLL_MS = 60 * 60 * 1000;
+
 export const useDaemonStore = defineStore('daemon', () => {
   const client = new DiffstalkerClient();
 
@@ -77,8 +84,18 @@ export const useDaemonStore = defineStore('daemon', () => {
    * cannot answer (the indicator then hides). */
   const version = shallowRef<VersionState | null>(null);
   const error = shallowRef<string | null>(null);
+  /**
+   * The daemon version this page was served by, remembered from the first
+   * answer we ever got. The web UI ships INSIDE the daemon tarball, so the
+   * daemon's own version is this bundle's identity — no build stamp needed.
+   * When a later poll reports a different one, the daemon was restarted on a
+   * new version and the code running in this tab no longer matches the API
+   * underneath it.
+   */
+  const servedBy = shallowRef<string | null>(null);
 
   let subscription: SseHandle | null = null;
+  let versionTimer: ReturnType<typeof setInterval> | null = null;
   // loadFollow guards: `loadingFollow` keeps repeated snapshots from
   // stacking overlapping retry loops; `followLoadedOnce` marks the
   // cold-load done so later loads (reconnects) may re-seed a changed
@@ -116,6 +133,7 @@ export const useDaemonStore = defineStore('daemon', () => {
         // was restarted on a different version. The daemon caches the npm
         // lookup, so this costs one local request.
         void loadVersion();
+        startVersionPolling();
       },
       onRepoOpened: (repo) => upsertRepo(repo),
       onRepoClosed: ({ id }) => {
@@ -153,6 +171,7 @@ export const useDaemonStore = defineStore('daemon', () => {
   function disconnect(): void {
     subscription?.close();
     subscription = null;
+    stopVersionPolling();
   }
 
   /** Re-pull the open-repo list (GET /repos carries branches). */
@@ -173,10 +192,43 @@ export const useDaemonStore = defineStore('daemon', () => {
    */
   async function loadVersion(): Promise<void> {
     try {
-      version.value = await client.version();
+      const state = await client.version();
+      version.value = state;
+      // First answer of this page load defines what served us. Only ever
+      // set once — reassigning on every poll is what would make the
+      // upgrade check silently never fire.
+      if (servedBy.value === null && state.current !== null) {
+        servedBy.value = state.current;
+      }
     } catch {
       // Nothing to say: the indicator keeps showing what it had.
     }
+  }
+
+  /**
+   * Re-ask periodically, because otherwise nobody ever does.
+   *
+   * loadVersion used to run only on (re)connect. That is exactly wrong for
+   * the way this thing is meant to be used: a tab left open on a second
+   * monitor holds one SSE connection for days and never asks again, so the
+   * "up to date" indicator freezes at whatever was true when the tab opened
+   * and fails in the reassuring direction. The daemon's own npm lookup is
+   * cached for six hours, so this poll costs one local request per hour and
+   * reaches the network at most every sixth.
+   *
+   * The same poll answers the second question: whether the daemon under
+   * this tab has been restarted on a newer version than the one that served
+   * the bundle.
+   */
+  function startVersionPolling(): void {
+    if (versionTimer !== null) return;
+    versionTimer = setInterval(() => void loadVersion(), VERSION_POLL_MS);
+  }
+
+  function stopVersionPolling(): void {
+    if (versionTimer === null) return;
+    clearInterval(versionTimer);
+    versionTimer = null;
   }
 
   /**
@@ -315,6 +367,19 @@ export const useDaemonStore = defineStore('daemon', () => {
   );
   const activeRepoPath = computed(() => activeRepo.value?.path ?? null);
 
+  /**
+   * The daemon has been restarted on a different version than the one that
+   * served this page, so the bundle in this tab is stale. Passive on
+   * purpose: an auto-reload would throw away whatever the user was reading,
+   * and this is a tool people leave open precisely to keep looking at it.
+   */
+  const daemonUpgraded = computed(
+    () =>
+      servedBy.value !== null &&
+      version.value?.current != null &&
+      version.value.current !== servedBy.value
+  );
+
   return {
     // reactive state
     connection,
@@ -329,6 +394,8 @@ export const useDaemonStore = defineStore('daemon', () => {
     activeRepo,
     activeRepoPath,
     version,
+    servedBy,
+    daemonUpgraded,
     error,
     // actions
     connect,

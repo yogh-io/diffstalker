@@ -10,6 +10,7 @@ import {
   useDaemonStore,
   FOLLOW_LOAD_ATTEMPTS,
   FOLLOW_RETRY_DELAY_MS,
+  VERSION_POLL_MS,
 } from './daemon';
 import { makeFakeFetch, FakeEventSource } from '../testing/fakes';
 import type { FakeFetch, FetchCall, FakeResponse } from '../testing/fakes';
@@ -57,6 +58,9 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // A test that enables fake timers must not leave them on: flush() is a
+  // real setTimeout and would hang in whatever runs next.
+  vi.useRealTimers();
 });
 
 describe('useDaemonStore', () => {
@@ -265,6 +269,51 @@ describe('useDaemonStore', () => {
     await flush();
 
     expect(store.version).toEqual(VERSION_STATE);
+  });
+
+  test('a connected tab keeps re-asking for the version on its own', async () => {
+    // The bug this pins: loadVersion used to run ONLY on (re)connect, so a
+    // tab left open on a second monitor — the intended use — never asked
+    // again and the indicator froze at whatever was true when it opened.
+    vi.useFakeTimers();
+    const store = useDaemonStore();
+    store.connect();
+    FakeEventSource.latest().emit('snapshot', []);
+    await vi.advanceTimersByTimeAsync(0);
+    const afterConnect = fake.callsTo('/version').length;
+    expect(afterConnect).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    expect(fake.callsTo('/version').length).toBe(2);
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    expect(fake.callsTo('/version').length).toBe(3);
+
+    // and it stops when the store is torn down, so nothing leaks
+    store.disconnect();
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 3);
+    expect(fake.callsTo('/version').length).toBe(3);
+  });
+
+  test('a daemon restarted on a new version marks the bundle stale', async () => {
+    vi.useFakeTimers();
+    const store = useDaemonStore();
+    store.connect();
+    FakeEventSource.latest().emit('snapshot', []);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.servedBy).toBe(VERSION_STATE.current);
+    expect(store.daemonUpgraded).toBe(false);
+
+    // The daemon comes back on a newer version than the one that served us.
+    onRequest = (call) =>
+      call.url === '/version'
+        ? { status: 200, body: { current: '0.10.0', latest: '0.10.0', status: 'current' } }
+        : undefined;
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+
+    expect(store.daemonUpgraded).toBe(true);
+    // servedBy is what SERVED this page and must never move, or the check
+    // silently stops firing.
+    expect(store.servedBy).toBe(VERSION_STATE.current);
   });
 
   test('a failing /version leaves the last known state and never touches the connection', async () => {

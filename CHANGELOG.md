@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The version indicator no longer freezes at whatever was true when the tab
+  opened.** It was pulled only when the event stream connected, so a tab left
+  open on a second monitor — the way this is meant to be used — never asked
+  again and kept reporting "up to date" indefinitely. It now re-asks hourly
+  while connected, and stops when the stream closes. The daemon still caches
+  npm's answer for six hours, so this costs one local request an hour.
+- **A tab now notices when the daemon under it was restarted on a new
+  version.** The web UI ships inside the daemon package, so the daemon's own
+  version identifies the bundle: when it changes, the page is older than the
+  API it is calling and the status bar says so and asks for a reload. It never
+  reloads on its own — this is a tool people leave open to keep looking at
+  something.
+
 ## [0.10.0] - 2026-08-03
 
 ### Added
