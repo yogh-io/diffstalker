@@ -256,6 +256,7 @@ export class App {
       getRepoPath: () => this.repoPath,
       getRecentRepos: () => this.recentRepos,
       onRepoSwitch: (repoPath) => this.switchToRepo(repoPath),
+      exit: () => this.exit(),
       render: () => this.render(),
     });
 
@@ -686,8 +687,7 @@ export class App {
     // Load root directory
     this.explorerManager.loadDirectory('');
 
-    // Pre-load file paths for file finder (runs in background)
-    this.explorerManager.loadFilePaths();
+    // The finder fetches its own list on open; nothing to pre-load.
 
     // Update git status after tree is loaded
     this.updateExplorerGitStatus();

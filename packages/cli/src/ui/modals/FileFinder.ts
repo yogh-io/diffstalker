@@ -1,32 +1,48 @@
 import blessed from 'neo-blessed';
 import type { Widgets } from 'blessed';
-import { Fzf, type FzfResultItem } from 'fzf';
+import {
+  clampMove,
+  createFinderIndex,
+  cycleMove,
+  toSegments,
+  FINDER_DEBOUNCE_MS,
+  type FinderIndex,
+  type FinderMatch,
+} from '@diffstalker/core/view/finderModel';
 import type { Modal } from './Modal.js';
 
 const MAX_RESULTS = 15;
-const DEBOUNCE_MS = 15;
-
-interface MatchResult {
-  path: string;
-  score: number;
-  positions: Set<number>;
-}
 
 /**
  * Highlight matched characters in a display path.
- * The positions set refers to indices in the original full path,
- * so we need an offset when the display path is truncated.
+ *
+ * `positions` indexes the FULL path; `sliceFrom` is where the rendered
+ * tail starts in it. The box is `tags: true`, so path text has to be
+ * escaped — a repo file named `a{bold}b` would otherwise be read as
+ * markup and corrupt the modal.
  */
-function highlightMatch(displayPath: string, positions: Set<number>, offset: number): string {
-  let result = '';
-  for (let i = 0; i < displayPath.length; i++) {
-    if (positions.has(i + offset)) {
-      result += `{yellow-fg}${displayPath[i]}{/yellow-fg}`;
-    } else {
-      result += displayPath[i];
-    }
-  }
-  return result;
+function highlightMatch(tail: string, positions: ReadonlySet<number>, sliceFrom: number): string {
+  return toSegments(tail, positions, sliceFrom)
+    .map((segment) => {
+      const text = blessed.escape(segment.text);
+      return segment.hit ? `{yellow-fg}${text}{/yellow-fg}` : text;
+    })
+    .join('');
+}
+
+/**
+ * One result row: left-truncated to `width`, matches highlighted, and
+ * marked up for selection.
+ */
+function formatRow(match: FinderMatch, selected: boolean, width: number): string {
+  const maxLen = width - 4;
+  // Truncate from the left: the filename end is the informative part. The
+  // ellipsis is rendered here, outside the highlighter, so the positions
+  // stay aligned to the untruncated path.
+  const sliceFrom = match.text.length > maxLen ? match.text.length - (maxLen - 1) : 0;
+  const ellipsis = sliceFrom > 0 ? '…' : '';
+  const body = ellipsis + highlightMatch(match.text.slice(sliceFrom), match.positions, sliceFrom);
+  return selected ? `{cyan-fg}{bold}> ${body}{/bold}{/cyan-fg}` : `  ${body}`;
 }
 
 /**
@@ -36,26 +52,27 @@ export class FileFinder implements Modal {
   private box: Widgets.BoxElement;
   private textbox: Widgets.TextareaElement;
   private screen: Widgets.Screen;
-  private allPaths: string[];
-  private results: MatchResult[] = [];
+  private results: FinderMatch[] = [];
   private selectedIndex: number = 0;
   private query: string = '';
   private onSelect: (path: string) => void;
   private onCancel: () => void;
+  private onQuit: () => void;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private fzf: Fzf<string[]>;
+  private finderIndex: FinderIndex;
 
   constructor(
     screen: Widgets.Screen,
     allPaths: string[],
     onSelect: (path: string) => void,
-    onCancel: () => void
+    onCancel: () => void,
+    onQuit: () => void
   ) {
     this.screen = screen;
-    this.allPaths = allPaths;
     this.onSelect = onSelect;
     this.onCancel = onCancel;
-    this.fzf = new Fzf(allPaths, { limit: MAX_RESULTS, casing: 'smart-case' });
+    this.onQuit = onQuit;
+    this.finderIndex = createFinderIndex(allPaths, MAX_RESULTS);
 
     // Create modal box
     const width = Math.min(80, (screen.width as number) - 10);
@@ -108,36 +125,44 @@ export class FileFinder implements Modal {
       this.onCancel();
     });
 
+    // Ctrl+C must quit from here too. blessed's grabKeys suppresses the
+    // screen-level handler while this textarea has focus, and the textarea
+    // swallows control characters — so without this binding the finder is
+    // the one place in the app where the universal exit does nothing.
+    this.textbox.key(['C-c'], () => {
+      this.destroy();
+      this.onQuit();
+    });
+
     // Handle enter to select
     this.textbox.key(['enter'], () => {
       if (this.results.length > 0) {
         const selected = this.results[this.selectedIndex];
         this.destroy();
-        this.onSelect(selected.path);
+        this.onSelect(selected.text);
       }
     });
 
     // Handle up/down for navigation (Ctrl+j/k since j/k are for typing)
     this.textbox.key(['C-j', 'down'], () => {
-      this.selectedIndex = Math.min(this.results.length - 1, this.selectedIndex + 1);
+      this.selectedIndex = clampMove(this.selectedIndex, 1, this.results.length);
       this.renderContent();
     });
 
     this.textbox.key(['C-k', 'up'], () => {
-      this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+      this.selectedIndex = clampMove(this.selectedIndex, -1, this.results.length);
       this.renderContent();
     });
 
     // Handle tab for next result
     this.textbox.key(['tab'], () => {
-      this.selectedIndex = (this.selectedIndex + 1) % Math.max(1, this.results.length);
+      this.selectedIndex = cycleMove(this.selectedIndex, 1, this.results.length);
       this.renderContent();
     });
 
     // Handle shift-tab for previous result
     this.textbox.key(['S-tab'], () => {
-      this.selectedIndex =
-        (this.selectedIndex - 1 + this.results.length) % Math.max(1, this.results.length);
+      this.selectedIndex = cycleMove(this.selectedIndex, -1, this.results.length);
       this.renderContent();
     });
 
@@ -152,23 +177,12 @@ export class FileFinder implements Modal {
           this.updateResults();
           this.renderContent();
         }
-      }, DEBOUNCE_MS);
+      }, FINDER_DEBOUNCE_MS);
     });
   }
 
   private updateResults(): void {
-    if (!this.query) {
-      this.results = this.allPaths
-        .slice(0, MAX_RESULTS)
-        .map((p) => ({ path: p, positions: new Set<number>(), score: 0 }));
-      return;
-    }
-    const entries = this.fzf.find(this.query);
-    this.results = entries.map((entry: FzfResultItem) => ({
-      path: entry.item,
-      score: entry.score,
-      positions: entry.positions,
-    }));
+    this.results = this.finderIndex.find(this.query);
   }
 
   private renderContent(): void {
@@ -185,29 +199,7 @@ export class FileFinder implements Modal {
       lines.push('{gray-fg}No matches{/gray-fg}');
     } else {
       for (let i = 0; i < this.results.length; i++) {
-        const result = this.results[i];
-        const isSelected = i === this.selectedIndex;
-
-        // Truncate path if needed
-        const fullPath = result.path;
-        const maxLen = width - 4;
-        let displayPath = fullPath;
-        let offset = 0;
-        if (displayPath.length > maxLen) {
-          offset = displayPath.length - (maxLen - 1);
-          displayPath = '…' + displayPath.slice(offset);
-          // Account for the '…' prefix: display index 0 is '…', actual content starts at 1
-          offset = offset - 1;
-        }
-
-        // Highlight matched characters
-        const highlighted = highlightMatch(displayPath, result.positions, offset);
-
-        if (isSelected) {
-          lines.push(`{cyan-fg}{bold}> ${highlighted}{/bold}{/cyan-fg}`);
-        } else {
-          lines.push(`  ${highlighted}`);
-        }
+        lines.push(formatRow(this.results[i], i === this.selectedIndex, width));
       }
     }
 

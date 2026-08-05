@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Ctrl+C now quits from the file finder too.** It was the one place in the
+  terminal UI where the universal exit did nothing: the finder's text input
+  takes over the keyboard and swallows control characters, so the app-level
+  binding never saw the key.
+- **The terminal UI no longer refetches the whole file list on every watcher
+  tick.** A status change now just marks the list stale, and the finder fetches
+  it when it opens. On a busy tree that was one round-trip per tick for a list
+  nobody was looking at.
+- **Pressing the finder key repeatedly on a slow daemon no longer stacks up
+  finder windows.** The modal slot is now claimed before the file list is
+  fetched, not after.
+- **A file whose name contains blessed markup no longer corrupts the finder.**
+  Result text is escaped before it is drawn.
 - **The version indicator no longer freezes at whatever was true when the tab
   opened.** It was pulled only when the event stream connected, so a tab left
   open on a second monitor — the way this is meant to be used — never asked

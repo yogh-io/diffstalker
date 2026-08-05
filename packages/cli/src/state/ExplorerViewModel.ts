@@ -83,6 +83,8 @@ export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
   private expandedPaths: Set<string> = new Set();
   private gitStatusMap: GitStatusMap = { files: new Map(), directories: new Set() };
   private _cachedFilePaths: string[] | null = null;
+  private filePathsStale = true;
+  private filePathsInFlight: Promise<string[]> | null = null;
 
   private _state: ExplorerState = {
     currentPath: '',
@@ -136,8 +138,8 @@ export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
    */
   setGitStatus(statusMap: GitStatusMap): void {
     this.gitStatusMap = statusMap;
-    // Invalidate file path cache — reload in background
-    this.loadFilePaths();
+    // Mark the path cache stale; the next finder open refetches it.
+    this.invalidateFilePaths();
     // Refresh display to show updated status
     if (this._state.tree) {
       this.applyGitStatusToTree(this._state.tree);
@@ -631,24 +633,53 @@ export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
   }
 
   /**
-   * Load all file paths from the daemon's /files endpoint (git ls-files).
-   * Stores result in cache for instant access by FileFinder.
+   * All file paths in the repo (the daemon's /files endpoint, git ls-files),
+   * for the file finder.
+   *
+   * Fetched lazily and kept until something invalidates it. Status changes
+   * only mark it stale — they do not refetch, because the watcher ticks far
+   * more often than anyone opens the finder, and this used to cost one REST
+   * round-trip per tick. Concurrent callers share one request.
+   *
+   * Never rejects: a connection error yields an empty list, because an
+   * unhandled rejection here would take the whole TUI down (index.ts).
    */
-  async loadFilePaths(): Promise<void> {
+  async getFilePaths(): Promise<string[]> {
+    if (!this.filePathsStale && this._cachedFilePaths !== null) return this._cachedFilePaths;
+    if (this.filePathsInFlight !== null) return this.filePathsInFlight;
+
+    this.filePathsInFlight = this.fetchFilePaths();
+    try {
+      return await this.filePathsInFlight;
+    } finally {
+      this.filePathsInFlight = null;
+    }
+  }
+
+  private async fetchFilePaths(): Promise<string[]> {
     if (this.repoId === null) {
       this._cachedFilePaths = [];
-      return;
+      this.filePathsStale = false;
+      return this._cachedFilePaths;
     }
     try {
       this._cachedFilePaths = await this.client.files(this.repoId);
+      this.filePathsStale = false;
     } catch (err) {
       // Silent on connection loss — logger.warn hits stderr and garbles the
       // alt-screen; the session's reconnect flow surfaces the outage.
       if (!isConnectionError(err)) {
         logger.warn(`Failed to load file paths: ${err instanceof Error ? err.message : err}`);
       }
+      // Stays stale: a failed fetch must not cache an empty list as truth.
       this._cachedFilePaths = [];
     }
+    return this._cachedFilePaths;
+  }
+
+  /** Mark the file-path cache stale. The next finder open refetches. */
+  invalidateFilePaths(): void {
+    this.filePathsStale = true;
   }
 
   /**

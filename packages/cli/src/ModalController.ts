@@ -41,6 +41,8 @@ export interface ModalContext {
   getRepoPath(): string;
   getRecentRepos(): string[];
   onRepoSwitch(repoPath: string): void;
+  /** Quit the app. Needed because a focused modal can swallow Ctrl+C. */
+  exit(): void;
   render(): void;
 }
 
@@ -51,11 +53,17 @@ export interface ModalContext {
 export class ModalController {
   private activeModal: Modal | null = null;
   private activeModalType: ModalType | null = null;
+  /**
+   * A modal that has to fetch before it can be constructed holds the slot
+   * while it waits. Without this, hammering the trigger key on a slow
+   * daemon builds one widget per press and leaks all but the last.
+   */
+  private opening = false;
 
   constructor(private ctx: ModalContext) {}
 
   hasActiveModal(): boolean {
-    return this.activeModal !== null;
+    return this.activeModal !== null || this.opening;
   }
 
   getActiveModalType(): ModalType | null {
@@ -151,11 +159,16 @@ export class ModalController {
   }
 
   async openFileFinder(): Promise<void> {
+    if (this.hasActiveModal()) return;
+
     const explorer = this.ctx.getExplorerManager();
-    let allPaths = explorer?.getCachedFilePaths() ?? [];
-    if (allPaths.length === 0) {
-      await explorer?.loadFilePaths();
-      allPaths = explorer?.getCachedFilePaths() ?? [];
+    let allPaths: string[];
+    // Claim the slot across the await — see `opening`.
+    this.opening = true;
+    try {
+      allPaths = (await explorer?.getFilePaths()) ?? [];
+    } finally {
+      this.opening = false;
     }
     if (allPaths.length === 0) return;
 
@@ -185,6 +198,10 @@ export class ModalController {
       () => {
         this.clearModal();
         this.ctx.render();
+      },
+      () => {
+        this.clearModal();
+        this.ctx.exit();
       }
     );
     this.activeModal.focus();

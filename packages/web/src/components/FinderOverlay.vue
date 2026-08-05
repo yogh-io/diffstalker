@@ -12,7 +12,15 @@
  */
 
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
-import { Fzf } from 'fzf';
+import {
+  clampMove,
+  createFinderIndex,
+  cycleMove,
+  toSegments,
+  FINDER_DEBOUNCE_MS,
+  type FinderIndex,
+  type FinderMatch,
+} from '@diffstalker/core/view/finderModel';
 import { DiffstalkerClient } from '../api/client';
 import { useDaemonStore } from '../stores/daemon';
 import { useExplorerStore } from '../stores/explorer';
@@ -23,19 +31,6 @@ import { useFocusTrap } from '../composables/useFocusTrap';
 
 /** More than the CLI's 15 — the list scrolls; still bounded for paint cost. */
 const MAX_RESULTS = 50;
-const DEBOUNCE_MS = 15;
-
-interface FinderMatch {
-  path: string;
-  /** Indices (into path) of the matched characters. */
-  positions: Set<number>;
-}
-
-/** A path split into runs for match highlighting. */
-interface PathSegment {
-  text: string;
-  hit: boolean;
-}
 
 const daemon = useDaemonStore();
 const explorer = useExplorerStore();
@@ -52,24 +47,13 @@ const query = ref('');
 const results = shallowRef<FinderMatch[]>([]);
 const selectedIndex = ref(0);
 
-let fzf: Fzf<string[]> | null = null;
+let finderIndex: FinderIndex | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 /** The query the current results answer (debounce may lag the input). */
 let appliedQuery = '';
 
-const EMPTY_POSITIONS = new Set<number>();
-
 function updateResults(): void {
-  const all = paths.value ?? [];
-  if (appliedQuery === '') {
-    results.value = all
-      .slice(0, MAX_RESULTS)
-      .map((path) => ({ path, positions: EMPTY_POSITIONS }));
-  } else {
-    results.value =
-      fzf?.find(appliedQuery).map((entry) => ({ path: entry.item, positions: entry.positions })) ??
-      [];
-  }
+  results.value = finderIndex?.find(appliedQuery) ?? [];
   selectedIndex.value = 0;
   // New results select row 0 — make that visible, not an old scroll pos.
   if (listEl.value) listEl.value.scrollTop = 0;
@@ -86,7 +70,7 @@ onMounted(async () => {
   try {
     const list = await client.files(id);
     paths.value = list;
-    fzf = new Fzf(list, { limit: MAX_RESULTS, casing: 'smart-case' });
+    finderIndex = createFinderIndex(list, MAX_RESULTS);
     appliedQuery = query.value;
     updateResults();
   } catch (err) {
@@ -101,7 +85,7 @@ watch(query, (value) => {
     if (value === appliedQuery) return;
     appliedQuery = value;
     updateResults();
-  }, DEBOUNCE_MS);
+  }, FINDER_DEBOUNCE_MS);
 });
 
 onBeforeUnmount(() => {
@@ -120,15 +104,8 @@ watch(
 const loading = computed(() => paths.value === null && loadError.value === null);
 
 /** Group a path's characters into matched/unmatched runs. */
-function segments(match: FinderMatch): PathSegment[] {
-  const out: PathSegment[] = [];
-  for (let i = 0; i < match.path.length; i++) {
-    const hit = match.positions.has(i);
-    const last = out[out.length - 1];
-    if (last !== undefined && last.hit === hit) last.text += match.path[i];
-    else out.push({ text: match.path[i], hit });
-  }
-  return out;
+function segments(match: FinderMatch): ReturnType<typeof toSegments> {
+  return toSegments(match.text, match.positions);
 }
 
 // --- Selection ---
@@ -136,14 +113,14 @@ function segments(match: FinderMatch): PathSegment[] {
 function moveSelection(delta: number): void {
   const count = results.value.length;
   if (count === 0) return;
-  selectedIndex.value = Math.min(count - 1, Math.max(0, selectedIndex.value + delta));
+  selectedIndex.value = clampMove(selectedIndex.value, delta, count);
   scrollSelectionIntoView();
 }
 
 function cycleSelection(delta: number): void {
   const count = results.value.length;
   if (count === 0) return;
-  selectedIndex.value = (selectedIndex.value + delta + count) % count;
+  selectedIndex.value = cycleMove(selectedIndex.value, delta, count);
   scrollSelectionIntoView();
 }
 
@@ -168,7 +145,7 @@ function choose(path: string): void {
 
 function chooseSelected(): void {
   const selected = results.value[selectedIndex.value];
-  if (selected !== undefined) choose(selected.path);
+  if (selected !== undefined) choose(selected.text);
 }
 
 function onInputKeydown(event: KeyboardEvent): void {
@@ -243,14 +220,14 @@ function onInputKeydown(event: KeyboardEvent): void {
         <li
           v-for="(match, index) in results"
           :id="`finder-option-${index}`"
-          :key="match.path"
+          :key="match.text"
           class="finder-option"
           role="option"
           :aria-selected="index === selectedIndex"
           :class="{ selected: index === selectedIndex }"
-          :title="match.path"
+          :title="match.text"
           @mousemove="selectedIndex = index"
-          @click="choose(match.path)"
+          @click="choose(match.text)"
         >
           <template v-for="(segment, si) in segments(match)" :key="si">
             <span v-if="segment.hit" class="hit">{{ segment.text }}</span>

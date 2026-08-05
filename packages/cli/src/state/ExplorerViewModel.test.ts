@@ -241,17 +241,63 @@ describe('ExplorerViewModel navigation + file finder', () => {
     expect(selected.node.path).toBe('src/app.ts');
   });
 
-  test('loadFilePaths caches the daemon /files list for the finder', async () => {
+  test('getFilePaths caches the daemon /files list for the finder', async () => {
     const fake = fakeClient({ files: ['a.ts', 'src/b.ts'] });
     const vm = makeVM(fake);
-    await vm.loadFilePaths();
+    expect(await vm.getFilePaths()).toEqual(['a.ts', 'src/b.ts']);
     expect(vm.getCachedFilePaths()).toEqual(['a.ts', 'src/b.ts']);
   });
 
-  test('loadFilePaths is empty in not-a-repo mode', async () => {
+  test('getFilePaths is empty in not-a-repo mode', async () => {
     const fake = fakeClient({ files: ['a.ts'] });
     const vm = makeVM(fake, null);
-    await vm.loadFilePaths();
-    expect(vm.getCachedFilePaths()).toEqual([]);
+    expect(await vm.getFilePaths()).toEqual([]);
+  });
+
+  test('getFilePaths serves a fresh cache without refetching', async () => {
+    const fake = fakeClient({ files: ['a.ts'] });
+    const vm = makeVM(fake);
+    await vm.getFilePaths();
+    await vm.getFilePaths();
+    expect(fake.calls.filter((c) => c.method === 'files').length).toBe(1);
+  });
+
+  test('a status change only marks the list stale — it does not refetch', async () => {
+    const fake = fakeClient({ files: ['a.ts'] });
+    const vm = makeVM(fake);
+    await vm.getFilePaths();
+    vm.setGitStatus(buildGitStatusMap([]));
+    vm.setGitStatus(buildGitStatusMap([]));
+    expect(fake.calls.filter((c) => c.method === 'files').length).toBe(1);
+
+    // ...but the next open picks the change up.
+    await vm.getFilePaths();
+    expect(fake.calls.filter((c) => c.method === 'files').length).toBe(2);
+  });
+
+  test('concurrent callers share one in-flight request', async () => {
+    const fake = fakeClient({ files: ['a.ts'] });
+    const vm = makeVM(fake);
+    const [first, second] = await Promise.all([vm.getFilePaths(), vm.getFilePaths()]);
+    expect(first).toEqual(['a.ts']);
+    expect(second).toEqual(['a.ts']);
+    expect(fake.calls.filter((c) => c.method === 'files').length).toBe(1);
+  });
+
+  test('a failed fetch stays stale and does not cache an empty list as truth', async () => {
+    let fail = true;
+    const fake = fakeClient({ files: ['a.ts'] });
+    const failing = {
+      ...fake.client,
+      files: (id: string) => {
+        if (fail) return Promise.reject(new DaemonError(503, 'daemon down'));
+        return fake.client.files(id);
+      },
+    } as unknown as DiffstalkerClient;
+    const vm = new ExplorerViewModel(failing, REPO_ID, REPO_PATH, {});
+
+    expect(await vm.getFilePaths()).toEqual([]);
+    fail = false;
+    expect(await vm.getFilePaths()).toEqual(['a.ts']);
   });
 });
