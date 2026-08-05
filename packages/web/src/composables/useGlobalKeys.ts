@@ -12,6 +12,14 @@
  *   d=split/unified diff layout, f=follow mode. f is a no-op when the
  *   daemon has no follow target (mirrors the header button's disabled
  *   state); a/s/d/f share the CLI's a and f bindings.
+ * - e — expand every diff body held back by the size gate, so browser
+ *   find-in-page reaches the whole changeset.
+ *
+ * Ctrl+F is deliberately NOT ours and never will be: find-in-page is the
+ * in-diff search, which is why windowed virtualization was rejected.
+ * Ctrl+H and Ctrl+O are not ours either — they are browser History and
+ * the file picker, and ⌘+H is macOS "hide application", which cannot be
+ * intercepted at all.
  *
  * Bare keys (digits, ?) never fire while the user is typing in an
  * input/textarea/select/contenteditable (the finder's input included)
@@ -61,6 +69,11 @@ export function useGlobalKeys(): void {
         // Follow acts only when the daemon has a hook file to follow — mirrors
         // the header button's disabled state; otherwise the key does nothing.
         if ((daemon.follow?.targetFile ?? null) !== null) daemon.toggleFollow();
+        return true;
+      case 'e':
+        // No-op unless a stacked view is showing gated bodies; the views
+        // watch the request and ignore it when nothing is withheld.
+        ui.requestExpandGated();
         return true;
       default:
         return false;

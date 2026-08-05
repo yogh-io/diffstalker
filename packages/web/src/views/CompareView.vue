@@ -216,6 +216,15 @@ watch(
   }
 );
 
+/** `e`: mount every body the size gate holds back, so Ctrl+F reaches it. */
+watch(
+  () => ui.expandGatedRequest,
+  (seq) => {
+    if (seq === 0) return;
+    stackEl.value?.expandAllGated();
+  }
+);
+
 /** The file row holding tabindex 0: the selected one, else the first. */
 function isTabStop(fileIndex: number): boolean {
   const order = treeFileOrder.value;

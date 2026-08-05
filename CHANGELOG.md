@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`e` expands every large diff at once, in the web UI.** A file past 1500
+  changed lines starts behind a "Load diff" gate, which also hides it from the
+  browser's own find-in-page. One key mounts all of them, so Ctrl+F then
+  reaches the whole changeset. It does nothing when nothing is gated.
+
 ### Fixed
 
 - **Ctrl+C now quits from the file finder too.** It was the one place in the

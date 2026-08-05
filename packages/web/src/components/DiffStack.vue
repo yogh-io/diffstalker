@@ -378,6 +378,22 @@ function loadHugeDiff(key: string): void {
   void nextTick(() => stackScroll.invalidateOffsets());
 }
 
+/**
+ * Mount every body still behind the "Load diff" gate, and report how
+ * many. This is what lets browser find-in-page reach the whole
+ * changeset — the gate is the only content the DOM withholds.
+ *
+ * Withheld diffs (no bytes fetched at all) are not gated files and are
+ * untouched; there is nothing to reveal. Already-loaded files are a
+ * no-op, so pressing this twice costs nothing.
+ */
+function expandAllGated(): number {
+  const gated = props.files.filter((item) => isUnloaded(item));
+  for (const item of gated) loadedHugeKeys.add(item.key);
+  if (gated.length > 0) void nextTick(() => stackScroll.invalidateOffsets());
+  return gated.length;
+}
+
 // --- Exact intrinsic sizes (probe) ---
 
 const probeEl = ref<HTMLElement | null>(null);
@@ -1227,6 +1243,7 @@ function focusFile(key: string): void {
 defineExpose({
   scrollToFile,
   scrollToHunk,
+  expandAllGated,
   focusFile,
   scrollerEl,
   isTweening: stackScroll.isTweening,

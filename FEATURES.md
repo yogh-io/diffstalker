@@ -862,6 +862,14 @@ git operations.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.
+- **Search is the browser's, and the app keeps it working.** Ctrl+F (find in
+  page) is the in-diff search — that is why windowed virtualization was
+  rejected: it would forfeit find-in-page and text selection. The one thing
+  the DOM withholds is a file past 1500 changed lines, which starts behind a
+  "Load diff" gate. `e` mounts every gated body at once, after which Ctrl+F
+  reaches the whole changeset. Ctrl+H and Ctrl+O are deliberately not bound:
+  they are browser History and the file picker, and ⌘+H is macOS "hide
+  application", which a page cannot intercept at all.
   Both the open-on-daemon list and the recent-repos list group a repo's
   worktrees under one project row (e.g. "calculator" instead of one row per
   worktree); picking a recent multi-worktree project opens its most

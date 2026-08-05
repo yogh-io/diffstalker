@@ -167,6 +167,33 @@ describe('diff layout (d)', () => {
   });
 });
 
+describe('expand gated diffs (e)', () => {
+  test('e asks the stacked views to mount every gated body', () => {
+    const ui = useUiStore();
+    const start = ui.expandGatedRequest;
+    press('e');
+    expect(ui.expandGatedRequest).toBe(start + 1);
+  });
+
+  test('e is repeatable — a second press is a distinct request', () => {
+    const ui = useUiStore();
+    const start = ui.expandGatedRequest;
+    press('e');
+    press('e');
+    expect(ui.expandGatedRequest).toBe(start + 2);
+  });
+
+  test('e is inert while typing, chorded, or under an overlay', () => {
+    const ui = useUiStore();
+    const start = ui.expandGatedRequest;
+    pressInInput('e');
+    press('e', { metaKey: true });
+    ui.openOverlay('help');
+    press('e');
+    expect(ui.expandGatedRequest).toBe(start);
+  });
+});
+
 describe('follow (f)', () => {
   const withTarget = {
     targetFile: '/repo/.git/HEAD',

@@ -461,3 +461,66 @@ describe('section offsets across every body shape', () => {
     expect(activeKey(wrapper)).toBe('img.png');
   });
 });
+
+/**
+ * The "Load diff" gate and the bulk escape hatch. The gate is the only
+ * content the DOM withholds from browser find-in-page (virtualization was
+ * rejected precisely to keep Ctrl+F working), so `e` — expandAllGated —
+ * is what makes find reach the whole changeset.
+ */
+describe('expandAllGated', () => {
+  /** Past HUGE_FILE_CHANGED_LINES, so it FIRST APPEARS gated. */
+  function hugeFile(path: string): StackFile {
+    return { ...stackFile(path, TEXT_DIFF), stats: { insertions: 900, deletions: 900 } };
+  }
+
+  async function mountGated(files: StackFile[]): Promise<VueWrapper> {
+    const wrapper = mount(DiffStack, {
+      props: { files, mediaKeys: new Set<string>() },
+      attachTo: document.body,
+    });
+    await nextTick();
+    return wrapper;
+  }
+
+  test('mounts every gated body and reports how many', async () => {
+    const wrapper = await mountGated([hugeFile('big-a.ts'), hugeFile('big-b.ts')]);
+    expect(wrapper.findAll('[data-testid="load-diff"]').length).toBe(2);
+
+    const expanded = (wrapper.vm as unknown as { expandAllGated(): number }).expandAllGated();
+    await nextTick();
+
+    expect(expanded).toBe(2);
+    expect(wrapper.findAll('[data-testid="load-diff"]').length).toBe(0);
+    wrapper.unmount();
+  });
+
+  test('leaves small files alone and is a no-op when nothing is gated', async () => {
+    const wrapper = await mountGated([stackFile('small.ts', TEXT_DIFF)]);
+    expect(wrapper.findAll('[data-testid="load-diff"]').length).toBe(0);
+
+    const expanded = (wrapper.vm as unknown as { expandAllGated(): number }).expandAllGated();
+    expect(expanded).toBe(0);
+    wrapper.unmount();
+  });
+
+  test('a second call expands nothing more', async () => {
+    const wrapper = await mountGated([hugeFile('big-a.ts')]);
+    const vm = wrapper.vm as unknown as { expandAllGated(): number };
+    expect(vm.expandAllGated()).toBe(1);
+    await nextTick();
+    expect(vm.expandAllGated()).toBe(0);
+    wrapper.unmount();
+  });
+
+  test('a withheld diff is not a gated file — there is nothing to reveal', async () => {
+    const withheld: StackFile = {
+      ...stackFile('big.gml', LARGE_DIFF),
+      stats: { insertions: 900, deletions: 900 },
+    };
+    const wrapper = await mountGated([withheld]);
+    const expanded = (wrapper.vm as unknown as { expandAllGated(): number }).expandAllGated();
+    expect(expanded).toBe(0);
+    wrapper.unmount();
+  });
+});

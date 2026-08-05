@@ -430,6 +430,15 @@ watch(
   }
 );
 
+/** `e`: mount every body the size gate holds back, so Ctrl+F reaches it. */
+watch(
+  () => ui.expandGatedRequest,
+  (seq) => {
+    if (seq === 0) return;
+    stackEl.value?.expandAllGated();
+  }
+);
+
 // --- Auto mode: the registered jump target ---
 
 /**

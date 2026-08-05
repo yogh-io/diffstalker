@@ -161,6 +161,21 @@ export const useUiStore = defineStore('ui', () => {
     stackScrollRequest.value = { key, seq: stackScrollSeq };
   }
 
+  /**
+   * A one-shot "mount every diff body the size gate is holding back".
+   * Same seq trick as stackScrollRequest, and for the same reason: a
+   * plain counter would be inert the second time it is asked for.
+   *
+   * This exists so browser find-in-page can reach the whole changeset.
+   * Windowed virtualization was rejected to keep Ctrl+F working; the
+   * "Load diff" gate is the one remaining hole, and this closes it.
+   */
+  const expandGatedRequest = shallowRef<number>(0);
+
+  function requestExpandGated(): void {
+    expandGatedRequest.value += 1;
+  }
+
   // --- Overlays (finder / help) ---
 
   function openOverlay(name: OverlayName): void {
@@ -189,6 +204,7 @@ export const useUiStore = defineStore('ui', () => {
     flashedFile,
     activeStackKey,
     stackScrollRequest,
+    expandGatedRequest,
     init,
     setTheme,
     setActiveView,
@@ -201,6 +217,7 @@ export const useUiStore = defineStore('ui', () => {
     flashFile,
     setActiveStackKey,
     requestStackScroll,
+    requestExpandGated,
     openOverlay,
     toggleOverlay,
     closeOverlay,
