@@ -99,6 +99,26 @@ it is a reasonable basis for leaving them.
 
 Kept here so the same ideas do not get re-proposed as though they were new.
 
+> **Update, 2026-08-05: the §6 trigger fired for search.** The author asked for
+> workspace search, which is the "real users arrive" trigger applied to the one
+> user there is. `docs/search-design.md` records the whole decision. What it
+> changes here:
+>
+> - **Built:** the changed-set filter (listed below as "filtering or sorting the
+>   changed-file set") shipped as bare `/`. Bare `e` expands the diffs the size
+>   gate withholds, which is a mount fix, not a feature.
+> - **Lifted from the rejected list:** repo-wide content search, and in-file
+>   symbol search. Both are planned in §10 of the search doc, neither is built
+>   yet.
+> - **Still rejected, and re-confirmed:** workspace symbol search,
+>   find-references, go-to-definition, search and replace, the pickaxe
+>   (`git log -S`/`-G`), a command palette, cross-repo search, saved searches,
+>   search history, regex or DSL query modifiers, an in-app find-in-diff, a
+>   query in the URL, and configurable keybindings.
+>
+> Lifting two rejections does not open the rest. Everything else in this
+> document still needs its own trigger.
+
 Conventional viewer features, judged real but not worth it now: expanding
 context around a hunk; an ignore-whitespace toggle; marking a file as seen;
 filtering or sorting the changed-file set; bounding a very large changeset with a
