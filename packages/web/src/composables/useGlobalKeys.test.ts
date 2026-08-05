@@ -16,6 +16,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { useGlobalKeys } from './useGlobalKeys';
 import { useDaemonStore } from '../stores/daemon';
 import { useUiStore } from '../stores/ui';
+import { useFilterStore } from '../stores/filter';
 
 const Harness = defineComponent({
   setup() {
@@ -164,6 +165,37 @@ describe('diff layout (d)', () => {
     ui.openOverlay('help');
     press('d');
     expect(ui.diffMode).toBe(start);
+  });
+});
+
+describe('list filter (/)', () => {
+  test('/ opens the filter and asks for the caret', () => {
+    const filter = useFilterStore();
+    press('/');
+    expect(filter.open).toBe(true);
+    expect(filter.focusRequest).toBe(1);
+  });
+
+  test('/ pressed again re-focuses rather than toggling closed', () => {
+    const filter = useFilterStore();
+    press('/');
+    press('/');
+    expect(filter.open).toBe(true);
+    expect(filter.focusRequest).toBe(2);
+  });
+
+  test('/ is inert while typing — it is a character, not a command, there', () => {
+    const filter = useFilterStore();
+    pressInInput('/');
+    expect(filter.open).toBe(false);
+  });
+
+  test('/ is inert under an open overlay', () => {
+    const ui = useUiStore();
+    const filter = useFilterStore();
+    ui.openOverlay('help');
+    press('/');
+    expect(filter.open).toBe(false);
   });
 });
 

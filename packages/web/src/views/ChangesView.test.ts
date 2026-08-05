@@ -20,6 +20,7 @@
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { nextTick } from 'vue';
 import type { MockInstance } from 'vitest';
 import { mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
@@ -30,6 +31,7 @@ import DiffStack from '../components/DiffStack.vue';
 import ImageDiffView from '../components/ImageDiffView.vue';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
+import { useFilterStore } from '../stores/filter';
 import type { StackAutoJumpTarget } from '../composables/useAutoMode';
 import { PREFS_KEY, loadPrefs } from '../prefs';
 import { stubMatchMedia } from '../testing/portrait';
@@ -1042,5 +1044,72 @@ describe('portrait layout', () => {
     expect(document.activeElement).toBe(
       wrapper.findAll('[data-testid="file-diff"]')[0].element
     );
+  });
+});
+
+/**
+ * The list filter. It narrows the file set BEFORE categorization, so the
+ * sections, the keyboard order and the diff stack all narrow together.
+ * The two things that must not break: the clean-tree state reads the RAW
+ * status (a filter hiding everything is not a clean tree), and a filter
+ * that matches nothing says so in its own words.
+ */
+describe('list filter', () => {
+  test('narrows the file list and keeps the count honest', async () => {
+    const { wrapper } = mountView();
+    const filter = useFilterStore();
+
+    filter.openAndFocus();
+    filter.setQuery('notes');
+    await nextTick();
+
+    const rows = wrapper.findAll('.file-row');
+    expect(rows.length).toBe(1);
+    expect(rows[0].text()).toContain('notes.txt');
+    expect(wrapper.find('[data-testid="filter-count"]').text()).toBe('1 of 4 changed files');
+    wrapper.unmount();
+  });
+
+  test('a filter matching nothing says so, and does NOT claim a clean tree', async () => {
+    const { wrapper } = mountView();
+    const filter = useFilterStore();
+
+    filter.openAndFocus();
+    filter.setQuery('zzzzzzzz');
+    await nextTick();
+
+    expect(wrapper.find('[data-testid="filter-no-matches"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="clean-tree"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  test('clearing brings the whole list back', async () => {
+    const { wrapper } = mountView();
+    const filter = useFilterStore();
+
+    filter.openAndFocus();
+    filter.setQuery('notes');
+    await nextTick();
+    expect(wrapper.findAll('.file-row').length).toBe(1);
+
+    filter.close();
+    await nextTick();
+    expect(wrapper.findAll('.file-row').length).toBe(FILES.length);
+    expect(wrapper.find('[data-testid="filter-chip"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  test('the diff stack narrows with the list', async () => {
+    const { wrapper } = mountView();
+    const filter = useFilterStore();
+
+    const before = wrapper.findAll('[data-testid="file-diff"]').length;
+    filter.openAndFocus();
+    filter.setQuery('notes');
+    await nextTick();
+
+    const after = wrapper.findAll('[data-testid="file-diff"]').length;
+    expect(after).toBeLessThan(before);
+    wrapper.unmount();
   });
 });

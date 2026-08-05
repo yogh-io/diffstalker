@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/` narrows the changed-file list, in the web UI.** Type to hide the rows
+  you are not looking at; the diff stack narrows with the list, so it also
+  shortens the page. It is a filter, not a search: no syntax, no scopes, and it
+  only ever hides rows from the set already on screen. The count always names
+  its corpus ("4 of 214 changed files"), a filter matching nothing says so
+  rather than looking like a clean tree, and the query resets when the repo
+  changes under you (follow mode). Esc clears it.
+
 - **`e` expands every large diff at once, in the web UI.** A file past 1500
   changed lines starts behind a "Load diff" gate, which also hides it from the
   browser's own find-in-page. One key mounts all of them, so Ctrl+F then

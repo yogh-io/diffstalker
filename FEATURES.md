@@ -862,6 +862,16 @@ git operations.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.
+- **`/` narrows the changed-file list** — a filter, not a search. It hides rows
+  from the set already on screen: no syntax, no scopes, no request. The diff
+  stack derives from the same ordered list, so narrowing the list also shortens
+  the page, which makes it the row-budget lever on a big changeset. The count
+  names its corpus ("4 of 214 changed files"); a filter matching nothing renders
+  its own note, never the clean-tree state, because the clean check reads the
+  raw status. Session-only, never persisted, never in the URL (a query is a
+  filter over a set, not a place), and reset whenever the repo changes — follow
+  mode switching repos under you is the common case. `/` again returns the
+  caret; Esc clears.
 - **Search is the browser's, and the app keeps it working.** Ctrl+F (find in
   page) is the in-diff search — that is why windowed virtualization was
   rejected: it would forfeit find-in-page and text selection. The one thing

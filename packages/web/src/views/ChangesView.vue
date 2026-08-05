@@ -41,6 +41,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { beginUserNav } from '../composables/useUrlSync';
 import { useRepoStore, workingDiffKey } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
+import { useFilterStore } from '../stores/filter';
+import { useTextFilter } from '../composables/useTextFilter';
+import FilterChip from '../components/FilterChip.vue';
 import { categorizeFiles } from '@diffstalker/core/view/fileCategories';
 import { shortenPath } from '@diffstalker/core/view/formatPath';
 import type { FileEntry } from '@diffstalker/core/git/status';
@@ -78,7 +81,16 @@ const isClean = computed(
 function isFlashed(file: FileEntry): boolean {
   return ui.flashedFile === file.path;
 }
-const categories = computed(() => categorizeFiles(status.value?.files ?? []));
+/**
+ * The filter narrows the file set BEFORE it is categorized, so the list,
+ * the section counts, the keyboard order and the diff stack all narrow
+ * together — stackFiles derives from categories.ordered, which makes the
+ * filter the row-budget lever on a big changeset.
+ */
+const filter = useFilterStore();
+const allFiles = computed(() => status.value?.files ?? []);
+const fileFilter = useTextFilter(allFiles, (file) => file.path);
+const categories = computed(() => categorizeFiles(fileFilter.filtered.value));
 
 /** The three sections, in the app-wide order; empty ones are hidden. */
 const sections = computed(() =>
@@ -559,8 +571,22 @@ const rootStyle = computed(() => ({
       @pointerenter="onPointerEnter"
       @pointerleave="onPointerLeave"
     >
+      <FilterChip
+        v-if="filter.open"
+        class="files-filter"
+        :shown="categories.ordered.length"
+        :total="fileFilter.total.value"
+        corpus="changed files"
+      />
+
       <p v-if="repo.shared.isLoading" class="panel-note">Loading status…</p>
       <p v-else-if="!status" class="panel-note">No status yet.</p>
+      <!-- A filter that hides everything must say so. The clean-tree state
+           reads the RAW status and stays false, so the app never claims a
+           dirty tree is clean. -->
+      <p v-else-if="fileFilter.empty.value" class="panel-note" data-testid="filter-no-matches">
+        No changed file matches “{{ filter.query }}”.
+      </p>
 
       <div
         v-else

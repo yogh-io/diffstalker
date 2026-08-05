@@ -13,7 +13,11 @@
  *   daemon has no follow target (mirrors the header button's disabled
  *   state); a/s/d/f share the CLI's a and f bindings.
  * - e — expand every diff body held back by the size gate, so browser
- *   find-in-page reaches the whole changeset.
+ *   find-in-page reaches the whole changeset;
+ * - / — narrow the list the current view is showing. A bare key, not a
+ *   chord: it is the vi/less/GitHub gesture, it costs nothing the browser
+ *   insists on, and it reads as "narrow this list" rather than "search
+ *   the world". Pressing it again returns the caret to the input.
  *
  * Ctrl+F is deliberately NOT ours and never will be: find-in-page is the
  * in-diff search, which is why windowed virtualization was rejected.
@@ -32,6 +36,7 @@ import { onBeforeUnmount, onMounted } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { beginUserNav } from './useUrlSync';
 import { useUiStore, VIEWS } from '../stores/ui';
+import { useFilterStore } from '../stores/filter';
 import type { ViewName } from '../prefs';
 
 /** Digit -> view, derived from the rail order — never hardcoded. */
@@ -49,6 +54,7 @@ function isEditable(target: EventTarget | null): boolean {
 export function useGlobalKeys(): void {
   const ui = useUiStore();
   const daemon = useDaemonStore();
+  const filter = useFilterStore();
 
   /**
    * The bare-key display toggles, grouped on the home row (a s d f). Kept out of
@@ -121,6 +127,12 @@ export function useGlobalKeys(): void {
     }
 
     if (ui.activeOverlay !== null) return; // overlays are modal
+
+    if (event.key === '/') {
+      event.preventDefault();
+      filter.openAndFocus();
+      return;
+    }
 
     // Display toggles on the home row (a s d f).
     if (handleDisplayToggle(event.key)) return;
