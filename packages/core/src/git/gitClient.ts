@@ -7,6 +7,7 @@
  * pushes by matching that text.
  */
 import { simpleGit, SimpleGit, SimpleGitOptions } from 'simple-git';
+import { attributesFilePath } from './diffAttributes.js';
 
 /** Environment for every git child process: inherit, but force locale C. */
 export function gitEnv(): NodeJS.ProcessEnv {
@@ -34,7 +35,32 @@ const ENV_PASSTHROUGH_UNSAFE: SimpleGitOptions['unsafe'] = {
   allowUnsafeSshCommand: true,
 };
 
+/**
+ * How long any single git invocation may sit silent before simple-git
+ * kills it. Without this a hung git (a stuck credential prompt, a network
+ * remote that never answers, a wedged filesystem) wedges the request that
+ * called it for as long as the process lives — and in the daemon that is
+ * a queued operation nobody can clear.
+ *
+ * `block` is idle time, not total runtime: a long but progressing clone
+ * keeps resetting it. Ten seconds is generous for local plumbing, which
+ * is what nearly every call here is.
+ */
+const GIT_IDLE_TIMEOUT_MS = 10_000;
+
 /** A simple-git instance for a repo with the pinned git environment. */
 export function createGit(repoPath: string): SimpleGit {
-  return simpleGit({ baseDir: repoPath, unsafe: ENV_PASSTHROUGH_UNSAFE }).env(gitEnv());
+  // Fills in funcname drivers for languages git ships regexes for. Omitted
+  // when the file cannot be written — a read-only cache dir must not stop
+  // git from running. See diffAttributes.ts, including which languages
+  // this does NOT help.
+  const attributesFile = attributesFilePath();
+  const config = attributesFile === null ? [] : [`core.attributesFile=${attributesFile}`];
+
+  return simpleGit({
+    baseDir: repoPath,
+    unsafe: ENV_PASSTHROUGH_UNSAFE,
+    timeout: { block: GIT_IDLE_TIMEOUT_MS },
+    config,
+  }).env(gitEnv());
 }

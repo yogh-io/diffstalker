@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Better hunk headers for the languages git ships regexes for.** The
+  `@@ ... @@ <context>` text names the function a hunk is inside, but git only
+  guesses well when a gitattributes file opts the path into one of its built-in
+  drivers, which most repos never set up. diffstalker now supplies that default
+  itself, at the lowest priority, so a repo's own `.gitattributes` still wins.
+  Python goes from `class Widget:` to `def render(self):`; Java from
+  `public class Widget {` to `public void render() {`; Ruby, Go, Rust, C#, PHP
+  and the rest likewise. **TypeScript, JavaScript and Vue are unaffected** —
+  git ships no driver for them, and borrowing another language's does not work.
+
 - **`/` narrows the changed-file list, in the web UI.** Type to hide the rows
   you are not looking at; the diff stack narrows with the list, so it also
   shortens the page. It is a filter, not a search: no syntax, no scopes, and it
@@ -24,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A hung git command can no longer wedge a request forever.** Every git
+  invocation now has a 10 second idle timeout (idle, not total, so a slow but
+  progressing operation is unaffected). Without it a stuck credential prompt or
+  an unresponsive remote held its queued operation open for the life of the
+  process.
 - **Ctrl+C now quits from the file finder too.** It was the one place in the
   terminal UI where the universal exit did nothing: the finder's text input
   takes over the keyboard and swallows control characters, so the app-level
