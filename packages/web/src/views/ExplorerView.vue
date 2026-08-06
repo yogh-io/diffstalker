@@ -31,11 +31,29 @@ import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
 import FileContentPane from '../components/FileContentPane.vue';
+import OutlinePopover from '../components/OutlinePopover.vue';
 import SplitResizer from '../components/SplitResizer.vue';
 
 const repo = useRepoStore();
 const ui = useUiStore();
 const explorer = useExplorerStore();
+const outlineEl = ref<{ openPopover(): void } | null>(null);
+
+/**
+ * `o`: fetch the outline for the open file, then show it.
+ *
+ * The popover opens FIRST so it can show its own "loading"-shaped state
+ * rather than appearing late; loadSymbols re-reads the file with symbols
+ * attached and never rejects.
+ */
+watch(
+  () => ui.outlineRequest,
+  (seq) => {
+    if (seq === 0 || explorer.selectedPath === null) return;
+    outlineEl.value?.openPopover();
+    void explorer.loadSymbols();
+  }
+);
 const {
   rows,
   rootLoading,
@@ -367,6 +385,9 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
       class="content-col"
       v-bind="payloadAttrs"
     >
+      <!-- Anchored to the content column, not the page: the outline
+           describes THIS file and should sit beside it. -->
+      <OutlinePopover ref="outlineEl" />
       <FileContentPane
         :path="selectedPath"
         :file="file"

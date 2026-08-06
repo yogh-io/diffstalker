@@ -16,6 +16,7 @@
  *   state); a/s/d/f share the CLI's a and f bindings.
  * - e — expand every diff body held back by the size gate, so browser
  *   find-in-page reaches the whole changeset;
+ * - o — the outline of the open file, in the Explorer;
  * - / — narrow the list the current view is showing, in the views that
  *   have one. A bare key, not a chord: it is the vi/less/GitHub gesture,
  *   it costs nothing the browser insists on, and it reads as "narrow this
@@ -142,6 +143,15 @@ export function useGlobalKeys(): void {
       if (daemon.activeRepoId === null) return true;
       event.preventDefault();
       ui.openOverlay('search');
+      return true;
+    }
+
+    // Bare o: the file outline. Explorer only, because that is the view
+    // with a file open; elsewhere it stays the browser's.
+    if (event.key === 'o') {
+      if (ui.activeView !== 'explorer' || daemon.activeRepoId === null) return true;
+      event.preventDefault();
+      ui.requestOutline();
       return true;
     }
 

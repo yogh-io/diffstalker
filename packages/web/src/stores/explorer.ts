@@ -45,6 +45,7 @@ import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import { useRepoStore, displayError } from './repo';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
+import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
 
 /** One flattened tree row the view renders. */
 export interface ExplorerRow {
@@ -93,6 +94,19 @@ export const useExplorerStore = defineStore('explorer', () => {
   // File selection.
   const selectedPath = shallowRef<string | null>(null);
   const file = shallowRef<FileForDisplay | null>(null);
+  /**
+   * The open file's outline, or null when none was asked for.
+   *
+   * Fetched ON DEMAND only — plain `openFile` (arrow-key browsing) never
+   * asks, because an outline costs a parse and most file opens do not want
+   * one. Coherence between `file` and `fileSymbols` is preserved by taking
+   * BOTH from the same response, not by fetch timing.
+   *
+   * Built from the /file read, never from workingDiffs: that map is empty
+   * until the Changes view has been activated once, which would make the
+   * outline silently absent on a cold load.
+   */
+  const fileSymbols = shallowRef<SymbolOutcome | null>(null);
   const fileLoading = shallowRef(false);
   const fileError = shallowRef<string | null>(null);
 
@@ -127,6 +141,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     error.value = null;
     selectedPath.value = null;
     file.value = null;
+    fileSymbols.value = null;
     fileLoading.value = false;
     fileError.value = null;
   }
@@ -352,12 +367,43 @@ export const useExplorerStore = defineStore('explorer', () => {
       const result = await client.file(id, path);
       if (gen !== generation || selectedPath.value !== path) return;
       file.value = result;
+      // Browsing does not pay for a parse. Cleared, not stale: an outline
+      // from the previous file is the wrong-symbols failure in miniature.
+      fileSymbols.value = null;
     } catch (err) {
       if (gen !== generation || selectedPath.value !== path) return;
       file.value = null;
+      fileSymbols.value = null;
       fileError.value = displayError(err);
     } finally {
       if (gen === generation && selectedPath.value === path) fileLoading.value = false;
+    }
+  }
+
+  /**
+   * Re-read the open file WITH its outline.
+   *
+   * One request, both fields — `file` and `fileSymbols` are set from the
+   * same response, so they cannot describe different revisions of the
+   * file. That is what makes coherence a property of the response rather
+   * than of fetch ordering.
+   *
+   * Never rejects; a failure lands in fileError like any other read.
+   */
+  async function loadSymbols(): Promise<void> {
+    const id = repo.repoId;
+    const path = selectedPath.value;
+    if (id === null || path === null) return;
+    const gen = generation;
+
+    try {
+      const result = await client.file(id, path, { symbols: true });
+      if (gen !== generation || selectedPath.value !== path) return;
+      file.value = result;
+      fileSymbols.value = result.symbols ?? null;
+    } catch (err) {
+      if (gen !== generation || selectedPath.value !== path) return;
+      fileError.value = displayError(err);
     }
   }
 
@@ -484,6 +530,7 @@ export const useExplorerStore = defineStore('explorer', () => {
   function clearSelection(): void {
     selectedPath.value = null;
     file.value = null;
+    fileSymbols.value = null;
     fileError.value = null;
     fileLoading.value = false;
   }
@@ -551,6 +598,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     file,
     fileLoading,
     fileError,
+    fileSymbols,
     lineRequest,
     // tree
     ensureRoot,
@@ -563,6 +611,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     setChangedOnly,
     // file
     openFile,
+    loadSymbols,
     revealFile,
     requestLine,
     clearSelection,

@@ -176,6 +176,16 @@ export const useUiStore = defineStore('ui', () => {
     expandGatedRequest.value += 1;
   }
 
+  /**
+   * A one-shot "show the outline" request. Seq-stamped like the others: a
+   * second `o` press must be a distinct request, not an inert repeat.
+   */
+  const outlineRequest = shallowRef<number>(0);
+
+  function requestOutline(): void {
+    outlineRequest.value += 1;
+  }
+
   // --- Overlays (finder / help) ---
 
   function openOverlay(name: OverlayName): void {
@@ -205,6 +215,7 @@ export const useUiStore = defineStore('ui', () => {
     activeStackKey,
     stackScrollRequest,
     expandGatedRequest,
+    outlineRequest,
     init,
     setTheme,
     setActiveView,
@@ -218,6 +229,7 @@ export const useUiStore = defineStore('ui', () => {
     setActiveStackKey,
     requestStackScroll,
     requestExpandGated,
+    requestOutline,
     openOverlay,
     toggleOverlay,
     closeOverlay,

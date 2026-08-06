@@ -436,3 +436,45 @@ describe('/ only where a list narrows', () => {
     }
   });
 });
+
+describe('file outline (o)', () => {
+  test('o asks for the outline in the Explorer', () => {
+    const ui = useUiStore();
+    useDaemonStore().activeRepoId = 'repo1';
+    ui.setActiveView('explorer');
+    const event = press('o');
+    expect(ui.outlineRequest).toBe(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  test('o is repeatable', () => {
+    const ui = useUiStore();
+    useDaemonStore().activeRepoId = 'repo1';
+    ui.setActiveView('explorer');
+    press('o');
+    press('o');
+    expect(ui.outlineRequest).toBe(2);
+  });
+
+  test('o is inert outside the Explorer, and stays the browser’s', () => {
+    const ui = useUiStore();
+    useDaemonStore().activeRepoId = 'repo1';
+    ui.setActiveView('changes');
+    const event = press('o');
+    expect(ui.outlineRequest).toBe(0);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  test('o is inert with no repo, while typing, and under an overlay', () => {
+    const ui = useUiStore();
+    ui.setActiveView('explorer');
+    press('o');
+    expect(ui.outlineRequest).toBe(0);
+
+    useDaemonStore().activeRepoId = 'repo1';
+    pressInInput('o');
+    ui.openOverlay('help');
+    press('o');
+    expect(ui.outlineRequest).toBe(0);
+  });
+});

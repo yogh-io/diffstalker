@@ -863,6 +863,23 @@ git operations.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.
+- **In-file outline** (bare `o`, Explorer) — the symbols in the open file, from
+  a real parser (tree-sitter compiled to WebAssembly), not a regex. Filter by
+  name, Enter jumps to the line. TypeScript and Vue today; Vue has no grammar of
+  its own, so its `<script>` blocks are fed to the TypeScript parser as ranges,
+  which keeps line numbers file-absolute across BOTH blocks when a component has
+  two. An unsupported language says so by extension — there is no regex second
+  pass, because a confidently wrong symbol is worse than an absent one. This is
+  syntax, never semantics: nothing resolves, so methods attached via
+  `Object.assign(X.prototype, …)`, re-exports and decorator-synthesized members
+  are invisible by design.
+- **The parser is opt-in and ships separately** (`diffstalkerd-grammars`). A
+  default `diffstalkerd` install does not carry it, and outlines are simply
+  absent — `/health` reports which extensions this install can outline, and an
+  empty list is a normal state, not a degraded one. The grammars run in a worker
+  thread the daemon discards and respawns on any timeout or crash: a cancelled
+  tree-sitter parse poisons its parser so the NEXT file would get the previous
+  file's symbols, and throwing the thread away is the only reliable cure.
 - **Repo-wide content search** (Ctrl/⌘+Shift+F, or bare `F`) — the one surface
   that reads bytes the client does not already hold, so every bound is
   server-side: `git grep -F` (literal text, never a regex), 500 results, 20 per

@@ -38,6 +38,7 @@ const GROUPS: HotkeyGroup[] = [
       { keys: 'd', description: 'Toggle split / unified diff' },
       { keys: 'f', description: 'Toggle follow mode' },
       { keys: '/', description: 'Filter the changed-file list' },
+      { keys: 'o', description: 'Outline of the open file (Explorer)' },
       { keys: 'e', description: 'Expand every large diff (so Ctrl F finds it)' },
       { keys: '?', description: 'This help' },
       { keys: 'Esc', description: 'Close dialog' },
@@ -65,6 +66,14 @@ const GROUPS: HotkeyGroup[] = [
       { keys: '↑ ↓ / Ctrl j k', description: 'Move selection' },
       { keys: 'Tab / Shift Tab', description: 'Cycle results' },
       { keys: 'Enter', description: 'Reveal in Explorer' },
+    ],
+  },
+  {
+    title: 'File outline (o)',
+    entries: [
+      { keys: '↑ ↓ / Ctrl j k', description: 'Move selection' },
+      { keys: 'Enter', description: 'Jump to that line' },
+      { keys: 'Esc', description: 'Close' },
     ],
   },
   {
