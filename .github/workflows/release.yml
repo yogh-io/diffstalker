@@ -122,10 +122,17 @@ jobs:
           # Install everything EXCEPT the grammars. They are opt-in, so the
           # default install has to be correct on its own — and a `*.tgz` glob
           # would quietly install them and make the "bare" half untestable.
+          #
+          # ONE npm invocation, not one per tarball: diffstalker pins
+          # diffstalkerd at the exact release version, which is not on the
+          # registry yet, so the sibling only resolves when both tarballs are
+          # named in the same install.
+          bundle=()
           for t in "$GITHUB_WORKSPACE"/dist-tarballs/*.tgz; do
             case "$t" in *diffstalkerd-grammars-*) continue ;; esac
-            npm i --no-audit --no-fund "$t" >/dev/null
+            bundle+=("$t")
           done
+          npm i --no-audit --no-fund "${bundle[@]}" >/dev/null
           export PATH="$work/node_modules/.bin:$PATH"
 
           # The bundled web UI must be present, or GET / serves nothing.
