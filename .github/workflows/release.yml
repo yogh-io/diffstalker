@@ -119,7 +119,13 @@ jobs:
           work=$(mktemp -d)
           cd "$work"
           npm init -y >/dev/null
-          npm i --no-audit --no-fund "$GITHUB_WORKSPACE"/dist-tarballs/*.tgz >/dev/null
+          # Install everything EXCEPT the grammars. They are opt-in, so the
+          # default install has to be correct on its own — and a `*.tgz` glob
+          # would quietly install them and make the "bare" half untestable.
+          for t in "$GITHUB_WORKSPACE"/dist-tarballs/*.tgz; do
+            case "$t" in *diffstalkerd-grammars-*) continue ;; esac
+            npm i --no-audit --no-fund "$t" >/dev/null
+          done
           export PATH="$work/node_modules/.bin:$PATH"
 
           # The bundled web UI must be present, or GET / serves nothing.
@@ -157,52 +163,50 @@ jobs:
           done
           # --- Outlines: both halves, because each fails differently. ---
           #
-          # The grammars are an OPT-IN package, so the daemon must first be
-          # correct WITHOUT them (capability empty, no outline offered), and
-          # then correct WITH them. Only the second half exercises the packed
-          # worker bundle, the vendored wasm and the query files together —
-          # and that combination is the one that has silently failed to reach
-          # a published daemon before.
+          # First WITHOUT the grammars: that is the default install, and it has
+          # to be correct on its own — no capability advertised, nothing broken.
           caps=$(curl -fsS "http://127.0.0.1:$port/health" | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).symbols.extensions.length")
           [ "$caps" = "0" ] || { echo "FAIL: bare daemon advertises $caps outline extensions"; exit 1; }
           echo "  ok no grammars -> no capability"
 
-          # Now with the grammars, against a real repo and a known symbol.
-          grammars="$GITHUB_WORKSPACE/packages/grammars"
-          test -f "$grammars/checksums.json" \
-            || { echo "FAIL: grammars not vendored — the outline gate cannot run"; exit 1; }
-          {
-            kill "$daemon" 2>/dev/null || true
-            wait "$daemon" 2>/dev/null || true
+          # Then opt in, exactly as a user does: install the package and
+          # restart. No --grammars flag — this must work through ordinary
+          # package resolution, which is the path npm users actually take and
+          # the one a bundled import.meta.url has broken before.
+          kill "$daemon" 2>/dev/null || true
+          wait "$daemon" 2>/dev/null || true
 
-            fixture="$work/fixture"
-            mkdir -p "$fixture"
-            git -C "$fixture" init -q .
-            printf 'export class Widget {\n  render(): number { return 1; }\n}\n' > "$fixture/a.ts"
-            git -C "$fixture" add -A
-            git -C "$fixture" -c user.email=ci@ci -c user.name=ci commit -qm fixture
+          npm i --no-audit --no-fund "$GITHUB_WORKSPACE"/dist-tarballs/diffstalkerd-grammars-[0-9]*.tgz >/dev/null
 
-            port=7392
-            diffstalkerd --socket "$work/d2.sock" --port "$port" --no-follow --no-update-check \
-              --grammars "$grammars" &
-            daemon=$!
-            for i in $(seq 1 50); do
-              curl -fsS "http://127.0.0.1:$port/health" >/dev/null 2>&1 && break
-              sleep 0.2
-            done
+          fixture="$work/fixture"
+          mkdir -p "$fixture"
+          git -C "$fixture" init -q .
+          printf 'export class Widget {\n  render(): number { return 1; }\n}\n' > "$fixture/a.ts"
+          git -C "$fixture" add -A
+          git -C "$fixture" -c user.email=ci@ci -c user.name=ci commit -qm fixture
 
-            id=$(curl -fsS -X POST "http://127.0.0.1:$port/repos" \
-              -H 'content-type: application/json' \
-              -d "{\"path\":\"$fixture\"}" \
-              | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).id")
+          port=7392
+          diffstalkerd --socket "$work/d2.sock" --port "$port" --no-follow --no-update-check &
+          daemon=$!
+          for i in $(seq 1 50); do
+            curl -fsS "http://127.0.0.1:$port/health" >/dev/null 2>&1 && break
+            sleep 0.2
+          done
 
-            out=$(curl -fsS "http://127.0.0.1:$port/repos/$id/file?path=a.ts&symbols=true")
-            echo "$out" | grep -q '"status":"ok"' \
-              || { echo "FAIL: outline not ok: $out"; exit 1; }
-            echo "$out" | grep -q '"name":"render"' \
-              || { echo "FAIL: outline missing a known symbol: $out"; exit 1; }
-            echo "  ok grammars -> real symbols from the packed tarball"
-          }
+          caps=$(curl -fsS "http://127.0.0.1:$port/health" | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).symbols.extensions.length")
+          [ "$caps" -gt 0 ] || { echo "FAIL: grammars installed but no capability advertised"; exit 1; }
+
+          id=$(curl -fsS -X POST "http://127.0.0.1:$port/repos" \
+            -H 'content-type: application/json' \
+            -d "{\"path\":\"$fixture\"}" \
+            | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).id")
+
+          out=$(curl -fsS "http://127.0.0.1:$port/repos/$id/file?path=a.ts&symbols=true")
+          echo "$out" | grep -q '"status":"ok"' \
+            || { echo "FAIL: outline not ok: $out"; exit 1; }
+          echo "$out" | grep -q '"name":"render"' \
+            || { echo "FAIL: outline missing a known symbol: $out"; exit 1; }
+          echo "  ok grammars installed -> real symbols, via package resolution"
 
           echo "smoke OK on $(node --version)"
           SMOKE
