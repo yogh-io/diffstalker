@@ -1,0 +1,5 @@
+# Vendored at build time by scripts/vendor.ts against pinned checksums.
+# Deliberately NOT committed: 2.4 MB of wasm is about +50% of this repo's
+# pack, permanently, and diffstalker-git is a VCS package so every AUR user
+# would pay it on every build.
+*.wasm

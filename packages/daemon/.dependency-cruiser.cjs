@@ -1,6 +1,14 @@
 /** @type {import('dependency-cruiser').IConfiguration} */
 module.exports = {
   forbidden: [
+    {
+      name: "extract-only-in-worker",
+      comment:
+        "The tree-sitter engine blocks its thread and can be poisoned by a cancelled parse. It runs ONLY inside symbolWorker.ts, which the host discards and respawns on any failure. A main-thread import would put a multi-second query and a corruptible wasm instance on the daemon's event loop, where SSE keep-alives, follow mode and every other repo live.",
+      severity: "error",
+      from: { path: "^src/", pathNot: "^src/symbols/symbolWorker\\.ts$" },
+      to: { path: "@diffstalker/core/symbols/extract|/core/(src|dist)/symbols/extract" },
+    },
     // --- Layering: index -> server -> routes/ -> follow -> router/registry/sse/serialize -> core ---
     {
       name: "serialize-bottom-layer",

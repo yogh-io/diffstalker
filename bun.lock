@@ -78,6 +78,7 @@
         "prettier": "^3.8.0",
         "typescript": "~6.0.3",
         "typescript-eslint": "^8.65.0",
+        "web-tree-sitter": "0.26.11",
       },
     },
     "packages/daemon": {
@@ -102,7 +103,12 @@
         "prettier": "^3.8.0",
         "typescript": "~6.0.3",
         "typescript-eslint": "^8.65.0",
+        "web-tree-sitter": "0.26.11",
       },
+    },
+    "packages/grammars": {
+      "name": "diffstalkerd-grammars",
+      "version": "0.0.0",
     },
     "packages/web": {
       "name": "@diffstalker/web",
@@ -405,6 +411,8 @@
     "diffstalker": ["diffstalker@workspace:packages/cli"],
 
     "diffstalkerd": ["diffstalkerd@workspace:packages/daemon"],
+
+    "diffstalkerd-grammars": ["diffstalkerd-grammars@workspace:packages/grammars"],
 
     "eastasianwidth": ["eastasianwidth@0.2.0", "", {}, "sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA=="],
 
@@ -739,6 +747,8 @@
     "vue-tsc": ["vue-tsc@3.3.7", "", { "dependencies": { "@volar/typescript": "2.4.28", "@vue/language-core": "3.3.7" }, "peerDependencies": { "typescript": ">=5.0.0" }, "bin": { "vue-tsc": "bin/vue-tsc.js" } }, "sha512-+C+rgD49wAQ5bUTl2sp5a8Bzg4YoldMNXM+g7CFe604MYcQ8PrZPMQhIjJSzKXtPBCa+C5ayMipqjbA7splekQ=="],
 
     "watskeburt": ["watskeburt@6.0.0", "", { "bin": { "watskeburt": "dist/run-cli.js" } }, "sha512-jfiuDABaxSkC71T6oZ3vCS99roYkSHm/+As+G0Dz8taAHQb+SJBvLEm5RlsgG71XdfAj3rv7eudUBTgwcQUPlQ=="],
+
+    "web-tree-sitter": ["web-tree-sitter@0.26.11", "", {}, "sha512-Q5Dm3YTIXSXuH6FxX6RuzX2Qwpc4DPGiYMU87Wg5Z8OIStiQFiUex4zMDc0vBTw78EphaYJacncJghCHzbZptg=="],
 
     "whatwg-mimetype": ["whatwg-mimetype@3.0.0", "", {}, "sha512-nt+N2dzIutVRxARx1nghPKGv1xHikU7HKdfafKkLNLindmPU/ch3U31NOCGGA/dmPcmb1VlofO0vnKAcsm0o/Q=="],
 

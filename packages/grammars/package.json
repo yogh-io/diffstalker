@@ -1,0 +1,21 @@
+{
+  "name": "diffstalkerd-grammars",
+  "version": "0.0.0",
+  "description": "Tree-sitter grammars and outline queries for diffstalkerd's in-file symbol search. Opt-in: diffstalkerd works without it.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./checksums.json": "./checksums.json",
+    "./*": "./*"
+  },
+  "files": [
+    "*.wasm",
+    "queries",
+    "checksums.json",
+    "README.md"
+  ],
+  "scripts": {
+    "vendor": "bun scripts/vendor.ts",
+    "verify": "bun scripts/vendor.ts --verify"
+  }
+}
