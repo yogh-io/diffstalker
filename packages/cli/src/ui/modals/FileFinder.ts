@@ -209,7 +209,9 @@ export class FileFinder implements Modal {
     }
 
     // Footer
-    lines.push('{gray-fg}Enter: select | Esc: cancel | Ctrl+j/k or ↑↓: navigate{/gray-fg}');
+    lines.push(
+      '{gray-fg}Enter: select | Esc: cancel | Ctrl+j/k or ↑↓: navigate | Ctrl+C: quit{/gray-fg}'
+    );
 
     this.box.setContent(lines.join('\n'));
     this.screen.render();

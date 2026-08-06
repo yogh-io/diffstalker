@@ -252,6 +252,7 @@ Every feature below is preserved; only the plumbing moved. The git state engine 
 | `Ctrl+j` / `Down` | Navigate to next result |
 | `Ctrl+k` / `Up` | Navigate to previous result |
 | `Tab` | Cycle through results |
+| `Ctrl+C` | Quit diffstalker (bound here too: the finder's input takes over the keyboard) |
 
 ### Display Options
 

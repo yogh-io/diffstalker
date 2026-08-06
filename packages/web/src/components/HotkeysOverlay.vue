@@ -67,6 +67,21 @@ const GROUPS: HotkeyGroup[] = [
       { keys: 'Enter', description: 'Reveal in Explorer' },
     ],
   },
+  {
+    title: 'Search file contents',
+    entries: [
+      { keys: '↑ ↓ / Ctrl j k', description: 'Move selection' },
+      { keys: 'Enter', description: 'Open the file at that line' },
+      { keys: 'Esc', description: 'Close' },
+    ],
+  },
+  {
+    title: 'Filter (/)',
+    entries: [
+      { keys: '/', description: 'Open, or return the caret to it' },
+      { keys: 'Esc', description: 'Clear and close' },
+    ],
+  },
 ];
 </script>
 
