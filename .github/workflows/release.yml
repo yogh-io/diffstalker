@@ -32,6 +32,14 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # Fetch the tree-sitter grammars against their pinned checksums. Needed
+      # before the smoke test, whose outline half is not optional: it is the
+      # only check that exercises the packed worker bundle, the vendored wasm
+      # and the query files together, and that combination has silently failed
+      # to reach a published daemon before.
+      - name: Vendor grammars
+        run: cd packages/grammars && bun run vendor
+
       # tsc -b across all packages (core -> cli, core -> daemon). bun test strips
       # types without checking, so this is the only gate that catches type errors.
       - run: bun run build
@@ -113,6 +121,11 @@ jobs:
           test -f node_modules/diffstalkerd/dist/web/index.html \
             || { echo "FAIL: daemon tarball has no dist/web/index.html"; exit 1; }
 
+          # The symbol worker is a SEPARATE bundle beside the entry point, and
+          # a files-field slip is invisible until someone presses `o`.
+          test -f node_modules/diffstalkerd/dist/symbolWorker.js \
+            || { echo "FAIL: daemon tarball has no dist/symbolWorker.js"; exit 1; }
+
           diffstalkerd --version
           diffstalker --version
 
@@ -137,6 +150,55 @@ jobs:
             [ "$code" = "200" ] || { echo "FAIL: asset $asset -> $code"; exit 1; }
             echo "  ok $asset"
           done
+          # --- Outlines: both halves, because each fails differently. ---
+          #
+          # The grammars are an OPT-IN package, so the daemon must first be
+          # correct WITHOUT them (capability empty, no outline offered), and
+          # then correct WITH them. Only the second half exercises the packed
+          # worker bundle, the vendored wasm and the query files together —
+          # and that combination is the one that has silently failed to reach
+          # a published daemon before.
+          caps=$(curl -fsS "http://127.0.0.1:$port/health" | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).symbols.extensions.length")
+          [ "$caps" = "0" ] || { echo "FAIL: bare daemon advertises $caps outline extensions"; exit 1; }
+          echo "  ok no grammars -> no capability"
+
+          # Now with the grammars, against a real repo and a known symbol.
+          grammars="$GITHUB_WORKSPACE/packages/grammars"
+          test -f "$grammars/checksums.json" \
+            || { echo "FAIL: grammars not vendored — the outline gate cannot run"; exit 1; }
+          {
+            kill "$daemon" 2>/dev/null || true
+            wait "$daemon" 2>/dev/null || true
+
+            fixture="$work/fixture"
+            mkdir -p "$fixture"
+            git -C "$fixture" init -q .
+            printf 'export class Widget {\n  render(): number { return 1; }\n}\n' > "$fixture/a.ts"
+            git -C "$fixture" add -A
+            git -C "$fixture" -c user.email=ci@ci -c user.name=ci commit -qm fixture
+
+            port=7392
+            diffstalkerd --socket "$work/d2.sock" --port "$port" --no-follow --no-update-check \
+              --grammars "$grammars" &
+            daemon=$!
+            for i in $(seq 1 50); do
+              curl -fsS "http://127.0.0.1:$port/health" >/dev/null 2>&1 && break
+              sleep 0.2
+            done
+
+            id=$(curl -fsS -X POST "http://127.0.0.1:$port/repos" \
+              -H 'content-type: application/json' \
+              -d "{\"path\":\"$fixture\"}" \
+              | node -pe "JSON.parse(require('fs').readFileSync(0,'utf8')).id")
+
+            out=$(curl -fsS "http://127.0.0.1:$port/repos/$id/file?path=a.ts&symbols=true")
+            echo "$out" | grep -q '"status":"ok"' \
+              || { echo "FAIL: outline not ok: $out"; exit 1; }
+            echo "$out" | grep -q '"name":"render"' \
+              || { echo "FAIL: outline missing a known symbol: $out"; exit 1; }
+            echo "  ok grammars -> real symbols from the packed tarball"
+          }
+
           echo "smoke OK on $(node --version)"
           SMOKE
           chmod +x "$RUNNER_TEMP/smoke.sh"

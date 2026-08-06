@@ -80,12 +80,21 @@ Never bump `package.json` or create version tags manually — always use the scr
 
 ## Project Structure
 
-The repo is a bun workspace with five packages:
+The repo is a bun workspace with six packages:
 
 - **`@diffstalker/core`** — headless git state (plain git fns + a small set of managers), no UI deps. The daemon consumes its managers; the CLI and web client import pure helpers/types from it (`view/*` presentation logic, `git/diff`, `git/explorerData`, `git/status`/`worktree` types, `services/commitService`, `utils`, `types`) but **not** its managers.
 - **`@diffstalker/daemon`** — diffstalkerd, published to npm as a bin-only package (an executable, not an importable API): Node http REST + SSE over core. Owns git state and follow mode, and serves the web UI at `GET /`.
 - **`@diffstalker/client`** — a typed REST + SSE client for the daemon. Private; consumed by the CLI (and, later, a web client).
 - **`diffstalker`** (`packages/cli`) — the terminal UI, published to npm. A pure daemon client: `RepoSession` fed by REST + SSE, `DaemonLifecycle` to attach/spawn.
+- **`diffstalkerd-grammars`** (`packages/grammars`) — tree-sitter grammars, the
+  runtime wasm, and our outline `.scm` queries. Pure data, no code, no install
+  scripts. **Opt-in and NOT a dependency of anything**: a default `diffstalkerd`
+  install does not carry it and simply has no outlines, which `GET /health`
+  reports. The `.wasm` files are not committed — `bun run vendor` fetches them
+  against pinned versions and checksums, and writes nothing on a mismatch,
+  because a grammar that drifts from its query produces confidently wrong labels
+  rather than an error. Run `cd packages/grammars && bun run vendor` once after
+  cloning if you want outlines locally; the symbol tests skip without it.
 - **`@diffstalker/web`** — the browser UI (Vue 3 + Vite + Pinia): a pure daemon client over the same REST + SSE. Private; its built assets are bundled INTO the `diffstalkerd` tarball and served same-origin (not a separately published package). Shipped in v0.6.0.
 
 The two **published** packages are `diffstalker` and `diffstalkerd`; the other three are private and bundled. See Releasing for the single-source version model.

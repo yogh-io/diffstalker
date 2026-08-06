@@ -24,6 +24,11 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # The symbol tests need real grammars; without them they skip, and a
+      # skipping suite is one that stops guarding the thing it was written for.
+      - name: Vendor grammars
+        run: cd packages/grammars && bun run vendor
+
       # tsc -b across all packages: bun test strips types without checking,
       # so this is the only gate that catches type errors.
       - run: bun run build
