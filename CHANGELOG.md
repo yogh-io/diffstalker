@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-06
+
 ### Added
 
 - **Search file contents across the repo** (Ctrl/⌘+Shift+F, or bare `F`), in the
