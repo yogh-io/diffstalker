@@ -1456,12 +1456,22 @@ Known and accepted (finding 36): this changes the funcname text for the affected
 languages, which re-keys their hunks. No golden test detects it, and the
 observable effect is one lost scroll position after upgrade.
 
-**Slice B — scroll-to-line.** The seq-stamped one-shot request on the explorer
+**Slice B — scroll-to-line. SHIPPED.** `lineRequest` (seq-stamped) on the
+explorer store, `revealFile(path, { line })`, and `FileContentPane` consuming it
+by `data-ln` with a fading flash — no second source of truth for line positions.
+
+**Slice B (as originally written) —** The seq-stamped one-shot request on the explorer
 store plus `FileContentPane` consuming it, with a row flash. Perhaps 80 lines. It
 is a prerequisite for both features, it is testable on its own, and it is the
 reason to do it before either.
 
-**Slice C — global text search, end to end.** `core/git/grep.ts`, the
+**Slice C — global text search. SHIPPED.** `core/git/grep.ts`,
+`POST /repos/:id/search`, client methods, `SearchOverlay.vue`, Ctrl/⌘+Shift+F and
+bare `F`. Blockers B1 and B2 were fixed before the parser was written and both
+are fixtures now (`--no-column`; NUL-first parsing; NUL-in-content dropped as
+binary). Verified in a browser end to end.
+
+**Slice C (as originally written) —** `core/git/grep.ts`, the
 `POST /repos/:id/search` route, the client method, `SearchOverlay.vue`, both
 keybindings, `HotkeysOverlay.vue`, `FEATURES.md`, `CHANGELOG.md`. This is the
 first slice a user feels, it is entirely conventional engineering, it adds zero
