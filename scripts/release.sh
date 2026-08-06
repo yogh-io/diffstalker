@@ -82,10 +82,17 @@ done
 # fields that currently hold the OUTGOING version ($current) — that's cli + daemon
 # (bun.lock has no version field for the root workspace entry). The private,
 # bundled packages (core/client/web) sit at a static 0.0.0 and are deliberately
-# left untouched, so no lock/manifest drift is created. Because this patch is
-# equality-scoped it would SILENTLY SKIP a stale cli/daemon entry, so it then
-# asserts both landed at $next and refuses otherwise — catching the bad pin here,
-# before the tag is pushed, not just at CI's post-push pin-guard.
+# left untouched, so no lock/manifest drift is created.
+#
+# The PUBLISHED workspace entries are set by KEY, not by matching their old
+# value. Value-matching looks equivalent and is not: diffstalkerd-grammars
+# joined the published set while sitting at 0.0.0, so an "old == current"
+# rewrite skipped it and left the lock stale — caught by the assertion below,
+# which is why it exists. Keying by path also states the intent directly:
+# these entries carry the release version, whatever they held before.
+#
+# The assertion stays regardless. It catches the bad pin HERE, before the tag
+# is pushed, not just at CI's post-push pin-guard.
 next="$next" current="$current" node -e '
   const fs = require("fs");
   const { next, current } = process.env;
@@ -93,10 +100,24 @@ next="$next" current="$current" node -e '
   const s = fs.readFileSync(p, "utf8");
   const i = s.indexOf("\n  \"packages\": {");
   if (i < 0) { console.error("bun.lock: workspaces/packages boundary not found"); process.exit(1); }
-  const head = s.slice(0, i).replace(
+  const PUBLISHED = ["packages/cli", "packages/daemon", "packages/grammars"];
+
+  // Everything that already carried the outgoing version moves forward...
+  let head = s.slice(0, i).replace(
     /("version": ")([^"]*)(")/g,
     (m, a, ver, b) => (ver === current ? a + next + b : m)
   );
+  // ...and every published workspace entry is set outright, whatever it held.
+  for (const key of PUBLISHED) {
+    const k = head.indexOf(`"${key}": {`);
+    if (k < 0) { console.error(`bun.lock: no entry for ${key}`); process.exit(1); }
+    const marker = `"version": "`;
+    const v = head.indexOf(marker, k);
+    if (v < 0) { console.error(`bun.lock: ${key} has no version field`); process.exit(1); }
+    const start = v + marker.length;
+    const end = head.indexOf(`"`, start);
+    head = head.slice(0, start) + next + head.slice(end);
+  }
   const lockVersion = (key) => {
     const k = head.indexOf(`"${key}": {`);
     if (k < 0) return null;
@@ -106,7 +127,7 @@ next="$next" current="$current" node -e '
     const start = v + marker.length;
     return head.slice(start, head.indexOf(`"`, start));
   };
-  for (const key of ["packages/cli", "packages/daemon", "packages/grammars"]) {
+  for (const key of PUBLISHED) {
     const got = lockVersion(key);
     if (got !== next) {
       console.error(`bun.lock: ${key} is ${got}, expected ${next} (stale lock entry?) — refusing`);
