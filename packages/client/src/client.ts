@@ -17,6 +17,7 @@ import { Transport } from './transport.js';
 import type { SseConnection, TransportTarget } from './transport.js';
 import type {
   CommitInfo,
+  GrepResult,
   CompareDiff,
   DiffResult,
   DirEntry,
@@ -349,6 +350,20 @@ export class DiffstalkerClient {
 
   files(id: string): Promise<string[]> {
     return this.transport.request('GET', this.repoPath(id, '/files'));
+  }
+
+  // --- Search ---
+
+  /**
+   * Repo-wide literal content search (`git grep -F`).
+   *
+   * POST because a GET would sit outside the daemon's CSRF guard — see
+   * `packages/daemon/src/routes/search.ts`. It is a read; do not make it a
+   * GET. `text` in each match is untrusted repo bytes: cap it, escape it,
+   * never render it as markup.
+   */
+  search(id: string, query: string): Promise<GrepResult> {
+    return this.transport.request('POST', this.repoPath(id, '/search'), { query });
   }
 
   // --- Media ---

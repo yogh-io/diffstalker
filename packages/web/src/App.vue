@@ -40,6 +40,7 @@ import ViewToolbarStrip from './components/ViewToolbarStrip.vue';
 import StatusBar from './components/StatusBar.vue';
 import RepoEmptyState from './components/RepoEmptyState.vue';
 import FinderOverlay from './components/FinderOverlay.vue';
+import SearchOverlay from './components/SearchOverlay.vue';
 import HotkeysOverlay from './components/HotkeysOverlay.vue';
 import ChangesView from './views/ChangesView.vue';
 import JournalView from './views/JournalView.vue';
@@ -394,6 +395,7 @@ onUnmounted(() => {
     <StatusBar />
 
     <FinderOverlay v-if="ui.activeOverlay === 'finder'" />
+    <SearchOverlay v-else-if="ui.activeOverlay === 'search'" />
     <HotkeysOverlay v-else-if="ui.activeOverlay === 'help'" />
   </div>
 </template>

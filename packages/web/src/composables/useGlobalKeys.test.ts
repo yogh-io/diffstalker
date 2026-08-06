@@ -350,3 +350,69 @@ describe('Escape', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 });
+
+describe('content search (Ctrl/⌘+Shift+F, bare F)', () => {
+  test('the chord opens the search overlay when a repo is active', () => {
+    const ui = useUiStore();
+    useDaemonStore().activeRepoId = 'repo1';
+    const event = press('F', { ctrlKey: true, shiftKey: true });
+    expect(ui.activeOverlay).toBe('search');
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  test('the chord toggles it closed again', () => {
+    const ui = useUiStore();
+    useDaemonStore().activeRepoId = 'repo1';
+    press('F', { ctrlKey: true, shiftKey: true });
+    press('F', { ctrlKey: true, shiftKey: true });
+    expect(ui.activeOverlay).toBeNull();
+  });
+
+  test('with no repo the chord stays the browser’s', () => {
+    const ui = useUiStore();
+    const event = press('F', { metaKey: true, shiftKey: true });
+    expect(ui.activeOverlay).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  test('the chord fires even while typing — it is a chord, not a bare key', () => {
+    const ui = useUiStore();
+    useDaemonStore().activeRepoId = 'repo1';
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.focus();
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'F',
+        ctrlKey: true,
+        shiftKey: true,
+        cancelable: true,
+        bubbles: true,
+      })
+    );
+    input.remove();
+    expect(ui.activeOverlay).toBe('search');
+  });
+
+  test('bare F opens it too, for parity with a terminal that has no chords', () => {
+    const ui = useUiStore();
+    useDaemonStore().activeRepoId = 'repo1';
+    press('F');
+    expect(ui.activeOverlay).toBe('search');
+  });
+
+  test('bare F is inert while typing', () => {
+    const ui = useUiStore();
+    useDaemonStore().activeRepoId = 'repo1';
+    pressInInput('F');
+    expect(ui.activeOverlay).toBeNull();
+  });
+
+  test('Ctrl+F is left to the browser — find-in-page is the in-diff search', () => {
+    const ui = useUiStore();
+    useDaemonStore().activeRepoId = 'repo1';
+    const event = press('f', { ctrlKey: true });
+    expect(ui.activeOverlay).toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+  });
+});

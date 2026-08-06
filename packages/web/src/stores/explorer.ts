@@ -392,9 +392,30 @@ export const useExplorerStore = defineStore('explorer', () => {
    * and the file is NOT opened past a broken level. A repo switch
    * mid-reveal drops the rest (generation guard).
    */
-  async function revealFile(path: string): Promise<void> {
+  /**
+   * A one-shot "put this line on screen" request for the file viewer.
+   *
+   * Seq-stamped for the usual reason: asking for the same line twice (two
+   * search hits in one file) must be two distinct requests, and a plain
+   * value ref would be inert the second time.
+   */
+  const lineRequest = shallowRef<{ line: number; seq: number } | null>(null);
+  let lineSeq = 0;
+
+  function requestLine(line: number): void {
+    lineSeq += 1;
+    lineRequest.value = { line, seq: lineSeq };
+  }
+
+  /**
+   * Reveal `path` in the tree and open it. With `line`, also ask the viewer
+   * to scroll there — that is how a search hit lands on its match rather
+   * than at the top of a 3000-line file.
+   */
+  async function revealFile(path: string, opts: { line?: number } = {}): Promise<void> {
     if (repo.repoId === null) return;
     const gen = generation;
+    const targetLine = opts.line;
 
     if (!showHidden.value && path.split('/').some((seg) => seg.startsWith('.'))) {
       await setShowHidden(true);
@@ -410,6 +431,9 @@ export const useExplorerStore = defineStore('explorer', () => {
     for (let i = 0; i < parts.length; i++) {
       const current = prefix === '' ? parts[i] : `${prefix}/${parts[i]}`;
       const step = await revealStep(prefix, current, i === parts.length - 1, gen);
+      if (step === 'done' && targetLine !== undefined && gen === generation) {
+        requestLine(targetLine);
+      }
       if (step !== 'descend') return;
       prefix = current;
     }
@@ -518,6 +542,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     file,
     fileLoading,
     fileError,
+    lineRequest,
     // tree
     ensureRoot,
     refresh,
@@ -530,6 +555,7 @@ export const useExplorerStore = defineStore('explorer', () => {
     // file
     openFile,
     revealFile,
+    requestLine,
     clearSelection,
   };
 });

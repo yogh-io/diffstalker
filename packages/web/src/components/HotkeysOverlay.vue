@@ -25,7 +25,9 @@ const GROUPS: HotkeyGroup[] = [
   {
     title: 'Global',
     entries: [
-      { keys: 'Ctrl P / ⌘ P', description: 'Find file' },
+      { keys: 'Ctrl P / ⌘ P', description: 'Find file by name' },
+      { keys: 'Ctrl ⇧ F / ⌘ ⇧ F', description: 'Search file contents' },
+      { keys: 'F', description: 'Search file contents (no chord)' },
       // Digit rows derived from the rail order, like useGlobalKeys.
       ...VIEWS.map((view, index) => ({
         keys: String(index + 1),

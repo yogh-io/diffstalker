@@ -29,7 +29,7 @@ export const VIEWS: { name: ViewName; label: string }[] = [
 ];
 
 /** The app's modal overlays. At most one is open at a time. */
-export type OverlayName = 'finder' | 'help';
+export type OverlayName = 'finder' | 'search' | 'help';
 
 /** How long the auto-selected file's row stays flashed (CLI parity). */
 export const FLASH_MS = 900;

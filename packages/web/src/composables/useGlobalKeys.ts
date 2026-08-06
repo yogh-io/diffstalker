@@ -3,7 +3,9 @@
  *
  * - Ctrl/⌘+P — toggle the fuzzy finder (needs an active repo; beats the
  *   browser's print dialog only when it acts; Ctrl+Shift+P is not ours);
- * - Esc — close the open overlay (finder/help);
+ * - Ctrl/⌘+Shift+F — repo-wide content search. The real cross-editor
+ *   convention for find-in-files, and free in both browsers;
+ * - Esc — close the open overlay (finder/search/help);
  * - ? — toggle the hotkeys help;
  * - 1..N — switch view, derived from VIEWS so the digits always match
  *   the rail order (1=Changes, 2=Journal, 3=History, ...);
@@ -86,28 +88,41 @@ export function useGlobalKeys(): void {
     }
   }
 
+  /**
+   * The overlay chords: ⌘/Ctrl+P (find file) and ⌘/Ctrl+Shift+F (search
+   * contents). Both fire from anywhere, typing included, because that is
+   * what a chord is for.
+   *
+   * The shared discipline, and the reason they live together: each toggles
+   * its own overlay, and each calls preventDefault ONLY on the branch that
+   * actually acts — so with no repo open, Print and the browser's own
+   * Ctrl+Shift+F stay the browser's. Returns true when it claimed the key.
+   */
+  function handleOverlayChord(event: KeyboardEvent): boolean {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey) return false;
+
+    const key = event.key.toLowerCase();
+    // Ctrl+Shift+P belongs to the browser/OS, so P is no-Shift only.
+    const overlay = !event.shiftKey && key === 'p' ? 'finder' : null;
+    const searchChord = event.shiftKey && key === 'f' ? 'search' : null;
+    const target = overlay ?? searchChord;
+    if (target === null) return false;
+
+    if (ui.activeOverlay === target) {
+      event.preventDefault();
+      ui.closeOverlay();
+    } else if (daemon.activeRepoId !== null) {
+      event.preventDefault();
+      ui.openOverlay(target);
+    }
+    return true;
+  }
+
   function onKeydown(event: KeyboardEvent): void {
     if (event.defaultPrevented) return;
 
-    // ⌘/Ctrl+P (no Shift — Ctrl+Shift+P belongs to the browser/OS): the
-    // finder, from anywhere — even mid-typing. Print is only suppressed
-    // when the toggle actually does something; with no active repo the
-    // key stays the browser's.
-    if (
-      (event.ctrlKey || event.metaKey) &&
-      !event.altKey &&
-      !event.shiftKey &&
-      event.key.toLowerCase() === 'p'
-    ) {
-      if (ui.activeOverlay === 'finder') {
-        event.preventDefault();
-        ui.closeOverlay();
-      } else if (daemon.activeRepoId !== null) {
-        event.preventDefault();
-        ui.openOverlay('finder');
-      }
-      return;
-    }
+    // The two overlay chords, which fire even mid-typing.
+    if (handleOverlayChord(event)) return;
 
     if (event.key === 'Escape') {
       if (ui.activeOverlay !== null) {
@@ -127,6 +142,15 @@ export function useGlobalKeys(): void {
     }
 
     if (ui.activeOverlay !== null) return; // overlays are modal
+
+    // Bare F: the chordless way in, for the CLI's sake later — a terminal
+    // cannot express Ctrl+Shift+letter at all.
+    if (event.key === 'F') {
+      if (daemon.activeRepoId === null) return;
+      event.preventDefault();
+      ui.openOverlay('search');
+      return;
+    }
 
     if (event.key === '/') {
       event.preventDefault();

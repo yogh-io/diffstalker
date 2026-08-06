@@ -42,6 +42,7 @@ import type {
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
+import type { GrepResult } from '@diffstalker/core/git/grep';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 
 /**
@@ -259,6 +260,20 @@ export class DiffstalkerClient {
 
   files(id: string): Promise<string[]> {
     return request('GET', this.repoPath(id, '/files'));
+  }
+
+  // --- Search ---
+
+  /**
+   * Repo-wide literal content search (`git grep -F`).
+   *
+   * POST because a GET would fall outside the daemon's CSRF guard — see
+   * `packages/daemon/src/routes/search.ts`. It is a read; do not make it a
+   * GET. Each match's `text` is untrusted repo content: render it as text,
+   * never as markup.
+   */
+  search(id: string, query: string): Promise<GrepResult> {
+    return request('POST', this.repoPath(id, '/search'), { query });
   }
 
   // --- Media ---

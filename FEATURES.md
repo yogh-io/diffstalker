@@ -862,6 +862,16 @@ git operations.
 - Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
   switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.
+- **Repo-wide content search** (Ctrl/⌘+Shift+F, or bare `F`) — the one surface
+  that reads bytes the client does not already hold, so every bound is
+  server-side: `git grep -F` (literal text, never a regex), 500 results, 20 per
+  file, 4 MiB, 5 seconds, 400 characters per line. Corpus is tracked plus
+  untracked and never gitignored — the same set the file finder offers. Hits
+  group by file; Enter reveals the file in the Explorer and scrolls to the line.
+  The endpoint is **POST**, not GET, because GET is exempt from the daemon's
+  CSRF guard and a repo id is derivable from a guessed path — a GET search would
+  be a cross-site timing oracle against a local daemon. Matched text is rendered
+  as text, never markup.
 - **`/` narrows the changed-file list** — a filter, not a search. It hides rows
   from the set already on screen: no syntax, no scopes, no request. The diff
   stack derives from the same ordered list, so narrowing the list also shortens

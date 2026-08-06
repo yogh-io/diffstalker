@@ -39,6 +39,7 @@ export type {
 } from '@diffstalker/core/git/diff';
 export type { DirEntry, FileForDisplay, FileMedia } from '@diffstalker/core/git/explorerData';
 export type { BlobSide, BlobRef } from '@diffstalker/core/utils/blobRef';
+export type { GrepMatch, GrepResult } from '@diffstalker/core/git/grep';
 export type { ImageInfo, ImageRefusal } from '@diffstalker/core/utils/imageSniff';
 export type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 export type { RemoteOperationState, RemoteOperation } from '@diffstalker/core/types/remote';

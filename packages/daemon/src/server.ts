@@ -38,6 +38,7 @@ import { registerHistoryCompareRoutes } from './routes/historyCompare.js';
 import { registerJournalRoutes } from './routes/journal.js';
 import { registerRemoteRoutes } from './routes/remote.js';
 import { registerExplorerRoutes } from './routes/explorer.js';
+import { registerSearchRoutes } from './routes/search.js';
 import { registerBlobRoutes } from './routes/blob.js';
 import { registerDaemonRoutes } from './routes/daemon.js';
 import { createBlobSemaphore } from './blobSemaphore.js';
@@ -216,6 +217,9 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
       registerRemoteRoutes(router, deps);
     }
     registerExplorerRoutes(router, deps);
+    // Content search is a read, but it is POST so the CSRF guard covers it —
+    // see routes/search.ts. Both modes: the web UI is why it exists.
+    registerSearchRoutes(router, deps);
     // Image bytes and their metadata are a web-UI feature, so they are
     // registered for BOTH modes — a --port daemon is exactly the one that
     // needs them.

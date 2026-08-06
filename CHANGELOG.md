@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Search file contents across the repo** (Ctrl/⌘+Shift+F, or bare `F`), in the
+  web UI. Literal text, not a pattern — `git grep -F`, so there is no regex to
+  learn and none to hang the daemon. Results group by file with line numbers;
+  Enter opens the file in the Explorer scrolled to the matching line. The corpus
+  is the same as the file finder's: tracked plus untracked, never gitignored.
+  Bounded server-side — 500 results, 20 per file, 4 MiB, 5 seconds — and it says
+  when it hit a limit rather than quietly showing you less.
+
 - **Better hunk headers for the languages git ships regexes for.** The
   `@@ ... @@ <context>` text names the function a hunk is inside, but git only
   guesses well when a gitattributes file opts the path into one of its built-in

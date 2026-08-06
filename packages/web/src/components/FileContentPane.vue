@@ -31,7 +31,8 @@
  * Bytes reach the page only as an `<img src>` subresource.
  */
 
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
+import { useExplorerStore } from '../stores/explorer';
 import type { FileForDisplay } from '@diffstalker/core/git/explorerData';
 import { REFUSAL_TEXT } from '../utils/imageRefusal';
 import { highlightContent } from '../utils/highlight';
@@ -58,6 +59,38 @@ const highlighted = computed(() => {
   if (binary || tooLarge || content === '') return null;
   return highlightContent(content, props.path);
 });
+
+/**
+ * Scroll-to-line: a search hit opens its file AND lands on its match,
+ * rather than at the top of a 3000-line file. Driven by the store's
+ * seq-stamped request so two hits in the same file are two requests.
+ *
+ * The row is found by its `data-ln`, which the template already renders,
+ * so there is no second source of truth for line positions. A line past
+ * the end (a truncated file, a stale hit) simply finds nothing.
+ */
+const explorer = useExplorerStore();
+const scrollEl = ref<HTMLElement | null>(null);
+const flashedLine = ref<number | null>(null);
+let flashTimer: ReturnType<typeof setTimeout> | null = null;
+
+watch(
+  () => explorer.lineRequest,
+  (request) => {
+    if (!request) return;
+    void nextTick(() => {
+      const row = scrollEl.value?.querySelector<HTMLElement>(`[data-ln="${request.line}"]`);
+      if (!row) return;
+      row.scrollIntoView({ block: 'center' });
+      flashedLine.value = request.line;
+      if (flashTimer) clearTimeout(flashTimer);
+      flashTimer = setTimeout(() => {
+        flashedLine.value = null;
+        flashTimer = null;
+      }, 1200);
+    });
+  }
+);
 
 const lineNumWidth = computed(() => {
   const count = highlighted.value?.lines.length ?? 0;
@@ -153,6 +186,7 @@ const frames = computed(() => {
 
       <div
         v-else-if="highlighted"
+        ref="scrollEl"
         class="code-scroll mono"
         :class="{ wrap }"
         data-testid="file-content"
@@ -166,6 +200,7 @@ const frames = computed(() => {
             v-for="(line, i) in highlighted.lines"
             :key="i"
             class="code-row"
+            :class="{ 'line-flash': flashedLine === i + 1 }"
             :data-ln="i + 1"
           >
             <span class="ln code-gutter">{{ i + 1 }}</span>
@@ -258,6 +293,22 @@ const frames = computed(() => {
 }
 
 /* --- Code viewer --- */
+
+/* Where a search hit landed. Fades rather than persisting: it answers
+   "which line" on arrival, then gets out of the way. */
+.line-flash {
+  background: var(--row-selected-bg);
+  animation: line-flash-fade 1.2s ease-out;
+}
+
+@keyframes line-flash-fade {
+  from {
+    background: var(--selection);
+  }
+  to {
+    background: var(--row-selected-bg);
+  }
+}
 
 .code-scroll {
   flex: 1;
