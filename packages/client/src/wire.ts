@@ -15,9 +15,10 @@ import type {
   CommitInfo,
 } from '@diffstalker/core/git/status';
 import type { CompareDiff } from '@diffstalker/core/git/diff';
-import type { FileMedia } from '@diffstalker/core/git/explorerData';
+import type { FileForDisplay, FileMedia } from '@diffstalker/core/git/explorerData';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type { BlobSide } from '@diffstalker/core/utils/blobRef';
+import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
 
 // Core DTOs re-exported for consumers (type-only, erased at build).
 export type {
@@ -40,6 +41,18 @@ export type {
 export type { DirEntry, FileForDisplay, FileMedia } from '@diffstalker/core/git/explorerData';
 export type { BlobSide, BlobRef } from '@diffstalker/core/utils/blobRef';
 export type { GrepMatch, GrepResult } from '@diffstalker/core/git/grep';
+export type { FileSymbol, SymbolKind, SymbolOutcome } from '@diffstalker/core/symbols/types';
+
+/**
+ * A file read that may carry an outline.
+ *
+ * `symbols` is absent when it was not asked for, and also when the file is
+ * binary or too large — those states are already on the flags, and giving
+ * them a second encoding here is how two states collapse into one.
+ */
+export interface FileWithSymbols extends FileForDisplay {
+  symbols?: SymbolOutcome;
+}
 export type { ImageInfo, ImageRefusal } from '@diffstalker/core/utils/imageSniff';
 export type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 export type { RemoteOperationState, RemoteOperation } from '@diffstalker/core/types/remote';

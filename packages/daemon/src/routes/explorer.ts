@@ -21,6 +21,8 @@ import {
   NotRegularFileError,
 } from '@diffstalker/core/git/explorerData';
 import { listAllFiles } from '@diffstalker/core/git/status';
+import type { FileForDisplay } from '@diffstalker/core/git/explorerData';
+import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
 import { Router, HttpError, sendJson } from '../router.js';
 import {
   dropEntriesEscapingRoot,
@@ -35,7 +37,51 @@ import {
 } from './shared.js';
 
 export function registerExplorerRoutes(router: Router, deps: RouteDeps): void {
-  const { registry } = deps;
+  const { registry, symbols } = deps;
+
+  /**
+   * Attach an outline to a file read, when one was asked for and is
+   * possible.
+   *
+   * The plain `/file` response is byte-identical without `?symbols=1` —
+   * asserted by a test, because every existing client depends on it.
+   *
+   * No `symbols` field at all for binary / too-large files: those stories
+   * are already told by the flags on the response, and re-encoding them
+   * here is how two states collapse into one string.
+   *
+   * An unsupported extension is answered from a map WITHOUT taking a gate
+   * slot: a lookup must never burn concurrency that a real extraction
+   * needs.
+   */
+  async function withSymbols(
+    file: FileForDisplay,
+    rel: string,
+    wanted: boolean
+  ): Promise<FileForDisplay | (FileForDisplay & { symbols: SymbolOutcome })> {
+    if (!wanted) return file;
+    if (file.binary || file.tooLarge) return file;
+
+    if (symbols === null) {
+      // The grammars package is not installed. Never 'unsupported:
+      // language' — that would blame the file for a missing install.
+      return { ...file, symbols: { status: 'unavailable', reason: 'error' } };
+    }
+    if (!symbols.pool.supported(rel)) {
+      return { ...file, symbols: { status: 'unsupported', reason: 'language' } };
+    }
+
+    const release = symbols.gate.acquire();
+    if (release === null) throw new HttpError(503, 'Symbol extraction busy');
+    try {
+      // Plain try/finally rather than blob.ts's holdSlot ceremony: this
+      // work is wall-clock bounded and the response is buffered JSON, not
+      // a streamed body. Do not "upgrade" it.
+      return { ...file, symbols: await symbols.pool.extract(rel, file.content) };
+    } finally {
+      (await release)();
+    }
+  }
 
   router.get('/repos/:id/tree', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
@@ -85,7 +131,8 @@ export function registerExplorerRoutes(router: Router, deps: RouteDeps): void {
     const rel = requireRepoRelPath(handle.path, relPath);
     await requireRealRepoPath(handle, rel);
     try {
-      sendJson(res, 200, await readFileForDisplay(handle.path, rel));
+      const file = await readFileForDisplay(handle.path, rel);
+      sendJson(res, 200, await withSymbols(file, rel, parseBoolParam(query, 'symbols', false)));
     } catch (err) {
       // Directories, FIFOs, sockets, devices: refused up front (a FIFO
       // read would block the event loop for every client).

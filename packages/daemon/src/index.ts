@@ -21,6 +21,7 @@ import { runtimeDir, cacheDir } from '@diffstalker/core/utils/xdg';
 import { expandPath } from '@diffstalker/core/utils/pathUtils';
 import { createDaemon, type Daemon, ListenOptions } from './server.js';
 import { readCurrentVersion } from './version.js';
+import { resolveSymbolArtifacts } from './symbols/resolveArtifacts.js';
 
 const SOCKET_NAME = 'diffstalkerd.sock';
 
@@ -88,6 +89,12 @@ export interface CliOptions extends ListenOptions {
   instance?: string;
   /** Explicit hook file from --follow-file. */
   followFile?: string;
+  /**
+   * Explicit grammars directory. Distro packaging needs this: a
+   * pacman-owned path has no node_modules for package resolution to find.
+   * Also how tests point at the workspace copy.
+   */
+  grammarsDir?: string;
   /** --no-follow: no hook-file watcher at all. */
   noFollow?: boolean;
   /** Explicit web UI assets dir from --web-root. */
@@ -154,6 +161,9 @@ export function parseArgs(argv: string[]): CliOptions | 'help' | 'version' {
         break;
       case '--web-root':
         options.webRoot = expectValue(argv, ++i, '--web-root');
+        break;
+      case '--grammars':
+        options.grammarsDir = expectValue(argv, ++i, '--grammars');
         break;
       case '--no-update-check':
         options.noUpdateCheck = true;
@@ -306,6 +316,16 @@ async function main(): Promise<void> {
 
   const webRoot = resolveWebRoot(options.webRoot);
 
+  // Resolved HERE, in the entry module, for the same reason webRoot is: a
+  // relative artifact path must be computed where import.meta.url still
+  // points at a real location. `bun build` collapses every module's
+  // import.meta.url into dist/index.js, so a resolution done deeper in the
+  // tree would be correct in dev and wrong in the published bundle.
+  const symbols = resolveSymbolArtifacts(
+    options.grammarsDir ?? process.env.DIFFSTALKER_GRAMMARS_DIR ?? null,
+    (message) => console.error(`diffstalkerd: ${message}`)
+  );
+
   // apiMode is deliberately left unset: least privilege is decided per
   // listener by how well its transport is protected — a unix socket / an
   // inherited fd is owner-only and gets the full API (commit, discard, hunk
@@ -314,6 +334,7 @@ async function main(): Promise<void> {
   const daemon = createDaemon({
     followFile,
     webRoot,
+    symbols,
     updateCheck: !options.noUpdateCheck,
   });
 

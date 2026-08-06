@@ -17,6 +17,8 @@ import type { RepoRegistry, RepoHandle } from '../repoRegistry.js';
 import type { SseHub, DaemonEventHub } from '../sse.js';
 import type { FollowController } from '../follow.js';
 import type { VersionService } from '../version.js';
+import type { SymbolPool } from '../symbols/pool.js';
+import type { BlobSemaphore } from '../blobSemaphore.js';
 import { serializeSharedState } from '../serialize.js';
 
 /** Everything a route module needs, injected by createDaemon. */
@@ -34,6 +36,20 @@ export interface RouteDeps {
    * CLI-only mutations. See DaemonOptions.apiMode.
    */
   apiMode: 'full' | 'web';
+  /**
+   * In-file symbols. Null when the grammars package is not installed or
+   * did not verify — outlines are opt-in, and their absence is a normal
+   * state reported through /health, not a degraded one.
+   */
+  symbols: SymbolSupport | null;
+}
+
+export interface SymbolSupport {
+  pool: SymbolPool;
+  /** Its own budget, deliberately not the blob gate's. */
+  gate: BlobSemaphore;
+  /** Extensions this install can outline. */
+  extensions: string[];
 }
 
 /** Resolve a repo id to its handle or 404. */

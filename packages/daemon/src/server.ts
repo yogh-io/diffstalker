@@ -39,6 +39,8 @@ import { registerJournalRoutes } from './routes/journal.js';
 import { registerRemoteRoutes } from './routes/remote.js';
 import { registerExplorerRoutes } from './routes/explorer.js';
 import { registerSearchRoutes } from './routes/search.js';
+import { createSymbolPool } from './symbols/pool.js';
+import type { SymbolArtifacts } from './symbols/resolveArtifacts.js';
 import { registerBlobRoutes } from './routes/blob.js';
 import { registerDaemonRoutes } from './routes/daemon.js';
 import { createBlobSemaphore } from './blobSemaphore.js';
@@ -125,6 +127,12 @@ export interface DaemonOptions {
    */
   apiMode?: ApiMode;
   /**
+   * Verified grammars for in-file outlines, or omitted when the opt-in
+   * `diffstalkerd-grammars` package is absent. Resolved by index.ts, which
+   * is the one module whose import.meta.url survives bundling intact.
+   */
+  symbols?: SymbolArtifacts | null;
+  /**
    * Whether GET /version may ask npm for the latest published version
    * (the daemon's only outbound request). Default true; --no-update-check
    * turns it off, and /version then reports latest: null / 'unknown'.
@@ -198,14 +206,36 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
   // and the git processes and open fds they would spawn come out of the same
   // budget.
   const blobGate = createBlobSemaphore();
+  /**
+   * Symbols get their OWN budget, not the blob gate's. One extraction at a
+   * time because one worker answers them, and a short queue because a
+   * waiting outline is worth less than a fast refusal.
+   */
+  const symbolArtifacts = options.symbols ?? null;
+  const symbolSupport =
+    symbolArtifacts === null
+      ? null
+      : {
+          pool: createSymbolPool(symbolArtifacts),
+          gate: createBlobSemaphore(1, 4),
+          extensions: symbolArtifacts.extensions,
+        };
 
   function routerFor(mode: ApiMode): Router {
     const cached = routers.get(mode);
     if (cached) return cached;
 
     const router = new Router();
-    const deps: RouteDeps = { registry, sse, daemonEvents, follow, apiMode: mode, version };
-    registerHealthRoutes(router);
+    const deps: RouteDeps = {
+      registry,
+      sse,
+      daemonEvents,
+      follow,
+      apiMode: mode,
+      version,
+      symbols: symbolSupport,
+    };
+    registerHealthRoutes(router, deps);
     registerVersionRoutes(router, deps);
     registerRepoRoutes(router, deps);
     registerWorkingTreeRoutes(router, deps);
@@ -395,7 +425,10 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
       for (const socket of sockets) {
         socket.destroy();
       }
-      return Promise.all(listeners.splice(0).map(closeListener)).then(() => {});
+      // The symbol worker is unref'd, so it cannot hold the process open —
+      // but a test that leaves one running would leak a thread per daemon.
+      const symbolsGone = symbolSupport?.pool.dispose() ?? Promise.resolve();
+      return Promise.all([symbolsGone, ...listeners.splice(0).map(closeListener)]).then(() => {});
     },
   };
 }

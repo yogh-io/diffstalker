@@ -18,6 +18,7 @@
   },
   "files": [
     "dist/index.js",
+    "dist/symbolWorker.js",
     "dist/web",
     "bin",
     "README.md",
@@ -31,7 +32,8 @@
     "dev": "bun --watch src/index.ts",
     "build": "rm -rf dist && tsc -b",
     "build:web": "cd ../web && bun run build && cd ../daemon && bun scripts/copyWebDist.ts",
-    "build:prod": "bun run build && bun run build:web && bun build dist/index.js --outfile dist/index.js --minify --target node --external chokidar --external simple-git --external ignore",
+    "build:prod": "bun run build && bun run build:web && bun run build:worker && bun build dist/index.js --outfile dist/index.js --minify --target node --external chokidar --external simple-git --external ignore",
+    "build:worker": "bun build dist/symbols/symbolWorker.js --outfile dist/symbolWorker.js --minify --target node",
     "start": "bun dist/index.js",
     "test": "bun test src/",
     "test:watch": "bun test --watch src/",

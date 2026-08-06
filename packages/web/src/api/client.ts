@@ -43,6 +43,16 @@ import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
 import type { GrepResult } from '@diffstalker/core/git/grep';
+import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
+
+/**
+ * A file read that may carry an outline. `symbols` is absent when it was
+ * not requested, and when the file is binary or too large — those states
+ * live on the flags already.
+ */
+export interface FileWithSymbols extends FileForDisplay {
+  symbols?: SymbolOutcome;
+}
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 
 /**
@@ -254,8 +264,19 @@ export class DiffstalkerClient {
     );
   }
 
-  file(id: string, path: string): Promise<FileForDisplay> {
-    return request('GET', this.repoPath(id, '/file') + toQuery({ path }));
+  /**
+   * Read a file for display, optionally with its outline.
+   *
+   * `symbols` is opt-in per request: the outline costs a parse, and most
+   * file reads (arrow-key browsing in the Explorer) do not want one. The
+   * field is absent from the response for a binary or too-large file —
+   * those stories are already told by the flags.
+   */
+  file(id: string, path: string, opts: { symbols?: boolean } = {}): Promise<FileWithSymbols> {
+    return request(
+      'GET',
+      this.repoPath(id, '/file') + toQuery({ path, symbols: opts.symbols })
+    );
   }
 
   files(id: string): Promise<string[]> {

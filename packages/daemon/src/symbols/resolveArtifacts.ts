@@ -61,16 +61,18 @@ function readManifest(dir: string): Manifest | null {
   }
 }
 
-/** The `web-tree-sitter` version bundled into this daemon's worker. */
-function bundledRuntimeVersion(): string | null {
-  try {
-    const require = createRequire(import.meta.url);
-    const manifest = require('web-tree-sitter/package.json') as { version?: string };
-    return manifest.version ?? null;
-  } catch {
-    return null;
-  }
-}
+/**
+ * The `web-tree-sitter` version bundled into this daemon's worker.
+ *
+ * A literal, NOT a runtime `require('web-tree-sitter/package.json')`.
+ * web-tree-sitter is a devDependency inlined into the worker bundle at
+ * build time, so a published daemon has no `node_modules/web-tree-sitter`
+ * to read — the runtime lookup would return null on exactly the installs
+ * that matter and the skew check would silently never fire.
+ *
+ * Kept in step with core's pinned devDependency by a test.
+ */
+export const BUNDLED_WEB_TREE_SITTER = '0.26.11';
 
 /** Every file in the manifest hashes to what the manifest says. */
 function verifyFiles(dir: string, manifest: Manifest, warn: (message: string) => void): boolean {
@@ -116,14 +118,13 @@ export function verifySymbolArtifacts(
     return null;
   }
 
-  const bundled = bundledRuntimeVersion();
-  if (bundled !== null && bundled !== manifest.webTreeSitterVersion) {
+  if (manifest.webTreeSitterVersion !== BUNDLED_WEB_TREE_SITTER) {
     // The runtime wasm ships with the grammars while the matching JS is
     // bundled into this daemon, so the two can be upgraded apart. A skewed
     // pair is refused outright rather than risking a wrong answer.
     warn(
       `grammars: built for web-tree-sitter ${manifest.webTreeSitterVersion}, ` +
-        `this daemon bundles ${bundled} — symbols disabled`
+        `this daemon bundles ${BUNDLED_WEB_TREE_SITTER} — symbols disabled`
     );
     return null;
   }

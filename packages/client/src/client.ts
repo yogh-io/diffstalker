@@ -21,7 +21,7 @@ import type {
   CompareDiff,
   DiffResult,
   DirEntry,
-  FileForDisplay,
+  FileWithSymbols,
   FollowChangeEvent,
   FollowState,
   HealthState,
@@ -344,8 +344,19 @@ export class DiffstalkerClient {
     );
   }
 
-  file(id: string, path: string): Promise<FileForDisplay> {
-    return this.transport.request('GET', this.repoPath(id, '/file') + toQuery({ path }));
+  /**
+   * Read a file for display, optionally with its outline.
+   *
+   * `symbols` is opt-in per request: the outline costs a parse, and most
+   * file reads (arrow-key browsing in the Explorer) do not want one. The
+   * field is absent from the response for a binary or too-large file —
+   * those stories are already told by the flags.
+   */
+  file(id: string, path: string, opts: { symbols?: boolean } = {}): Promise<FileWithSymbols> {
+    return this.transport.request(
+      'GET',
+      this.repoPath(id, '/file') + toQuery({ path, symbols: opts.symbols })
+    );
   }
 
   files(id: string): Promise<string[]> {
