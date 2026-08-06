@@ -68,7 +68,7 @@ By default the daemon binds a unix socket at `$XDG_RUNTIME_DIR/diffstalker/diffs
 
 ## Releasing
 
-Use `bun run release` to publish a new version. The **root `package.json` is the single source of version truth**: the script reads and bumps it, and derives the two published manifests (`diffstalker`, `diffstalkerd`) from it in lockstep (they must carry a literal version for npm). The three private, bundled packages (`@diffstalker/core`, `@diffstalker/client`, `@diffstalker/web`) stay at a static `0.0.0` and are never versioned — they ship inside the published bundles, not on their own. The script commits, tags, and pushes; it refuses to run if the working tree is dirty or if `CHANGELOG.md` has no entry for the new version. The pre-push hook runs the full test suite before the tag push is allowed through. CI then builds, tests, publishes to npm, and commits a metrics snapshot.
+Use `bun run release` to publish a new version. The **root `package.json` is the single source of version truth**: the script reads and bumps it, and derives the three published manifests (`diffstalker`, `diffstalkerd`, `diffstalkerd-grammars`) from it in lockstep (they must carry a literal version for npm). The three private, bundled packages (`@diffstalker/core`, `@diffstalker/client`, `@diffstalker/web`) stay at a static `0.0.0` and are never versioned — they ship inside the published bundles, not on their own. The script commits, tags, and pushes; it refuses to run if the working tree is dirty or if `CHANGELOG.md` has no entry for the new version. The pre-push hook runs the full test suite before the tag push is allowed through. CI then builds, tests, publishes to npm, and commits a metrics snapshot.
 
 ```bash
 bun run release         # patch bump (0.3.0 -> 0.3.1)
@@ -97,7 +97,7 @@ The repo is a bun workspace with six packages:
   cloning if you want outlines locally; the symbol tests skip without it.
 - **`@diffstalker/web`** — the browser UI (Vue 3 + Vite + Pinia): a pure daemon client over the same REST + SSE. Private; its built assets are bundled INTO the `diffstalkerd` tarball and served same-origin (not a separately published package). Shipped in v0.6.0.
 
-The two **published** packages are `diffstalker` and `diffstalkerd`; the other three are private and bundled. See Releasing for the single-source version model.
+The three **published** packages are `diffstalker`, `diffstalkerd` and `diffstalkerd-grammars`; the other three are private and bundled. Grammars are published but **opt-in** — nothing depends on them, and a daemon without them simply reports no outline capability. See Releasing for the single-source version model.
 
 Everything imports core via subpath imports only (e.g. `@diffstalker/core/git/status`) — there is no barrel/bare specifier. A dependency-cruiser rule forbids the CLI from importing `@diffstalker/core/managers/*`, `simple-git`, or `chokidar` (see Architecture Layering).
 

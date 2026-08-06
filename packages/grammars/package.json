@@ -34,6 +34,7 @@
   },
   "scripts": {
     "vendor": "bun scripts/vendor.ts",
-    "verify": "bun scripts/vendor.ts --verify"
+    "verify": "bun scripts/vendor.ts --verify",
+    "build:prod": "bun run vendor"
   }
 }

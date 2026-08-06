@@ -19,7 +19,7 @@ esac
 # they carry a static 0.0.0 and are never versioned (they ship inside the published
 # bundles, never on their own). If the web ever becomes independently publishable,
 # add its manifest here.
-MANIFESTS="package.json packages/cli/package.json packages/daemon/package.json"
+MANIFESTS="package.json packages/cli/package.json packages/daemon/package.json packages/grammars/package.json"
 
 # Ensure clean working tree
 if [ -n "$(git status --porcelain)" ]; then
@@ -106,7 +106,7 @@ next="$next" current="$current" node -e '
     const start = v + marker.length;
     return head.slice(start, head.indexOf(`"`, start));
   };
-  for (const key of ["packages/cli", "packages/daemon"]) {
+  for (const key of ["packages/cli", "packages/daemon", "packages/grammars"]) {
     const got = lockVersion(key);
     if (got !== next) {
       console.error(`bun.lock: ${key} is ${got}, expected ${next} (stale lock entry?) — refusing`);
