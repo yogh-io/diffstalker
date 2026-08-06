@@ -118,6 +118,54 @@ describe.if(ready)('extracting', () => {
   });
 });
 
+describe.if(ready)('java', () => {
+  const JAVA = [
+    'package a;',
+    'public class Widget {',
+    '  private int count;',
+    '  public Widget(int c) { this.count = c; }',
+    '  public void run() { count++; }',
+    '}',
+  ].join('\n');
+
+  test('captures class, field, constructor and method with parents', async () => {
+    const outcome = await pool.extract('M.java', JAVA);
+    if (outcome.status !== 'ok') throw new Error('expected ok');
+
+    expect(outcome.symbols.map((s) => `${s.kind} ${s.name}@${s.startLine}`)).toEqual([
+      'class Widget@2',
+      'field count@3',
+      'constructor Widget@4',
+      'method run@5',
+    ]);
+    expect(outcome.symbols.find((s) => s.name === 'run')?.parent).toBe('Widget');
+  });
+});
+
+describe.if(ready)('javascript', () => {
+  const JS = [
+    'export class Thing {',
+    '  render() { return 1; }',
+    '}',
+    'export function free() {}',
+    'const arrow = () => 2;',
+    'const plain = 42;',
+  ].join('\n');
+
+  test('captures declarations and arrow-bound functions', async () => {
+    const outcome = await pool.extract('m.js', JS);
+    if (outcome.status !== 'ok') throw new Error('expected ok');
+    expect(outcome.symbols.map((s) => s.name)).toEqual(['Thing', 'render', 'free', 'arrow']);
+  });
+
+  test('a const holding a plain value is NOT a symbol', async () => {
+    // Otherwise the outline becomes a list of every constant in the file.
+    const outcome = await pool.extract('m.js', JS);
+    if (outcome.status !== 'ok') throw new Error('expected ok');
+    expect(outcome.symbols.map((s) => s.name)).not.toContain('plain');
+  });
+});
+
 describe.if(ready)('bounds', () => {
   /** Pathological for the QUERY, which the engine's own deadline misses. */
   const NASTY = '{a:'.repeat(12_000);
@@ -196,8 +244,10 @@ describe('artifact verification', () => {
 
   test.skipIf(!ready)('capability comes from what is installed', () => {
     // TypeScript is vendored; Java is not, so it must not be advertised.
-    expect(artifacts!.extensions).toContain('.ts');
-    expect(artifacts!.extensions).toContain('.vue');
-    expect(artifacts!.extensions).not.toContain('.java');
+    expect(artifacts!.extensions).toEqual(
+      expect.arrayContaining(['.ts', '.vue', '.js', '.java'])
+    );
+    // Never advertised: no grammar ships for it.
+    expect(artifacts!.extensions).not.toContain('.rs');
   });
 });

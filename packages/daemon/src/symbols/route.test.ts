@@ -88,8 +88,10 @@ describe('/health capability', () => {
       symbols: { extensions: string[] };
     };
     if (ready) {
-      expect(body.symbols.extensions).toContain('.ts');
-      expect(body.symbols.extensions).not.toContain('.java');
+      expect(body.symbols.extensions).toEqual(
+        expect.arrayContaining(['.ts', '.vue', '.js', '.java'])
+      );
+      expect(body.symbols.extensions).not.toContain('.rs');
     } else {
       expect(body.symbols.extensions).toEqual([]);
     }

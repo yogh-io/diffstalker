@@ -39,6 +39,11 @@ const EXTENSION_TO_GRAMMAR: ReadonlyMap<string, GrammarMatch> = new Map([
   ['.mts', { grammar: 'typescript', container: null }],
   ['.cts', { grammar: 'typescript', container: null }],
   ['.vue', { grammar: 'typescript', container: 'vue' as const }],
+  ['.js', { grammar: 'javascript', container: null }],
+  ['.mjs', { grammar: 'javascript', container: null }],
+  ['.cjs', { grammar: 'javascript', container: null }],
+  ['.jsx', { grammar: 'javascript', container: null }],
+  ['.java', { grammar: 'java', container: null }],
 ]);
 
 /** Extensions this build can outline, for the capability report. */

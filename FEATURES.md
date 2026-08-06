@@ -865,11 +865,12 @@ git operations.
   and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.
 - **In-file outline** (bare `o`, Explorer) — the symbols in the open file, from
   a real parser (tree-sitter compiled to WebAssembly), not a regex. Filter by
-  name, Enter jumps to the line. TypeScript and Vue today; Vue has no grammar of
-  its own, so its `<script>` blocks are fed to the TypeScript parser as ranges,
+  name, Enter jumps to the line. Vue has no grammar of its own, so its `<script>` blocks are fed to the TypeScript parser as ranges,
   which keeps line numbers file-absolute across BOTH blocks when a component has
   two. An unsupported language says so by extension — there is no regex second
-  pass, because a confidently wrong symbol is worse than an absent one. This is
+  pass, because a confidently wrong symbol is worse than an absent one.
+  TypeScript, Vue, JavaScript and Java today; a language is a vendored grammar
+  plus a query file, so adding one is data rather than code. This is
   syntax, never semantics: nothing resolves, so methods attached via
   `Object.assign(X.prototype, …)`, re-exports and decorator-synthesized members
   are invisible by design.

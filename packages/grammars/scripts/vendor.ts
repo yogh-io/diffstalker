@@ -63,6 +63,20 @@ const ARTIFACTS: Artifact[] = [
     inPackage: 'tree-sitter-typescript.wasm',
     sha256: '778025db5a8be0e70f8ccc3671e486dfeddd048c25d9e8a70c26de2e1bf6f97d',
   },
+  {
+    file: 'tree-sitter-javascript.wasm',
+    pkg: 'tree-sitter-javascript',
+    version: '0.25.0',
+    inPackage: 'tree-sitter-javascript.wasm',
+    sha256: '5fb488d0cabb4775a594bab85682de5ad6ce83c0d6ac997a9f82dd084d571240',
+  },
+  {
+    file: 'tree-sitter-java.wasm',
+    pkg: 'tree-sitter-java',
+    version: '0.23.5',
+    inPackage: 'tree-sitter-java.wasm',
+    sha256: '4fdeac4ca6ca089f06c6f7e562abcac1733cd465728cc7031ebb73c2019122c4',
+  },
 ];
 
 /** The runtime's version, recorded so the daemon can refuse a skewed pair. */

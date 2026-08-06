@@ -3,6 +3,10 @@
   "files": {
     "web-tree-sitter.wasm": "715cae35f31b7b03a13592bc5ac9039d5c6d2c2bda9f9e0c2b8abab77b3f64cc",
     "tree-sitter-typescript.wasm": "778025db5a8be0e70f8ccc3671e486dfeddd048c25d9e8a70c26de2e1bf6f97d",
+    "tree-sitter-javascript.wasm": "5fb488d0cabb4775a594bab85682de5ad6ce83c0d6ac997a9f82dd084d571240",
+    "tree-sitter-java.wasm": "4fdeac4ca6ca089f06c6f7e562abcac1733cd465728cc7031ebb73c2019122c4",
+    "queries/javascript.scm": "ffafc29fa2b3ff03595cab2298678287b566c3fa85c3c27b22ea63d2d2cc7dda",
+    "queries/java.scm": "b2bcb1fba9c367d71016240d5cd433fe201455033554ce9240814677a562416b",
     "queries/typescript.scm": "f4959f8fa6ba5edc4acfd21b6b00462178f6d1744a8750c3e556d9b0bcf5e6a2"
   }
 }
