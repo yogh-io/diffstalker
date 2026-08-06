@@ -282,7 +282,9 @@ export async function commit(
   message: string,
   amend: boolean = false
 ): Promise<void> {
-  const git = createGit(repoPath);
+  // Runs the user's pre-commit / commit-msg hooks, which are silent for
+  // as long as they take. The short idle budget would kill them.
+  const git = createGit(repoPath, { longRunning: true });
   const result = await git.commit(message, undefined, amend ? { '--amend': null } : undefined);
   // simple-git swallows "nothing to commit" (exit 1) and resolves with an
   // empty commit hash. Reporting success for a commit that never happened
@@ -330,7 +332,9 @@ export function unstageHunk(repoPath: string, patch: string): void {
 }
 
 export async function push(repoPath: string): Promise<string> {
-  const git = createGit(repoPath);
+  // Talks to a remote, and git is silent while a pack is negotiated (it
+  // only writes progress when stderr is a TTY, which it is not here).
+  const git = createGit(repoPath, { longRunning: true });
   const result = await git.push();
   // Build a summary string from the push result
   const pushed = result.pushed;
@@ -339,13 +343,15 @@ export async function push(repoPath: string): Promise<string> {
 }
 
 export async function fetchRemote(repoPath: string): Promise<string> {
-  const git = createGit(repoPath);
+  // Talks to a remote. See push().
+  const git = createGit(repoPath, { longRunning: true });
   await git.fetch();
   return 'Fetch complete';
 }
 
 export async function pullRebase(repoPath: string): Promise<string> {
-  const git = createGit(repoPath);
+  // Talks to a remote AND runs commit hooks on the rebase. See push().
+  const git = createGit(repoPath, { longRunning: true });
   const result = await git.pull(['--rebase']);
   if (
     result.summary.changes === 0 &&
@@ -493,14 +499,16 @@ export async function softResetHead(repoPath: string, count: number = 1): Promis
 // History actions
 
 export async function cherryPick(repoPath: string, hash: string): Promise<string> {
-  const git = createGit(repoPath);
+  // Runs commit hooks. See commit().
+  const git = createGit(repoPath, { longRunning: true });
   // --end-of-options: a hash like '--abort' must never be read as a flag
   await git.raw(['cherry-pick', '--end-of-options', hash]);
   return 'Cherry-picked';
 }
 
 export async function revertCommit(repoPath: string, hash: string): Promise<string> {
-  const git = createGit(repoPath);
+  // Runs commit hooks. See commit().
+  const git = createGit(repoPath, { longRunning: true });
   await git.raw(['revert', '--no-edit', '--end-of-options', hash]);
   return 'Reverted';
 }
@@ -551,7 +559,8 @@ export async function abortOperation(repoPath: string): Promise<string> {
  * cannot open an editor.
  */
 export async function rebaseContinue(repoPath: string): Promise<string> {
-  const git = createGit(repoPath);
+  // Runs commit hooks. See commit().
+  const git = createGit(repoPath, { longRunning: true });
   await git.raw(['-c', 'core.editor=true', 'rebase', '--continue']);
   return 'Rebase continued';
 }

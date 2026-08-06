@@ -42,11 +42,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A commit no longer dies mid-hook, and a fetch no longer dies mid-transfer.**
+  The idle timeout added alongside the funcname drivers applied to every git
+  call, including ones that are legitimately silent for a long time: git only
+  writes progress to a terminal, so a pre-commit hook running a test suite, or a
+  pack being negotiated, looks identical to a hang. Hook-running and remote
+  operations now get a much larger budget; local reads keep the short one. Both
+  are still bounded.
+- **Content search no longer 500s on a huge matched line, a NUL, a newline, or a
+  very long query.** An over-budget result now returns what it found and says it
+  is partial; a query git cannot take literally is refused with a clear message
+  instead of surfacing as a server error. Searching also no longer needs git
+  2.38 — the per-file cap is counted locally rather than passed to `git grep`.
+- **diffstalker no longer displaces your own global gitattributes.** The
+  generated funcname defaults are only injected when you have no per-user
+  attributes of your own; previously they took priority over yours and silently
+  dropped every rule you had defined, textconv and merge drivers included.
+- **The terminal UI no longer misses a file-list change that lands mid-fetch.**
+  A status change arriving while `/files` was in flight was swallowed by the
+  reply that overtook it, leaving the finder showing a list that predated it.
+- **`/` is inert in views that have no filter.** It used to set invisible state
+  on Journal, History, Compare and Explorer, which then appeared as an
+  already-open filter on returning to Changes.
 - **A hung git command can no longer wedge a request forever.** Every git
-  invocation now has a 10 second idle timeout (idle, not total, so a slow but
-  progressing operation is unaffected). Without it a stuck credential prompt or
-  an unresponsive remote held its queued operation open for the life of the
-  process.
+  invocation now has an idle timeout — 10 seconds for local reads, 10 minutes
+  for anything running your hooks or talking to a remote. Without it a stuck
+  credential prompt or an unresponsive remote held its queued operation open
+  for the life of the process.
 - **Ctrl+C now quits from the file finder too.** It was the one place in the
   terminal UI where the universal exit did nothing: the finder's text input
   takes over the keyboard and swallows control characters, so the app-level

@@ -85,6 +85,13 @@ export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
   private _cachedFilePaths: string[] | null = null;
   private filePathsStale = true;
   private filePathsInFlight: Promise<string[]> | null = null;
+  /**
+   * Bumped by every invalidation. A fetch captures it at start and only
+   * marks the cache fresh if it has not moved — otherwise a status change
+   * arriving mid-flight would be swallowed by the reply that overtakes it,
+   * and the finder would serve a list that predates the change.
+   */
+  private filePathsGeneration = 0;
 
   private _state: ExplorerState = {
     currentPath: '',
@@ -657,14 +664,17 @@ export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
   }
 
   private async fetchFilePaths(): Promise<string[]> {
+    const generation = this.filePathsGeneration;
     if (this.repoId === null) {
       this._cachedFilePaths = [];
-      this.filePathsStale = false;
+      if (generation === this.filePathsGeneration) this.filePathsStale = false;
       return this._cachedFilePaths;
     }
     try {
       this._cachedFilePaths = await this.client.files(this.repoId);
-      this.filePathsStale = false;
+      // An invalidation that landed while this was in flight wins: the
+      // reply describes a tree that has already moved on.
+      if (generation === this.filePathsGeneration) this.filePathsStale = false;
     } catch (err) {
       // Silent on connection loss — logger.warn hits stderr and garbles the
       // alt-screen; the session's reconnect flow surfaces the outage.
@@ -680,6 +690,7 @@ export class ExplorerViewModel extends EventEmitter<ExplorerStateEventMap> {
   /** Mark the file-path cache stale. The next finder open refetches. */
   invalidateFilePaths(): void {
     this.filePathsStale = true;
+    this.filePathsGeneration += 1;
   }
 
   /**

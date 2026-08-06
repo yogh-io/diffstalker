@@ -46,8 +46,22 @@ const execFileAsync = promisify(execFile);
 
 /** Shortest query we will run. One character scans the tree per keystroke. */
 export const GREP_MIN_QUERY = 3;
-/** Matches per file (`-m`), so one generated file cannot own the results. */
+/**
+ * Matches kept per file, so one generated file cannot own the results.
+ *
+ * Enforced HERE, not with `git grep -m`: `--max-count` only landed in git
+ * 2.38 (2022), and an older git answers "unknown switch" with exit 129,
+ * which is neither "no matches" nor a kill — every search would surface as
+ * a 500 on, say, Ubuntu 22.04. Counting in the parser works everywhere.
+ */
 export const GREP_MAX_PER_FILE = 20;
+
+/**
+ * Longest query we will run. Not a security bound (the query is never
+ * argv-positional) — an argument list has an OS limit, and a megabyte of
+ * pasted text should fail as a clear 400, not as E2BIG from execFile.
+ */
+export const GREP_MAX_QUERY = 500;
 /** Total matches returned. */
 export const GREP_MAX_RESULTS = 500;
 /** Output budget. The child is killed at the cap. */
@@ -96,6 +110,22 @@ export class GrepQueryTooShortError extends Error {
   }
 }
 
+/**
+ * A query git cannot take literally, or cannot take at all.
+ *
+ * NUL cannot cross an argv boundary — execFile throws a TypeError, which
+ * would surface as a 500. A newline is worse than that: `git grep -F`
+ * treats it as a PATTERN SEPARATOR, so "a\nb" quietly becomes "match a or
+ * match b" and the endpoint's literal-text contract stops being true.
+ * Both are refusals, not silent repairs.
+ */
+export class GrepQueryInvalidError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'GrepQueryInvalidError';
+  }
+}
+
 const EMPTY: GrepResult = { matches: [], capped: false, incomplete: false, binarySkipped: 0 };
 
 /**
@@ -115,33 +145,59 @@ function decode(bytes: Uint8Array): string {
  * Parse `path\0lineno\0content\n` records. See the module comment for why
  * this walks NUL-first instead of splitting.
  */
+/** One `path\0lineno\0content\n` record, as raw byte slices. */
+interface RawRecord {
+  pathBytes: Uint8Array;
+  lineBytes: Uint8Array;
+  contentBytes: Uint8Array;
+  /** Where the next record starts. */
+  next: number;
+}
+
+/**
+ * Read one record from `cursor`, NUL-first. Returns null when the tail is
+ * truncated — a half record is discarded, never half-parsed.
+ */
+function readRecord(out: Buffer, cursor: number): RawRecord | null {
+  const pathEnd = out.indexOf(0, cursor);
+  if (pathEnd === -1) return null;
+  const lineEnd = out.indexOf(0, pathEnd + 1);
+  if (lineEnd === -1) return null;
+  let contentEnd = out.indexOf(0x0a, lineEnd + 1);
+  if (contentEnd === -1) contentEnd = out.length;
+
+  return {
+    pathBytes: out.subarray(cursor, pathEnd),
+    lineBytes: out.subarray(pathEnd + 1, lineEnd),
+    contentBytes: out.subarray(lineEnd + 1, contentEnd),
+    next: contentEnd + 1,
+  };
+}
+
+/**
+ * Parse `path\0lineno\0content\n` records. See the module comment for why
+ * this walks NUL-first instead of splitting.
+ */
 export function parseGrepOutput(out: Buffer, limit = GREP_MAX_RESULTS): GrepResult {
   const matches: GrepMatch[] = [];
+  const perFile = new Map<string, number>();
   let binarySkipped = 0;
   let capped = false;
   let cursor = 0;
 
   while (cursor < out.length) {
-    const pathEnd = out.indexOf(0, cursor);
-    if (pathEnd === -1) break;
-    const lineEnd = out.indexOf(0, pathEnd + 1);
-    if (lineEnd === -1) break;
-    let contentEnd = out.indexOf(0x0a, lineEnd + 1);
-    if (contentEnd === -1) contentEnd = out.length;
-
-    const pathBytes = out.subarray(cursor, pathEnd);
-    const lineBytes = out.subarray(pathEnd + 1, lineEnd);
-    const contentBytes = out.subarray(lineEnd + 1, contentEnd);
-    cursor = contentEnd + 1;
+    const record = readRecord(out, cursor);
+    if (record === null) break;
+    cursor = record.next;
 
     // git was wrong about this file being text. -I is advisory; this is the
     // real binary bound.
-    if (contentBytes.includes(0)) {
+    if (record.contentBytes.includes(0)) {
       binarySkipped += 1;
       continue;
     }
 
-    const line = Number.parseInt(decode(lineBytes), 10);
+    const line = Number.parseInt(decode(record.lineBytes), 10);
     if (!Number.isSafeInteger(line) || line < 1) continue;
 
     if (matches.length >= limit) {
@@ -149,10 +205,18 @@ export function parseGrepOutput(out: Buffer, limit = GREP_MAX_RESULTS): GrepResu
       break;
     }
 
-    const full = decode(contentBytes);
+    const filePath = decode(record.pathBytes);
+    const seen = perFile.get(filePath) ?? 0;
+    if (seen >= GREP_MAX_PER_FILE) {
+      capped = true;
+      continue;
+    }
+    perFile.set(filePath, seen + 1);
+
+    const full = decode(record.contentBytes);
     const truncated = full.length > GREP_MAX_LINE_CHARS;
     matches.push({
-      path: decode(pathBytes),
+      path: filePath,
       line,
       text: truncated ? full.slice(0, GREP_MAX_LINE_CHARS) : full,
       truncated,
@@ -177,8 +241,6 @@ export function grepArgs(query: string): string[] {
     '-z',
     '-F', // fixed strings only: no regex ever reaches git
     ...(isCaseInsensitive(query) ? ['-i'] : []),
-    '-m',
-    String(GREP_MAX_PER_FILE),
     '-e',
     query, // never argv-positional, so a leading "-" is data
     '--untracked', // same corpus as the finder; still honors .gitignore
@@ -196,6 +258,13 @@ export function grepArgs(query: string): string[] {
  */
 export async function grepRepo(repoPath: string, query: string): Promise<GrepResult> {
   if (query.length < GREP_MIN_QUERY) throw new GrepQueryTooShortError();
+  if (query.length > GREP_MAX_QUERY) {
+    throw new GrepQueryInvalidError(`Query must be at most ${GREP_MAX_QUERY} characters`);
+  }
+  if (query.includes('\0')) throw new GrepQueryInvalidError('Query cannot contain a NUL byte');
+  if (query.includes('\n')) {
+    throw new GrepQueryInvalidError('Query cannot span lines — this searches for literal text');
+  }
 
   try {
     const { stdout } = await execFileAsync('git', grepArgs(query), {
@@ -213,8 +282,11 @@ export async function grepRepo(repoPath: string, query: string): Promise<GrepRes
     const e = err as { code?: number | string; killed?: boolean; stdout?: Buffer };
     // Exit 1 is "no matches", which is not an error.
     if (e.code === 1) return EMPTY;
-    // Killed at the time or byte budget: keep what we got, say it is partial.
-    if (e.killed === true || e.code === 'ETIMEDOUT' || e.code === 'ENOBUFS') {
+    // Killed at the time or byte budget: keep what we got, say it is
+    // partial. The maxBuffer overflow does NOT set `killed` and reports its
+    // own code — checking only `killed` let a single multi-MB minified line
+    // turn every query matching it into a 500.
+    if (e.killed === true || e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
       const partial = e.stdout ? parseGrepOutput(e.stdout) : EMPTY;
       return { ...partial, incomplete: true };
     }

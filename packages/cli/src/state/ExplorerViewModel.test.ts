@@ -275,6 +275,36 @@ describe('ExplorerViewModel navigation + file finder', () => {
     expect(fake.calls.filter((c) => c.method === 'files').length).toBe(2);
   });
 
+  test('an invalidation arriving mid-fetch is not swallowed by the reply', async () => {
+    let release!: (value: string[]) => void;
+    const fake = fakeClient({ files: ['a.ts'] });
+    let gate = true;
+    const gated = {
+      ...fake.client,
+      files: () => {
+        fake.calls.push({ method: 'files', args: [] });
+        if (!gate) return Promise.resolve(['a.ts', 'new.ts']);
+        gate = false;
+        // Only the FIRST call is held open; the refetch must complete.
+        return new Promise<string[]>((resolve) => {
+          release = resolve;
+        });
+      },
+    } as unknown as DiffstalkerClient;
+    const vm = new ExplorerViewModel(gated, REPO_ID, REPO_PATH, {});
+
+    const pending = vm.getFilePaths();
+    // A watcher tick lands while the request is still open.
+    vm.setGitStatus(buildGitStatusMap([]));
+    release(['a.ts']);
+    await pending;
+
+    // The reply predates the change, so the cache must still be stale and
+    // the next read must go back to the daemon.
+    expect(await vm.getFilePaths()).toEqual(['a.ts', 'new.ts']);
+    expect(fake.calls.filter((c) => c.method === 'files').length).toBe(2);
+  });
+
   test('concurrent callers share one in-flight request', async () => {
     const fake = fakeClient({ files: ['a.ts'] });
     const vm = makeVM(fake);

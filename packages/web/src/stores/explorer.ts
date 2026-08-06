@@ -431,7 +431,16 @@ export const useExplorerStore = defineStore('explorer', () => {
     for (let i = 0; i < parts.length; i++) {
       const current = prefix === '' ? parts[i] : `${prefix}/${parts[i]}`;
       const step = await revealStep(prefix, current, i === parts.length - 1, gen);
-      if (step === 'done' && targetLine !== undefined && gen === generation) {
+      // Ask for the line only if THIS file is the one now open. `done` also
+      // covers a reveal whose openFile bailed because the user clicked
+      // another file mid-walk — scrolling that file to this hit's line
+      // would be worse than not scrolling at all.
+      if (
+        step === 'done' &&
+        targetLine !== undefined &&
+        gen === generation &&
+        selectedPath.value === path
+      ) {
         requestLine(targetLine);
       }
       if (step !== 'descend') return;

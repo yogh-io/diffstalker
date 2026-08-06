@@ -20,6 +20,8 @@ import {
   grepArgs,
   parseGrepOutput,
   GrepQueryTooShortError,
+  GrepQueryInvalidError,
+  GREP_MAX_QUERY,
   GREP_MAX_LINE_CHARS,
   GREP_MAX_PER_FILE,
   GREP_MIN_QUERY,
@@ -86,9 +88,8 @@ describe('argv', () => {
     expect(grepArgs('Abc')).not.toContain('-i');
   });
 
-  test('caps matches per file', () => {
-    const args = grepArgs('abc');
-    expect(args[args.indexOf('-m') + 1]).toBe(String(GREP_MAX_PER_FILE));
+  test('does not pass -m: --max-count needs git 2.38, the parser caps instead', () => {
+    expect(grepArgs('abc')).not.toContain('-m');
   });
 });
 
@@ -256,6 +257,39 @@ describe('hostile output shapes', () => {
   });
 });
 
+/**
+ * The budgets. These were untested when this shipped, which is how the
+ * maxBuffer path got to throw a 500 instead of returning partial results.
+ */
+describe('budgets', () => {
+  test('an over-budget output returns partial results, never throws', async () => {
+    // One matched line larger than GREP_MAX_BYTES: execFile aborts with
+    // ERR_CHILD_PROCESS_STDIO_MAXBUFFER, which sets no `killed` flag.
+    write('huge.txt', `${'needle '.repeat(900_000)}\n`);
+    write('small.txt', 'needle here\n');
+    commit();
+
+    const result = await grepRepo(repo, 'needle');
+    expect(result.incomplete).toBe(true);
+  });
+
+  test('a query at the length limit runs; past it is refused', async () => {
+    write('a.txt', 'nothing\n');
+    commit();
+
+    await grepRepo(repo, 'x'.repeat(GREP_MAX_QUERY));
+    expect(grepRepo(repo, 'x'.repeat(GREP_MAX_QUERY + 1))).rejects.toThrow(GrepQueryInvalidError);
+  });
+
+  test('a NUL in the query is refused, not passed to execFile', async () => {
+    expect(grepRepo(repo, 'ab\0cd')).rejects.toThrow(GrepQueryInvalidError);
+  });
+
+  test('a newline in the query is refused — git grep -F would read it as two patterns', async () => {
+    expect(grepRepo(repo, 'alpha\nbeta')).rejects.toThrow(GrepQueryInvalidError);
+  });
+});
+
 describe('caps', () => {
   test('stops at the result limit and says so', () => {
     const records: Buffer[] = [];
@@ -273,12 +307,30 @@ describe('caps', () => {
     expect(parseGrepOutput(out, 10).capped).toBe(false);
   });
 
-  test('caps matches per file through git itself', async () => {
+  test('caps matches per file in the parser, not with git -m', async () => {
+    // -m (--max-count) needs git 2.38; an older git answers "unknown
+    // switch" with exit 129, which would surface as a 500. So the cap is
+    // counted here and the argv must not carry -m.
+    expect(grepArgs('needle')).not.toContain('-m');
+
     const lines = Array.from({ length: GREP_MAX_PER_FILE + 25 }, () => 'needle').join('\n');
     write('many.txt', `${lines}\n`);
     commit();
 
-    const matches = (await grepRepo(repo, 'needle')).matches;
-    expect(matches.length).toBe(GREP_MAX_PER_FILE);
+    const result = await grepRepo(repo, 'needle');
+    expect(result.matches.length).toBe(GREP_MAX_PER_FILE);
+    expect(result.capped).toBe(true);
+  });
+
+  test('the per-file cap does not starve later files', () => {
+    const records: Buffer[] = [];
+    for (let i = 1; i <= GREP_MAX_PER_FILE + 10; i++) {
+      records.push(Buffer.from(`noisy.txt\x00${i}\x00line ${i}\n`));
+    }
+    records.push(Buffer.from('quiet.txt\x001\x00the one hit here\n'));
+
+    const { matches } = parseGrepOutput(Buffer.concat(records));
+    expect(matches.filter((m) => m.path === 'noisy.txt').length).toBe(GREP_MAX_PER_FILE);
+    expect(matches.some((m) => m.path === 'quiet.txt')).toBe(true);
   });
 });

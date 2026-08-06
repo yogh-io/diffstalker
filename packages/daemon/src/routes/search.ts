@@ -14,7 +14,12 @@
  * Registered for both API modes: the web UI is the client this exists for.
  */
 
-import { grepRepo, GrepQueryTooShortError, GREP_MIN_QUERY } from '@diffstalker/core/git/grep';
+import {
+  grepRepo,
+  GrepQueryTooShortError,
+  GrepQueryInvalidError,
+  GREP_MIN_QUERY,
+} from '@diffstalker/core/git/grep';
 import { Router, HttpError, sendJson } from '../router.js';
 import { requireRepo, requireStringField, type RouteDeps } from './shared.js';
 
@@ -31,6 +36,11 @@ export function registerSearchRoutes(router: Router, deps: RouteDeps): void {
     } catch (err) {
       if (err instanceof GrepQueryTooShortError) {
         throw new HttpError(400, `Query must be at least ${GREP_MIN_QUERY} characters`);
+      }
+      // A NUL, a newline, or an over-long query: the caller's problem to
+      // fix, not a server fault. Without this they surfaced as 500s.
+      if (err instanceof GrepQueryInvalidError) {
+        throw new HttpError(400, err.message);
       }
       throw err;
     }

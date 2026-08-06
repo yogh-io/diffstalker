@@ -30,14 +30,25 @@ describe('createFinderIndex', () => {
     expect(index.find('packages').length).toBeLessThanOrEqual(2);
   });
 
-  test('matches fuzzily and reports positions into the item text', () => {
+  test('reports the EXACT matched positions, not merely in-range ones', () => {
+    // Pinned exactly: an in-range assertion passes with any off-by-one,
+    // and an off-by-one in these offsets is what the CLI's truncation
+    // rewrite existed to fix.
     const index = createFinderIndex(['README.md'], 10);
     const [match] = index.find('rme');
     expect(match.text).toBe('README.md');
-    for (const position of match.positions) {
-      expect(position).toBeGreaterThanOrEqual(0);
-      expect(position).toBeLessThan('README.md'.length);
-    }
+    // R(0) M(4) E(5) in 'README.md' — verified against fzf, not assumed.
+    expect([...match.positions].sort((a, b) => a - b)).toEqual([0, 4, 5]);
+  });
+
+  test('positions land on the queried characters', () => {
+    const index = createFinderIndex(['packages/core/src/view/finderModel.ts'], 10);
+    const [match] = index.find('finder');
+    const picked = [...match.positions]
+      .sort((a, b) => a - b)
+      .map((i) => match.text[i])
+      .join('');
+    expect(picked.toLowerCase()).toBe('finder');
   });
 
   test('smart-case: a lowercase query is case-insensitive', () => {

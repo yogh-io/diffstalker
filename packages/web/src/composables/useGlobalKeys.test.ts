@@ -416,3 +416,23 @@ describe('content search (Ctrl/⌘+Shift+F, bare F)', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 });
+
+describe('/ only where a list narrows', () => {
+  test('opens on Changes', () => {
+    const ui = useUiStore();
+    ui.setActiveView('changes');
+    press('/');
+    expect(useFilterStore().open).toBe(true);
+  });
+
+  test('is inert on a view with no filter chip, and does not preventDefault', () => {
+    const ui = useUiStore();
+    const filter = useFilterStore();
+    for (const view of ['journal', 'history', 'compare', 'explorer'] as const) {
+      ui.setActiveView(view);
+      const event = press('/');
+      expect(filter.open).toBe(false);
+      expect(event.defaultPrevented).toBe(false);
+    }
+  });
+});

@@ -37,7 +37,7 @@ const GROUPS: HotkeyGroup[] = [
       { keys: 's', description: 'Toggle diff syntax highlighting' },
       { keys: 'd', description: 'Toggle split / unified diff' },
       { keys: 'f', description: 'Toggle follow mode' },
-      { keys: '/', description: 'Filter the list you are looking at' },
+      { keys: '/', description: 'Filter the changed-file list' },
       { keys: 'e', description: 'Expand every large diff (so Ctrl F finds it)' },
       { keys: '?', description: 'This help' },
       { keys: 'Esc', description: 'Close dialog' },

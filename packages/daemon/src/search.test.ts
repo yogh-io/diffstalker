@@ -124,6 +124,21 @@ describe('POST /repos/:id/search', () => {
     expect(res.status).toBe(400);
   });
 
+  test('a NUL in the query is a 400, not a 500', async () => {
+    const res = await search('ab\u0000cd');
+    expect(res.status).toBe(400);
+  });
+
+  test('a multi-line query is a 400 — git grep -F would read it as two patterns', async () => {
+    const res = await search('alpha\nbeta');
+    expect(res.status).toBe(400);
+  });
+
+  test('an over-long query is a 400, not an execFile crash', async () => {
+    const res = await search('x'.repeat(5000));
+    expect(res.status).toBe(400);
+  });
+
   test('404s an unknown repo id', async () => {
     const res = await request('/repos/deadbeefcafe/search', {
       method: 'POST',

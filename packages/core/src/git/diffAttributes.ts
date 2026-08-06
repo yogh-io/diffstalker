@@ -9,10 +9,19 @@
  * it to a driver.
  *
  * Most repos never set that up, so we supply it ourselves, per invocation,
- * via `-c core.attributesFile=…`. This is the lowest-priority attributes
- * source git consults, so a repo's own `.gitattributes` — or the user's
- * `core.attributesFile` if they set one — still wins. We are filling in a
- * default, not overriding anyone.
+ * via `-c core.attributesFile=…`. A repo's own `.gitattributes` still wins:
+ * it is a higher-priority source than the per-user file.
+ *
+ * The USER's own per-user file is a different story, and the reason
+ * `userHasAttributesFile()` exists. `-c` has the HIGHEST config priority,
+ * so setting it does not sit under an existing `core.attributesFile` — it
+ * replaces it, and it also displaces the spec default
+ * (`$XDG_CONFIG_HOME/git/attributes`) that applies when the setting is
+ * unset. That would silently drop every attribute the user defined
+ * globally: not just funcname drivers, but textconv, merge drivers, `-text`.
+ * So we inject ONLY when the user has no per-user attributes of their own.
+ * Someone who has already written that file does not need our defaults and
+ * must not lose theirs to them.
  *
  * MEASURED, so nobody re-derives it:
  *
@@ -35,7 +44,9 @@
  */
 
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { cacheDir } from '../utils/xdg.js';
 
 /**
@@ -94,6 +105,44 @@ export function attributesText(): string {
 }
 
 let cachedPath: string | null = null;
+let userOwnsAttributes: boolean | null = null;
+
+/**
+ * Does the user already have per-user gitattributes? Either an explicit
+ * `core.attributesFile`, or the XDG default path existing on disk.
+ *
+ * Memoized: this runs on the first `createGit` and the answer does not
+ * change under a running daemon. A failure to ask git is treated as "yes,
+ * they might" — the safe direction is to leave their config alone.
+ */
+export function userHasAttributesFile(): boolean {
+  if (userOwnsAttributes !== null) return userOwnsAttributes;
+
+  try {
+    const configured = execFileSync('git', ['config', '--get', 'core.attributesFile'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      // Passed explicitly: under bun, execFileSync does NOT pick up mutations
+      // to process.env made after startup.
+      env: process.env,
+    }).trim();
+    if (configured !== '') {
+      userOwnsAttributes = true;
+      return true;
+    }
+  } catch (err) {
+    // Exit 1 is "not set", which is the common case and not a failure.
+    const code = (err as { status?: number }).status;
+    if (code !== 1) {
+      userOwnsAttributes = true;
+      return true;
+    }
+  }
+
+  const xdg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+  userOwnsAttributes = fs.existsSync(path.join(xdg, 'git', 'attributes'));
+  return userOwnsAttributes;
+}
 
 /**
  * Path to the generated attributes file, written on first use.
@@ -104,6 +153,8 @@ let cachedPath: string | null = null;
  */
 export function attributesFilePath(): string | null {
   if (cachedPath !== null) return cachedPath;
+  // Their file, their rules. See the module comment.
+  if (userHasAttributesFile()) return null;
 
   const target = path.join(cacheDir(), 'funcname.gitattributes');
   const text = attributesText();
@@ -118,16 +169,34 @@ export function attributesFilePath(): string | null {
     }
     if (current !== text) {
       fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, text, 'utf8');
+      writeAtomic(target, text);
     }
     cachedPath = target;
     return cachedPath;
   } catch {
+    // Remember the failure too: without this, a read-only cache dir means
+    // every createGit call retries the whole mkdir/write dance.
+    cachedPath = null;
+    userOwnsAttributes = true;
     return null;
   }
 }
 
-/** Reset the memo. Tests only. */
+/**
+ * Write the file to a temp name and rename it into place.
+ *
+ * Two daemons starting together would otherwise interleave writes and hand
+ * git a torn file. Unknown drivers are ignored, so a torn file is benign —
+ * but rename is atomic and costs one line.
+ */
+function writeAtomic(target: string, text: string): void {
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, text, 'utf8');
+  fs.renameSync(tmp, target);
+}
+
+/** Reset both memos. Tests only. */
 export function resetAttributesFileCache(): void {
   cachedPath = null;
+  userOwnsAttributes = null;
 }

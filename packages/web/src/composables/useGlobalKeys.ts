@@ -16,10 +16,12 @@
  *   state); a/s/d/f share the CLI's a and f bindings.
  * - e — expand every diff body held back by the size gate, so browser
  *   find-in-page reaches the whole changeset;
- * - / — narrow the list the current view is showing. A bare key, not a
- *   chord: it is the vi/less/GitHub gesture, it costs nothing the browser
- *   insists on, and it reads as "narrow this list" rather than "search
- *   the world". Pressing it again returns the caret to the input.
+ * - / — narrow the list the current view is showing, in the views that
+ *   have one. A bare key, not a chord: it is the vi/less/GitHub gesture,
+ *   it costs nothing the browser insists on, and it reads as "narrow this
+ *   list" rather than "search the world". Pressing it again returns the
+ *   caret to the input. Inert in views with no filterable list, so it
+ *   never opens a chip the user cannot see.
  *
  * Ctrl+F is deliberately NOT ours and never will be: find-in-page is the
  * in-diff search, which is why windowed virtualization was rejected.
@@ -40,6 +42,15 @@ import { beginUserNav } from './useUrlSync';
 import { useUiStore, VIEWS } from '../stores/ui';
 import { useFilterStore } from '../stores/filter';
 import type { ViewName } from '../prefs';
+
+/**
+ * Views that render a FilterChip. `/` is inert elsewhere — the binding and
+ * the surface have to agree, or the key sets invisible state.
+ *
+ * Grow this set in the same commit that renders the chip in a view, never
+ * before.
+ */
+const FILTERABLE_VIEWS = new Set<ViewName>(['changes']);
 
 /** Digit -> view, derived from the rail order — never hardcoded. */
 const VIEW_KEYS: Record<string, ViewName> = Object.fromEntries(
@@ -118,6 +129,35 @@ export function useGlobalKeys(): void {
     return true;
   }
 
+  /**
+   * The two bare keys that open something: `F` (content search) and `/`
+   * (narrow this list). Both are no-ops when their surface does not exist,
+   * and neither calls preventDefault on that branch — an inert key stays
+   * the browser's. Returns true when it claimed the key.
+   */
+  function handleBareSurface(event: KeyboardEvent): boolean {
+    // Bare F is the chordless way into search, for the CLI's sake later —
+    // a terminal cannot express Ctrl+Shift+letter at all.
+    if (event.key === 'F') {
+      if (daemon.activeRepoId === null) return true;
+      event.preventDefault();
+      ui.openOverlay('search');
+      return true;
+    }
+
+    if (event.key === '/') {
+      // Only where a list actually narrows. Opening the filter on a view
+      // that does not render the chip would set state nobody can see, and
+      // then reveal an already-open filter on returning to Changes.
+      if (!FILTERABLE_VIEWS.has(ui.activeView)) return true;
+      event.preventDefault();
+      filter.openAndFocus();
+      return true;
+    }
+
+    return false;
+  }
+
   function onKeydown(event: KeyboardEvent): void {
     if (event.defaultPrevented) return;
 
@@ -143,20 +183,8 @@ export function useGlobalKeys(): void {
 
     if (ui.activeOverlay !== null) return; // overlays are modal
 
-    // Bare F: the chordless way in, for the CLI's sake later — a terminal
-    // cannot express Ctrl+Shift+letter at all.
-    if (event.key === 'F') {
-      if (daemon.activeRepoId === null) return;
-      event.preventDefault();
-      ui.openOverlay('search');
-      return;
-    }
-
-    if (event.key === '/') {
-      event.preventDefault();
-      filter.openAndFocus();
-      return;
-    }
+    // The bare-key surfaces: search, and the list filter.
+    if (handleBareSurface(event)) return;
 
     // Display toggles on the home row (a s d f).
     if (handleDisplayToggle(event.key)) return;

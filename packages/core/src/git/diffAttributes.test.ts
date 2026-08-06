@@ -17,6 +17,7 @@ import {
   DIFF_DRIVERS,
   attributesText,
   attributesFilePath,
+  userHasAttributesFile,
   resetAttributesFileCache,
 } from './diffAttributes.js';
 import { createGit } from './gitClient.js';
@@ -48,7 +49,36 @@ function fixture(file: string, before: string, from: string, to: string): void {
   fs.writeFileSync(path.join(repo, file), before.replace(from, to));
 }
 
+/**
+ * The injection is skipped when the USER has per-user gitattributes, so
+ * every test here has to pin that answer — otherwise the suite passes or
+ * fails depending on whose machine it runs on.
+ */
+let configHome: string;
+let savedConfigHome: string | undefined;
+let savedGlobalConfig: string | undefined;
+
+function pinNoUserAttributes(): void {
+  savedConfigHome = process.env.XDG_CONFIG_HOME;
+  savedGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
+  configHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-cfg-'));
+  process.env.XDG_CONFIG_HOME = configHome;
+  process.env.GIT_CONFIG_GLOBAL = path.join(configHome, 'gitconfig');
+  fs.writeFileSync(process.env.GIT_CONFIG_GLOBAL, '');
+  resetAttributesFileCache();
+}
+
+function restoreUserAttributes(): void {
+  if (savedConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = savedConfigHome;
+  if (savedGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+  else process.env.GIT_CONFIG_GLOBAL = savedGlobalConfig;
+  fs.rmSync(configHome, { recursive: true, force: true });
+  resetAttributesFileCache();
+}
+
 beforeEach(() => {
+  pinNoUserAttributes();
   repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-attrs-'));
   git(['init', '-q', '.']);
   attributesFile = path.join(repo, 'attrs');
@@ -57,7 +87,65 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(repo, { recursive: true, force: true });
-  resetAttributesFileCache();
+  restoreUserAttributes();
+});
+
+/**
+ * `-c core.attributesFile` has the HIGHEST config priority, so injecting it
+ * replaces the user's own per-user attributes rather than sitting under
+ * them — dropping their textconv, merge and `-text` rules along with their
+ * funcname ones. So we only inject when they have none.
+ */
+describe('never evicting the user\'s own attributes', () => {
+  test('injects when the user has no per-user attributes', () => {
+    expect(userHasAttributesFile()).toBe(false);
+    expect(attributesFilePath()).not.toBeNull();
+  });
+
+  test('backs off when the XDG default attributes file exists', () => {
+    fs.mkdirSync(path.join(configHome, 'git'), { recursive: true });
+    fs.writeFileSync(path.join(configHome, 'git', 'attributes'), '*.zz diff=python\n');
+    resetAttributesFileCache();
+
+    expect(userHasAttributesFile()).toBe(true);
+    expect(attributesFilePath()).toBeNull();
+  });
+
+  test('backs off when core.attributesFile is configured', () => {
+    const theirs = path.join(configHome, 'mine.attributes');
+    fs.writeFileSync(theirs, '*.zz diff=python\n');
+    fs.writeFileSync(
+      process.env.GIT_CONFIG_GLOBAL as string,
+      `[core]\n\tattributesFile = ${theirs}\n`
+    );
+    resetAttributesFileCache();
+
+    expect(userHasAttributesFile()).toBe(true);
+    expect(attributesFilePath()).toBeNull();
+  });
+
+  test('a user driver assignment still applies through createGit', async () => {
+    // The regression this guards: our file used to displace theirs, so
+    // their rule stopped working the moment diffstalker ran the diff.
+    const theirs = path.join(configHome, 'mine.attributes');
+    fs.writeFileSync(theirs, '*.py diff=python\n');
+    fs.writeFileSync(
+      process.env.GIT_CONFIG_GLOBAL as string,
+      `[core]\n\tattributesFile = ${theirs}\n`
+    );
+    resetAttributesFileCache();
+
+    fixture(
+      'm.py',
+      'class Widget:\n    def render(self):\n        a = 1\n        b = 2\n        c = 3\n        return a\n',
+      '        b = 2',
+      '        b = 99'
+    );
+
+    const diff = await createGit(repo).diff(['-U1', '--', 'm.py']);
+    const header = diff.split('\n').find((line) => line.startsWith('@@')) ?? '';
+    expect(header).toContain('def render(self):');
+  });
 });
 
 describe('the generated attributes file', () => {
@@ -229,4 +317,39 @@ describe('precedence', () => {
     // to the default guess — proving OUR python driver did not win.
     expect(hunkContext('m.py', true)).not.toBe('def render(self):');
   });
+});
+
+/**
+ * The idle timeout, and why it is not one number.
+ *
+ * `timeout: { block }` measures silence, and git is silent for as long as
+ * a pre-commit hook runs or a pack is negotiated — it only writes progress
+ * to a TTY, and simple-git spawns with pipes. A single short budget killed
+ * commits mid-hook; this repo's own pre-commit takes about 24 seconds.
+ */
+describe('git idle timeout', () => {
+  test('a commit survives a hook that is silent past the short budget', async () => {
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'x\n');
+    git(['add', '-A']);
+
+    const hooks = path.join(repo, '.git', 'hooks');
+    fs.mkdirSync(hooks, { recursive: true });
+    const hook = path.join(hooks, 'pre-commit');
+    // Comfortably past the 10s plumbing budget, well under the long one.
+    fs.writeFileSync(hook, '#!/bin/sh\nsleep 12\nexit 0\n');
+    // Owner-only: the hook just has to be executable by this test.
+    fs.chmodSync(hook, 0o700);
+
+    await createGit(repo, { longRunning: true }).raw([
+      '-c',
+      'user.email=t@t',
+      '-c',
+      'user.name=t',
+      'commit',
+      '-m',
+      'slow hook',
+    ]);
+
+    expect(git(['log', '--oneline']).trim()).toContain('slow hook');
+  }, 30_000);
 });

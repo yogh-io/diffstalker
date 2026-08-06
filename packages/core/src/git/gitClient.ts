@@ -36,20 +36,38 @@ const ENV_PASSTHROUGH_UNSAFE: SimpleGitOptions['unsafe'] = {
 };
 
 /**
- * How long any single git invocation may sit silent before simple-git
- * kills it. Without this a hung git (a stuck credential prompt, a network
- * remote that never answers, a wedged filesystem) wedges the request that
- * called it for as long as the process lives — and in the daemon that is
- * a queued operation nobody can clear.
+ * How long a git invocation may sit silent before simple-git kills it.
+ * Without a bound, a hung git — a stuck credential prompt, a remote that
+ * never answers, a wedged filesystem — holds its queued operation open
+ * for the life of the daemon.
  *
- * `block` is idle time, not total runtime: a long but progressing clone
- * keeps resetting it. Ten seconds is generous for local plumbing, which
- * is what nearly every call here is.
+ * `block` is IDLE time, not total runtime, but idle is not the same as
+ * "making no progress": git only writes progress to stderr when stderr is
+ * a TTY, and simple-git spawns with pipes. So a fetch negotiating a pack,
+ * or a commit running the user's pre-commit hook, is genuinely silent for
+ * as long as it takes. Ten seconds is right for local plumbing reads and
+ * badly wrong for anything that talks to a network or runs user code —
+ * this repo's own pre-commit hook takes about 24 seconds.
+ *
+ * Hence two budgets. Long-running is still bounded, because an unbounded
+ * one is the hazard this exists to close; it is just bounded at a length
+ * no legitimate hook or transfer will reach.
  */
 const GIT_IDLE_TIMEOUT_MS = 10_000;
+const GIT_LONG_IDLE_TIMEOUT_MS = 10 * 60_000;
+
+export interface CreateGitOptions {
+  /**
+   * True for operations that legitimately go quiet for a long time:
+   * anything running the user's hooks (commit, cherry-pick, revert,
+   * rebase, merge) and anything talking to a remote (fetch, pull, push).
+   * Everything else is a local plumbing read and takes the short budget.
+   */
+  longRunning?: boolean;
+}
 
 /** A simple-git instance for a repo with the pinned git environment. */
-export function createGit(repoPath: string): SimpleGit {
+export function createGit(repoPath: string, options: CreateGitOptions = {}): SimpleGit {
   // Fills in funcname drivers for languages git ships regexes for. Omitted
   // when the file cannot be written — a read-only cache dir must not stop
   // git from running. See diffAttributes.ts, including which languages
@@ -60,7 +78,9 @@ export function createGit(repoPath: string): SimpleGit {
   return simpleGit({
     baseDir: repoPath,
     unsafe: ENV_PASSTHROUGH_UNSAFE,
-    timeout: { block: GIT_IDLE_TIMEOUT_MS },
+    timeout: {
+      block: options.longRunning === true ? GIT_LONG_IDLE_TIMEOUT_MS : GIT_IDLE_TIMEOUT_MS,
+    },
     config,
   }).env(gitEnv());
 }
