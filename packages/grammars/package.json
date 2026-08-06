@@ -4,6 +4,21 @@
   "description": "Tree-sitter grammars and outline queries for diffstalkerd's in-file symbol search. Opt-in: diffstalkerd works without it.",
   "type": "module",
   "license": "MIT",
+  "author": "yogh-io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yogh-io/diffstalker.git"
+  },
+  "homepage": "https://github.com/yogh-io/diffstalker#readme",
+  "bugs": {
+    "url": "https://github.com/yogh-io/diffstalker/issues"
+  },
+  "keywords": [
+    "diffstalker",
+    "tree-sitter",
+    "grammars",
+    "symbols"
+  ],
   "exports": {
     "./checksums.json": "./checksums.json",
     "./*": "./*"
@@ -14,6 +29,9 @@
     "checksums.json",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "vendor": "bun scripts/vendor.ts",
     "verify": "bun scripts/vendor.ts --verify"

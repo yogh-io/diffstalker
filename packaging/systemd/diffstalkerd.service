@@ -14,6 +14,12 @@ Type=exec
 # of spawning its own.
 ExecStart=/usr/bin/diffstalkerd --port 7337
 
+# In-file outlines, when the optional grammars package is installed. A distro
+# install has no node_modules for package resolution to find, so the path is
+# given explicitly; the daemon verifies its checksums and simply reports no
+# outline capability when the directory is absent. Harmless either way.
+Environment=DIFFSTALKER_GRAMMARS_DIR=/usr/share/diffstalker/grammars
+
 Restart=on-failure
 RestartSec=2s
 # The daemon has no idle timeout and holds watchers on open repos; it is
@@ -35,6 +41,8 @@ RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
+# WebAssembly needs write+execute memory to compile a grammar, so this must
+# stay `no`. It already was, for the JIT; the outline engine depends on it too.
 MemoryDenyWriteExecute=no
 # ProtectSystem=strict makes /usr, /boot and /etc read-only; git needs to
 # write inside the user's own tree, plus its cache and runtime dirs.

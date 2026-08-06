@@ -15,6 +15,15 @@ env:
   # Space-separated "dir:name" pairs. daemon before cli: the cli depends on
   # diffstalkerd (workspace:*, published as the exact version), so the daemon
   # must reach the registry first. Add e.g. "packages/web:@diffstalker/web" here.
+  # NOTE: packages/grammars (diffstalkerd-grammars) is NOT here yet, and
+  # adding it before it exists on the registry would fail the release.
+  # npm's OIDC trusted publishing cannot perform a package's FIRST publish —
+  # a trusted publisher can only be configured on a package that already
+  # exists. Sequence, once: publish 0.0.0 manually with a temporary granular
+  # token, configure the trusted publisher on npmjs.com (repo, workflow
+  # `release.yml`, environment `npm`), revoke the token, THEN add
+  # "packages/grammars:diffstalkerd-grammars" here and teach scripts/release.ts
+  # to version it in lockstep like the other two.
   PUBLISHABLE: "packages/daemon:diffstalkerd packages/cli:diffstalker"
 
 jobs:
