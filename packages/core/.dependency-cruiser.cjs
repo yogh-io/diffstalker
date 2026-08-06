@@ -31,6 +31,23 @@ module.exports = {
       to: { path: "^src/(git|managers|services|utils|view)/" },
     },
 
+    // --- symbols/: the outline model ---
+    {
+      name: "symbols-pure-no-extract",
+      comment:
+        "types/languages/mapping/vueBlocks are browser-safe and must stay that way: they may never reach extract.ts, which loads web-tree-sitter and is node-only. This is the guard that keeps an outline model importable by the web client.",
+      severity: "error",
+      from: { path: "^src/symbols/(types|languages|mapping|vueBlocks)\\.ts$" },
+      to: { path: "^src/symbols/extract\\.ts$" },
+    },
+    {
+      name: "symbols-no-upper-layers",
+      comment: "symbols/ must not import managers/ or view/",
+      severity: "error",
+      from: { path: "^src/symbols/" },
+      to: { path: "^src/(managers|view)/" },
+    },
+
     // --- view/: pure presentation logic (shared with web) ---
     {
       name: "view-no-managers",
@@ -46,7 +63,7 @@ module.exports = {
         "view/ must stay browser-safe — no simple-git or chokidar (type-only imports of git/ modules are fine)",
       severity: "error",
       from: { path: "^src/view/" },
-      to: { path: "node_modules/(simple-git|chokidar)/" },
+      to: { path: "node_modules/(simple-git|chokidar|web-tree-sitter)/" },
     },
     {
       name: "view-no-node-runtime",
@@ -54,7 +71,7 @@ module.exports = {
         "view/ must stay browser-safe: it may import git/ and utils/ TYPES only (erased at build). A RUNTIME import of git/ or utils/ drags in node-only code (git/status pulls simple-git + node:child_process; utils/xdg pulls node:os). Dep-cruiser tracks runtime edges only by default, so type-only imports never trip this; a real runtime import does. This is the guard the layer exists for — it catches dropping `type` from an import, which build+deps+tests otherwise miss until the browser bundle breaks. Test files are exempt: they never enter a browser bundle (splitDiffByFile.test.ts parses fixtures with git/diffParse).",
       severity: "error",
       from: { path: "^src/view/", pathNot: "\\.test\\.ts$" },
-      to: { path: "^src/(git|utils)/", dependencyTypesNot: ["type-only"] },
+      to: { path: "^src/(git|utils|symbols)/", dependencyTypesNot: ["type-only"] },
     },
     {
       name: "managers-no-view",

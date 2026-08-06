@@ -27,6 +27,16 @@ module.exports = {
       to: { path: "@diffstalker/core/managers|/core/(src|dist)/managers/" },
     },
     {
+      name: "no-symbol-engine",
+      comment:
+        "The symbol engine loads web-tree-sitter and runs only inside the daemon's worker. The web may import the pure outline model (core/symbols/types, languages, mapping, vueBlocks) but never extract.ts, and never the engine itself. Same raw-specifier reasoning as no-core-managers above.",
+      severity: "error",
+      from: { path: "^src/" },
+      to: {
+        path: "@diffstalker/core/symbols/extract|/core/(src|dist)/symbols/extract|^web-tree-sitter$|node_modules/web-tree-sitter/",
+      },
+    },
+    {
       name: "no-in-process-git",
       comment:
         "simple-git and chokidar are core/daemon-only (and Node-only anyway). Match the bare specifier too: until slice 3 pulls @diffstalker/core (which depends on them) these aren't installed under web, so they stay unresolved — a node_modules-only regex would match nothing and pass vacuously.",

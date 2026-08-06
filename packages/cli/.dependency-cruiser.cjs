@@ -47,6 +47,16 @@ module.exports = {
 
     // --- CLI is a pure daemon client: no in-process git ---
     {
+      name: "cli-no-symbol-engine",
+      comment:
+        "The symbol engine loads web-tree-sitter and runs only inside the daemon's worker. The CLI may import the pure outline model (core/symbols/types, languages, mapping, vueBlocks) but never extract.ts, and never the engine itself. Same raw-specifier reasoning as cli-no-core-managers.",
+      severity: "error",
+      from: { path: "^src/" },
+      to: {
+        path: "@diffstalker/core/symbols/extract|/core/(src|dist)/symbols/extract|^web-tree-sitter$|node_modules/web-tree-sitter/",
+      },
+    },
+    {
       name: "cli-no-core-managers",
       comment:
         "The CLI is a daemon client — it must not import @diffstalker/core managers (in-process git state). Talk to diffstalkerd over REST/SSE instead. Pure core helpers (view/* presentation logic, git/diff, git/explorerData, git/status + worktree types, services/commitService, utils, types) are fine.",
