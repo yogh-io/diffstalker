@@ -1562,6 +1562,55 @@ outline; then install the grammars tarball and assert the same request returns
 `status: "ok"` with a known symbol. Both halves, or B5 comes back wearing a
 different hat.
 
+### 10.6 Distro packaging, and where the grammars actually live
+
+Three consequences of §10.5 that only surface once you read
+`diffstalker-git`'s PKGBUILD.
+
+**Arch users must never be told to `npm i -g diffstalkerd-grammars`.** The
+PKGBUILD spends thirty lines on exactly why: npm's prefix on Arch is `/usr`, a
+global install plants unowned files there, and pacman aborts the whole
+transaction over them. The npm opt-in is for npm users. Arch gets a companion
+`diffstalker-grammars-git` listed in `optdepends`, installing to a pacman-owned
+path — the same opt-in shape, expressed in the distro's own terms.
+
+**So resolution is a search order, not a single lookup.** In order:
+
+1. `--grammars DIR`, or `DIFFSTALKER_GRAMMARS_DIR`. Explicit. The systemd unit
+   sets it; the AUR package sets it; tests set it, which is what lets the whole
+   engine be tested without npm in the loop.
+2. `createRequire(import.meta.url).resolve('diffstalkerd-grammars/...')`.
+
+Two first-class sources, both documented — not a primary path with a fallback
+under it. Nothing is silently attempted after something failed: an explicit
+directory that does not verify disables symbols and says so, rather than
+quietly trying npm resolution next.
+
+**`packages/grammars` is a workspace package named `diffstalkerd-grammars`.**
+That is what makes step 2 resolve identically in dev (bun links workspace
+packages into `node_modules`) and after a real npm install. Without it, dev
+would need its own lookup and the no-prod/dev-divergence rule would be broken by
+the packaging itself.
+
+**The `.wasm` files are NOT committed to git.** The repo is 6.3 MB with a
+4.76 MiB pack; 2.44 MB of grammars is about +50%, permanently, on every clone —
+and `diffstalker-git` is a VCS package, so every AUR user pays it on every
+build. Instead `bun run vendor:grammars` pins versions and sha256s and fetches
+at build time.
+
+This does not weaken §10.5's offline-reproducibility argument, which was about
+the published TARBALL not needing network at install: the npm package still
+contains the wasm. Build time already requires network for `bun install`, so
+nothing new is divergent. It also gives the AUR package the shape Arch expects —
+a `source=()` array with `sha256sums`, fetched and verified by makepkg itself
+rather than by a script we wrote.
+
+**Consequence for CI:** the grammars package is built by the release pipeline
+(vendor, then publish), so the vendor script is release infrastructure, not a
+developer convenience. It needs the same treatment as the tarball-boot gate:
+if it silently fetches the wrong version, every outline is subtly wrong, so the
+checksums are the gate and a mismatch must fail the build loudly.
+
 ### 10.4 Risks
 
 The adversarial review ran on 2026-08-06, late, before implementation started.
