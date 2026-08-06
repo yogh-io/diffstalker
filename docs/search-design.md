@@ -1509,6 +1509,59 @@ client timeout) and one honest decision about the golden hunk-key test that does
 not exist (item 36). Slice 0 — the adversarial review this section names — has now
 run; its output is §10.4.
 
+### 10.5 Packaging: grammars are a separate, opt-in package
+
+**Decided 2026-08-06, overriding §10.4's vendor-into-diffstalkerd conclusion.**
+Vendoring was right about WHAT to ship and wrong about WHERE. Measured, the
+daemon is 200 kB packed / 598 kB unpacked today, and 512 kB of that unpacked is
+the web UI. Adding 2.44 MB of wasm would make grammars the dominant payload of a
+tool whose whole character is being small.
+
+**The shape.** A new published package, `diffstalkerd-grammars`: grammar `.wasm`,
+our `.scm` queries, the `web-tree-sitter` runtime `.wasm`, and `checksums.json`.
+Pure data — no code, no dependencies, and above all **no install scripts**, which
+is the property that disqualified the first-party grammar packages in the first
+place.
+
+**It is NOT a dependency of `diffstalkerd`, optional or otherwise.** A default
+`npm i -g diffstalkerd` stays at 200 kB and grows by nothing. Outlines appear
+after `npm i -g diffstalkerd-grammars`. Chosen over `optionalDependencies`
+because an optional dependency installs by DEFAULT — it makes lean possible
+rather than lean normal, which is the opposite of the point.
+
+**Resolution.** `createRequire(import.meta.url).resolve(...)` against the
+package, exactly how `chokidar`/`simple-git`/`ignore` are already externalled
+(`packages/daemon/package.json:36`). Not installed resolves to nothing, which is
+the same branch as a failed checksum: symbols off.
+
+**No new `SymbolOutcome` variant, and this matters.** §10.4 item 30 warns against
+the status union growing, and "the grammars package is not installed" is
+INSTALL-level state, not per-file state. It is reported once through `/health`'s
+extension list — already specified as derived from grammars actually present and
+verified (item 32) — so an empty list means the engine is absent and the UI shows
+one install hint. A partially installed set falls out of the same list for free.
+Per-file, an extension not in the list is simply not offered an outline.
+
+**ABI skew is the one new hazard.** The `web-tree-sitter` JS is bundled into the
+daemon's worker; the runtime `.wasm` and the grammars now ship separately, so the
+two can be upgraded independently. `diffstalkerd-grammars`'s `package.json`
+declares the `web-tree-sitter` version it was built against; the daemon compares
+it against its own bundled version at load and disables symbols with a specific
+message on mismatch — never a silent degrade, and never a wrong symbol. The
+load-every-grammar startup test (risk 12) still runs and still disables any
+individual grammar that fails to compile its query.
+
+**Release model.** This makes three published packages where CLAUDE.md commits to
+two, all derived from the root version in lockstep. Mechanical, but it touches
+`scripts/release.ts`, the CI publish job and CLAUDE.md, and those edits belong in
+the same commit that first publishes the package.
+
+**The CI tarball gate grows a second case**: install the daemon tarball alone and
+assert `/health` reports an empty extension list and a `.ts` file offers no
+outline; then install the grammars tarball and assert the same request returns
+`status: "ok"` with a known symbol. Both halves, or B5 comes back wearing a
+different hat.
+
 ### 10.4 Risks
 
 The adversarial review ran on 2026-08-06, late, before implementation started.
