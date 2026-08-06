@@ -1,6 +1,6 @@
 {
   "name": "diffstalkerd-grammars",
-  "version": "0.0.0",
+  "version": "0.11.0",
   "description": "Tree-sitter grammars and outline queries for diffstalkerd's in-file symbol search. Opt-in: diffstalkerd works without it.",
   "type": "module",
   "license": "MIT",
