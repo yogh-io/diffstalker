@@ -85,6 +85,10 @@ function chooseView(view: ViewName): void {
 
 <template>
   <nav ref="railEl" class="rail" aria-label="Views">
+    <!-- title is the mouse tooltip, aria-label the accessible name. Both,
+         because in the icon-only band .rail-label is display:none and the
+         count span is all that is left — name-from-content would announce
+         the Changes tab as "(12)". -->
     <button
       v-for="view in VIEWS"
       :key="view.name"
@@ -92,6 +96,7 @@ function chooseView(view: ViewName): void {
       :class="{ active: ui.activeView === view.name }"
       :aria-current="ui.activeView === view.name ? 'page' : undefined"
       :title="titleFor(view.name, view.label)"
+      :aria-label="titleFor(view.name, view.label)"
       @click="chooseView(view.name)"
     >
       <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">

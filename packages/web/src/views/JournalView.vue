@@ -663,7 +663,10 @@ onBeforeUnmount(() => {
           :role="isFoldable(row) ? 'button' : undefined"
           :aria-expanded="isFoldable(row) ? !foldedCommits.has(row.key) : undefined"
           :title="isFoldable(row) ? (foldedCommits.has(row.key) ? 'Show this commit\'s changes' : 'Fold this commit\'s changes') : undefined"
+          :tabindex="isFoldable(row) ? 0 : undefined"
           @click="isFoldable(row) && toggleCommitFold(row.key)"
+          @keydown.enter.prevent="isFoldable(row) && toggleCommitFold(row.key)"
+          @keydown.space.prevent="isFoldable(row) && toggleCommitFold(row.key)"
         >
           <span v-if="isFoldable(row)" class="boundary-fold" aria-hidden="true">{{
             foldedCommits.has(row.key) ? '▸' : '▾'

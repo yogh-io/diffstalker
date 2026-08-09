@@ -86,7 +86,7 @@ describe('the seven states', () => {
   });
 
   test('not loaded yet', () => {
-    expect(outlineStatus(file(), null)).toEqual({ kind: 'note', note: 'Outline not loaded.' });
+    expect(outlineStatus(file(), null)).toEqual({ kind: 'note', note: 'Loading outline…' });
   });
 });
 

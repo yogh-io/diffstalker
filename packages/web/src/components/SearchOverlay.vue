@@ -193,6 +193,7 @@ const empty = computed(
         role="combobox"
         :aria-expanded="matches.length > 0"
         :aria-controls="matches.length > 0 ? 'search-results' : undefined"
+        :aria-activedescendant="matches.length > 0 ? `search-option-${selectedIndex}` : undefined"
         autocomplete="off"
         spellcheck="false"
         placeholder="Search file contents…"
@@ -227,6 +228,7 @@ const empty = computed(
           </p>
           <div
             v-for="hit in group.hits"
+            :id="`search-option-${indexOf(hit)}`"
             :key="`${hit.path}:${hit.line}`"
             class="hit-row"
             role="option"

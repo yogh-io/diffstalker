@@ -41,6 +41,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   months sinks and dims rather than competing with this week's work. Past eight
   projects the list grows a filter field.
 
+### Fixed
+
+A sweep of small things across the web UI — the kind that only show up in real
+use:
+
+- The header and the status bar phrased one dropped connection two different
+  ways at the same moment; they now share the one sentence.
+- Escape closing a panel used to drop focus on the floor, so the arrow keys
+  stopped working: the file-list filter, and the outline popover, now hand
+  focus back to where it came from.
+- Escape in the settings panel's directory browser closed the whole panel
+  (and the path you had typed). It backs out of the browser first.
+- The journal's commit fold was mouse-only despite announcing itself as a
+  button — Enter and Space work now, and it takes a tab stop.
+- Pressing `o` in the Explorer with no file open did nothing at all, though
+  the help advertises it; it now opens the popover, which says "No file open."
+- The outline said "Outline not loaded." while it was still loading, which
+  reads as a verdict. It says "Loading outline…", and a failed request lands
+  on the real unavailable state instead of spinning forever.
+- A failed *optional* outline re-read replaced the file you were reading with
+  one line of error text. The file stays.
+- The Explorer's filter toggles kept the same tooltip whichever way they were
+  set, so the tooltip described the opposite of what a click would do.
+- A long branch name painted straight over the arrow and the ahead/behind
+  counts instead of ellipsizing.
+- Adding a watch directory that was already there looked exactly like a
+  successful add (the daemon dedupes silently); it now says so. A refusal no
+  longer greets you again the next time you open the panel.
+- Browsing to a path that does not exist opened a dead picker with every
+  button disabled; it falls back to home and still says why. Two quick clicks
+  on a slow mount could land you in the folder you did not pick.
+- Truncation and naming: the filter chip said "1 changed files", the clean-tree
+  line was not a sentence and named two of its three cases, the Discovered list
+  called repos "projects" while the settings panel called them repos, the
+  outline squeezed away the symbol name to keep its parent, and the browse
+  bar chopped paths with no ellipsis.
+- Accessibility: the activity rail announced the Changes tab as "(12)" in the
+  icon-only band, the tree-refresh and parent-directory glyphs had no name, and
+  arrowing through search hits announced nothing.
+- The daemon's save failure read "Could not save settings: Error: EACCES…",
+  with the exception's own prefix glued into the sentence.
+
 ## [0.11.0] - 2026-08-06
 
 ### Added

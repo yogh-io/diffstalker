@@ -216,6 +216,9 @@ const errorLine = computed(() =>
   letter-spacing: -0.02em;
 }
 
+/* The truncation lives on the TEXT items below, not here: text-overflow
+   does nothing on a flex container, so a long branch name used to paint
+   straight over the arrow and the ahead/behind counts. */
 .branch {
   display: flex;
   align-items: center;
@@ -224,19 +227,34 @@ const errorLine = computed(() =>
   /* Clamp inside the header row: never force horizontal page scroll. */
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* min-width: 0 is the load-bearing part — a flex item's automatic minimum
+   size is what forces the overflow instead of letting it shrink. */
 .branch-name {
   font-weight: 600;
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .arrow,
 .tracking {
   color: var(--text-dim);
   white-space: nowrap;
+}
+
+/* One glyph, never squeezed. */
+.arrow {
+  flex: none;
+}
+
+.tracking {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .error-line {

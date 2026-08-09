@@ -267,6 +267,20 @@ describe('rendering', () => {
     expect(seqs()).toEqual(['2']);
   });
 
+  test('the fold is reachable from the keyboard, not just the mouse', async () => {
+    // role=button + aria-expanded promise an operable control; without a
+    // tabindex and key handlers, Tab walks straight past it.
+    const { wrapper } = mountView([hunk(1), boundary(2, { resolves: [1] })]);
+    const boundaryEl = wrapper.get('[data-testid="journal-boundary"]');
+    expect(boundaryEl.attributes('tabindex')).toBe('0');
+
+    await boundaryEl.trigger('keydown.enter');
+    expect(wrapper.findAll('[data-testid="journal-entry"]')).toHaveLength(0);
+
+    await boundaryEl.trigger('keydown.space');
+    expect(wrapper.findAll('[data-testid="journal-entry"]')).toHaveLength(1);
+  });
+
   test('folding a commit also hides the dead (outdated) stubs in its section', async () => {
     // seq 20 supersedes seq 1 across the 15s fold window, so seq 1 stays a
     // separate OUTDATED stub (not folded into seq 20). The commit resolves

@@ -404,6 +404,9 @@ export const useExplorerStore = defineStore('explorer', () => {
     } catch (err) {
       if (gen !== generation || selectedPath.value !== path) return;
       fileError.value = displayError(err);
+      // Land on a terminal state, not on null: null now reads as "loading",
+      // so a request that already died would spin forever.
+      fileSymbols.value = { status: 'unavailable', reason: 'error' };
     }
   }
 

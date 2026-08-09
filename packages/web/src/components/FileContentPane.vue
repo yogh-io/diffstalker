@@ -158,7 +158,11 @@ const frames = computed(() => {
     <div class="pane-body">
       <p v-if="path === null" class="pane-note" data-testid="file-prompt">Select a file</p>
 
-      <p v-else-if="error" class="pane-note pane-error mono" data-testid="file-error">
+      <!-- Gated on `file === null`: a real load failure nulls the file, so
+           it still lands here, while a failed OPTIONAL re-read (the outline's
+           `o`) leaves the content you were reading on screen instead of
+           replacing it with one line of error text. -->
+      <p v-else-if="error && file === null" class="pane-note pane-error mono" data-testid="file-error">
         {{ error }}
       </p>
 

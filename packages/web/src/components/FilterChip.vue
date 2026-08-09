@@ -11,7 +11,7 @@
  * "no match" and "nothing loaded" must never read the same.
  */
 
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useFilterStore } from '../stores/filter';
 
 const props = defineProps<{
@@ -21,7 +21,12 @@ const props = defineProps<{
   total: number;
   /** Plural noun for the corpus, e.g. "changed files", "commits loaded". */
   corpus: string;
+  /** Singular of the same noun, e.g. "changed file". */
+  singular: string;
 }>();
+
+/** Agrees with `total`, not `shown`, so "0 of 1 changed file" reads right. */
+const noun = computed(() => (props.total === 1 ? props.singular : props.corpus));
 
 const filter = useFilterStore();
 const inputEl = ref<HTMLInputElement | null>(null);
@@ -64,8 +69,8 @@ function onKeydown(event: KeyboardEvent): void {
       @keydown="onKeydown"
     />
     <span class="filter-count" data-testid="filter-count">
-      <template v-if="filter.query === ''">{{ props.total }} {{ props.corpus }}</template>
-      <template v-else>{{ props.shown }} of {{ props.total }} {{ props.corpus }}</template>
+      <template v-if="filter.query === ''">{{ props.total }} {{ noun }}</template>
+      <template v-else>{{ props.shown }} of {{ props.total }} {{ noun }}</template>
     </span>
     <button
       class="filter-clear"

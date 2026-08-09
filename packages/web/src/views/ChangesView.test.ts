@@ -188,7 +188,7 @@ describe('files column', () => {
   test('shows the clean-tree state when there are no changes', () => {
     const { wrapper } = mountView([]);
     expect(wrapper.find('[data-testid="clean-tree"]').text()).toContain(
-      'No changes in the staging area or untracked changes'
+      'No changes'
     );
     // The message replaces the whole two-column layout.
     expect(wrapper.find('[data-testid="file-list"]').exists()).toBe(false);
@@ -1067,6 +1067,17 @@ describe('list filter', () => {
     expect(rows.length).toBe(1);
     expect(rows[0].text()).toContain('notes.txt');
     expect(wrapper.find('[data-testid="filter-count"]').text()).toBe('1 of 4 changed files');
+    wrapper.unmount();
+  });
+
+  test('a corpus of one is not "1 changed files"', async () => {
+    const { wrapper } = mountView([FILES[0]]);
+    const filter = useFilterStore();
+
+    filter.openAndFocus();
+    await nextTick();
+
+    expect(wrapper.find('[data-testid="filter-count"]').text()).toBe('1 changed file');
     wrapper.unmount();
   });
 

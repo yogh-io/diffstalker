@@ -49,7 +49,10 @@ const outlineEl = ref<{ openPopover(): void } | null>(null);
 watch(
   () => ui.outlineRequest,
   (seq) => {
-    if (seq === 0 || explorer.selectedPath === null) return;
+    // No file selected is NOT a reason to swallow the key: the popover has
+    // a "No file open." state, and a hotkey the help advertises must never
+    // do nothing silently.
+    if (seq === 0) return;
     outlineEl.value?.openPopover();
     void explorer.loadSymbols();
   }
@@ -263,7 +266,7 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
             class="tool-toggle mono"
             data-testid="toggle-hidden"
             :aria-pressed="showHidden"
-            title="Show dotfiles"
+            :title="showHidden ? 'Dotfiles are shown. Click to hide them' : 'Dotfiles are hidden. Click to show them'"
             @click="explorer.setShowHidden(!showHidden)"
           >
             dotfiles
@@ -272,7 +275,11 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
             class="tool-toggle mono"
             data-testid="toggle-ignored"
             :aria-pressed="showIgnored"
-            title="Show gitignored files"
+            :title="
+              showIgnored
+                ? 'Gitignored files are shown. Click to hide them'
+                : 'Gitignored files are hidden. Click to show them'
+            "
             @click="explorer.setShowIgnored(!showIgnored)"
           >
             ignored
@@ -281,7 +288,11 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
             class="tool-toggle mono"
             data-testid="toggle-changed"
             :aria-pressed="changedOnly"
-            title="Show only files with changes"
+            :title="
+              changedOnly
+                ? 'Showing only files with changes. Click to show every file'
+                : 'Showing every file. Click to show only files with changes'
+            "
             @click="explorer.setChangedOnly(!changedOnly)"
           >
             changed
@@ -289,6 +300,7 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
           <button
             class="tool-refresh mono"
             data-testid="tree-refresh"
+            aria-label="Reload the tree"
             title="Reload the tree"
             :disabled="rootLoading"
             @click="explorer.refresh()"

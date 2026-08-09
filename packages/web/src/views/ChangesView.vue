@@ -396,6 +396,15 @@ function moveSelection(delta: number): void {
   });
 }
 
+/** Put focus on the row that holds tabindex 0: the active one, else the first. */
+function focusActiveRow(): void {
+  const list = listEl.value;
+  if (!list) return;
+  const idx = activeIndex();
+  const rows = list.querySelectorAll<HTMLElement>('.file-row');
+  (idx >= 0 ? rows[idx] : rows[0])?.focus();
+}
+
 // Focus recovery: if a state-change removes the row that held focus,
 // focus would fall to <body>. Move it to the active row instead so
 // keyboard navigation keeps working.
@@ -407,9 +416,7 @@ watch(
     void nextTick(() => {
       const list = listEl.value;
       if (!hadFocus || !list || list.contains(document.activeElement)) return;
-      const idx = activeIndex();
-      const rows = list.querySelectorAll<HTMLElement>('.file-row');
-      (idx >= 0 ? rows[idx] : rows[0])?.focus();
+      focusActiveRow();
     });
   }
 );
@@ -417,6 +424,23 @@ watch(
 // --- Keep the active row visible (spy-driven) ---
 
 const filesColEl = ref<HTMLElement | null>(null);
+
+// The same hole, from the other direction: closing the filter chip (Esc,
+// or its x) takes the focused input with it, since the chip is v-if'd on
+// filter.open — so focus lands on <body> and the arrow keys stop moving
+// the list. Only when the chip itself held focus: a repo switch also
+// closes the filter (filter.reset), and must not steal focus into a list
+// the user was not in.
+watch(
+  () => filter.open,
+  (open, wasOpen) => {
+    if (open || !wasOpen) return;
+    // Default (pre) flush: the chip is still mounted here.
+    const chip = filesColEl.value?.querySelector('[data-testid="filter-chip"]');
+    if (!chip?.contains(document.activeElement)) return;
+    void nextTick(focusActiveRow);
+  }
+);
 
 /** Keep the active row visible in the files column (see useActiveRowScroll). */
 const { onPointerEnter, onPointerLeave } = useActiveRowScroll(
@@ -559,7 +583,7 @@ const rootStyle = computed(() => ({
     :style="rootStyle"
   >
     <div v-if="isClean" class="clean-state" data-testid="clean-tree" role="status">
-      <p class="clean-title">No changes in the staging area or untracked changes.</p>
+      <p class="clean-title">No changes.</p>
       <p class="clean-sub">The working tree is clean.</p>
     </div>
 
@@ -577,6 +601,7 @@ const rootStyle = computed(() => ({
         :shown="categories.ordered.length"
         :total="fileFilter.total.value"
         corpus="changed files"
+        singular="changed file"
       />
 
       <p v-if="repo.shared.isLoading" class="panel-note">Loading status…</p>

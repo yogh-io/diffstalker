@@ -55,6 +55,47 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+describe('focus', () => {
+  test('closing hands focus back to whatever opened it', async () => {
+    seed(SYMBOLS);
+    // Stand in for the Explorer tree row the user was arrowing through.
+    const row = document.createElement('button');
+    document.body.appendChild(row);
+    row.focus();
+
+    wrapper = mount(OutlinePopover, { attachTo: document.body });
+    await openIt();
+    expect(document.activeElement).toBe(wrapper.find('[data-testid="outline-input"]').element);
+
+    await wrapper.find('[data-testid="outline-input"]').trigger('keydown', { key: 'Escape' });
+    await nextTick();
+    // Without this the input is torn out by v-if and focus lands on <body>,
+    // so the arrow keys stop moving the tree.
+    expect(document.activeElement).toBe(row);
+    row.remove();
+  });
+
+  test('an outside click keeps the focus it gave away', async () => {
+    seed(SYMBOLS);
+    const row = document.createElement('button');
+    const elsewhere = document.createElement('button');
+    document.body.append(row, elsewhere);
+    row.focus();
+
+    wrapper = mount(OutlinePopover, { attachTo: document.body });
+    await openIt();
+
+    // What an outside click looks like: focus moves out, then it closes.
+    elsewhere.focus();
+    document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await nextTick();
+
+    expect(document.activeElement).toBe(elsewhere);
+    row.remove();
+    elsewhere.remove();
+  });
+});
+
 describe('rendering', () => {
   test('is closed until opened', () => {
     seed(SYMBOLS);

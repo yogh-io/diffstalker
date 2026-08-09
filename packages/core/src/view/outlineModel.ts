@@ -52,7 +52,11 @@ export function outlineStatus(
   if (file.binary) return { kind: 'note', note: 'Binary file — no outline.' };
   if (file.tooLarge) return { kind: 'note', note: 'File too large to outline.' };
 
-  if (outcome === null) return { kind: 'note', note: 'Outline not loaded.' };
+  // null means the answer has not arrived: the popover opens BEFORE the
+  // fetch resolves, so this is what a user reads while it works. Phrase it
+  // as progress — a verdict here is indistinguishable from the real ones
+  // below ("no outline for this language"), and people give up on it.
+  if (outcome === null) return { kind: 'note', note: 'Loading outline…' };
 
   if (outcome.status === 'unavailable') {
     // Deliberately the same words for both reasons: to a reader, "the

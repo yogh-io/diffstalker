@@ -29,14 +29,35 @@ const { open, rootEl } = useDismissable();
 const inputEl = ref<HTMLInputElement | null>(null);
 const query = ref('');
 const selectedIndex = ref(0);
+/** Whatever had focus when the popover opened — usually the tree row. */
+let opener: HTMLElement | null = null;
 
 /** Opened by the host on `o`; closes itself on Escape or an outside click. */
 function openPopover(): void {
   query.value = '';
   selectedIndex.value = 0;
+  opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   open.value = true;
   void nextTick(() => inputEl.value?.focus());
 }
+
+/**
+ * Hand focus back on close. Opening steals it into the filter input, and
+ * the popover is v-if'd away — so without this, Escape drops focus to
+ * <body> and the arrow keys stop moving the tree you came from.
+ *
+ * Guarded twice: only when the popover still HOLDS focus (an outside
+ * click has already given it to something the user picked), and only if
+ * the opener is still in the document (the tree can have reloaded).
+ * Default `pre` flush, so the popover DOM is still there to ask.
+ */
+watch(open, (isOpen) => {
+  if (isOpen) return;
+  const holdsFocus = rootEl.value?.contains(document.activeElement) ?? false;
+  const target = opener;
+  opener = null;
+  if (holdsFocus && target?.isConnected === true) target.focus();
+});
 
 defineExpose({ openPopover });
 
@@ -139,6 +160,7 @@ function onKeydown(event: KeyboardEvent): void {
           v-for="(symbol, index) in shown"
           :key="`${symbol.name}:${symbol.startLine}`"
           class="outline-row"
+          :title="symbol.parent ? `${symbol.name} in ${symbol.parent}` : symbol.name"
           role="option"
           :aria-selected="index === selectedIndex"
           :class="{ selected: index === selectedIndex }"
@@ -231,8 +253,16 @@ function onKeydown(event: KeyboardEvent): void {
   white-space: nowrap;
 }
 
+/* The parent chip yields before the name does. A high shrink factor, not
+   `0 1 auto`: flex distributes shrinkage in proportion to basis, so an
+   equal factor would drag a long name down with a long parent — and the
+   name is the thing being looked for. */
 .outline-parent {
-  flex: 0 0 auto;
+  flex: 0 8 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--fs-micro);
   opacity: 0.6;
 }

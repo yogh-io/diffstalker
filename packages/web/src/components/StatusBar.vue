@@ -7,7 +7,7 @@
 
 import { computed } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
-import { useRepoStore } from '../stores/repo';
+import { useRepoStore, CONNECTION_LOST_MESSAGE } from '../stores/repo';
 
 const daemon = useDaemonStore();
 const repo = useRepoStore();
@@ -15,7 +15,10 @@ const repo = useRepoStore();
 const CONNECTION_LABELS = {
   connecting: 'connecting…',
   connected: 'daemon connected',
-  disconnected: 'daemon disconnected — retrying',
+  // The same sentence the header shows, not a second phrasing of it: both
+  // are set by one dropped stream, and two wordings of one condition on
+  // screen at once read as two problems.
+  disconnected: CONNECTION_LOST_MESSAGE,
 } as const;
 
 const connectionLabel = computed(() => CONNECTION_LABELS[daemon.connection]);

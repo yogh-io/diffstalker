@@ -513,7 +513,11 @@ describe('live readouts', () => {
 
     daemonSource().fail();
     await flushPromises();
-    expect(wrapper.find('[data-testid="connection"]').text()).toContain('daemon disconnected');
+    // One sentence for one dropped connection: the status bar reuses the
+    // header's CONNECTION_LOST_MESSAGE rather than phrasing it a second way.
+    expect(wrapper.find('[data-testid="connection"]').text()).toContain(
+      'daemon connection lost'
+    );
     wrapper.unmount();
   });
 
