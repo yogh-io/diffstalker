@@ -8,7 +8,8 @@
  * the page behind the scrim. Focus returns to the opener on unmount —
  * unless the opener can no longer take it (disabled or gone), in which
  * case the caller's fallback gets it instead of <body>. Includes
- * HotkeysOverlay, whose only autofocus target is the close button.
+ * HotkeysOverlay, which autofocuses its close button and cycles between
+ * it and the focusable shortcut list.
  */
 
 import { describe, test, expect, afterEach, beforeEach } from 'vitest';
@@ -27,7 +28,11 @@ function makeHarness(withAutofocus: boolean, fallback?: () => HTMLElement | null
       useFocusTrap(container, fallback ? { fallback } : {});
       return () =>
         h('div', { ref: container, tabindex: '-1', 'data-testid': 'dialog' }, [
-          h('button', { 'data-testid': 'first', ...(withAutofocus ? { 'data-autofocus': '' } : {}) }, 'first'),
+          h(
+            'button',
+            { 'data-testid': 'first', ...(withAutofocus ? { 'data-autofocus': '' } : {}) },
+            'first'
+          ),
           h('button', { 'data-testid': 'last' }, 'last'),
         ]);
     },
@@ -128,7 +133,10 @@ describe('restore fallback', () => {
 
   test('an opener DISABLED while the dialog was open: focus lands on the fallback, not body', () => {
     const { opener, fallback } = setupTargets();
-    wrapper = mount(makeHarness(true, () => fallback), { attachTo: document.body });
+    wrapper = mount(
+      makeHarness(true, () => fallback),
+      { attachTo: document.body }
+    );
 
     // An opener can be disabled while the dialog is open (e.g. a repo
     // switch disables it) — restoring focus there is a no-op.
@@ -141,7 +149,10 @@ describe('restore fallback', () => {
 
   test('an opener REMOVED from the DOM: focus lands on the fallback', () => {
     const { opener, fallback } = setupTargets();
-    wrapper = mount(makeHarness(true, () => fallback), { attachTo: document.body });
+    wrapper = mount(
+      makeHarness(true, () => fallback),
+      { attachTo: document.body }
+    );
 
     opener.remove();
     wrapper.unmount();
@@ -151,7 +162,10 @@ describe('restore fallback', () => {
 
   test('a healthy opener still wins over the fallback (cancel path)', () => {
     const { opener, fallback } = setupTargets();
-    wrapper = mount(makeHarness(true, () => fallback), { attachTo: document.body });
+    wrapper = mount(
+      makeHarness(true, () => fallback),
+      { attachTo: document.body }
+    );
 
     wrapper.unmount();
 
@@ -169,15 +183,17 @@ describe('restore fallback', () => {
 });
 
 describe('HotkeysOverlay', () => {
-  test('opens with focus on the close button, and Shift+Tab stays trapped', () => {
+  test('opens on the close button and cycles between it and the list', () => {
     wrapper = mount(HotkeysOverlay, { attachTo: document.body });
     const close = wrapper.find('[data-testid="hotkeys-close"]').element as HTMLElement;
+    const body = wrapper.find('[data-testid="hotkeys-body"]').element as HTMLElement;
     expect(document.activeElement).toBe(close);
 
-    // The close button is the only focusable item — both directions wrap
-    // onto it; nothing escapes to the page behind the scrim.
+    // Two focusables — the button and the scroll region, which takes a
+    // tab stop so the list can be scrolled without a pointer. Both
+    // directions wrap between them; nothing escapes the scrim.
     expect(pressTab(true).defaultPrevented).toBe(true);
-    expect(document.activeElement).toBe(close);
+    expect(document.activeElement).toBe(body);
     expect(pressTab(false).defaultPrevented).toBe(true);
     expect(document.activeElement).toBe(close);
   });

@@ -234,7 +234,11 @@ function removeRoot(path: string): void {
 <style scoped>
 .settings {
   width: min(38rem, calc(100vw - 2rem));
-  max-height: min(36rem, calc(100vh - 4rem));
+  /* The scrim already pushes the dialog down by clamp(2rem, 12vh, 8rem),
+     which a flat `100vh - 4rem` never subtracted — on a short window the
+     foot of the panel sat below a scrim that has no overflow, clipped
+     with nothing able to scroll to it. */
+  max-height: calc(100dvh - clamp(2rem, 12vh, 8rem) - 2rem);
   display: flex;
   flex-direction: column;
 }

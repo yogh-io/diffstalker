@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **The keyboard shortcut sheet (`?`) was redesigned.** It was one 18-row
+  "Global" block against six three-row ones in a two-column grid, and a grid
+  row is as tall as its tallest cell — so most of the sheet sat behind a
+  scrollbar next to a large empty rectangle, and widening the dialog only
+  widened the rectangle. The content is re-cut into nine groups of at most five
+  rows, named for what you are trying to do, and flowed into CSS columns: four
+  on a laptop with all 35 shortcuts visible at once and no scrollbar, three at
+  1024px, two on a tablet, one on a phone in priority order. No breakpoint is
+  involved — the column count is a function of the width.
+
+### Fixed
+
+- The shortcut sheet listed `F` for content search, which is Shift+F and did
+  nothing as written, and gave `Enter / Space` as one row in lists though Enter
+  hands focus to the diff and Space keeps it in the list. Four live bindings it
+  never mentioned are now on it: `j`/`k` in the stacked layout, arrow keys
+  resizing a divider, Enter or Space folding a commit in the Journal, and
+  typing to narrow the outline.
+- The shortcut sheet and the settings panel both budgeted their height as
+  `100vh - 4rem` while the scrim above them already pushed them down by up to
+  `8rem`. On a short window their last rows sat below a scrim that has no
+  scrollbar of its own — clipped, with no way to reach them.
+- The shortcut list takes a tab stop, so it can be scrolled without a pointer.
+
 ## [0.12.0] - 2026-08-09
 
 ### Added

@@ -864,6 +864,17 @@ git operations.
   follow-mode toggle, theme switcher (the same six themes as CSS variables),
   fuzzy file finder (Ctrl+P), a settings panel (`,`), and a hotkeys overlay
   (`?`). Live over SSE, with a calm reconnect banner.
+- **Keyboard shortcut sheet** (`?`) — nine small groups cut by what you are
+  trying to do (open something, switch view, change the display, move in a
+  list), none over five rows, flowed into as many columns as the window
+  affords: four on a laptop with the whole sheet visible at once, one on a
+  phone in priority order. It is CSS columns rather than a grid because a grid
+  row is as tall as its tallest cell, and one long group beside a short one is
+  what made the old sheet a half-empty box you had to scroll. It also documents
+  what it always left out: `j`/`k` in the stacked layout, arrow keys resizing a
+  divider, Enter or Space folding a commit in the Journal, typing to narrow the
+  outline — and Enter and Space are now separate rows in lists, because Enter
+  hands focus to the diff and Space keeps it in the list.
 - **Settings panel** (gear in the header, or `,`) — two kinds of setting, and
   it says which is which: **Appearance** is this browser's (theme, in
   localStorage), **Repositories** is the daemon's (one file on its machine,
