@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Settings panel** in the web UI (gear in the header, or `,`). It separates
+  what belongs to this browser (theme) from what belongs to the daemon's
+  machine (below), and says which is which. The theme picker moved into it
+  from the header, where a permanently parked select cost more room than a
+  set-once choice earns.
+- **Watch directories**: point diffstalker at the folder you keep projects in,
+  and every git repository in it appears in the repo switcher ready to open —
+  no more typing an absolute path per repo. The setting lives with the daemon
+  (`~/.config/diffstalker/daemon.json`), so every client sees the same list and
+  it survives a restart. New endpoints `GET`/`PUT /settings`, `GET /discovered`
+  and `POST /discovered/rescan`, plus `settings-change` / `discovery-change` on
+  the daemon SSE channel.
+
+  A **Browse…** button picks the directory by walking the daemon's own
+  filesystem (new `GET /browse`, directory names only, repos marked so you can
+  pick their parent). It has to work that way: a browser is never handed a real
+  path by its own file pickers, so nothing client-side could name a directory
+  the daemon could then open.
+
+  Discovery lists repos, it never opens them. The scan runs no git at all: a
+  directory holding `.git` is a repo, its branch comes from `.git/HEAD`, and
+  its last activity from the git dir's mtimes. It looks at the root's children
+  and one level deeper, stops at the first `.git` (so submodules are never
+  listed as projects), skips dot-dirs and `node_modules`, and is capped at 500
+  with the cap reported. Each root is watched, so a fresh clone shows up
+  without a reload.
+
+  The list is ordered most-recently-touched first, with the age beside each
+  path: a projects folder is mostly archaeology, so anything untouched for six
+  months sinks and dims rather than competing with this week's work. Past eight
+  projects the list grows a filter field.
+
 ## [0.11.0] - 2026-08-06
 
 ### Added

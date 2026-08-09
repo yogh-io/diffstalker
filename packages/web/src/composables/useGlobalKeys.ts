@@ -191,6 +191,14 @@ export function useGlobalKeys(): void {
       return;
     }
 
+    // Settings, on the key every editor uses for it. Like `?`, it is
+    // handled ABOVE the modal guard so it can close itself again.
+    if (event.key === ',') {
+      event.preventDefault();
+      ui.toggleOverlay('settings');
+      return;
+    }
+
     if (ui.activeOverlay !== null) return; // overlays are modal
 
     // The bare-key surfaces: search, and the list filter.

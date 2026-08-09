@@ -2,8 +2,10 @@
 /**
  * Global header: wordmark, repo switcher, branch + tracking + ahead/behind
  * (mono, diff-colored counts — read-only text), one calm error line, the
- * fuzzy finder trigger, theme switcher. No git controls: the web UI is a
- * viewer. The four display toggles (auto / syntax / split / follow) live
+ * fuzzy finder trigger, settings. No git controls: the web UI is a viewer.
+ * The theme picker lives in the settings panel only — it is a set-once
+ * choice, and a select sitting in the chrome forever costs more room than
+ * it earns. The four display toggles (auto / syntax / split / follow) live
  * in the tab band (HeaderToggles, rendered by ActivityRail), NOT here —
  * keeping them off the header saves it a row.
  */
@@ -16,7 +18,6 @@ import { useActiveWorktrees } from '../composables/useActiveWorktrees';
 import { basename } from '../utils/format';
 import RepoSwitcher from './RepoSwitcher.vue';
 import WorktreeSwitcher from './WorktreeSwitcher.vue';
-import ThemeSwitcher from './ThemeSwitcher.vue';
 
 const daemon = useDaemonStore();
 const repo = useRepoStore();
@@ -129,14 +130,27 @@ const errorLine = computed(() =>
         Find file <kbd class="mono">Ctrl P</kbd>
       </button>
 
-      <ThemeSwitcher />
+      <button
+        class="settings-btn"
+        data-testid="settings-open"
+        title="Settings (,)"
+        aria-label="Settings"
+        @click="ui.toggleOverlay('settings')"
+      >
+        <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+          <circle cx="8" cy="8" r="2.25" />
+          <path
+            d="M8 1.5v1.75M8 12.75v1.75M1.5 8h1.75M12.75 8h1.75M3.4 3.4l1.24 1.24M11.36 11.36l1.24 1.24M12.6 3.4l-1.24 1.24M4.64 11.36 3.4 12.6"
+          />
+        </svg>
+      </button>
     </div>
   </header>
 </template>
 
 <style scoped>
 /* Two columns: identity (left, shrinks/ellipsizes) | pinned find-file +
-   theme (right). The display toggles moved to the tab band, so the header
+   settings (right). The display toggles moved to the tab band, so the header
    no longer needs a reflow row for them. */
 .app-header {
   grid-area: header;
@@ -254,5 +268,24 @@ const errorLine = computed(() =>
   padding: 0 0.25rem;
   border: 1px solid var(--border);
   border-radius: 3px;
+}
+
+.settings-btn {
+  display: flex;
+  align-items: center;
+  padding: 0.25rem;
+  border-radius: 4px;
+  color: var(--text-dim);
+}
+
+.settings-btn:hover {
+  color: var(--text);
+}
+
+.settings-btn svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linecap: round;
 }
 </style>

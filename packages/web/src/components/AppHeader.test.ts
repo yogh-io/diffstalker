@@ -52,7 +52,8 @@ describe('viewer stance (read-only)', () => {
       expect(wrapper.find(`[data-testid="${id}"]`).exists()).toBe(false);
     }
     // The only buttons left are the read-side chrome: repo switcher, finder
-    // trigger, theme switcher (the display toggles moved to the tab band).
+    // trigger, settings (the display toggles moved to the tab band, and the
+    // theme picker now lives only in the settings panel).
     const labels = wrapper.findAll('button').map((b) => b.text());
     expect(labels.join(' ')).not.toMatch(/fetch|pull|push|stash|branch|reset/i);
   });

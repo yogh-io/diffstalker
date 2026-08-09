@@ -38,6 +38,9 @@ import type {
   WireCommitInfo,
   WireCompareDiff,
   CompareCount,
+  DaemonSettings,
+  DirectoryListing,
+  DiscoveryState,
   WireSharedState,
   WorktreeInfo,
 } from './wire.js';
@@ -78,6 +81,8 @@ export type DaemonSubscriptionEvents = CommonSubscriptionEvents & {
   'repo-opened': [RepoOpenedEvent];
   'repo-closed': [RepoClosedEvent];
   'follow-change': [FollowChangeEvent];
+  'settings-change': [DaemonSettings];
+  'discovery-change': [DiscoveryState];
 };
 
 /**
@@ -160,6 +165,40 @@ export class DiffstalkerClient {
 
   getFollow(): Promise<FollowState> {
     return this.transport.request('GET', '/follow');
+  }
+
+  // --- Settings and repository discovery ---
+
+  getSettings(): Promise<DaemonSettings> {
+    return this.transport.request('GET', '/settings');
+  }
+
+  /**
+   * Replace the watch directories. A whole list, not a patch: two clients
+   * editing the same setting resolve by last-write-wins rather than by
+   * two half-applied patches. A path the daemon refuses (relative, gone,
+   * not a directory) fails the whole call with its reason.
+   */
+  setWatchRoots(watchRoots: string[]): Promise<DaemonSettings> {
+    return this.transport.request('PUT', '/settings', { watchRoots });
+  }
+
+  /** The repos found under the watch directories, as last scanned. */
+  discovered(): Promise<DiscoveryState> {
+    return this.transport.request('GET', '/discovered');
+  }
+
+  /** Re-walk every watch directory now (filesystem only, no git processes). */
+  rescanDiscovered(): Promise<DiscoveryState> {
+    return this.transport.request('POST', '/discovered/rescan');
+  }
+
+  /**
+   * One directory level of the daemon's filesystem, for a directory
+   * picker. No path starts at the daemon's home.
+   */
+  browse(path?: string): Promise<DirectoryListing> {
+    return this.transport.request('GET', `/browse${toQuery({ path })}`);
   }
 
   // --- Repos ---
@@ -465,7 +504,8 @@ export class DiffstalkerClient {
 
   /**
    * Subscribe to the daemon-scope stream: `snapshot` (open repos) on
-   * connect, then `repo-opened` / `repo-closed` / `follow-change`.
+   * connect, then `repo-opened` / `repo-closed` / `follow-change` /
+   * `settings-change` / `discovery-change`.
    */
   subscribeDaemon(): DaemonSubscription {
     return new SseSubscription<DaemonSubscriptionEvents>(this.transport, '/events');

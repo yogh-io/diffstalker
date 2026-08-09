@@ -40,6 +40,7 @@ const GROUPS: HotkeyGroup[] = [
       { keys: '/', description: 'Filter the changed-file list' },
       { keys: 'o', description: 'Outline of the open file (Explorer)' },
       { keys: 'e', description: 'Expand every large diff (so Ctrl F finds it)' },
+      { keys: ',', description: 'Settings (watch directories, theme)' },
       { keys: '?', description: 'This help' },
       { keys: 'Esc', description: 'Close dialog' },
     ],

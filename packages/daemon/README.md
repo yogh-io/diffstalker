@@ -217,13 +217,18 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | GET    | `/repos/:id/files`         | All tracked + untracked (not ignored) paths: the fuzzy-finder source |
 | GET    | `/repos/:id/journal?since=` | Append-only edit journal: `{epoch, prunedBefore, entries}`; `since=<seq>` returns only entries with a higher seq (all when omitted) |
 | GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher and `journal-append {entries}` per journal observation |
-| GET    | `/events`                  | Daemon-scope SSE: `snapshot` (open repos) on connect, then `repo-opened` / `repo-closed` / `follow-change` |
+| GET    | `/events`                  | Daemon-scope SSE: `snapshot` (open repos) on connect, then `repo-opened` / `repo-closed` / `follow-change` / `settings-change` / `discovery-change` |
 | GET    | `/follow`                  | Follow state: `{targetFile, enabled, followedRepoId, followedPath}` |
+| GET    | `/settings`                | Daemon settings: `{watchRoots, persisted}`. `persisted: false` means this daemon holds them in memory only (no settings file) |
+| GET    | `/discovered`              | Repos found under the watch directories: `{roots: [{path, repos: [{path, name, branch, lastActivity}], error, capped}]}`. See [Watch directories](#watch-directories) |
+| GET    | `/browse?path=`            | One directory level of the daemon's filesystem, for picking a watch directory: `{path, parent, home, entries: [{name, path, isRepo}]}`. Directory names only — no files, no dot directories. No `path` starts at the daemon's home; 400 for a relative path, 404 for one it cannot read |
 
 ### Mutations (all respond `{state, result?}`)
 
 | Method | Path                       | Body / behavior                                  |
 | ------ | -------------------------- | ------------------------------------------------ |
+| PUT    | `/settings`                | Replace the settings: `{"watchRoots": ["/abs/dir", "~/projects"]}` → `{watchRoots, persisted}`. Whole document, not a patch. Each path is expanded, made absolute and checked to be an existing directory; a refusal is a 400 naming the path, and nothing is saved |
+| POST   | `/discovered/rescan`       | Re-walk every watch directory now and return the new `{roots}` (filesystem only, no git processes) |
 | POST   | `/repos/:id/stage`         | `{"path": "file.txt"}` — stage one file (404 when not in status) |
 | POST   | `/repos/:id/unstage`       | `{"path": "file.txt"}` — unstage one file        |
 | POST   | `/repos/:id/stage-all`     | Stage everything                                 |
@@ -391,6 +396,51 @@ sec-fetch-dest`, and either `cache-control: no-store` (`side=worktree`, whose
 bytes can change under us) or `cache-control: private, no-cache` plus an
 `etag` of the object id (`side=index|head`, which are immutable).
 
+## Watch directories
+
+A watch directory is a folder the user keeps projects in. The daemon scans
+each configured one for git repositories and keeps that list live, so a
+client can offer "your projects" instead of an empty path field — a browser
+cannot browse the daemon's filesystem, and this is what replaces typing an
+absolute path every time.
+
+Discovery LISTS repos; it never opens them. Opening is what starts a
+watcher and git state per repo, so a folder with fifty projects would
+otherwise cost fifty of each. A discovered repo is `{path, name, branch}`
+until a client calls `POST /repos` for it.
+
+The scan is filesystem-only — no git process. A directory holding a `.git`
+entry is a repo, and its branch is read from `.git/HEAD` (a short sha when
+detached). It looks at the root's children, and one level further inside a
+child that is not itself a repo (so `~/projects/work/thing` is found), and
+stops descending as soon as it finds a repo — a repo's own subdirectories,
+submodules included, are never listed as projects. Dot directories,
+`node_modules` and friends are skipped, symlinked directories are not
+followed, and the list is capped (500 repos, reported as `capped: true`
+rather than silently trimmed). A leftover worktree directory whose git dir
+has been pruned is dropped: it would only produce "not a git repository"
+when clicked.
+
+A client picks a watch directory through `GET /browse`, which walks the
+daemon's directories one level at a time. That has to happen here: a browser
+is never handed a real path by its own file pickers (`webkitdirectory` gives
+relative names, `showDirectoryPicker` a bare handle), so the one thing this
+API needs — an absolute path on the daemon's machine — is exactly what the
+page cannot produce.
+
+Each root also gets a chokidar watcher one level deep, so a clone appearing
+in the folder shows up without anyone reloading; directory add/remove is
+the only thing it reacts to, debounced. The watcher deliberately does not
+look inside a repo's `.git`, so a branch label can lag a checkout made
+elsewhere — `POST /discovered/rescan` is how a client refreshes it.
+
+Settings persist in `~/.config/diffstalker/daemon.json` (or
+`$XDG_CONFIG_HOME`), written atomically and re-read at startup. A root that
+is configured but currently unreadable (an unmounted disk) keeps its place
+in the settings and is reported with an `error` — it is never quietly
+dropped. Both `/settings` and `/discovered` are served on every transport,
+including a `--port` listener: the settings UI lives in the web client.
+
 ## Follow mode
 
 The daemon owns the truth, clients decide policy. It watches ONE hook file
@@ -426,4 +476,6 @@ curl --unix-socket "$SOCK" -X POST -d '{"path": "file.txt"}' http://localhost/re
 curl --unix-socket "$SOCK" -N http://localhost/repos/<id>/events
 curl --unix-socket "$SOCK" -N http://localhost/events
 curl --unix-socket "$SOCK" http://localhost/follow
+curl --unix-socket "$SOCK" -X PUT -d '{"watchRoots": ["~/projects"]}' http://localhost/settings
+curl --unix-socket "$SOCK" http://localhost/discovered
 ```

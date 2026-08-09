@@ -4,18 +4,21 @@
  * opening a panel that lists the daemon's open repos GROUPED BY PROJECT
  * (all worktrees of one repo collapse to a single row — e.g. "calculator"
  * — the worktree switcher beside the button picks the worktree), the
- * localStorage recents that aren't open, and the open-by-path form. Esc or
+ * localStorage recents that aren't open, the repos DISCOVERED under the
+ * settings panel's watch directories, and the open-by-path form. Esc or
  * an outside click closes the panel.
  */
 
-import { computed, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useUiStore } from '../stores/ui';
 import { beginUserNav } from '../composables/useUrlSync';
 import { useRepoOpen } from '../composables/useRepoOpen';
 import { useActiveWorktrees } from '../composables/useActiveWorktrees';
 import { useWorktreeStore, type WorktreeProject } from '../stores/worktrees';
+import { useSettingsStore } from '../stores/settings';
 import { basename } from '../utils/format';
+import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import RepoOpenForm from './RepoOpenForm.vue';
 import type { RepoSummary } from '@diffstalker/client';
 import { useDismissable } from '../composables/useDismissable';
@@ -25,11 +28,11 @@ const ui = useUiStore();
 const { openByPath, activate } = useRepoOpen();
 const { hasMultiple, projectName } = useActiveWorktrees();
 const worktreeStore = useWorktreeStore();
+const settings = useSettingsStore();
 
 // `open` and `rootEl` must keep these exact names: Vue matches ref="rootEl"
 // in the template against the setup variable name.
 const { open, rootEl } = useDismissable();
-
 
 const activeRepo = computed(
   () => daemon.repos.find((repo) => repo.id === daemon.activeRepoId) ?? null
@@ -159,6 +162,84 @@ async function pickRecentProject(project: WorktreeProject): Promise<void> {
   const ok = await openByPath(path);
   if (ok) open.value = false;
 }
+
+// --- Discovered (watch directories) --------------------------------------
+
+/**
+ * Repos found under the watch directories that no row above already
+ * covers. Deliberately NOT folded into projects the way the two lists
+ * above are: folding needs one GET /worktrees per path, and this list is
+ * as long as the user's projects folder. A repo and its sibling worktree
+ * therefore get a row each, told apart by the branch beside the name —
+ * which is free, since it comes from the scan.
+ */
+const discoveredRepos = computed(() => {
+  const shown = new Set([
+    ...daemon.repos.map((repo) => repo.path),
+    ...recentProjects.value.flatMap((project) => [
+      project.root,
+      ...project.worktrees.map((worktree) => worktree.path),
+    ]),
+  ]);
+  return settings.discoveredRepos.filter((repo) => !shown.has(repo.path));
+});
+
+/**
+ * How long a project can go untouched before the row recedes. Past this it
+ * is still there, still one click away — it just stops competing for the
+ * eye with the ones being worked on. Six months is deliberately generous:
+ * a project you return to seasonally should not read as abandoned.
+ */
+const STALE_AFTER_MS = 182 * 24 * 60 * 60 * 1000;
+
+function isStale(lastActivity: number | null): boolean {
+  // Unknown counts as stale: it is certainly not evidence of freshness.
+  return lastActivity === null || Date.now() - lastActivity > STALE_AFTER_MS;
+}
+
+function ageLabel(lastActivity: number | null): string {
+  return lastActivity === null ? '' : formatRelativeTime(lastActivity);
+}
+
+/**
+ * A watch directory can hold dozens of projects, at which point scrolling
+ * to one is worse than typing three letters of its name. The field appears
+ * only once the list is long enough to need it.
+ */
+const DISCOVERED_FILTER_THRESHOLD = 8;
+
+const discoveredFilter = ref('');
+
+const showDiscoveredFilter = computed(
+  () => discoveredRepos.value.length > DISCOVERED_FILTER_THRESHOLD
+);
+
+const filteredDiscovered = computed(() => {
+  const needle = discoveredFilter.value.trim().toLowerCase();
+  if (!needle) return discoveredRepos.value;
+  return discoveredRepos.value.filter(
+    (repo) => repo.name.toLowerCase().includes(needle) || repo.path.toLowerCase().includes(needle)
+  );
+});
+
+/**
+ * Re-walk the watch directories whenever the panel opens: the daemon's
+ * watchers keep the repo SET current, but a branch label only refreshes
+ * on a scan, and a scan is filesystem-only (no git processes).
+ */
+watch(open, (isOpen) => {
+  if (!isOpen) {
+    discoveredFilter.value = '';
+    return;
+  }
+  void settings.rescan();
+});
+
+async function pickDiscovered(path: string): Promise<void> {
+  beginUserNav({ repo: path });
+  const ok = await openByPath(path);
+  if (ok) open.value = false;
+}
 </script>
 
 <template>
@@ -195,6 +276,39 @@ async function pickRecentProject(project: WorktreeProject): Promise<void> {
           >
           <span class="path mono" :title="project.root">{{ project.root }}</span>
         </button>
+      </div>
+
+      <div v-if="discoveredRepos.length" class="group" data-testid="discovered-repos">
+        <p class="group-label eyebrow">Discovered</p>
+        <input
+          v-if="showDiscoveredFilter"
+          v-model="discoveredFilter"
+          class="discovered-filter mono"
+          type="text"
+          :placeholder="`Filter ${discoveredRepos.length} repos`"
+          spellcheck="false"
+          autocomplete="off"
+          aria-label="Filter discovered repos"
+        />
+        <div class="scrollable">
+          <button
+            v-for="repo in filteredDiscovered"
+            :key="repo.path"
+            class="repo-row"
+            :class="{ stale: isStale(repo.lastActivity) }"
+            @click="pickDiscovered(repo.path)"
+          >
+            <span class="name mono" :title="repo.name">{{ repo.name }}</span>
+            <span v-if="repo.branch" class="branch mono" :title="repo.branch">{{
+              repo.branch
+            }}</span>
+            <span class="meta mono">
+              <span class="path" :title="repo.path">{{ repo.path }}</span>
+              <span v-if="repo.lastActivity" class="age">{{ ageLabel(repo.lastActivity) }}</span>
+            </span>
+          </button>
+          <p v-if="!filteredDiscovered.length" class="no-match mono">no repo matches</p>
+        </div>
       </div>
 
       <div v-if="recentProjects.length" class="group" data-testid="recent-repos">
@@ -264,6 +378,61 @@ async function pickRecentProject(project: WorktreeProject): Promise<void> {
 
 .group-label {
   margin: 0 0 0.25rem;
+}
+
+/* A project nobody has touched in half a year is still listed, in its
+   place at the bottom, but it stops shouting: the name drops to the dim
+   weight the path already uses. Hovering restores it. */
+.repo-row.stale .name {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.repo-row.stale:hover .name {
+  color: var(--text);
+}
+
+/* Path and age share the row's second line: the PATH gives way (it is the
+   least surprising thing on the row), the age never does — it is the whole
+   point of the ordering. */
+.meta {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.375rem;
+  min-width: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+}
+
+.meta .path {
+  grid-column: auto;
+  min-width: 0;
+}
+
+.age {
+  flex: none;
+  color: var(--text-dim);
+}
+
+/* The discovered list is as long as the user's projects folder, so it
+   scrolls inside the panel rather than growing it past the viewport. */
+.scrollable {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.discovered-filter {
+  margin-bottom: 0.25rem;
+  font-size: var(--fs-base);
+}
+
+.no-match {
+  margin: 0.25rem 0;
+  font-size: var(--fs-small);
+  color: var(--text-dim);
 }
 
 .repo-row {

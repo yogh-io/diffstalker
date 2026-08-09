@@ -17,7 +17,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { runtimeDir, cacheDir } from '@diffstalker/core/utils/xdg';
+import { runtimeDir, cacheDir, configDir } from '@diffstalker/core/utils/xdg';
 import { expandPath } from '@diffstalker/core/utils/pathUtils';
 import { createDaemon, type Daemon, ListenOptions } from './server.js';
 import { readCurrentVersion } from './version.js';
@@ -333,6 +333,9 @@ async function main(): Promise<void> {
   // process and gets the web subset. See server.ts modeFor.
   const daemon = createDaemon({
     followFile,
+    // One settings file per user, shared by every daemon this user runs —
+    // "where my projects live" does not change with --instance.
+    settingsFile: path.join(configDir(), 'daemon.json'),
     webRoot,
     symbols,
     updateCheck: !options.noUpdateCheck,

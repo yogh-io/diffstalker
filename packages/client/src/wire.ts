@@ -157,6 +157,69 @@ export interface FollowChangeEvent {
   rawContent: string;
 }
 
+/**
+ * GET/PUT /settings: the daemon's persistent, machine-level configuration.
+ * `persisted` is false when the daemon holds settings in memory only, so a
+ * client can say they will not outlive the daemon instead of promising a
+ * save it did not get.
+ */
+export interface DaemonSettings {
+  watchRoots: string[];
+  persisted: boolean;
+}
+
+/** A git repo found under a watch directory, but not opened. */
+export interface DiscoveredRepo {
+  path: string;
+  name: string;
+  /** From .git/HEAD: a branch, a short sha when detached, or null. */
+  branch: string | null;
+  /**
+   * Newest mtime of the git dir's `index` / `HEAD` (epoch ms), or null
+   * when neither could be read. What a client ranks by, so the projects
+   * worked on this week come first and years-old ones sink.
+   */
+  lastActivity: number | null;
+}
+
+/** One watch directory's scan result. */
+export interface WatchRootState {
+  path: string;
+  repos: DiscoveredRepo[];
+  /** Why the root itself yielded nothing (removed, unreadable). */
+  error: string | null;
+  /** The scan hit its cap: there are more repos than are listed. */
+  capped: boolean;
+}
+
+/** One subdirectory in a GET /browse listing. */
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  /** True when the directory is itself a git repo, not a folder of them. */
+  isRepo: boolean;
+}
+
+/**
+ * GET /browse: one directory level of the daemon's filesystem, for picking
+ * a watch directory. A browser cannot be handed a real path by its own
+ * file pickers, so browsing happens daemon-side.
+ */
+export interface DirectoryListing {
+  /** The directory that was listed, absolute and resolved. */
+  path: string;
+  /** Its parent, or null at the filesystem root. */
+  parent: string | null;
+  /** The daemon's home directory — where browsing starts. */
+  home: string;
+  entries: DirectoryEntry[];
+}
+
+/** GET /discovered, POST /discovered/rescan, and the `discovery-change` event. */
+export interface DiscoveryState {
+  roots: WatchRootState[];
+}
+
 /** Payload of the daemon-scope `repo-opened` SSE event. */
 export type RepoOpenedEvent = RepoRef;
 

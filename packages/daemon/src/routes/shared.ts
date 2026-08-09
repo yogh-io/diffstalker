@@ -16,6 +16,8 @@ import { HttpError, sendJson } from '../router.js';
 import type { RepoRegistry, RepoHandle } from '../repoRegistry.js';
 import type { SseHub, DaemonEventHub } from '../sse.js';
 import type { FollowController } from '../follow.js';
+import type { SettingsStore } from '../settings.js';
+import type { DiscoveryController } from '../discovery.js';
 import type { VersionService } from '../version.js';
 import type { SymbolPool } from '../symbols/pool.js';
 import type { BlobSemaphore } from '../blobSemaphore.js';
@@ -28,6 +30,10 @@ export interface RouteDeps {
   daemonEvents: DaemonEventHub;
   /** Null when follow mode is disabled (--no-follow). */
   follow: FollowController | null;
+  /** Persistent daemon-level settings (watch directories). */
+  settings: SettingsStore;
+  /** The repos found under those watch directories, kept live. */
+  discovery: DiscoveryController;
   /** Running-vs-published version, behind a cache (GET /version). */
   version: VersionService;
   /**
@@ -94,6 +100,21 @@ export function requireRefField(body: unknown, field: string): string {
     throw new HttpError(400, `Invalid "${field}" (must not start with "-"): ${value}`);
   }
   return value;
+}
+
+/**
+ * Required array-of-strings field on a JSON body. An empty array is a
+ * legitimate value (clearing a list), a non-array or a mixed array is not.
+ */
+export function requireStringArrayField(body: unknown, field: string): string[] {
+  if (typeof body !== 'object' || body === null) {
+    throw new HttpError(400, `Expected a JSON body with "${field}"`);
+  }
+  const value = (body as Record<string, unknown>)[field];
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+    throw new HttpError(400, `Missing "${field}" (array of strings) in body`);
+  }
+  return value as string[];
 }
 
 /** Optional string field on a JSON body; absent yields undefined. */

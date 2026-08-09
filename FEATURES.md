@@ -860,9 +860,41 @@ git operations.
   and scrolls straight to it; back out of one closes it again. A Back also
   holds follow mode off for 1500ms, so an editor save landing right after
   cannot silently undo it.
-- Repo switcher (open by absolute path, recent repos), follow-mode toggle, theme
-  switcher (the same six themes as CSS variables), fuzzy file finder (Ctrl+P),
-  and a hotkeys overlay (`?`). Live over SSE, with a calm reconnect banner.
+- Repo switcher (open by absolute path, recent repos, **discovered projects**),
+  follow-mode toggle, theme switcher (the same six themes as CSS variables),
+  fuzzy file finder (Ctrl+P), a settings panel (`,`), and a hotkeys overlay
+  (`?`). Live over SSE, with a calm reconnect banner.
+- **Settings panel** (gear in the header, or `,`) — two kinds of setting, and
+  it says which is which: **Appearance** is this browser's (theme, in
+  localStorage), **Repositories** is the daemon's (one file on its machine,
+  shared by every client, surviving a restart). A daemon holding settings in
+  memory only says so instead of implying a save. The theme picker lives here
+  and only here — it is a set-once choice, so a select parked in the chrome
+  cost more room than it earned.
+- **Watch directories** — point diffstalker at the folder you keep projects in
+  and every git repo in it shows up in the repo switcher, ready to open; a
+  browser cannot browse the daemon's filesystem, so this is what replaces
+  typing an absolute path every time. Discovery LISTS repos, it never opens
+  them (opening is what costs a watcher and git state per repo). The scan is
+  filesystem-only — no git process — reading the branch from `.git/HEAD` and
+  the last activity from the git dir's `index`/`HEAD` mtimes: children of the
+  root plus one level further inside a child that is not itself a repo, never
+  descending into a repo (so no submodule is listed as a project), skipping
+  dot-dirs and `node_modules`, capped at 500 with `capped` reported rather
+  than a silently short list. Each root is watched one level deep, so a fresh
+  clone appears without a reload. **Browse…** picks a directory by walking the
+  daemon's own filesystem (`GET /browse`, directory names only), because a
+  browser is never handed a real path by its file pickers — `webkitdirectory`
+  yields relative names and `showDirectoryPicker` a bare handle, so a purely
+  client-side picker could not name anything the daemon could open. Directories
+  that are themselves repos are marked, since the folder you want is usually
+  their parent. Rows are ordered **most recently touched
+  first** with the age beside the path — projects untouched for half a year
+  sink to the bottom and their names drop to the dim weight, because a
+  projects folder is mostly archaeology and the three you are working on this
+  week are the answer nearly every time. Over eight projects, the list grows a
+  filter field. A root that has gone missing (an unmounted disk) keeps its
+  place in the settings and reports the reason; it is never quietly dropped.
 - **In-file outline** (bare `o`, Explorer) — the symbols in the open file, from
   a real parser (tree-sitter compiled to WebAssembly), not a regex. Filter by
   name, Enter jumps to the line. Vue has no grammar of its own, so its `<script>` blocks are fed to the TypeScript parser as ranges,

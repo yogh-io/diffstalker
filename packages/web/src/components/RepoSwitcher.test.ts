@@ -304,3 +304,137 @@ describe('recent list groups by project', () => {
     expect(names).toEqual(['diffstalker']);
   });
 });
+
+describe('discovered repos', () => {
+  /** A daemon whose watch directory holds these repos, and no worktrees. */
+  function discoveryFetch(
+    repos: { name: string; path: string; branch: string | null; lastActivity?: number | null }[]
+  ) {
+    return makeFakeFetch((call) => {
+      if (call.url.startsWith('/discovered')) {
+        const rows = repos.map((repo) => ({ lastActivity: null, ...repo }));
+        return { body: { roots: [{ path: '/w', repos: rows, error: null, capped: false }] } };
+      }
+      if (call.url.startsWith('/worktrees')) return { body: [] };
+      return { status: 404, body: {} };
+    });
+  }
+
+  test('lists repos found under a watch directory, with their branch', async () => {
+    const fake = discoveryFetch([
+      { name: 'archive', path: '/w/archive', branch: 'main' },
+      { name: 'register', path: '/w/register', branch: 'feat/x' },
+    ]);
+    vi.stubGlobal('fetch', fake.fn);
+
+    const wrapper = mount(RepoSwitcher);
+    await wrapper.find('.switch-btn').trigger('click');
+    await flushPromises();
+
+    const rows = wrapper.findAll('[data-testid="discovered-repos"] .repo-row');
+    expect(rows.map((row) => row.find('.name').text())).toEqual(['archive', 'register']);
+    expect(rows[1].find('.branch').text()).toBe('feat/x');
+  });
+
+  test('a repo already open on the daemon is not repeated in Discovered', async () => {
+    vi.stubGlobal(
+      'fetch',
+      discoveryFetch([
+        { name: 'archive', path: '/w/archive', branch: 'main' },
+        { name: 'register', path: '/w/register', branch: 'main' },
+      ]).fn
+    );
+    const daemon = useDaemonStore();
+    daemon.repos = [{ id: 'r1', path: '/w/archive', branch: 'main' }];
+
+    const wrapper = mount(RepoSwitcher);
+    await wrapper.find('.switch-btn').trigger('click');
+    await flushPromises();
+
+    const names = wrapper
+      .findAll('[data-testid="discovered-repos"] .repo-row .name')
+      .map((n) => n.text());
+    expect(names).toEqual(['register']);
+  });
+
+  test('opening the panel rescans, so a branch label is not stale', async () => {
+    const fake = discoveryFetch([{ name: 'archive', path: '/w/archive', branch: 'main' }]);
+    vi.stubGlobal('fetch', fake.fn);
+
+    const wrapper = mount(RepoSwitcher);
+    await wrapper.find('.switch-btn').trigger('click');
+    await flushPromises();
+
+    expect(fake.callsTo('/discovered/rescan')).toHaveLength(1);
+  });
+
+  test('a long list gets a filter that narrows by name', async () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      name: `proj-${i}`,
+      path: `/w/proj-${i}`,
+      branch: 'main',
+    }));
+    vi.stubGlobal('fetch', discoveryFetch(many).fn);
+
+    const wrapper = mount(RepoSwitcher);
+    await wrapper.find('.switch-btn').trigger('click');
+    await flushPromises();
+
+    const filter = wrapper.find('.discovered-filter');
+    expect(filter.exists()).toBe(true);
+
+    await filter.setValue('proj-1');
+    const names = wrapper
+      .findAll('[data-testid="discovered-repos"] .repo-row .name')
+      .map((n) => n.text());
+    expect(names).toEqual(['proj-1', 'proj-10', 'proj-11']);
+  });
+
+  test('a short list has no filter field', async () => {
+    vi.stubGlobal(
+      'fetch',
+      discoveryFetch([{ name: 'archive', path: '/w/archive', branch: 'main' }]).fn
+    );
+
+    const wrapper = mount(RepoSwitcher);
+    await wrapper.find('.switch-btn').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('.discovered-filter').exists()).toBe(false);
+  });
+
+  test('clicking a discovered repo opens it by path', async () => {
+    const fake = makeFakeFetch((call) => {
+      if (call.url.startsWith('/discovered')) {
+        return {
+          body: {
+            roots: [
+              {
+                path: '/w',
+                repos: [
+                  { name: 'archive', path: '/w/archive', branch: 'main', lastActivity: null },
+                ],
+                error: null,
+                capped: false,
+              },
+            ],
+          },
+        };
+      }
+      if (call.url === '/repos' && call.method === 'POST') {
+        return { status: 201, body: { id: 'r9', path: '/w/archive' } };
+      }
+      if (call.url.startsWith('/worktrees')) return { body: [] };
+      return { status: 404, body: {} };
+    });
+    vi.stubGlobal('fetch', fake.fn);
+
+    const wrapper = mount(RepoSwitcher);
+    await wrapper.find('.switch-btn').trigger('click');
+    await flushPromises();
+    await wrapper.find('[data-testid="discovered-repos"] .repo-row').trigger('click');
+    await flushPromises();
+
+    expect(fake.callsTo('/repos').some((call) => call.body && (call.body as { path: string }).path === '/w/archive')).toBe(true);
+  });
+});

@@ -23,6 +23,9 @@ import { request, subscribe } from './transport';
 import type { SseHandle } from './transport';
 import { mediaUrl } from '@diffstalker/core/utils/blobRef';
 import type {
+  DaemonSettings,
+  DirectoryListing,
+  DiscoveryState,
   FollowChangeEvent,
   FollowState,
   HealthState,
@@ -102,6 +105,10 @@ export interface DaemonStreamHandlers {
   onRepoOpened: (repo: RepoOpenedEvent) => void;
   onRepoClosed: (event: RepoClosedEvent) => void;
   onFollowChange: (event: FollowChangeEvent) => void;
+  /** Another client saved the daemon settings. */
+  onSettingsChange?: (settings: DaemonSettings) => void;
+  /** A watch directory was rescanned (by a watcher, or by any client). */
+  onDiscoveryChange?: (state: DiscoveryState) => void;
   onOpen?: () => void;
   onError?: () => void;
 }
@@ -119,6 +126,42 @@ export class DiffstalkerClient {
 
   getFollow(): Promise<FollowState> {
     return request('GET', '/follow');
+  }
+
+  // --- Settings and repository discovery ---
+
+  getSettings(): Promise<DaemonSettings> {
+    return request('GET', '/settings');
+  }
+
+  /**
+   * Replace the watch directories — the whole list, not a patch. A path
+   * the daemon refuses (relative, gone, not a directory) fails the call
+   * with the reason, which the panel shows next to the field.
+   */
+  setWatchRoots(watchRoots: string[]): Promise<DaemonSettings> {
+    return request('PUT', '/settings', { watchRoots });
+  }
+
+  discovered(): Promise<DiscoveryState> {
+    return request('GET', '/discovered');
+  }
+
+  rescanDiscovered(): Promise<DiscoveryState> {
+    return request('POST', '/discovered/rescan');
+  }
+
+  /**
+   * One directory level of the daemon's filesystem, for the settings
+   * panel's directory picker. Omitting the path starts at its home.
+   *
+   * The browser cannot do this itself: its own file pickers never hand
+   * over a real path, so a client-side "Browse…" could not produce
+   * anything the daemon could then open.
+   */
+  browse(path?: string): Promise<DirectoryListing> {
+    const query = path === undefined ? '' : `?path=${encodeURIComponent(path)}`;
+    return request('GET', `/browse${query}`);
   }
 
   // --- Repos ---
@@ -336,10 +379,19 @@ export class DiffstalkerClient {
 
   /**
    * Subscribe to the daemon-scope stream: `snapshot` (open repos) on
-   * connect, then `repo-opened` / `repo-closed` / `follow-change`.
+   * connect, then `repo-opened` / `repo-closed` / `follow-change` /
+   * `settings-change` / `discovery-change`.
    */
   subscribeDaemon(handlers: DaemonStreamHandlers): SseHandle {
-    return subscribe('/events', ['snapshot', 'repo-opened', 'repo-closed', 'follow-change'], {
+    const events = [
+      'snapshot',
+      'repo-opened',
+      'repo-closed',
+      'follow-change',
+      'settings-change',
+      'discovery-change',
+    ];
+    return subscribe('/events', events, {
       onEvent: (event, payload) => this.dispatchDaemonEvent(event, payload, handlers),
       onOpen: handlers.onOpen,
       onError: handlers.onError,
@@ -365,6 +417,12 @@ export class DiffstalkerClient {
         break;
       case 'follow-change':
         handlers.onFollowChange(payload as FollowChangeEvent);
+        break;
+      case 'settings-change':
+        handlers.onSettingsChange?.(payload as DaemonSettings);
+        break;
+      case 'discovery-change':
+        handlers.onDiscoveryChange?.(payload as DiscoveryState);
         break;
     }
   }

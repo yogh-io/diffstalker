@@ -39,6 +39,23 @@ module.exports = {
       to: { path: "^src/(index|server|router|serialize)\\.ts$|^src/routes/" },
     },
     {
+      name: "settings-bottom-layer",
+      comment:
+        "settings.ts is a file-backed document; it only imports core. No registry, no routes, no server.",
+      severity: "error",
+      from: { path: "^src/settings\\.ts$" },
+      to: {
+        path: "^src/(index|server|router|repoRegistry|sse|follow|discovery)\\.ts$|^src/routes/",
+      },
+    },
+    {
+      name: "discovery-no-upper-layers",
+      comment: "discovery.ts sits beside follow.ts, below routes/: only sse/core imports",
+      severity: "error",
+      from: { path: "^src/discovery\\.ts$" },
+      to: { path: "^src/(index|server|router|serialize|repoRegistry)\\.ts$|^src/routes/" },
+    },
+    {
       name: "staticfiles-no-upper-layers",
       comment: "staticFiles.ts sits at the router layer: only router/core imports",
       severity: "error",

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 diffstalker is a terminal UI for interactive git staging and committing, built with TypeScript and neo-blessed.
 
-The git state engine now lives in a **daemon** (`diffstalkerd`): a Node http server exposing `@diffstalker/core` over REST + Server-Sent Events. The terminal UI is a **client** of that daemon — it holds no in-process git. On launch the CLI attaches to a running daemon or spawns one on a unix socket, opens repos over REST, and follows live state over SSE. The daemon owns follow mode: it watches ONE hook file external tools append repo/file paths to, and broadcasts `follow-change` so clients can switch focus. The same daemon backs other clients: a web UI ships too (served at GET /).
+The git state engine now lives in a **daemon** (`diffstalkerd`): a Node http server exposing `@diffstalker/core` over REST + Server-Sent Events. The terminal UI is a **client** of that daemon — it holds no in-process git. On launch the CLI attaches to a running daemon or spawns one on a unix socket, opens repos over REST, and follows live state over SSE. The daemon owns follow mode: it watches ONE hook file external tools append repo/file paths to, and broadcasts `follow-change` so clients can switch focus. It also owns the persistent settings (`~/.config/diffstalker/daemon.json`) and the **watch directories** in them: folders it scans for git repos so clients can offer "your projects" instead of an empty path field. The same daemon backs other clients: a web UI ships too (served at GET /).
 
 ## Feature Documentation
 
@@ -83,7 +83,7 @@ Never bump `package.json` or create version tags manually — always use the scr
 The repo is a bun workspace with six packages:
 
 - **`@diffstalker/core`** — headless git state (plain git fns + a small set of managers), no UI deps. The daemon consumes its managers; the CLI and web client import pure helpers/types from it (`view/*` presentation logic, `git/diff`, `git/explorerData`, `git/status`/`worktree` types, `services/commitService`, `utils`, `types`) but **not** its managers.
-- **`@diffstalker/daemon`** — diffstalkerd, published to npm as a bin-only package (an executable, not an importable API): Node http REST + SSE over core. Owns git state and follow mode, and serves the web UI at `GET /`.
+- **`@diffstalker/daemon`** — diffstalkerd, published to npm as a bin-only package (an executable, not an importable API): Node http REST + SSE over core. Owns git state, follow mode, and the persistent settings + repo discovery they drive; serves the web UI at `GET /`.
 - **`@diffstalker/client`** — a typed REST + SSE client for the daemon. Private; consumed by the CLI (and, later, a web client).
 - **`diffstalker`** (`packages/cli`) — the terminal UI, published to npm. A pure daemon client: `RepoSession` fed by REST + SSE, `DaemonLifecycle` to attach/spawn.
 - **`diffstalkerd-grammars`** (`packages/grammars`) — tree-sitter grammars, the
@@ -110,6 +110,7 @@ packages/core/src/
 │   ├── blob.ts             # openBlob: raw bytes at worktree/index/head, size+mode checked first
 │   ├── explorerData.ts     # Tree listing + buildGitStatusMap for the file explorer
 │   ├── hunkTimes.ts        # Per-hunk edit timestamps
+│   ├── discoverRepos.ts    # Watch-directory scan: git repos under a dir (fs only, no git)
 │   ├── worktree.ts         # Worktree/bare-repo resolution and listing
 │   └── ignoreUtils.ts      # Gitignore checking
 ├── managers/               # EventEmitter-based state managers (daemon-side only)
@@ -128,6 +129,7 @@ packages/core/src/
 ├── utils/                  # logger, path utils, base-branch cache, xdg dirs
 │   ├── imageSniff.ts       # Pure magic-byte image validation (PNG/JPEG/GIF only) + the caps
 │   ├── binaryDetect.ts     # isBinaryContent: the NUL scan, shared by diff.ts and explorerData.ts
+│   ├── watchGuards.ts      # isUnwatchable: the FIFO guard every chokidar watcher shares
 │   └── blobRef.ts          # blobUrl/mediaUrl — the one copy of the byte-endpoint URL shape
 └── types/                  # Shared type declarations (remote)
 ```
@@ -148,11 +150,14 @@ packages/daemon/src/
 ├── router.ts               # Method+path router, JSON bodies, HttpError -> {error}
 ├── repoRegistry.ts         # Open repos by path, stable ids, refcounting, follow-ref
 ├── follow.ts               # Hook-file watcher -> resolve path -> open repo -> broadcast
+├── settings.ts             # Persistent daemon settings (~/.config/diffstalker/daemon.json)
+├── discovery.ts            # Watch directories: scan + watch, 'discovery-change' broadcasts
 ├── sse.ts                  # Per-repo + daemon-scope SSE hubs fanning out events
 ├── serialize.ts            # Wire encoders (shared state, Dates/Maps to JSON)
 └── routes/                 # One module per endpoint group
     ├── health.ts, repos.ts, workingTree.ts, remote.ts
     ├── historyCompare.ts, explorer.ts, daemon.ts, shared.ts
+    ├── settings.ts         # /settings + /discovered + /browse (both API modes)
     ├── blob.ts             # /blob (image bytes) + /media (per-side image metadata)
 
 packages/client/src/

@@ -16,7 +16,8 @@
  * - the global keyboard layer (useGlobalKeys), follow-mode policy
  *   (useFollowMode) and auto-mode policy (useAutoMode) mount here, and
  *   the two overlays (fuzzy finder, hotkeys help) render at the shell
- *   level from ui.activeOverlay.
+ *   level from ui.activeOverlay (fuzzy finder, search, hotkeys help,
+ *   settings).
  */
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
@@ -42,6 +43,7 @@ import RepoEmptyState from './components/RepoEmptyState.vue';
 import FinderOverlay from './components/FinderOverlay.vue';
 import SearchOverlay from './components/SearchOverlay.vue';
 import HotkeysOverlay from './components/HotkeysOverlay.vue';
+import SettingsOverlay from './components/SettingsOverlay.vue';
 import ChangesView from './views/ChangesView.vue';
 import JournalView from './views/JournalView.vue';
 import HistoryView from './views/HistoryView.vue';
@@ -397,6 +399,7 @@ onUnmounted(() => {
     <FinderOverlay v-if="ui.activeOverlay === 'finder'" />
     <SearchOverlay v-else-if="ui.activeOverlay === 'search'" />
     <HotkeysOverlay v-else-if="ui.activeOverlay === 'help'" />
+    <SettingsOverlay v-else-if="ui.activeOverlay === 'settings'" />
   </div>
 </template>
 

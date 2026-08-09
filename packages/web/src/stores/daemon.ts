@@ -29,6 +29,7 @@ import type {
   VersionState,
 } from '@diffstalker/client';
 import { errorMessage } from '../api/errors';
+import { useSettingsStore } from './settings';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -129,6 +130,10 @@ export const useDaemonStore = defineStore('daemon', () => {
         // The snapshot has no branches; the REST list does. Fire-and-forget.
         void refreshRepos();
         void loadFollow();
+        // Daemon-owned settings + what they discovered. Pulled here (not
+        // when the panel opens) because the repo switcher lists discovered
+        // repos too, so they must be there before anyone asks.
+        void useSettingsStore().load();
         // Re-pulled on every (re)connect: a reconnect can mean the daemon
         // was restarted on a different version. The daemon caches the npm
         // lookup, so this costs one local request.
@@ -160,6 +165,11 @@ export const useDaemonStore = defineStore('daemon', () => {
           };
         }
       },
+      // Settings and discovery live in their own store; the daemon-scope
+      // stream is the only place their events arrive, so they are handed
+      // over here rather than each store opening a second EventSource.
+      onSettingsChange: (settings) => useSettingsStore().applySettings(settings),
+      onDiscoveryChange: (state) => useSettingsStore().applyDiscovery(state),
       onError: () => {
         // No respawn from a browser: surface the status, let EventSource retry.
         connection.value = 'disconnected';

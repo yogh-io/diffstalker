@@ -28,6 +28,8 @@ import { shouldGuard, guardRequest, SECURITY_HEADERS } from './security.js';
 import { RepoRegistry, openAndWarm, type RepoHandle } from './repoRegistry.js';
 import { SseHub, DaemonEventHub } from './sse.js';
 import { FollowController } from './follow.js';
+import { SettingsStore } from './settings.js';
+import { DiscoveryController } from './discovery.js';
 import { createVersionService, type LatestVersionFetcher } from './version.js';
 import type { RouteDeps } from './routes/shared.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -43,6 +45,7 @@ import { createSymbolPool } from './symbols/pool.js';
 import type { SymbolArtifacts } from './symbols/resolveArtifacts.js';
 import { registerBlobRoutes } from './routes/blob.js';
 import { registerDaemonRoutes } from './routes/daemon.js';
+import { registerSettingsRoutes } from './routes/settings.js';
 import { createBlobSemaphore } from './blobSemaphore.js';
 
 /** Which slice of the REST API a listener exposes. */
@@ -100,6 +103,15 @@ export interface DaemonOptions {
    * the default path unless --no-follow is given.
    */
   followFile?: string;
+  /**
+   * Where the daemon's persistent settings live (watch directories). Omit
+   * and settings still work for the daemon's lifetime but are not written
+   * anywhere — GET /settings reports `persisted: false`, so a client can
+   * say so instead of promising a save that will not survive. The entry
+   * point supplies the real path (~/.config/diffstalker/daemon.json);
+   * tests point it at a temp file.
+   */
+  settingsFile?: string;
   /**
    * Directory with the built web UI (index.html + hashed assets). When set,
    * unmatched GET requests are served from it (SPA fallback); API routes
@@ -187,6 +199,8 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
   const version = createVersionService(
     options.updateCheck === false ? () => Promise.resolve(null) : options.fetchLatestVersion
   );
+  const settings = new SettingsStore(options.settingsFile ?? null);
+  const discovery = new DiscoveryController(daemonEvents);
 
   /**
    * One router per API mode, built on demand and cached.
@@ -231,6 +245,8 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
       sse,
       daemonEvents,
       follow,
+      settings,
+      discovery,
       apiMode: mode,
       version,
       symbols: symbolSupport,
@@ -255,6 +271,9 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
     // needs them.
     registerBlobRoutes(router, deps, blobGate);
     registerDaemonRoutes(router, deps);
+    // Both modes: the settings panel that drives these lives in the web UI
+    // (see routes/settings.ts on why the port gets them too).
+    registerSettingsRoutes(router, deps);
 
     routers.set(mode, router);
     return router;
@@ -271,6 +290,12 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
   const modeFor = (kind: BindKind): ApiMode => options.apiMode ?? (kind === 'tcp' ? 'web' : 'full');
 
   follow?.start();
+
+  // Load the stored watch directories and start scanning them. Deliberately
+  // not awaited: the daemon must answer requests while a big root is being
+  // walked, and clients learn the result from `discovery-change` (or by
+  // asking GET /discovered) either way.
+  void discovery.setRoots(settings.load().watchRoots);
 
   const staticHandler = options.webRoot ? createStaticHandler(options.webRoot) : undefined;
 
@@ -419,6 +444,7 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
       // Follow first: stops the watcher and releases its follow-ref before
       // the hubs and registry are torn down.
       follow?.dispose();
+      discovery.dispose();
       sse.destroy();
       daemonEvents.destroy();
       registry.disposeAll();
