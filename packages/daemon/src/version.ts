@@ -1,19 +1,24 @@
 /**
- * Version reporting: what this daemon is running, and what npm publishes.
+ * Version reporting: what this daemon is running, what npm publishes, and
+ * how to update it.
  *
  * The running version comes from the daemon's own package.json (one level
  * up from this module, both in dist/ and in src/). The published version
  * comes from npm's dist-tags endpoint — the smallest registry response
  * that answers "what is latest" — fetched lazily (only when a client asks
  * GET /version) and cached, so an open web UI costs at most one registry
- * request per TTL.
+ * request per TTL. The update command comes from install detection (see
+ * install.ts), which is what makes the indicator actionable rather than
+ * merely informative.
  *
- * Either half can be unknown (unreadable manifest, offline, opt-out); the
- * state says so with nulls and status 'unknown' instead of guessing, and
- * clients hide the indicator rather than claim a match.
+ * Any of these can be unknown (unreadable manifest, offline, opt-out, an
+ * install nothing owns); the state says so with nulls and status 'unknown'
+ * instead of guessing, and clients hide or soften the indicator rather
+ * than claim a match.
  */
 
 import * as fs from 'node:fs';
+import { createInstallService, type InstallInfo, type InstallService } from './install.js';
 
 /** How the running version relates to the latest published one. */
 export type VersionStatus = 'current' | 'outdated' | 'ahead' | 'unknown';
@@ -24,6 +29,8 @@ export interface VersionState {
   /** The latest version published to npm. Null when unknown (offline/opt-out). */
   latest: string | null;
   status: VersionStatus;
+  /** How this daemon was installed, and the command that updates it. */
+  install: InstallInfo;
 }
 
 /** Reads the latest published version, or null when it cannot be known. */
@@ -93,14 +100,17 @@ export function compareVersions(current: string | null, latest: string | null): 
 
 /**
  * Build the /version service. `fetchLatest` is the seam tests replace (and
- * that --no-update-check stubs out); `current` is the running version.
+ * that --no-update-check stubs out); `current` is the running version;
+ * `install` names the package manager this daemon came from.
  *
  * Caching is per daemon instance: a hit inside the TTL never touches the
- * network, and concurrent misses share one in-flight request.
+ * network, and concurrent misses share one in-flight request. Install
+ * detection is cached for the process lifetime.
  */
 export function createVersionService(
   fetchLatest: LatestVersionFetcher = fetchLatestFromNpm,
-  current: string | null = readCurrentVersion()
+  current: string | null = readCurrentVersion(),
+  install: InstallService = createInstallService()
 ): VersionService {
   let cached: { value: string | null; expiresAt: number } | null = null;
   let pending: Promise<string | null> | null = null;
@@ -124,8 +134,8 @@ export function createVersionService(
 
   return {
     async state(): Promise<VersionState> {
-      const latest = await loadLatest();
-      return { current, latest, status: compareVersions(current, latest) };
+      const [latest, installed] = await Promise.all([loadLatest(), install.info()]);
+      return { current, latest, status: compareVersions(current, latest), install: installed };
     },
   };
 }

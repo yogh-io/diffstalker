@@ -5,7 +5,7 @@
  * latest published on npm — all mono, all live.
  */
 
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useRepoStore, CONNECTION_LOST_MESSAGE } from '../stores/repo';
 
@@ -38,6 +38,11 @@ const deletions = computed(
  * Version indicator. Shown only when the daemon knows its own version;
  * 'outdated' also names the newer version, the rest is just the running
  * one (the title line carries the detail).
+ *
+ * `command` is the daemon's own update command for the way it was actually
+ * installed, and clicking copies it. It is null for an install nothing
+ * owns (a source checkout, a link), and the indicator is then exactly what
+ * it always was: text saying what is running.
  */
 const version = computed(() => {
   const state = daemon.version;
@@ -46,13 +51,15 @@ const version = computed(() => {
   // The daemon under this tab was restarted on a different version, so this
   // page's code is older than the API it is talking to. That outranks
   // whatever npm says: a stale bundle can start failing on changed routes,
-  // and no npm hint helps with that. Never reloads on its own — this is a
-  // tool people leave open to keep looking at something.
+  // and no npm hint helps with that — reloading is the fix, not an update,
+  // so nothing is offered to copy here. Never reloads on its own — this is
+  // a tool people leave open to keep looking at something.
   if (daemon.daemonUpgraded) {
     return {
       status: 'stale-bundle' as const,
       label: `v${daemon.servedBy} → v${state.current}`,
       title: `the daemon restarted on ${state.current}; reload to match it`,
+      command: null,
     };
   }
 
@@ -63,13 +70,58 @@ const version = computed(() => {
     ahead: `ahead of npm (latest published: ${state.latest})`,
     unknown: 'npm version unknown — could not check',
   };
+  const command = state.install?.command ?? null;
 
   return {
     status: state.status,
     label: state.status === 'outdated' ? `${label} → ${state.latest}` : label,
-    title: titles[state.status],
+    title: command ? `${titles[state.status]}\nclick to copy: ${command}` : titles[state.status],
+    command,
   };
 });
+
+/** How long the chip says 'copied' before going back to the version. */
+const FEEDBACK_MS = 1400;
+
+/** Transient result of the last copy, shown in place of the version. */
+const feedback = ref<'copied' | 'failed' | null>(null);
+let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flash(result: 'copied' | 'failed'): void {
+  feedback.value = result;
+  if (feedbackTimer !== null) clearTimeout(feedbackTimer);
+  feedbackTimer = setTimeout(() => {
+    feedback.value = null;
+    feedbackTimer = null;
+  }, FEEDBACK_MS);
+}
+
+onBeforeUnmount(() => {
+  if (feedbackTimer !== null) clearTimeout(feedbackTimer);
+});
+
+/**
+ * Copy the update command. A rejected write is reported, not swallowed:
+ * the clipboard API is missing outside a secure context (a daemon reached
+ * over plain http on a LAN address), and a click that silently does
+ * nothing reads as a broken UI.
+ */
+async function copyCommand(): Promise<void> {
+  const command = version.value?.command;
+  if (!command) return;
+  try {
+    await navigator.clipboard.writeText(command);
+    flash('copied');
+  } catch {
+    flash('failed');
+  }
+}
+
+const FEEDBACK_LABELS = { copied: 'copied', failed: 'copy failed' } as const;
+
+const versionLabel = computed(() =>
+  feedback.value ? FEEDBACK_LABELS[feedback.value] : (version.value?.label ?? '')
+);
 </script>
 
 <template>
@@ -98,11 +150,17 @@ const version = computed(() => {
     <span
       v-if="version"
       class="version"
+      :class="{ copyable: version.command !== null }"
       :data-state="version.status"
       :title="version.title"
+      :role="version.command ? 'button' : undefined"
+      :tabindex="version.command ? 0 : undefined"
       data-testid="version"
+      @click="copyCommand"
+      @keydown.enter.prevent="copyCommand"
+      @keydown.space.prevent="copyCommand"
     >
-      {{ version.label }}
+      {{ versionLabel }}
     </span>
   </footer>
 </template>
@@ -173,6 +231,16 @@ const version = computed(() => {
 .version {
   white-space: nowrap;
   cursor: default;
+}
+
+/* Only an install we can actually name offers the click. */
+.version.copyable {
+  cursor: pointer;
+}
+
+.version.copyable:hover,
+.version.copyable:focus-visible {
+  text-decoration: underline;
 }
 
 /* Only a stale version earns attention; matching npm stays quiet. A stale

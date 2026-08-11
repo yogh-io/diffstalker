@@ -193,7 +193,7 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | Method | Path                       | What                                             |
 | ------ | -------------------------- | ------------------------------------------------ |
 | GET    | `/health`                  | `{ok, ready}`                                    |
-| GET    | `/version`                 | `{current, latest, status}` — the running version against npm's `latest` dist-tag (`current` \| `outdated` \| `ahead` \| `unknown`). The npm lookup is cached (6h, 5min after a failure) and only ever runs when this endpoint is called; `--no-update-check` skips it, leaving `latest: null` |
+| GET    | `/version`                 | `{current, latest, status, install}` — the running version against npm's `latest` dist-tag (`current` \| `outdated` \| `ahead` \| `unknown`). The npm lookup is cached (6h, 5min after a failure) and only ever runs when this endpoint is called; `--no-update-check` skips it, leaving `latest: null`. `install` is `{method, package, command}` — how this daemon was installed (`npm` \| `bun` \| `pnpm` \| `yarn` \| `pacman` \| `unknown`) and the one command that updates it, detected once from where the daemon's own files live. An install nothing owns reports `unknown` with a null command rather than a guess |
 | GET    | `/repos`                   | List open repos (`id`, `path`, `branch`)         |
 | POST   | `/repos`                   | Open a repo: `{"path": "/abs/path"}` → `{id, path}` (201 created, 200 already open) |
 | DELETE | `/repos/:id`               | Close a repo (refcounted per open)               |

@@ -118,12 +118,25 @@ export interface HealthState {
 /** How the running daemon relates to the latest version published on npm. */
 export type VersionStatus = 'current' | 'outdated' | 'ahead' | 'unknown';
 
+/** The package manager a daemon was installed with, or 'unknown' for a
+ *  source checkout, a link, or anything else nothing owns. */
+export type InstallMethod = 'npm' | 'bun' | 'pnpm' | 'yarn' | 'pacman' | 'unknown';
+
+/** How the running daemon was installed. `command` is null exactly when
+ *  the install could not be named — there is no guessed command. */
+export interface InstallInfo {
+  method: InstallMethod;
+  package: string | null;
+  command: string | null;
+}
+
 /** GET /version. Either side is null when it cannot be known — an
  *  unreadable manifest, an offline daemon, or --no-update-check. */
 export interface VersionState {
   current: string | null;
   latest: string | null;
   status: VersionStatus;
+  install: InstallInfo;
 }
 
 /** A repo as identified by the daemon (POST /repos, SSE repo-opened). */

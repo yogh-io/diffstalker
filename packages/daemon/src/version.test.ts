@@ -8,6 +8,13 @@ import { describe, test, expect } from 'bun:test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { compareVersions, createVersionService, readCurrentVersion } from './version.js';
+import { UNKNOWN_INSTALL, type InstallInfo, type InstallService } from './install.js';
+
+/** A stub install service: detection has its own tests, and no version
+ *  test should shell out to pacman to get a version state. */
+function stubInstall(info: InstallInfo = UNKNOWN_INSTALL): InstallService {
+  return { info: () => Promise.resolve(info) };
+}
 
 describe('compareVersions', () => {
   test('equal versions are current', () => {
@@ -48,12 +55,25 @@ describe('readCurrentVersion', () => {
 
 describe('createVersionService', () => {
   test('reports the running version against the published one', async () => {
-    const service = createVersionService(() => Promise.resolve('0.9.0'), '0.8.1');
+    const service = createVersionService(() => Promise.resolve('0.9.0'), '0.8.1', stubInstall());
     expect(await service.state()).toEqual({
       current: '0.8.1',
       latest: '0.9.0',
       status: 'outdated',
+      install: UNKNOWN_INSTALL,
     });
+  });
+
+  test('carries the install method, so a client can offer the update command', async () => {
+    const service = createVersionService(() => Promise.resolve('0.9.0'), '0.8.1', {
+      info: () =>
+        Promise.resolve({
+          method: 'pacman' as const,
+          package: 'diffstalker-git',
+          command: 'yay -S diffstalker-git',
+        }),
+    });
+    expect((await service.state()).install.command).toBe('yay -S diffstalker-git');
   });
 
   test('caches the lookup: repeated calls hit the registry once', async () => {
@@ -61,7 +81,7 @@ describe('createVersionService', () => {
     const service = createVersionService(() => {
       calls++;
       return Promise.resolve('0.9.0');
-    }, '0.8.1');
+    }, '0.8.1', stubInstall());
 
     await service.state();
     await service.state();
@@ -74,7 +94,7 @@ describe('createVersionService', () => {
     const service = createVersionService(() => {
       calls++;
       return new Promise((resolve) => setTimeout(() => resolve('0.9.0'), 10));
-    }, '0.8.1');
+    }, '0.8.1', stubInstall());
 
     const states = await Promise.all([service.state(), service.state(), service.state()]);
     expect(calls).toBe(1);
@@ -82,20 +102,22 @@ describe('createVersionService', () => {
   });
 
   test('a failed lookup leaves the latest unknown instead of throwing', async () => {
-    const service = createVersionService(() => Promise.reject(new Error('offline')), '0.8.1');
+    const service = createVersionService(() => Promise.reject(new Error('offline')), '0.8.1', stubInstall());
     expect(await service.state()).toEqual({
       current: '0.8.1',
       latest: null,
       status: 'unknown',
+      install: UNKNOWN_INSTALL,
     });
   });
 
   test('an unreadable running version is unknown, never a crash', async () => {
-    const service = createVersionService(() => Promise.resolve('0.9.0'), null);
+    const service = createVersionService(() => Promise.resolve('0.9.0'), null, stubInstall());
     expect(await service.state()).toEqual({
       current: null,
       latest: '0.9.0',
       status: 'unknown',
+      install: UNKNOWN_INSTALL,
     });
   });
 });

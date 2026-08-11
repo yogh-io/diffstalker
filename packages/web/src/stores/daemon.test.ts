@@ -22,7 +22,12 @@ const FOLLOW_STATE = {
   followedPath: null,
 };
 
-const VERSION_STATE = { current: '0.8.1', latest: '0.9.0', status: 'outdated' };
+const VERSION_STATE = {
+  current: '0.8.1',
+  latest: '0.9.0',
+  status: 'outdated',
+  install: { method: 'npm', package: 'diffstalkerd', command: 'npm install -g diffstalkerd' },
+};
 
 let fake: FakeFetch;
 let onRequest: ((call: FetchCall) => FakeResponse | undefined) | null;
