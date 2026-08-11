@@ -1,0 +1,455 @@
+{
+  "timestamp": "2026-08-11T14:14:44.220Z",
+  "gitRef": "v0.12.2",
+  "gitSha": "f01d366",
+  "summary": {
+    "files": 349,
+    "lines": 87329,
+    "functions": 6030,
+    "avgCyclomaticComplexity": 3.8,
+    "maxCyclomaticComplexity": {
+      "value": 34,
+      "function": "reconcileSelectionAfterStateChange",
+      "file": "packages/cli/src/App.ts:600"
+    },
+    "avgCognitiveComplexity": 5,
+    "maxCognitiveComplexity": {
+      "value": 41,
+      "function": "(anonymous)",
+      "file": "packages/core/src/git/diff.ts:566"
+    },
+    "smells": 2
+  },
+  "hotspots": [
+    {
+      "file": "packages/web/src/composables/useActiveRowScroll.test.ts",
+      "lines": 148,
+      "cyclomaticMax": 0,
+      "cognitiveMax": 0,
+      "smells": 2
+    },
+    {
+      "file": "packages/cli/src/App.ts",
+      "lines": 1134,
+      "cyclomaticMax": 34,
+      "cognitiveMax": 19,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/view/flatFileList.ts",
+      "lines": 100,
+      "cyclomaticMax": 29,
+      "cognitiveMax": 14,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/diff.ts",
+      "lines": 705,
+      "cyclomaticMax": 26,
+      "cognitiveMax": 41,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/utils/displayRows.ts",
+      "lines": 537,
+      "cyclomaticMax": 25,
+      "cognitiveMax": 39,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/status.ts",
+      "lines": 577,
+      "cyclomaticMax": 24,
+      "cognitiveMax": 28,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/CommitPanel.ts",
+      "lines": 141,
+      "cyclomaticMax": 23,
+      "cognitiveMax": 23,
+      "smells": 0
+    },
+    {
+      "file": "packages/daemon/src/index.ts",
+      "lines": 411,
+      "cyclomaticMax": 23,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/PaneRenderers.ts",
+      "lines": 247,
+      "cyclomaticMax": 20,
+      "cognitiveMax": 8,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/ExplorerContent.ts",
+      "lines": 126,
+      "cyclomaticMax": 20,
+      "cognitiveMax": 24,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/config.ts",
+      "lines": 181,
+      "cyclomaticMax": 18,
+      "cognitiveMax": 26,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/index.ts",
+      "lines": 287,
+      "cyclomaticMax": 18,
+      "cognitiveMax": 21,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/Header.ts",
+      "lines": 128,
+      "cyclomaticMax": 18,
+      "cognitiveMax": 22,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/MouseHandlers.ts",
+      "lines": 288,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/NavigationController.ts",
+      "lines": 488,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/ExplorerView.ts",
+      "lines": 208,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 21,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/explorerData.ts",
+      "lines": 360,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 26,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/stores/explorer.ts",
+      "lines": 623,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/stores/repo.ts",
+      "lines": 1845,
+      "cyclomaticMax": 17,
+      "cognitiveMax": 16,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/utils/ansiTruncate.ts",
+      "lines": 111,
+      "cyclomaticMax": 16,
+      "cognitiveMax": 24,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/diffParse.ts",
+      "lines": 401,
+      "cyclomaticMax": 16,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/DiffView.ts",
+      "lines": 515,
+      "cyclomaticMax": 15,
+      "cognitiveMax": 21,
+      "smells": 0
+    },
+    {
+      "file": "packages/daemon/src/security.ts",
+      "lines": 251,
+      "cyclomaticMax": 15,
+      "cognitiveMax": 11,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/composables/useGlobalKeys.ts",
+      "lines": 220,
+      "cyclomaticMax": 15,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/CompareListView.ts",
+      "lines": 410,
+      "cyclomaticMax": 14,
+      "cognitiveMax": 16,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/blob.ts",
+      "lines": 618,
+      "cyclomaticMax": 14,
+      "cognitiveMax": 8,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/components/DiffStack.test.ts",
+      "lines": 527,
+      "cyclomaticMax": 14,
+      "cognitiveMax": 11,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/utils/diffSplit.ts",
+      "lines": 141,
+      "cyclomaticMax": 14,
+      "cognitiveMax": 10,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/dev/DiffChurnHarness.vue",
+      "lines": 392,
+      "cyclomaticMax": 13,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/StagingOperations.ts",
+      "lines": 222,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 10,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/FileList.ts",
+      "lines": 216,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/view/lineBreaking.ts",
+      "lines": 114,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 17,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/components/DiffStack.vue",
+      "lines": 1688,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 14,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/composables/useFocusTrap.ts",
+      "lines": 90,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 10,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/composables/useFollowMode.test.ts",
+      "lines": 350,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 14,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/composables/useStackScroll.ts",
+      "lines": 429,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 10,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/prefs.ts",
+      "lines": 176,
+      "cyclomaticMax": 12,
+      "cognitiveMax": 10,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/grep.ts",
+      "lines": 296,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/utils/imageSniff.ts",
+      "lines": 626,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 14,
+      "smells": 0
+    },
+    {
+      "file": "packages/daemon/src/router.ts",
+      "lines": 222,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 9,
+      "smells": 0
+    },
+    {
+      "file": "packages/daemon/src/staticFiles.ts",
+      "lines": 119,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 10,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/components/FinderOverlay.vue",
+      "lines": 340,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 9,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/components/SettingsOverlay.test.ts",
+      "lines": 246,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 9,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/composables/useScrollAnchor.ts",
+      "lines": 217,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/composables/useUrlSync.ts",
+      "lines": 518,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 8,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/testing/fakes.ts",
+      "lines": 167,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 3,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/utils/diffHighlight.ts",
+      "lines": 193,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/utils/foldEntries.ts",
+      "lines": 162,
+      "cyclomaticMax": 11,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/managers/WorkingTreeManager.ts",
+      "lines": 767,
+      "cyclomaticMax": 10,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/utils/diffRows.ts",
+      "lines": 435,
+      "cyclomaticMax": 10,
+      "cognitiveMax": 14,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/state/ExplorerViewModel.ts",
+      "lines": 739,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/widgets/HistoryView.ts",
+      "lines": 90,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/git/worktree.ts",
+      "lines": 284,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 11,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/managers/JournalManager.ts",
+      "lines": 903,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 14,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/view/formatPath.ts",
+      "lines": 72,
+      "cyclomaticMax": 9,
+      "cognitiveMax": 11,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/utils/explorerDisplayRows.ts",
+      "lines": 206,
+      "cyclomaticMax": 8,
+      "cognitiveMax": 15,
+      "smells": 0
+    },
+    {
+      "file": "packages/client/src/transport.ts",
+      "lines": 227,
+      "cyclomaticMax": 8,
+      "cognitiveMax": 12,
+      "smells": 0
+    },
+    {
+      "file": "packages/core/src/symbols/extract.ts",
+      "lines": 186,
+      "cyclomaticMax": 8,
+      "cognitiveMax": 11,
+      "smells": 0
+    },
+    {
+      "file": "packages/web/src/composables/useSplitDrag.ts",
+      "lines": 169,
+      "cyclomaticMax": 7,
+      "cognitiveMax": 11,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/modals/BaseBranchPicker.ts",
+      "lines": 132,
+      "cyclomaticMax": 6,
+      "cognitiveMax": 13,
+      "smells": 0
+    },
+    {
+      "file": "packages/cli/src/ui/modals/RepoPicker.ts",
+      "lines": 149,
+      "cyclomaticMax": 6,
+      "cognitiveMax": 13,
+      "smells": 0
+    }
+  ],
+  "smellsByRule": {
+    "vue/one-component-per-file": 2
+  }
+}
