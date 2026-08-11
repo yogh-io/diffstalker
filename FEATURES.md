@@ -934,6 +934,21 @@ git operations.
   CSRF guard and a repo id is derivable from a guessed path — a GET search would
   be a cross-site timing oracle against a local daemon. Matched text is rendered
   as text, never markup.
+- **One visible door to all three** — the search overlays carry a mode strip
+  naming every search gesture and the key it answers to: `Files Ctrl P`,
+  `Contents ⇧F`, `Outline o`. Only the finder ever had a visible way in (the
+  header button, now labelled **Search**), so the other two were reachable only
+  by already knowing them; printing all three on the surface you do open means
+  the keys get learned by using the app instead of by remembering to open the
+  help sheet first. Every mode is clickable, so no key is load-bearing. It is
+  **not** a palette: no prefix, no mode token in the query, nothing parses
+  input — each mode keeps its own corpus, debounce and cost, and the strip only
+  switches which is open. The query follows you across a switch, so changing
+  your mind mid-word costs nothing. Outline stays a popover beside the code
+  rather than becoming a mode inside the modal, so it never scrims the file it
+  describes; choosing it closes the overlay, switches to Explorer and opens the
+  popover there (the request waits a tick for the Explorer to exist — firing it
+  first loses it silently).
 - **`/` narrows the changed-file list** — a filter, not a search. It hides rows
   from the set already on screen: no syntax, no scopes, no request. The diff
   stack derives from the same ordered list, so narrowing the list also shortens
@@ -1002,6 +1017,19 @@ git operations.
   ever fetched when a client asks. Offline, or with `--no-update-check`, the
   running version still shows and the comparison reads "unknown"; the indicator
   hides entirely when the daemon cannot read its own version.
+- **Click the version to copy the update command.** The same `GET /version`
+  reports how the daemon was installed, worked out from where its own files
+  live: a global `node_modules` layout names its manager (`npm install -g
+  diffstalkerd`, or the bun/pnpm/yarn spelling, prefixed with `sudo` when the
+  prefix is root-owned), and anything else is offered to pacman, which answers
+  with the owning package (`yay -S diffstalker-git`, `paru` preferred, plain
+  `sudo pacman -Syu` with no helper installed). Hovering names the command,
+  clicking copies it and the chip flashes `copied`. An install nothing owns — a
+  source checkout, a `bun link`, a project-local dependency — gets no command
+  and no click: the chip is just text saying what is running, because a wrong
+  update command either fails or, with npm's prefix on Arch, plants unowned
+  files over a packaged install. A daemon that outran the page (`stale-bundle`)
+  offers nothing to copy either; reloading is the fix there, not an update.
 - **Auto mode** (header toggle or `a`, persisted): read-only auto-following of
   the newest change — the web port of the CLI's auto mode. When a file's
   content changes on disk, it is auto-selected and its row flashes briefly;

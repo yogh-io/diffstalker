@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2] - 2026-08-11
+
+### Added
+
+- **The search overlays now name all three search gestures and their keys.**
+  There are three (file names `Ctrl P`, contents `⇧F`, outline `o`) and only
+  one of them had a visible way in, so the other two were reachable only if you
+  already knew them. A mode strip on the overlay prints all three and switches
+  between them by click, carrying the typed query across. The header button is
+  labelled **Search** rather than **Find file** for the same reason. Not a
+  palette: no prefixes, no query syntax, each mode keeps its own corpus and
+  cost. Outline stays a popover beside the code rather than a mode inside the
+  modal.
+
+- **The version indicator copies the update command for how you installed it.**
+  It could say an update existed but not what to type, and npm, bun and the AUR
+  package are three different answers. `GET /version` now also reports the
+  install: a global `node_modules` layout names its package manager (`sudo`
+  prefixed when the prefix is root-owned), anything else is offered to pacman,
+  which names the owning package and an AUR helper to rebuild it with. Hover
+  names the command, click copies it. An install nothing owns — a source
+  checkout, a link, a project-local dependency — gets no command and no click,
+  since a guessed one either fails or plants unowned files over a packaged
+  install.
+
 ## [0.12.1] - 2026-08-10
 
 ### Changed
