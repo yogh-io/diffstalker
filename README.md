@@ -63,7 +63,7 @@ That's it. The UI streams live over SSE — status, diffs, and the change timeli
   <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-explorer-light.jpg" alt="" width="49%">
 </p>
 
-Plus, everywhere: word-level diff highlighting, an app-wide **unified / split** diff toggle, optional **syntax highlighting** in diffs, **follow** and **auto** mode, a fuzzy file finder (`Ctrl+P`), six themes, a hotkeys overlay (`?`), and a layout that reflows for portrait (vertical) monitors.
+Plus, everywhere: word-level diff highlighting, an app-wide **unified / split** diff toggle, optional **syntax highlighting** in diffs, **follow** and **auto** mode, **search** (`Ctrl+P` — file names, file contents, or the open file's outline, each named on the overlay so you never have to remember which key), six themes, a hotkeys overlay (`?`), and a layout that reflows for portrait (vertical) monitors.
 
 The web UI is a viewer with one write: file-level stage / unstage from the Changes list. Commit, discard, hunk-level staging, and remote/branch operations live in the terminal UI. See the [Web UI section of FEATURES.md](FEATURES.md#web-ui-browser-client) for the full list.
 

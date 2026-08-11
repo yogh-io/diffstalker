@@ -14,6 +14,10 @@
  *
  * Activating a hit reveals the file in the Explorer and scrolls to the
  * line, reusing the finder's reveal path plus the store's line request.
+ *
+ * The query is seeded from and written back to `ui.overlayQuery`, so
+ * arriving here from the finder keeps what you typed. See SearchModes.vue
+ * for the strip that makes the switch visible.
  */
 
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
@@ -26,6 +30,7 @@ import { beginUserNav } from '../composables/useUrlSync';
 import { useUiStore } from '../stores/ui';
 import { displayError } from '../stores/repo';
 import { useFocusTrap } from '../composables/useFocusTrap';
+import SearchModes from './SearchModes.vue';
 
 /** Mirrors the daemon's GREP_MIN_QUERY: below this it will 400. */
 const MIN_QUERY = 3;
@@ -41,7 +46,8 @@ const dialogEl = ref<HTMLElement | null>(null);
 const listEl = ref<HTMLElement | null>(null);
 useFocusTrap(dialogEl);
 
-const query = ref('');
+/** Seeded from the sibling overlay when you switched corpus mid-query. */
+const query = ref(ui.overlayQuery);
 const result = shallowRef<GrepResult | null>(null);
 const searchError = shallowRef<string | null>(null);
 const searching = ref(false);
@@ -92,21 +98,28 @@ async function run(value: string): Promise<void> {
   }
 }
 
-watch(query, (value) => {
-  if (debounceTimer !== null) clearTimeout(debounceTimer);
-  const trimmed = value.trim();
-  if (trimmed.length < MIN_QUERY) {
-    generation += 1; // abandon any in-flight reply
-    result.value = null;
-    searchError.value = null;
-    searching.value = false;
-    return;
-  }
-  debounceTimer = setTimeout(() => {
-    debounceTimer = null;
-    void run(trimmed);
-  }, SEARCH_DEBOUNCE_MS);
-});
+// `immediate` so a query carried in from the finder searches on mount
+// instead of waiting for a keystroke that may never come.
+watch(
+  query,
+  (value) => {
+    ui.setOverlayQuery(value);
+    if (debounceTimer !== null) clearTimeout(debounceTimer);
+    const trimmed = value.trim();
+    if (trimmed.length < MIN_QUERY) {
+      generation += 1; // abandon any in-flight reply
+      result.value = null;
+      searchError.value = null;
+      searching.value = false;
+      return;
+    }
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      void run(trimmed);
+    }, SEARCH_DEBOUNCE_MS);
+  },
+  { immediate: true }
+);
 
 onBeforeUnmount(() => {
   if (debounceTimer !== null) clearTimeout(debounceTimer);
@@ -185,6 +198,8 @@ const empty = computed(
       aria-label="Search repository content"
       tabindex="-1"
     >
+      <SearchModes current="contents" />
+
       <input
         class="search-input mono"
         data-autofocus

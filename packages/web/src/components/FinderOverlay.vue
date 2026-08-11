@@ -9,6 +9,10 @@
  * highlighted. Up/Down or Ctrl+j/k move, Tab/Shift+Tab cycle, Enter
  * reveals the file in the Explorer view (explorer.revealFile), Esc
  * closes. Focus is trapped in the dialog and returns on close.
+ *
+ * The query is seeded from and written back to `ui.overlayQuery`, so
+ * switching to content search mid-word keeps what you typed. See
+ * SearchModes.vue for the strip that makes the switch visible.
  */
 
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
@@ -28,6 +32,7 @@ import { beginUserNav } from '../composables/useUrlSync';
 import { useUiStore } from '../stores/ui';
 import { displayError } from '../stores/repo';
 import { useFocusTrap } from '../composables/useFocusTrap';
+import SearchModes from './SearchModes.vue';
 
 /** More than the CLI's 15 — the list scrolls; still bounded for paint cost. */
 const MAX_RESULTS = 50;
@@ -43,7 +48,8 @@ useFocusTrap(dialogEl);
 
 const paths = shallowRef<string[] | null>(null);
 const loadError = shallowRef<string | null>(null);
-const query = ref('');
+/** Seeded from the sibling overlay when you switched corpus mid-query. */
+const query = ref(ui.overlayQuery);
 const results = shallowRef<FinderMatch[]>([]);
 const selectedIndex = ref(0);
 
@@ -79,6 +85,7 @@ onMounted(async () => {
 });
 
 watch(query, (value) => {
+  ui.setOverlayQuery(value);
   if (debounceTimer !== null) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
@@ -178,6 +185,8 @@ function onInputKeydown(event: KeyboardEvent): void {
       aria-label="Find file"
       tabindex="-1"
     >
+      <SearchModes current="files" />
+
       <input
         class="finder-input mono"
         data-autofocus

@@ -288,3 +288,41 @@ describe('repo switching', () => {
     expect(ui.activeOverlay).toBeNull();
   });
 });
+
+describe('arriving from the file finder', () => {
+  test('a query carried over is searched on mount, not left waiting', async () => {
+    useUiStore().setOverlayQuery('needle');
+
+    wrapper = mountOverlay();
+    await settle();
+
+    expect(search).toHaveBeenCalledWith('repo1', 'needle');
+    expect(wrapper.find('[data-testid="search-input"]').attributes('value')).toBe('needle');
+  });
+
+  test('a carried query below the minimum searches nothing and says so', async () => {
+    useUiStore().setOverlayQuery('ne');
+
+    wrapper = mountOverlay();
+    await settle();
+
+    expect(search).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-testid="search-too-short"]').exists()).toBe(true);
+  });
+
+  test('typing here keeps the shared query in step, for the trip back', async () => {
+    const ui = useUiStore();
+    wrapper = mountOverlay();
+    await type('needle');
+    await settle();
+
+    expect(ui.overlayQuery).toBe('needle');
+  });
+
+  test('the mode strip is on it, marking contents', () => {
+    wrapper = mountOverlay();
+
+    expect(wrapper.find('[data-testid="search-modes"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="mode-contents"]').classes()).toContain('current');
+  });
+});

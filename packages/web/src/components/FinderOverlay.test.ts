@@ -259,3 +259,39 @@ describe('closing', () => {
     expect(document.activeElement).toBe(button);
   });
 });
+
+describe('the search modes strip', () => {
+  test('is on the overlay, marking files', async () => {
+    const wrapper = await mountFinder();
+
+    expect(wrapper.find('[data-testid="search-modes"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="mode-files"]').classes()).toContain('current');
+    // The other two keys are printed here or nowhere — this overlay is the
+    // only one of the three with a visible way in.
+    expect(wrapper.text()).toContain('Contents');
+    expect(wrapper.text()).toContain('Outline');
+
+    wrapper.unmount();
+  });
+
+  test('a query carried in from content search is applied on mount', async () => {
+    useUiStore().setOverlayQuery('paths');
+
+    const wrapper = await mountFinder();
+    await settleDebounce();
+
+    expect(optionTexts(wrapper)).toEqual(['src/utils/paths.ts']);
+    wrapper.unmount();
+  });
+
+  test('typing keeps the shared query in step, for the trip across', async () => {
+    const ui = useUiStore();
+    const wrapper = await mountFinder();
+
+    await wrapper.find('[data-testid="finder-input"]').setValue('App');
+    await settleDebounce();
+
+    expect(ui.overlayQuery).toBe('App');
+    wrapper.unmount();
+  });
+});

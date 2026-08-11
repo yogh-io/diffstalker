@@ -31,6 +31,13 @@ export const VIEWS: { name: ViewName; label: string }[] = [
 /** The app's modal overlays. At most one is open at a time. */
 export type OverlayName = 'finder' | 'search' | 'help' | 'settings';
 
+/**
+ * The overlays that are one search gesture in different corpora, and so
+ * hand their typed query to each other. Help and settings are not — they
+ * are a different kind of thing that happens to use the same slot.
+ */
+const SEARCH_OVERLAYS: ReadonlySet<OverlayName> = new Set<OverlayName>(['finder', 'search']);
+
 /** How long the auto-selected file's row stays flashed (CLI parity). */
 export const FLASH_MS = 900;
 
@@ -186,19 +193,41 @@ export const useUiStore = defineStore('ui', () => {
     outlineRequest.value += 1;
   }
 
-  // --- Overlays (finder / help) ---
+  // --- Overlays (finder / search / help / settings) ---
+
+  /**
+   * What was typed in the search-type overlay that is open, so switching
+   * corpus mid-query does not throw the query away — the one thing a
+   * single mode-switching palette would have given us for free.
+   *
+   * Session-only and deliberately NOT a saved preference: a query is a
+   * thing you are doing right now, not a setting. It is cleared the moment
+   * the search overlays are left, so reopening always starts empty.
+   */
+  const overlayQuery = shallowRef('');
+
+  function setOverlayQuery(value: string): void {
+    overlayQuery.value = value;
+  }
+
+  /** Every path that changes the overlay clears the query unless the new
+   *  overlay is the other half of the same gesture. */
+  function setOverlay(name: OverlayName | null): void {
+    if (name === null || !SEARCH_OVERLAYS.has(name)) overlayQuery.value = '';
+    activeOverlay.value = name;
+  }
 
   function openOverlay(name: OverlayName): void {
-    activeOverlay.value = name;
+    setOverlay(name);
   }
 
   /** Open when closed or another overlay is up; close when it's the one open. */
   function toggleOverlay(name: OverlayName): void {
-    activeOverlay.value = activeOverlay.value === name ? null : name;
+    setOverlay(activeOverlay.value === name ? null : name);
   }
 
   function closeOverlay(): void {
-    activeOverlay.value = null;
+    setOverlay(null);
   }
 
   return {
@@ -216,6 +245,8 @@ export const useUiStore = defineStore('ui', () => {
     stackScrollRequest,
     expandGatedRequest,
     outlineRequest,
+    overlayQuery,
+    setOverlayQuery,
     init,
     setTheme,
     setActiveView,

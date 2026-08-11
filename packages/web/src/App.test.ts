@@ -467,6 +467,56 @@ describe('global keyboard + overlays', () => {
     wrapper.unmount();
   });
 
+  test('the finder names the other two search gestures and their keys', async () => {
+    // The one surface with a visible way in is where the other two keys
+    // get learned; without this they are reachable only by knowing them.
+    const wrapper = await mountWithRepos([REPO_ONE]);
+
+    press('p', { ctrlKey: true });
+    await flushPromises();
+
+    const strip = wrapper.find('[data-testid="search-modes"]');
+    const text = strip.text().replace(/\s+/g, ' ');
+    expect(text).toContain('Files Ctrl P');
+    expect(text).toContain('Contents ⇧ F');
+    expect(text).toContain('Outline o');
+    wrapper.unmount();
+  });
+
+  test('the strip switches corpus and carries the query across', async () => {
+    const wrapper = await mountWithRepos([REPO_ONE]);
+
+    press('p', { ctrlKey: true });
+    await flushPromises();
+    await wrapper.find('[data-testid="finder-input"]').setValue('needle');
+
+    await wrapper.find('[data-testid="mode-contents"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="finder-overlay"]').exists()).toBe(false);
+    const search = wrapper.find('[data-testid="search-overlay"]');
+    expect(search.exists()).toBe(true);
+    expect(search.find('[data-testid="search-input"]').attributes('value')).toBe('needle');
+    wrapper.unmount();
+  });
+
+  test('the outline mode reaches the popover from another view', async () => {
+    // The regression this pins: the Explorer is what listens for the
+    // outline request, so firing it before the view mounts loses it and
+    // you land in the Explorer with no popover.
+    const wrapper = await mountWithRepos([REPO_ONE]);
+
+    press('p', { ctrlKey: true });
+    await flushPromises();
+    await wrapper.find('[data-testid="mode-outline"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="finder-overlay"]').exists()).toBe(false);
+    expect(wrapper.find('button[aria-current="page"]').attributes('title')).toBe('Explorer');
+    expect(wrapper.find('[data-testid="outline-popover"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
   test('? toggles the hotkeys help', async () => {
     const wrapper = await mountWithRepos([REPO_ONE]);
 

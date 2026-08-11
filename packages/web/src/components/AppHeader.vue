@@ -2,7 +2,7 @@
 /**
  * Global header: wordmark, repo switcher, branch + tracking + ahead/behind
  * (mono, diff-colored counts — read-only text), one calm error line, the
- * fuzzy finder trigger, settings. No git controls: the web UI is a viewer.
+ * search trigger, settings. No git controls: the web UI is a viewer.
  * The theme picker lives in the settings panel only — it is a set-once
  * choice, and a select sitting in the chrome forever costs more room than
  * it earns. The four display toggles (auto / syntax / split / follow) live
@@ -116,18 +116,22 @@ const errorLine = computed(() =>
     </div>
 
     <div class="header-pinned">
+      <!-- The one visible way into search, and now the way into all three
+           corpora: the overlay it opens names files / contents / outline
+           and the key each answers to (SearchModes.vue). Labelled for the
+           gesture, not for one of its modes. -->
       <button
         class="finder-btn"
         data-testid="finder-open"
         :disabled="daemon.activeRepoId === null"
         :title="
           daemon.activeRepoId === null
-            ? 'Open a repository to find files'
-            : 'Find a file in the active repository'
+            ? 'Open a repository to search it'
+            : 'Search this repository: file names, contents, or the open file’s outline'
         "
         @click="ui.openOverlay('finder')"
       >
-        Find file <kbd class="mono">Ctrl P</kbd>
+        Search <kbd class="mono">Ctrl P</kbd>
       </button>
 
       <button

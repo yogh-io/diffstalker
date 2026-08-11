@@ -103,6 +103,45 @@ describe('overlays', () => {
     store.openOverlay('finder');
     expect(localStorage.getItem(PREFS_KEY)).toBeNull();
   });
+
+  test('the query survives a hop between the two search overlays', () => {
+    const store = useUiStore();
+    store.openOverlay('finder');
+    store.setOverlayQuery('needle');
+
+    store.openOverlay('search');
+    expect(store.overlayQuery).toBe('needle');
+
+    store.openOverlay('finder');
+    expect(store.overlayQuery).toBe('needle');
+  });
+
+  test('and is dropped everywhere else', () => {
+    const store = useUiStore();
+
+    store.openOverlay('finder');
+    store.setOverlayQuery('needle');
+    store.closeOverlay();
+    expect(store.overlayQuery).toBe('');
+
+    // Help and settings share the slot but are not the same gesture.
+    store.openOverlay('search');
+    store.setOverlayQuery('needle');
+    store.openOverlay('help');
+    expect(store.overlayQuery).toBe('');
+
+    store.openOverlay('search');
+    store.setOverlayQuery('needle');
+    store.toggleOverlay('settings');
+    expect(store.overlayQuery).toBe('');
+  });
+
+  test('the query is never persisted either', () => {
+    const store = useUiStore();
+    store.openOverlay('finder');
+    store.setOverlayQuery('needle');
+    expect(localStorage.getItem(PREFS_KEY)).toBeNull();
+  });
 });
 
 describe('auto mode', () => {
