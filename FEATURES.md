@@ -770,6 +770,11 @@ git operations.
   Compare): jumps from a file's diff to the file itself in the Explorer —
   the tree expands down to it and its content opens, the same reveal the
   fuzzy finder and follow mode use.
+- "copy path" button beside it in the same headers: puts the file's
+  repo-relative path (exactly what the header shows) on the clipboard, and
+  says `copied` — or `copy failed`, since the clipboard API is missing
+  outside a secure context, and a click that silently does nothing reads as
+  a broken UI.
 - Consistent panel separation across every split view: the index panel and the
   payload beside it are separated by page background, not a rule. Each payload
   is a card (a diff stack's files, Explorer's file contents, History's commit

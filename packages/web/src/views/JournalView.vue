@@ -92,6 +92,7 @@ import { DIFF_ROW_PX } from '../utils/diffRows';
 import { useScrollAnchor, type AnchorCandidate } from '../composables/useScrollAnchor';
 import DiffView from '../components/DiffView.vue';
 import ViewFileButton from '../components/ViewFileButton.vue';
+import CopyPathButton from '../components/CopyPathButton.vue';
 import { errorMessage } from '../api/errors';
 
 /** Pinned-to-head band: this close to the top, appends auto-follow. */
@@ -702,6 +703,7 @@ onBeforeUnmount(() => {
               >
 
               <ViewFileButton :path="row.tip.path" />
+              <CopyPathButton :path="row.tip.path" />
 
               <!-- ×N: a static marker of how many rapid saves folded into this
                    row — a count, not a button (walking the chain is forensics). -->

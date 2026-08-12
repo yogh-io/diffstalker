@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3] - 2026-08-12
+
+### Added
+
+- **A diff header copies its file path.** The header already knew the path and
+  already had a button beside it (`view file`), but the path itself could only
+  be had by selecting text out of a header that ellipsises. `copy path` sits
+  next to `view file` in every diff header — Changes, Compare, History and the
+  Journal — and puts exactly what the header shows on the clipboard: the
+  repo-relative path, with no hidden translation step. It flashes `copied`, or
+  `copy failed` when the clipboard API is missing (no secure context — a daemon
+  reached over plain http on a LAN address), because a click that silently does
+  nothing reads as a broken UI. Same shape as the button beside it, and the same
+  zero-height-cost trick: no block padding and a transparent border, so it
+  measures shorter than the header's line box and cannot change a header's
+  height, which the diff stack's exact-height model measures once and assumes
+  constant.
+
 ## [0.12.2] - 2026-08-11
 
 ### Added
