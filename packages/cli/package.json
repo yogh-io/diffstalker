@@ -1,6 +1,6 @@
 {
   "name": "diffstalker",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "description": "Interactive terminal UI for git staging, committing, and live diff review",
   "author": "yogh-io",
   "license": "MIT",
