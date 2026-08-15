@@ -33,6 +33,7 @@ import type {
   RepoClosedEvent,
   RepoOpenedEvent,
   RepoRef,
+  RepoResolve,
   RepoSummary,
   VersionState,
   WireCommitInfo,
@@ -223,6 +224,12 @@ export class DiffstalkerClient {
    * open on this daemon (e.g. a recently-visited repo). */
   worktreesForPath(path: string): Promise<WorktreeInfo[]> {
     return this.transport.request('GET', '/worktrees' + toQuery({ path }));
+  }
+
+  /** Whether a path can be opened, and as which worktree — without opening
+   * it. Rejects with a 400 for a path that is not absolute. */
+  resolvePath(path: string): Promise<RepoResolve> {
+    return this.transport.request('GET', '/resolve' + toQuery({ path }));
   }
 
   // --- Working tree ---

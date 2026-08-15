@@ -9,16 +9,10 @@
  */
 
 import { createHash } from 'node:crypto';
-import * as path from 'node:path';
 import { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
-import { expandPath } from '@diffstalker/core/utils/pathUtils';
 import { createJournalStore } from '@diffstalker/core/managers/JournalManager';
 import type { JournalStore } from '@diffstalker/core/types/journal';
-import {
-  resolveWorktreeRoot,
-  listWorktrees,
-  pickDefaultWorktree,
-} from '@diffstalker/core/git/worktree';
+import { resolveRepoRoot } from '@diffstalker/core/git/worktree';
 
 /** Stable repo id: first 12 hex chars of sha256 of the worktree root. */
 export function repoId(root: string): string {
@@ -122,29 +116,22 @@ export class RepoRegistry {
    * container (resolved to its most recently active worktree). Opening the
    * same normalized path twice shares one manager and bumps the refcount.
    *
-   * A leading `~` is expanded here, at the daemon's trust boundary: this is
-   * the funnel every human-typed path arrives through (the web UI's open
-   * form, the CLI's positional paths, the follow hook file), and the daemon
-   * is loopback-only with no auth, so its home IS the user's home. A path
-   * that is still relative after expansion is refused as such — the daemon's
-   * working directory is meaningless to the client that sent the path.
+   * Path resolution (including `~` expansion) is `resolveRepoRoot`'s job,
+   * shared with the `GET /resolve` probe so the picker's Open button and
+   * this open can never disagree. Opening does NOT require the path to
+   * exist: git placing a vanished subdirectory in its parent worktree is a
+   * convenience worth keeping here, and only the probe needs it closed off.
    */
   async openRepo(inputPath: string): Promise<OpenResult> {
-    const requested = expandPath(inputPath);
-    if (!path.isAbsolute(requested)) {
-      throw new Error(`Repo path must be absolute: ${inputPath}`);
+    const resolved = await resolveRepoRoot(inputPath, { mustExist: false });
+    if (!resolved.ok) {
+      throw new Error(
+        resolved.reason === 'not-absolute'
+          ? `Repo path must be absolute: ${resolved.requested}`
+          : `Not a git repository: ${resolved.requested}`
+      );
     }
-
-    let root = await resolveWorktreeRoot(requested);
-    if (!root) {
-      // Bare container (or a path git can't place in a working tree):
-      // fall back to the default worktree of whatever repo this is.
-      const worktree = pickDefaultWorktree(await listWorktrees(requested));
-      if (!worktree) {
-        throw new Error(`Not a git repository: ${requested}`);
-      }
-      root = worktree.path;
-    }
+    const root = resolved.root;
 
     const existing = this.byPath.get(root);
     if (existing) {

@@ -1,34 +1,24 @@
 <script setup lang="ts">
 /**
- * Repo switcher in the header: a button showing the active repo/project,
- * opening a panel that lists the daemon's open repos GROUPED BY PROJECT
- * (all worktrees of one repo collapse to a single row — e.g. "calculator"
- * — the worktree switcher beside the button picks the worktree), the
- * localStorage recents that aren't open, the repos DISCOVERED under the
- * settings panel's watch directories, and the open-by-path form. Esc or
- * an outside click closes the panel.
+ * Repo switcher in the header: a button naming the active repo/project,
+ * opening a popover that holds the RepoPicker — one input that filters
+ * every repo the daemon knows about and opens a typed path, over one list
+ * (open, recent, and discovered behind a control).
+ *
+ * The panel is the shell only. Everything inside it is RepoPicker, which
+ * the empty state mounts too, so the two cannot drift apart. Esc or an
+ * outside click closes.
  */
 
-import { computed, ref, watch } from 'vue';
+import { computed } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
-import { useUiStore } from '../stores/ui';
-import { beginUserNav } from '../composables/useUrlSync';
-import { useRepoOpen } from '../composables/useRepoOpen';
 import { useActiveWorktrees } from '../composables/useActiveWorktrees';
-import { useWorktreeStore, type WorktreeProject } from '../stores/worktrees';
-import { useSettingsStore } from '../stores/settings';
 import { basename } from '../utils/format';
-import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
-import RepoOpenForm from './RepoOpenForm.vue';
-import type { RepoSummary } from '@diffstalker/client';
+import RepoPicker from './RepoPicker.vue';
 import { useDismissable } from '../composables/useDismissable';
 
 const daemon = useDaemonStore();
-const ui = useUiStore();
-const { openByPath, activate } = useRepoOpen();
 const { hasMultiple, projectName } = useActiveWorktrees();
-const worktreeStore = useWorktreeStore();
-const settings = useSettingsStore();
 
 // `open` and `rootEl` must keep these exact names: Vue matches ref="rootEl"
 // in the template against the setup variable name.
@@ -48,198 +38,6 @@ const triggerLabel = computed(() => {
   if (!activeRepo.value) return 'no repo';
   return hasMultiple.value ? projectName.value : basename(activeRepo.value.path);
 });
-
-// --- Grouping, all from the one worktree store ---------------------------
-
-/**
- * Both lists below fold a project's worktrees into ONE row, and both read
- * the same store entries — so a project reads identically in the trigger
- * label, the "Open on daemon" row, the "Recent" row, and the worktree
- * dropdown. Rows are derived from what the store knows RIGHT NOW, so the
- * panel's contents no longer depend on how recently it was opened.
- */
-
-const recentsNotOpen = computed(() =>
-  ui.recentRepos.filter((path) => !daemon.repos.some((repo) => repo.path === path))
-);
-
-/** Every path the panel needs resolved: the open repos and the recents. */
-const neededPaths = computed(() => [
-  ...daemon.repos.map((repo) => repo.path),
-  ...recentsNotOpen.value,
-]);
-
-/**
- * Resolve while the panel is open (and re-resolve as its inputs change).
- * `ensure` skips what is already known and dedups in flight, so this is
- * one request per unknown path no matter how often it fires.
- */
-watch([open, neededPaths], ([isOpen]) => {
-  if (isOpen) void worktreeStore.ensure(neededPaths.value);
-});
-
-interface RepoProject {
-  /** Project root: the deepest dir containing all the repo's worktrees. */
-  root: string;
-  name: string;
-  /** The open worktrees of this project (one repo id each). */
-  repos: RepoSummary[];
-  /** ALL worktrees the project has, not just the open ones — the same
-   * count the Recent list shows, so one project reads the same in both. */
-  worktreeCount: number;
-}
-
-const openProjects = computed<RepoProject[]>(() => {
-  const groups = new Map<string, RepoProject>();
-  for (const repo of daemon.repos) {
-    // Unresolved: the repo stands as its own project (its path, its name).
-    // It folds into its family the moment the entry lands.
-    const resolved = worktreeStore.projectFor(repo.path);
-    const root = resolved?.root ?? repo.path;
-    let group = groups.get(root);
-    if (!group) {
-      group = { root, name: basename(root), repos: [], worktreeCount: 0 };
-      groups.set(root, group);
-    }
-    group.repos.push(repo);
-    // Every repo in a group belongs to the same family, so they all report
-    // the same count; take whichever resolved (0 while none has yet).
-    group.worktreeCount = Math.max(group.worktreeCount, resolved?.worktrees.length ?? 0);
-  }
-  return [...groups.values()];
-});
-
-/**
- * One row per project root, folding every recent path that resolved to the
- * same root and dropping any already shown under "Open on daemon".
- *
- * Which recents render, by entry status:
- *  - unknown / pending: held back. Several worktrees of one project each
- *    resolve to the same row, so drawing them early shows a stray row per
- *    worktree that then vanishes (the "why is my worktree listed as a
- *    repo" bug);
- *  - absent: dropped — the daemon looked and the path is not a worktree
- *    (a removed directory still in prefs);
- *  - failed: rendered by its own path. We could not ask, so the entry is
- *    not evidence the path is bad, and the list must not silently lose it
- *    because the daemon blinked.
- */
-const recentProjects = computed<WorktreeProject[]>(() => {
-  const openRoots = new Set(openProjects.value.map((p) => p.root));
-  const seen = new Map<string, WorktreeProject>();
-  for (const path of recentsNotOpen.value) {
-    const entry = worktreeStore.entryFor(path);
-    if (entry === undefined || entry.status === 'pending' || entry.status === 'absent') continue;
-    const project =
-      entry.status === 'ready'
-        ? entry.project
-        : { root: path, name: basename(path), worktrees: [] };
-    if (openRoots.has(project.root) || seen.has(project.root)) continue;
-    seen.set(project.root, project);
-  }
-  return [...seen.values()];
-});
-
-/** The worktree to open for a project: the most recently active one (the
- * store sorts by activity), or the root itself when nothing resolved. */
-function bestWorktreePath(project: WorktreeProject): string {
-  return project.worktrees[0]?.path ?? project.root;
-}
-
-/** Activate a project: keep the active worktree if it's in this project,
- * else switch to its first open worktree; the header select refines. */
-function pickProject(project: RepoProject): void {
-  const active = project.repos.find((repo) => repo.id === daemon.activeRepoId);
-  const target = active ?? project.repos[0];
-  beginUserNav({ repo: target.path });
-  void activate(target);
-  open.value = false;
-}
-
-async function pickRecentProject(project: WorktreeProject): Promise<void> {
-  const path = bestWorktreePath(project);
-  beginUserNav({ repo: path });
-  const ok = await openByPath(path);
-  if (ok) open.value = false;
-}
-
-// --- Discovered (watch directories) --------------------------------------
-
-/**
- * Repos found under the watch directories that no row above already
- * covers. Deliberately NOT folded into projects the way the two lists
- * above are: folding needs one GET /worktrees per path, and this list is
- * as long as the user's projects folder. A repo and its sibling worktree
- * therefore get a row each, told apart by the branch beside the name —
- * which is free, since it comes from the scan.
- */
-const discoveredRepos = computed(() => {
-  const shown = new Set([
-    ...daemon.repos.map((repo) => repo.path),
-    ...recentProjects.value.flatMap((project) => [
-      project.root,
-      ...project.worktrees.map((worktree) => worktree.path),
-    ]),
-  ]);
-  return settings.discoveredRepos.filter((repo) => !shown.has(repo.path));
-});
-
-/**
- * How long a project can go untouched before the row recedes. Past this it
- * is still there, still one click away — it just stops competing for the
- * eye with the ones being worked on. Six months is deliberately generous:
- * a project you return to seasonally should not read as abandoned.
- */
-const STALE_AFTER_MS = 182 * 24 * 60 * 60 * 1000;
-
-function isStale(lastActivity: number | null): boolean {
-  // Unknown counts as stale: it is certainly not evidence of freshness.
-  return lastActivity === null || Date.now() - lastActivity > STALE_AFTER_MS;
-}
-
-function ageLabel(lastActivity: number | null): string {
-  return lastActivity === null ? '' : formatRelativeTime(lastActivity);
-}
-
-/**
- * A watch directory can hold dozens of projects, at which point scrolling
- * to one is worse than typing three letters of its name. The field appears
- * only once the list is long enough to need it.
- */
-const DISCOVERED_FILTER_THRESHOLD = 8;
-
-const discoveredFilter = ref('');
-
-const showDiscoveredFilter = computed(
-  () => discoveredRepos.value.length > DISCOVERED_FILTER_THRESHOLD
-);
-
-const filteredDiscovered = computed(() => {
-  const needle = discoveredFilter.value.trim().toLowerCase();
-  if (!needle) return discoveredRepos.value;
-  return discoveredRepos.value.filter(
-    (repo) => repo.name.toLowerCase().includes(needle) || repo.path.toLowerCase().includes(needle)
-  );
-});
-
-/**
- * Re-walk the watch directories whenever the panel opens: the daemon's
- * watchers keep the repo SET current, but a branch label only refreshes
- * on a scan, and a scan is filesystem-only (no git processes).
- */
-watch(open, (isOpen) => {
-  if (!isOpen) {
-    discoveredFilter.value = '';
-    return;
-  }
-  void settings.rescan();
-});
-
-async function pickDiscovered(path: string): Promise<void> {
-  beginUserNav({ repo: path });
-  const ok = await openByPath(path);
-  if (ok) open.value = false;
-}
 </script>
 
 <template>
@@ -255,80 +53,10 @@ async function pickDiscovered(path: string): Promise<void> {
       <span class="caret popover-caret" aria-hidden="true">&#9662;</span>
     </button>
 
+    <!-- v-if, not v-show: mounting is what resets the picker's query,
+         selection and expand state, and what re-runs its discovery scan. -->
     <div v-if="open" class="panel popover-panel">
-      <RepoOpenForm @opened="open = false" />
-
-      <div v-if="openProjects.length" class="group" data-testid="open-repos">
-        <p class="group-label eyebrow">Open on daemon</p>
-        <button
-          v-for="project in openProjects"
-          :key="project.root"
-          class="repo-row"
-          :class="{ active: project.repos.some((r) => r.id === daemon.activeRepoId) }"
-          @click="pickProject(project)"
-        >
-          <span class="name mono" :title="project.name">{{ project.name }}</span>
-          <span
-            v-if="project.worktreeCount > 1"
-            class="branch mono"
-            :title="`${project.worktreeCount} worktrees (${project.repos.length} open on the daemon)`"
-            >{{ project.worktreeCount }} worktrees</span
-          >
-          <span class="path mono" :title="project.root">{{ project.root }}</span>
-        </button>
-      </div>
-
-      <div v-if="discoveredRepos.length" class="group" data-testid="discovered-repos">
-        <p class="group-label eyebrow">Discovered</p>
-        <input
-          v-if="showDiscoveredFilter"
-          v-model="discoveredFilter"
-          class="discovered-filter mono"
-          type="text"
-          :placeholder="`Filter ${discoveredRepos.length} repos`"
-          spellcheck="false"
-          autocomplete="off"
-          aria-label="Filter discovered repos"
-        />
-        <div class="scrollable">
-          <button
-            v-for="repo in filteredDiscovered"
-            :key="repo.path"
-            class="repo-row"
-            :class="{ stale: isStale(repo.lastActivity) }"
-            @click="pickDiscovered(repo.path)"
-          >
-            <span class="name mono" :title="repo.name">{{ repo.name }}</span>
-            <span v-if="repo.branch" class="branch mono" :title="repo.branch">{{
-              repo.branch
-            }}</span>
-            <span class="meta mono">
-              <span class="path" :title="repo.path">{{ repo.path }}</span>
-              <span v-if="repo.lastActivity" class="age">{{ ageLabel(repo.lastActivity) }}</span>
-            </span>
-          </button>
-          <p v-if="!filteredDiscovered.length" class="no-match mono">no repo matches</p>
-        </div>
-      </div>
-
-      <div v-if="recentProjects.length" class="group" data-testid="recent-repos">
-        <p class="group-label eyebrow">Recent</p>
-        <button
-          v-for="project in recentProjects"
-          :key="project.root"
-          class="repo-row"
-          @click="pickRecentProject(project)"
-        >
-          <span class="name mono" :title="project.name">{{ project.name }}</span>
-          <span
-            v-if="project.worktrees.length > 1"
-            class="branch mono"
-            :title="`${project.worktrees.length} worktrees`"
-            >{{ project.worktrees.length }} worktrees</span
-          >
-          <span class="path mono" :title="project.root">{{ project.root }}</span>
-        </button>
-      </div>
+      <RepoPicker @opened="open = false" />
     </div>
   </div>
 </template>
@@ -364,126 +92,10 @@ async function pickDiscovered(path: string): Promise<void> {
 }
 
 .panel {
-  /* Shared box in style.css (.popover-panel); only the size differs. */
+  /* Shared box in style.css (.popover-panel); only the size differs. The
+     height cap belongs to the picker's list, not here — the empty state
+     mounts the same picker without this panel. */
   width: 24rem;
   padding: 0.75rem;
-  gap: 0.75rem;
-}
-
-.group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-}
-
-.group-label {
-  margin: 0 0 0.25rem;
-}
-
-/* A project nobody has touched in half a year is still listed, in its
-   place at the bottom, but it stops shouting: the name drops to the dim
-   weight the path already uses. Hovering restores it. */
-.repo-row.stale .name {
-  font-weight: 500;
-  color: var(--text-dim);
-}
-
-.repo-row.stale:hover .name {
-  color: var(--text);
-}
-
-/* Path and age share the row's second line: the PATH gives way (it is the
-   least surprising thing on the row), the age never does — it is the whole
-   point of the ordering. */
-.meta {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 0.375rem;
-  min-width: 0;
-  font-size: var(--fs-micro);
-  color: var(--text-dim);
-}
-
-.meta .path {
-  grid-column: auto;
-  min-width: 0;
-}
-
-.age {
-  flex: none;
-  color: var(--text-dim);
-}
-
-/* The discovered list is as long as the user's projects folder, so it
-   scrolls inside the panel rather than growing it past the viewport. */
-.scrollable {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  max-height: 14rem;
-  overflow-y: auto;
-}
-
-.discovered-filter {
-  margin-bottom: 0.25rem;
-  font-size: var(--fs-base);
-}
-
-.no-match {
-  margin: 0.25rem 0;
-  font-size: var(--fs-small);
-  color: var(--text-dim);
-}
-
-.repo-row {
-  display: grid;
-  /* minmax(0, 1fr), NOT 1fr: a bare 1fr floors at the name's min-content,
-     so a long hyphenated name wraps hyphen-by-hyphen into a tall column
-     while the branch keeps its width. Flooring at 0 lets the name shrink
-     and ellipsize on one line instead. */
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0 0.5rem;
-  padding: 0.375rem 0.5rem;
-  border-radius: 4px;
-  text-align: left;
-}
-
-.repo-row:hover {
-  background: var(--surface-raised);
-}
-
-.repo-row.active .name {
-  color: var(--accent);
-}
-
-.name {
-  font-size: var(--fs-base);
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.branch {
-  font-size: var(--fs-small);
-  color: var(--text-dim);
-  justify-self: end;
-  /* Cap the branch so a long branch name can't starve the name column;
-     it ellipsizes too (full value on hover). */
-  max-width: 12rem;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.path {
-  grid-column: 1 / -1;
-  font-size: var(--fs-micro);
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

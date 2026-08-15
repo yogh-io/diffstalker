@@ -932,8 +932,23 @@ git operations.
   and scrolls straight to it; back out of one closes it again. A Back also
   holds follow mode off for 1500ms, so an editor save landing right after
   cannot silently undo it.
-- Repo switcher (open by absolute path, recent repos, **discovered projects**),
-  follow-mode toggle, theme switcher (the same six themes as CSS variables),
+- **Repo picker** — one input and one list, in the header and on the empty
+  state alike (the same component, so the two cannot say different things).
+  The input filters everything the daemon knows about — repos open on it,
+  your recents, and the projects discovered under the watch directories —
+  with fzf, matched characters highlighted on the path. The list is one list:
+  OPEN first, then RECENT, then DISCOVERED behind a control that is collapsed
+  by default (a projects folder holds dozens of repos, and the four you are
+  working on this week are the answer nearly every time; typing reaches the
+  rest without expanding anything). Type an absolute path instead and the
+  input grows an **Open** button — but only once the daemon has confirmed
+  that the path is PRECISELY a repository it can open, bare layouts included.
+  The probe (`GET /resolve`) shares one resolver with the open itself and is
+  deliberately stricter: git resolves a path that does not exist to its
+  parent worktree, so a typo would otherwise offer to open the repo above it.
+  Arrows move, Enter opens, the first Escape clears the query and the second
+  closes the panel.
+- Follow-mode toggle, theme switcher (the same six themes as CSS variables),
   fuzzy file finder (Ctrl+P), a settings panel (`,`), and a hotkeys overlay
   (`?`). Live over SSE, with a calm reconnect banner.
 - **Keyboard shortcut sheet** (`?`) — nine small groups cut by what you are
@@ -975,8 +990,9 @@ git operations.
   first** with the age beside the path — projects untouched for half a year
   sink to the bottom and their names drop to the dim weight, because a
   projects folder is mostly archaeology and the three you are working on this
-  week are the answer nearly every time. Over eight projects, the list grows a
-  filter field. A root that has gone missing (an unmounted disk) keeps its
+  week are the answer nearly every time. The whole discovered list sits behind
+  one control in the picker, showing how many repos revealing it will add (and
+  saying so when a scan hit its cap). A root that has gone missing (an unmounted disk) keeps its
   place in the settings and reports the reason; it is never quietly dropped.
 - **In-file outline** (bare `o`, Explorer) — the symbols in the open file, from
   a real parser (tree-sitter compiled to WebAssembly), not a regex. Filter by
@@ -1039,7 +1055,7 @@ git operations.
   reaches the whole changeset. Ctrl+H and Ctrl+O are deliberately not bound:
   they are browser History and the file picker, and ⌘+H is macOS "hide
   application", which a page cannot intercept at all.
-  Both the open-on-daemon list and the recent-repos list group a repo's
+  Both the OPEN and RECENT sections of the repo picker group a repo's
   worktrees under one project row (e.g. "calculator" instead of one row per
   worktree); picking a recent multi-worktree project opens its most
   recently edited worktree. The worktree switcher beside it (shown once a
@@ -1058,7 +1074,7 @@ git operations.
   there (`aer-4569-x → origin`, full ref on hover); a different upstream
   branch is spelled out.
 - **One worktree source (`stores/worktrees`).** The trigger label, the
-  worktree dropdown, the "Open on daemon" rows, and the "Recent" rows all
+  worktree dropdown, and the repo picker's OPEN and RECENT rows all
   read worktree knowledge from a single store keyed by filesystem PATH
   (`GET /worktrees?path=`), with per-entry state (pending / ready /
   absent / failed), one shared request per path in flight, and

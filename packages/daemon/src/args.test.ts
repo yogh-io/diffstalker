@@ -229,6 +229,14 @@ describe('positional repo paths', () => {
           const res = await fetch('http://localhost/repos', { unix: socket } as RequestInit);
           const repos = (await res.json()) as Array<{ path: string }>;
           expect(repos.map((repo) => repo.path)).toContain(repoDir);
+
+          // The probe expands ~ the same way, and this is the only place
+          // it can be checked positively: HOME is repointed for this child
+          // process, and a running process cannot repoint its own.
+          const probe = await fetch('http://localhost/resolve?path=~%2Frepo', {
+            unix: socket,
+          } as RequestInit);
+          expect(await probe.json()).toEqual({ openable: true, root: repoDir });
         }
       );
     } finally {

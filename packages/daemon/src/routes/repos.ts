@@ -1,6 +1,6 @@
-/** Repo lifecycle: list, open (refcounted), close, worktrees. */
+/** Repo lifecycle: list, open (refcounted), close, resolve, worktrees. */
 
-import { listWorktrees } from '@diffstalker/core/git/worktree';
+import { listWorktrees, resolveRepoRoot } from '@diffstalker/core/git/worktree';
 import { Router, HttpError, sendJson } from '../router.js';
 import { openAndWarm } from '../repoRegistry.js';
 import { requireRepo, requireStringField, type RouteDeps } from './shared.js';
@@ -28,6 +28,37 @@ export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
     sendJson(res, opened.created ? 201 : 200, {
       id: opened.handle.id,
       path: opened.handle.path,
+    });
+  });
+
+  /**
+   * Can this exact path be opened, and as what — WITHOUT opening it.
+   *
+   * The repo picker's single input both filters and opens, so it needs to
+   * know whether the text typed so far names a repo before it may offer an
+   * Open button. Same resolver `POST /repos` uses, called with
+   * `mustExist: true`: a probe that lit the button for a path that does not
+   * exist (git would place it in its parent worktree) would promise an open
+   * of something else entirely.
+   *
+   * Top-level and path-keyed like `GET /worktrees?path=`, not under
+   * `/repos/:id` — there is no id yet; that is the point. Cheaper than
+   * `/worktrees` too: no activity stats, no base-branch discovery.
+   */
+  router.get('/resolve', async ({ query, res }) => {
+    const requested = query.get('path');
+    if (!requested) throw new HttpError(400, 'Missing "path" query parameter');
+
+    const resolved = await resolveRepoRoot(requested, { mustExist: true });
+    if (!resolved.ok && resolved.reason === 'not-absolute') {
+      throw new HttpError(400, `Repo path must be absolute: ${resolved.requested}`);
+    }
+    // Not-a-repo is an ANSWER, not an error: the client is asking a
+    // question about a half-typed path, and every keystroke before the
+    // last one is legitimately not a repo.
+    sendJson(res, 200, {
+      openable: resolved.ok,
+      root: resolved.ok ? resolved.root : null,
     });
   });
 

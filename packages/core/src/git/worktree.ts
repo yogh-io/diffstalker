@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { createGit } from './gitClient.js';
 import { getDefaultBaseBranch } from './diff.js';
 import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
+import { expandPath } from '../utils/pathUtils.js';
 
 /**
  * A single git worktree, as reported by `git worktree list --porcelain`,
@@ -65,6 +66,92 @@ export async function resolveWorktreeRoot(inputPath: string): Promise<string | n
     return top || null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * What a path resolved to, or why it could not. A refusal carries the
+ * EXPANDED path, so an error message can name what was actually looked for
+ * (`/home/you/nope`) rather than the `~/nope` the user typed — the literal
+ * tilde never reaches git, and the message should not pretend it did.
+ */
+export type RepoResolution =
+  | { ok: true; root: string }
+  | { ok: false; reason: 'not-absolute' | 'not-a-repo'; requested: string };
+
+/**
+ * Resolve a client-supplied path to the worktree root that opening it would
+ * use. THE one answer to "can diffstalker open this path, and as what" —
+ * both `RepoRegistry.openRepo` and the `GET /resolve` probe behind the repo
+ * picker's Open button call this, so the button cannot promise an open the
+ * daemon then refuses. Two copies of the chain, however carefully kept in
+ * step, would eventually tell that lie at the moment of highest trust.
+ *
+ * `~` is expanded here because this is the daemon's trust boundary: the
+ * paths arriving are human-typed (the picker's input, the CLI's positional
+ * argument, the follow hook file), and the daemon is loopback-only and runs
+ * as the user, so its home IS their home. Anything still relative after
+ * that is refused — the daemon's working directory means nothing to the
+ * client that sent the path.
+ *
+ * `mustExist` is the ONLY difference between the two callers, and it makes
+ * the probe deliberately STRICTER than opening, never looser:
+ * `toDirectory` falls back to the PARENT directory of a path that is not on
+ * disk, so `<repo>/nope` resolves to `<repo>` and an open of a typo
+ * quietly succeeds against the repo above it. That is tolerable when a
+ * human asked to open something; it is wrong for a button whose whole
+ * contract is that the typed text precisely names a repo. Never flip this
+ * to make the probe more permissive than the open.
+ */
+export async function resolveRepoRoot(
+  inputPath: string,
+  { mustExist }: { mustExist: boolean }
+): Promise<RepoResolution> {
+  const requested = expandPath(inputPath);
+  if (!path.isAbsolute(requested)) return { ok: false, reason: 'not-absolute', requested };
+
+  if (mustExist && !isExistingDirectory(requested)) {
+    return { ok: false, reason: 'not-a-repo', requested };
+  }
+
+  const root = await resolveWorktreeRoot(requested);
+  if (root) return { ok: true, root };
+
+  // Bare container (or a path git can't place in a working tree): fall back
+  // to the default worktree of whatever repo this is.
+  const worktree = pickDefaultWorktree(await listWorktreesRaw(requested));
+  return worktree
+    ? { ok: true, root: worktree.path }
+    : { ok: false, reason: 'not-a-repo', requested };
+}
+
+function isExistingDirectory(candidate: string): boolean {
+  try {
+    return fs.statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The worktrees registered for the repository `anyRepoPath` belongs to, with
+ * nothing attached: git's own answer, parsed.
+ *
+ * This is the cheap half of `listWorktrees` — one `git worktree list`, no
+ * activity stats and no base-branch discovery. Callers that only need to
+ * know WHICH worktrees exist (resolving a path to a repo root, in
+ * particular) use this; `git log --all` per family is far too much work to
+ * answer that question.
+ */
+export async function listWorktreesRaw(anyRepoPath: string): Promise<RawWorktreeInfo[]> {
+  const dir = toDirectory(anyRepoPath);
+  if (!dir) return [];
+
+  try {
+    const git = createGit(dir);
+    return parseWorktreePorcelain(await git.raw(['worktree', 'list', '--porcelain']));
+  } catch {
+    return [];
   }
 }
 
@@ -143,9 +230,14 @@ async function aheadOfBaseCounts(
  * Bare entries are skipped.
  *
  * Returns null when the list contains no usable worktree.
+ *
+ * Takes RAW entries (generic, so an enriched `WorktreeInfo[]` still comes
+ * back as `WorktreeInfo`): it reads only `path` and `isBare`, and re-derives
+ * activity itself, so demanding the enriched shape would have forced every
+ * caller to pay for a base-branch scan this function never looks at.
  */
-export function pickDefaultWorktree(worktrees: WorktreeInfo[]): WorktreeInfo | null {
-  let best: WorktreeInfo | null = null;
+export function pickDefaultWorktree<T extends RawWorktreeInfo>(worktrees: T[]): T | null {
+  let best: T | null = null;
   let bestTime = -Infinity;
   for (const wt of worktrees) {
     if (wt.isBare) continue;

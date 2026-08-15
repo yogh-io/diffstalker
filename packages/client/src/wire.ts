@@ -156,6 +156,19 @@ export interface RepoSummary extends RepoRef {
   branch: string | null;
 }
 
+/**
+ * GET /resolve?path= — "could you open this exact path, and as what?"
+ *
+ * `root` is the worktree POST /repos would actually open, which is NOT the
+ * requested path for a bare container (there it is the container's most
+ * recently active worktree). Clients show it so the user can see what a
+ * typed path will really open.
+ */
+export interface RepoResolve {
+  openable: boolean;
+  root: string | null;
+}
+
 /** GET /follow. */
 export interface FollowState {
   /** The hook file being watched (null when follow mode is disabled). */

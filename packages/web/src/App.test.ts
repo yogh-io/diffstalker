@@ -90,7 +90,34 @@ function repoGetRoutes(url: string): FakeResponse | undefined {
   return undefined;
 }
 
+/**
+ * The calls the repo picker makes wherever it is mounted (the empty state
+ * mounts it, so almost every test in here hits these).
+ *
+ * `/resolve` answers openable for any path the fake "server" would open —
+ * i.e. any path at all. That mirrors the daemon: the probe and POST /repos
+ * share one resolver, so a fake where they disagreed would let a test pass
+ * against behaviour the real pair cannot produce.
+ */
+function pickerRoutes(url: string): FakeResponse | undefined {
+  if (url === '/settings') return { body: { watchRoots: [], persisted: true } };
+  if (url === '/discovered') return { body: { roots: [] } };
+  if (url.startsWith('/worktrees?')) return { body: [] };
+  if (url.startsWith('/resolve?')) {
+    const path = new URLSearchParams(url.split('?')[1]).get('path') ?? '';
+    return { body: { openable: path.startsWith('/'), root: path.startsWith('/') ? path : null } };
+  }
+  return undefined;
+}
+
 function routes(call: FetchCall): FakeResponse {
+  if (call.method === 'POST' && call.url === '/discovered/rescan') {
+    return { body: { roots: [] } };
+  }
+  if (call.method === 'GET') {
+    const pickerRoute = pickerRoutes(call.url);
+    if (pickerRoute) return pickerRoute;
+  }
   if (call.method === 'GET' && call.url === '/repos') {
     return { body: serverRepos };
   }
@@ -151,6 +178,31 @@ async function mountWithRepos(
   return wrapper;
 }
 
+/**
+ * The picker's repo rows. Every test in here starts with no recents and no
+ * watch directories, so each row is a repo open on the daemon.
+ */
+function openRows(wrapper: VueWrapper): ReturnType<VueWrapper['findAll']> {
+  return wrapper.findAll('[data-testid="picker-row"]');
+}
+
+/**
+ * Open a repo the way the picker does it: type the path, let the probe
+ * answer, then press the button it grows.
+ *
+ * The wait is real, not a fake timer: these tests drive the whole app, and
+ * swapping the clock mid-test would also freeze the stores' own timers. The
+ * button is deliberately not reachable before the daemon has confirmed the
+ * path — that is the behaviour under test, not an obstacle to route around.
+ */
+async function typePathAndOpen(wrapper: VueWrapper, path: string): Promise<void> {
+  await wrapper.find('[data-testid="picker-input"]').setValue(path);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await flushPromises();
+  await wrapper.find('[data-testid="picker-open-btn"]').trigger('click');
+  await flushPromises();
+}
+
 beforeEach(() => {
   localStorage.clear();
   // Reset the URL — useUrlSync reads the query on mount, and happy-dom's
@@ -206,10 +258,7 @@ describe('repo selection', () => {
   test('entering a path opens it with exactly ONE POST and starts the repo session', async () => {
     const wrapper = await mountWithRepos([]);
 
-    const form = wrapper.find('[data-testid="empty-state"] form');
-    await form.find('input').setValue('/other');
-    await form.trigger('submit');
-    await flushPromises();
+    await typePathAndOpen(wrapper, '/other');
 
     // repoStore.open is the sole opener: one POST /repos per open.
     expect(repoPosts()).toEqual(['/other']);
@@ -238,10 +287,7 @@ describe('repo selection', () => {
     });
     vi.stubGlobal('fetch', fake.fn);
 
-    const form = wrapper.find('[data-testid="empty-state"] form');
-    await form.find('input').setValue('/not-a-repo');
-    await form.trigger('submit');
-    await flushPromises();
+    await typePathAndOpen(wrapper, '/not-a-repo');
 
     expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('Not a git repository');
@@ -346,7 +392,7 @@ describe('repo selection', () => {
     const wrapper = await mountWithRepos([REPO_ONE, REPO_TWO]);
 
     await wrapper.find('.switch-btn').trigger('click');
-    const rows = wrapper.find('[data-testid="open-repos"]').findAll('.repo-row');
+    const rows = openRows(wrapper);
     expect(rows.map((row) => row.text())).toEqual([
       expect.stringContaining('repo'),
       expect.stringContaining('other'),
@@ -363,7 +409,7 @@ describe('repo selection', () => {
     expect(repoPosts()).toEqual(['/repo']); // auto-activation of A
 
     await wrapper.find('.switch-btn').trigger('click');
-    const rows = wrapper.find('[data-testid="open-repos"]').findAll('.repo-row');
+    const rows = openRows(wrapper);
     await rows[1].trigger('click');
     await flushPromises();
 
@@ -378,7 +424,7 @@ describe('repo switch discards stale view state', () => {
   /** Switch to the second repo through the header switcher. */
   async function switchToSecond(wrapper: VueWrapper): Promise<void> {
     await wrapper.find('.switch-btn').trigger('click');
-    const rows = wrapper.find('[data-testid="open-repos"]').findAll('.repo-row');
+    const rows = openRows(wrapper);
     await rows[1].trigger('click');
     await flushPromises();
   }

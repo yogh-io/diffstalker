@@ -1,24 +1,17 @@
 <script setup lang="ts">
 /**
- * Empty state: no repository is active. Prompts for an absolute path
- * (the browser can't browse the daemon's filesystem) and offers the
- * recent repos from localStorage.
+ * Empty state: no repository is active. Mounts the SAME RepoPicker the
+ * header switcher does — filter by name, or type an absolute path on the
+ * daemon's machine to open something new — so the two ways in cannot say
+ * different things about which repos exist.
+ *
+ * It had its own flat list of recents before, painted straight from
+ * localStorage. That list is gone with the picker's arrival: it could not
+ * fold worktrees into projects, so a project with three worktrees read as
+ * three repos here and as one everywhere else.
  */
 
-import { useUiStore } from '../stores/ui';
-import { beginUserNav } from '../composables/useUrlSync';
-import { useRepoOpen } from '../composables/useRepoOpen';
-import { basename } from '../utils/format';
-import RepoOpenForm from './RepoOpenForm.vue';
-
-const ui = useUiStore();
-const { openByPath } = useRepoOpen();
-
-/** A recent-repo row: one gesture, one entry. */
-function openRecent(path: string): void {
-  beginUserNav({ repo: path });
-  void openByPath(path);
-}
+import RepoPicker from './RepoPicker.vue';
 </script>
 
 <template>
@@ -31,23 +24,10 @@ function openRecent(path: string): void {
       </span>
       <h1>Open a repository</h1>
       <p class="copy">
-        diffstalker follows a repository on the daemon's machine. Enter the absolute path of a git
-        repository to start watching it.
+        diffstalker follows a repository on the daemon's machine. Type a name to pick one it
+        already knows, or an absolute path to open a new one.
       </p>
-      <RepoOpenForm />
-
-      <div v-if="ui.recentRepos.length" class="recents" data-testid="empty-recents">
-        <p class="recents-label eyebrow">Recent</p>
-        <button
-          v-for="path in ui.recentRepos"
-          :key="path"
-          class="recent-row"
-          @click="openRecent(path)"
-        >
-          <span class="name mono">{{ basename(path) }}</span>
-          <span class="path mono" :title="path">{{ path }}</span>
-        </button>
-      </div>
+      <RepoPicker />
     </div>
   </div>
 </template>
@@ -105,43 +85,5 @@ h1 {
   margin: 0 0 1.25rem;
   font-size: var(--fs-content);
   color: var(--text-dim);
-}
-
-.recents {
-  margin-top: 1.5rem;
-}
-
-.recents-label {
-  margin: 0 0 0.375rem;
-}
-
-.recent-row {
-  display: flex;
-  align-items: baseline;
-  gap: 0.625rem;
-  /* The row bleeds 0.5rem into both side margins; widen it by the same
-     1rem so the bleed is even instead of lopsided. */
-  width: calc(100% + 1rem);
-  padding: 0.375rem 0.5rem;
-  margin: 0 -0.5rem;
-  border-radius: 4px;
-  text-align: left;
-}
-
-.recent-row:hover {
-  background: var(--surface);
-}
-
-.name {
-  font-size: var(--fs-base);
-  font-weight: 600;
-}
-
-.path {
-  font-size: var(--fs-micro);
-  color: var(--text-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

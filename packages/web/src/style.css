@@ -386,9 +386,11 @@ input::placeholder {
 /* The header's two dropdowns (repo, worktree) — the only popovers in the app,
    and adjacent siblings in AppHeader, so any drift in offset or elevation
    shows as two menus that do not line up. Each keeps only what genuinely
-   differs: width, padding, gap, and WorktreeSwitcher's max-height/overflow
-   (RepoSwitcher has no cap today, and giving it one would change how a long
-   repo list scrolls).
+   differs: width, padding, gap, and where the height cap lives. Both panels
+   cap at 60vh, but WorktreeSwitcher caps the panel while RepoSwitcher caps
+   the LIST inside RepoPicker — the picker mounts on the empty state too,
+   where there is no panel, and its input has to stay put while the list
+   scrolls under it.
 
    The shadow stays a literal rather than a --shadow-menu token: after this
    merge it has exactly one consumer, and a one-consumer token advertises

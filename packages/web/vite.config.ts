@@ -32,6 +32,7 @@ export const apiPaths = [
   '/events',
   '/follow',
   '/worktrees',
+  '/resolve',
   '/settings',
   '/discovered',
   '/browse',

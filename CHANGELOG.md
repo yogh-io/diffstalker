@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   null when the daemon bound only a socket). A socket client could not
   otherwise tell whether a browser URL exists at all; `diffstalker link` says
   so plainly instead of guessing a port.
+- **`GET /resolve?path=`** — can this exact path be opened, and as which
+  worktree, without opening it. It shares one resolver with `POST /repos` so
+  the two can never disagree, but requires the path to EXIST: git resolves a
+  missing path to its parent worktree, which would make a typo look openable.
 - **Whole-file mode in the web UI.** A `whole file` toggle in each diff header
   (Changes, Compare, History) draws that one file in full — every line
   numbered, the changed ones marked in place — instead of hunks with three
@@ -69,6 +73,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole-file diff is one hunk per file and stamping it would write keys the
   daemon's own `-U3` refresh never produces — the file would read back as
   edited just now.
+
+### Changed
+
+- **The repo picker is one input over one list.** The header panel used to
+  stack three lists (open on daemon, discovered, recent) with a path field
+  above them and a filter buried in the middle that narrowed only the
+  discovered list — four ways in, and no obvious one. Now: one input at the
+  top that filters everything at once, one list with the open repos first
+  under an `OPEN` label, and the discovered repos behind a single control
+  that is collapsed by default and says how many revealing will add. Typing
+  a name searches every source including discovered; typing an absolute path
+  grows an **Open** button, but only once the daemon confirms the path is
+  precisely a repository it can open. Arrows move, Enter opens, the first
+  Escape clears and the second closes. The empty state mounts the same
+  picker, so the two cannot drift apart.
+- Two behaviours were dropped with it. The path field no longer starts
+  prefilled with the active repo's path — in an input that also filters, a
+  prefill would narrow the list to the repo you are already in. And the empty
+  state's recents now wait for their worktree lookup like every other list,
+  instead of painting straight from localStorage: that is what keeps a
+  three-worktree project from reading as three repos there and one everywhere
+  else.
 
 ### Fixed
 

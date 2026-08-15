@@ -231,6 +231,11 @@ describe('history, compare, explorer, follow', () => {
     expect(worktrees[0].branch).toBe('main');
   });
 
+  test('resolvePath answers openable for a repo, and not for a plain dir', async () => {
+    expect(await client.resolvePath(repoDir)).toEqual({ openable: true, root: repoDir });
+    expect(await client.resolvePath(os.tmpdir())).toEqual({ openable: false, root: null });
+  });
+
   test('headMessage returns the HEAD commit message', async () => {
     const [head] = await client.history(repoId, 1);
     expect(await client.headMessage(repoId)).toBe(head.message);
