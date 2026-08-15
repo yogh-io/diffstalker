@@ -52,6 +52,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the unstaged chunk was thrown away while the stats still counted its lines.
   It is one `git diff HEAD` now: staged and unstaged together, in one entry,
   with stats that match what is drawn.
+- **A `diff.context` setting in your git config changed what diffstalker
+  showed.** Context width is not cosmetic here — it decides where hunks merge
+  and split, so it moved the per-file hunk badges, the identity a hunk's edit
+  time is keyed by, and the patches built for staging. Only the journal's diff
+  pinned it; every other read took git's default. All of them pin `-U3` now, so
+  the same repo reads the same everywhere. If you have `diff.context` set, this
+  re-keys your hunks once: existing edit times restamp and hunk badges shift,
+  one time.
 
 ## [0.12.3] - 2026-08-12
 

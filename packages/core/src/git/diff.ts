@@ -67,6 +67,19 @@ export interface FileHunkCounts {
   unstaged: Map<string, number>;
 }
 
+/**
+ * Context lines every diff in this file asks git for, pinned rather than
+ * left to git's default.
+ *
+ * A user's `diff.context` config would otherwise decide it, and context
+ * width is not cosmetic here: it sets where hunks merge and split. That
+ * moves hunk COUNT (the per-file badges), hunk IDENTITY (hunkTimes keys a
+ * hunk by a hash of its +/- body, so a re-split hunk is a new hunk with a
+ * fresh edit time), and the patches extractHunkPatch builds for staging.
+ * Pinned, the same repo reads the same on every machine.
+ */
+export const DIFF_CONTEXT_LINES = 3;
+
 export async function getDiff(
   repoPath: string,
   file?: string,
@@ -75,7 +88,7 @@ export async function getDiff(
   const git = createGit(repoPath);
 
   try {
-    const args: string[] = [];
+    const args: string[] = [`-U${DIFF_CONTEXT_LINES}`];
     if (staged) {
       args.push('--cached');
     }
@@ -128,8 +141,9 @@ export async function getHeadOid(repoPath: string): Promise<string> {
  * Whole-tree worktree-vs-HEAD diff for the journal: `git diff -U3 HEAD --`.
  * Unborn HEAD diffs against the empty tree instead.
  *
- * -U3 is pinned explicitly: a user's diff.context config would otherwise
- * change hunk merge/split geometry between machines.
+ * Context is pinned (DIFF_CONTEXT_LINES) like every other diff here; for
+ * the journal it matters most, since a re-split hunk is a new hunk with a
+ * new edit time in an append-only log.
  *
  * DELIBERATE CONVENTION BREAK — THIS FUNCTION PROPAGATES ERRORS. Every
  * sibling in this file catches failure into an empty DiffResult, which is
@@ -142,7 +156,9 @@ export async function getDiffAgainstHead(repoPath: string): Promise<DiffResult> 
   const git = createGit(repoPath);
   const head = await getHeadOid(repoPath);
   const base = head === UNBORN_HEAD_OID ? EMPTY_TREE_OID : 'HEAD';
-  const raw = capLargeFileDiffs(await git.raw(['diff', '-U3', base, '--']));
+  const raw = capLargeFileDiffs(
+    await git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, base, '--'])
+  );
   return { lines: parseDiffWithLineNumbers(raw) };
 }
 
@@ -406,7 +422,9 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
   const nameStatus = await git.raw(['diff', '--name-status', `${base}...HEAD`]);
 
   // Get full diff
-  const rawDiff = capLargeFileDiffs(await git.raw(['diff', `${base}...HEAD`]));
+  const rawDiff = capLargeFileDiffs(
+    await git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, `${base}...HEAD`])
+  );
 
   // Parse numstat: "additions deletions filepath" per line
   const numstatLines = numstat
@@ -552,8 +570,11 @@ export async function getCommitDiff(repoPath: string, hash: string): Promise<Dif
 
   try {
     // git show --format="" gives just the diff without commit metadata;
-    // --end-of-options keeps a flag-shaped hash from being read as an option
-    const raw = capLargeFileDiffs(await git.raw(['show', '--format=', '--end-of-options', hash]));
+    // --end-of-options keeps a flag-shaped hash from being read as an option,
+    // so every real option (-U) has to be spelled before it
+    const raw = capLargeFileDiffs(
+      await git.raw(['show', '--format=', `-U${DIFF_CONTEXT_LINES}`, '--end-of-options', hash])
+    );
     return { lines: parseDiffWithLineNumbers(raw) };
   } catch {
     return { lines: [] };
@@ -584,7 +605,7 @@ export async function getCompareDiffWithUncommitted(
   const committedDiff = await getDiffBetweenRefs(repoPath, baseRef);
 
   const uncommittedRaw = await git.diff(['HEAD', '--numstat']);
-  const uncommittedDiff = capLargeFileDiffs(await git.diff(['HEAD']));
+  const uncommittedDiff = capLargeFileDiffs(await git.diff([`-U${DIFF_CONTEXT_LINES}`, 'HEAD']));
 
   // Parse uncommitted file stats from numstat output
   const uncommittedFiles: Map<string, { additions: number; deletions: number }> = new Map();

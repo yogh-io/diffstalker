@@ -119,6 +119,34 @@ Kept here so the same ideas do not get re-proposed as though they were new.
 > Lifting two rejections does not open the rest. Everything else in this
 > document still needs its own trigger.
 
+> **Update, 2026-08-15: the §6 trigger fired for whole-file context.** The
+> author asked to turn a file's changes on and off while reading it, then named
+> the shape himself: a mode of the diff view, hunks or whole file, over the ref
+> pair that view already pins, restorable by URL. `docs/whole-file-mode.md`
+> records the whole decision. What it changes here:
+>
+> - **Lifted from the rejected list: expanding context around a hunk** — and
+>   only in its limit form. `whole` is a boolean on the wire and in the URL, so
+>   the protocol cannot express "10 more lines". Incremental expansion, a
+>   context slider and a context-line setting stay rejected, now structurally
+>   rather than by judgement.
+> - **The §3 reasoning was wrong in one clause, and that is worth recording.**
+>   It held that the Explorer plus a view-file button is "most of what expanding
+>   context buys". Every clause of that is true except the last: `GET /file` is
+>   `fs.stat` + `fs.open` on the worktree, and `FileForDisplay` carries no
+>   status, no line pairs and no markers. The one-click workaround delivers
+>   content and forfeits *all* change information — and from History or a
+>   Compare-committed row it lands on today's copy of the path, which is
+>   different bytes than the diff was about. The residue "most of" excluded was
+>   the whole request.
+> - **Still rejected, and re-confirmed:** widening Compare's base picker beyond
+>   remote branches; a free-text revspec box or any ref input; a text-at-a-ref
+>   endpoint; any diff rendering inside the Explorer; a fifth view; marking a
+>   file as seen; an ignore-whitespace toggle; a per-file log.
+>
+> Lifting one more rejection does not open the rest. Everything else in this
+> document still needs its own trigger.
+
 Conventional viewer features, judged real but not worth it now: expanding
 context around a hunk; an ignore-whitespace toggle; marking a file as seen;
 filtering or sorting the changed-file set; bounding a very large changeset with a

@@ -593,3 +593,105 @@ describe('getDiffAgainstHead / getHeadOid (fixture)', () => {
     }
   });
 });
+
+describe('diff.context is pinned, not inherited (fixture)', () => {
+  // A user with `diff.context` set in their git config must not get
+  // different hunk geometry than anyone else. Context width decides where
+  // hunks merge and split, and hunk boundaries are an identity here: the
+  // per-file hunk badges count them, hunkTimes keys an edit time by a hash
+  // of a hunk's body, and extractHunkPatch builds staging patches from
+  // them. Only getDiffAgainstHead pinned -U3 before this; the rest took
+  // git's default, so the same repo read differently on two machines.
+  //
+  // The fixture is built so the difference is visible: two edits 12 lines
+  // apart are two hunks at -U3 and ONE hunk at the configured -U20.
+  const REPO_NAME = 'diff-context-pin-test';
+  let repoPath: string;
+
+  const BASE = Array.from({ length: 16 }, (_, i) => `line${i + 1}`).join('\n') + '\n';
+  const EDITED = BASE.replace('line2\n', 'EDITED2\n').replace('line15\n', 'EDITED15\n');
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    writeFixtureFile(repoPath, 'wide.txt', BASE);
+    gitExec(repoPath, 'add -A');
+    gitExec(repoPath, 'commit -m "base"');
+    // The config under test. Wide enough to merge the two hunks together.
+    gitExec(repoPath, 'config diff.context 20');
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  /** Back to a clean HEAD, staged or not — these tests dirty both sides. */
+  function resetRepo(): void {
+    gitExec(repoPath, 'reset --hard HEAD');
+    gitExec(repoPath, 'clean -fd');
+  }
+
+  it('the fixture actually distinguishes the two widths', () => {
+    // Guards the test itself: if git ever stopped honouring diff.context,
+    // or the file got too short to split, every assertion below would pass
+    // for the wrong reason.
+    writeFixtureFile(repoPath, 'wide.txt', EDITED);
+    expect(countHunks(gitExec(repoPath, 'diff -- wide.txt'))).toBe(1);
+    expect(countHunks(gitExec(repoPath, 'diff -U3 -- wide.txt'))).toBe(2);
+    resetRepo();
+  });
+
+  it('getDiff pins context on the unstaged side', async () => {
+    writeFixtureFile(repoPath, 'wide.txt', EDITED);
+    const diff = await getDiff(repoPath, 'wide.txt');
+    expect(countHunks(rawFromLines(diff.lines))).toBe(2);
+    resetRepo();
+  });
+
+  it('getDiff pins context on the staged side', async () => {
+    writeFixtureFile(repoPath, 'wide.txt', EDITED);
+    gitExec(repoPath, 'add wide.txt');
+    const diff = await getDiff(repoPath, 'wide.txt', true);
+    expect(countHunks(rawFromLines(diff.lines))).toBe(2);
+    resetRepo();
+  });
+
+  it('getDiffAgainstHead pins context', async () => {
+    writeFixtureFile(repoPath, 'wide.txt', EDITED);
+    const diff = await getDiffAgainstHead(repoPath);
+    expect(countHunks(rawFromLines(diff.lines))).toBe(2);
+    resetRepo();
+  });
+
+  it('getCommitDiff pins context', async () => {
+    writeFixtureFile(repoPath, 'wide.txt', EDITED);
+    gitExec(repoPath, 'commit -am "edit"');
+    const diff = await getCommitDiff(repoPath, 'HEAD');
+    expect(countHunks(rawFromLines(diff.lines))).toBe(2);
+    gitExec(repoPath, 'reset --hard HEAD~1');
+  });
+
+  it('getDiffBetweenRefs pins context', async () => {
+    gitExec(repoPath, 'checkout -b ctx-feature');
+    writeFixtureFile(repoPath, 'wide.txt', EDITED);
+    gitExec(repoPath, 'commit -am "branch edit"');
+    const compare = await getDiffBetweenRefs(repoPath, 'main');
+    const file = compare.files.find((f) => f.path === 'wide.txt');
+    expect(file).toBeDefined();
+    expect(countHunks(rawFromLines(file!.diff.lines))).toBe(2);
+    gitExec(repoPath, 'checkout main');
+    gitExec(repoPath, 'branch -D ctx-feature');
+    resetRepo();
+  });
+
+  it('getCompareDiffWithUncommitted pins context on the uncommitted side', async () => {
+    gitExec(repoPath, 'checkout -b ctx-uncommitted');
+    writeFixtureFile(repoPath, 'wide.txt', EDITED);
+    const compare = await getCompareDiffWithUncommitted(repoPath, 'main');
+    const file = compare.files.find((f) => f.path === 'wide.txt');
+    expect(file).toBeDefined();
+    expect(countHunks(rawFromLines(file!.diff.lines))).toBe(2);
+    resetRepo();
+    gitExec(repoPath, 'checkout main');
+    gitExec(repoPath, 'branch -D ctx-uncommitted');
+  });
+});
