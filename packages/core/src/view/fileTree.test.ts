@@ -58,6 +58,18 @@ describe('buildFileTree', () => {
     expect(root.children[0].fileIndex).toBe(0);
     expect(root.children[1].fileIndex).toBe(1);
   });
+
+  it('gives two entries with the same path a row each', () => {
+    // Compare with "include uncommitted" lists a file twice when the
+    // branch's commits touch it AND it has uncommitted edits. Merging
+    // them into one leaf dropped the second entry's diff out of the view.
+    const files = [{ path: 'src/a.ts' }, { path: 'src/a.ts' }, { path: 'src/b.ts' }];
+    const root = buildFileTree(files);
+    const src = root.children[0];
+    expect(src.name).toBe('src');
+    expect(src.children.map((c) => c.fileIndex)).toEqual([0, 1, 2]);
+    expect(flattenTree(root).filter((r) => r.type === 'file')).toHaveLength(3);
+  });
 });
 
 describe('flattenTree', () => {

@@ -4,6 +4,7 @@ import { createGit } from './gitClient.js';
 import { CommitInfo } from './status.js';
 import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
 import { isBinaryContent } from '../utils/binaryDetect.js';
+import { getIgnoredFiles } from './ignoreUtils.js';
 import {
   capLargeFileDiffs,
   largeDiffNotice,
@@ -562,6 +563,17 @@ export async function getCommitDiff(repoPath: string, hash: string): Promise<Dif
 /**
  * Get PR diff that includes uncommitted changes (staged + unstaged).
  * Merges committed diff with working tree changes.
+ *
+ * The uncommitted side is read as ONE `git diff HEAD` — staged and
+ * unstaged together — not as two diffs concatenated. Two diffs meant a
+ * file with changes on both sides produced two chunks for the same path,
+ * of which only the first survived, so half its edits went missing while
+ * the stats still counted them. `HEAD` is also the range the reader
+ * expects: the compare shows everything the branch adds on top of the
+ * base, committed or not.
+ *
+ * Untracked files are read separately (git diff never reports them) and
+ * shaped as new-file diffs, the same way the Changes view shows them.
  */
 export async function getCompareDiffWithUncommitted(
   repoPath: string,
@@ -571,18 +583,13 @@ export async function getCompareDiffWithUncommitted(
 
   const committedDiff = await getDiffBetweenRefs(repoPath, baseRef);
 
-  const stagedRaw = await git.diff(['--cached', '--numstat']);
-  const unstagedRaw = await git.diff(['--numstat']);
-  const stagedDiff = await git.diff(['--cached']);
-  const unstagedDiff = await git.diff([]);
+  const uncommittedRaw = await git.diff(['HEAD', '--numstat']);
+  const uncommittedDiff = capLargeFileDiffs(await git.diff(['HEAD']));
 
   // Parse uncommitted file stats from numstat output
-  const uncommittedFiles: Map<
-    string,
-    { additions: number; deletions: number; staged: boolean; unstaged: boolean }
-  > = new Map();
+  const uncommittedFiles: Map<string, { additions: number; deletions: number }> = new Map();
 
-  for (const line of stagedRaw
+  for (const line of uncommittedRaw
     .trim()
     .split('\n')
     .filter((l) => l)) {
@@ -591,27 +598,7 @@ export async function getCompareDiffWithUncommitted(
       const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
       const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
       const filepath = parts.slice(2).join('\t');
-      uncommittedFiles.set(filepath, { additions, deletions, staged: true, unstaged: false });
-    }
-  }
-
-  for (const line of unstagedRaw
-    .trim()
-    .split('\n')
-    .filter((l) => l)) {
-    const parts = line.split('\t');
-    if (parts.length >= 3) {
-      const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
-      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-      const filepath = parts.slice(2).join('\t');
-      const existing = uncommittedFiles.get(filepath);
-      if (existing) {
-        existing.additions += additions;
-        existing.deletions += deletions;
-        existing.unstaged = true;
-      } else {
-        uncommittedFiles.set(filepath, { additions, deletions, staged: false, unstaged: true });
-      }
+      uncommittedFiles.set(filepath, { additions, deletions });
     }
   }
 
@@ -632,18 +619,13 @@ export async function getCompareDiffWithUncommitted(
 
   // Split uncommitted diffs by file
   const uncommittedFileDiffs: CompareFileDiff[] = [];
-  const combinedDiff = stagedDiff + unstagedDiff;
-  const diffChunks = combinedDiff.split(/(?=^diff --git )/m).filter((chunk) => chunk.trim());
-  const processedFiles = new Set<string>();
+  const diffChunks = uncommittedDiff.split(/(?=^diff --git )/m).filter((chunk) => chunk.trim());
 
   for (const chunk of diffChunks) {
     const match = chunk.match(/^diff --git a\/.+ b\/(.+)$/m);
     if (!match) continue;
 
     const filepath = match[1];
-    if (processedFiles.has(filepath)) continue;
-    processedFiles.add(filepath);
-
     const lines = parseDiffWithLineNumbers(chunk);
     const fileStats = uncommittedFiles.get(filepath) || { additions: 0, deletions: 0 };
     const fileStatus = statusMap.get(filepath) || 'modified';
@@ -654,6 +636,28 @@ export async function getCompareDiffWithUncommitted(
       additions: fileStats.additions,
       deletions: fileStats.deletions,
       diff: { lines },
+      isUncommitted: true,
+    });
+  }
+
+  // Untracked files, minus the ignored ones simple-git's status can still
+  // report (the same filter getStatus applies, so both views agree on what
+  // "untracked" means).
+  const untrackedPaths = status.files.filter((f) => f.working_dir === '?').map((f) => f.path);
+  const ignored = await getIgnoredFiles(repoPath, untrackedPaths);
+  for (const filepath of untrackedPaths) {
+    if (ignored.has(filepath)) continue;
+    const diff = await getDiffForUntracked(repoPath, filepath);
+    // Nothing readable behind the path (a collapsed directory entry, a
+    // non-regular file, a symlink out of the repo): no row rather than an
+    // empty one that reads as "no changes".
+    if (diff.lines.length === 0) continue;
+    uncommittedFileDiffs.push({
+      path: filepath,
+      status: 'added',
+      additions: diff.lines.filter((l) => l.type === 'addition').length,
+      deletions: 0,
+      diff,
       isUncommitted: true,
     });
   }

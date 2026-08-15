@@ -25,6 +25,12 @@ export interface TreeRowItem {
 /**
  * Build a tree structure from flat file paths.
  * Paths should be sorted alphabetically before calling this.
+ *
+ * One row per input entry, always: directories are shared between files,
+ * but a file leaf is never reused. Two entries CAN carry the same path —
+ * compare lists a file twice when the branch's commits touch it and it
+ * also has uncommitted changes — and merging them into one leaf dropped
+ * the second entry's diff out of the view entirely.
  */
 export function buildFileTree<T extends { path: string }>(files: T[]): FileTreeNode {
   // Root node
@@ -47,7 +53,9 @@ export function buildFileTree<T extends { path: string }>(files: T[]): FileTreeN
       const isFile = j === parts.length - 1;
       const pathSoFar = parts.slice(0, j + 1).join('/');
 
-      let child = current.children.find((c) => c.name === part && c.isDirectory === !isFile);
+      let child = isFile
+        ? undefined
+        : current.children.find((c) => c.name === part && c.isDirectory);
 
       if (!child) {
         child = {

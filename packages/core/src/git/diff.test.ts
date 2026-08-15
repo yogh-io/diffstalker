@@ -16,6 +16,7 @@ import {
   getDefaultBaseBranch,
   getCommitCountBetweenRefs,
   getDiffBetweenRefs,
+  getCompareDiffWithUncommitted,
   commitExists,
   resolveEffectiveBaseBranch,
   NoCommonHistoryError,
@@ -292,6 +293,88 @@ describe('getCandidateBaseBranches / getDefaultBaseBranch / getDiffBetweenRefs (
       } else {
         process.env.XDG_CACHE_HOME = savedCacheHome;
       }
+    }
+  });
+});
+
+describe('getCompareDiffWithUncommitted (fixture)', () => {
+  const REPO_NAME = 'compare-uncommitted-test';
+  let repoPath: string;
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    writeFixtureFile(repoPath, 'tracked.txt', 'a\nb\nc\nd\ne\n');
+    writeFixtureFile(repoPath, '.gitignore', 'ignored.txt\n');
+    gitExec(repoPath, 'add -A');
+    gitExec(repoPath, 'commit -m "base"');
+    gitExec(repoPath, 'checkout -b feature');
+    // A commit on the branch touching the same file the working tree will.
+    writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nc\nd\ne\n');
+    gitExec(repoPath, 'commit -am "branch edit"');
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  function resetRepo(): void {
+    gitExec(repoPath, 'checkout -- .');
+    gitExec(repoPath, 'reset HEAD');
+    gitExec(repoPath, 'checkout -- .');
+    gitExec(repoPath, 'clean -fd');
+  }
+
+  it('lists a file changed BOTH by a branch commit and uncommitted as two entries', async () => {
+    // The bug: only the committed entry survived, so an edit on top of a
+    // file the branch already touches simply vanished from the compare.
+    writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nc\nD\ne\n');
+    try {
+      const diff = await getCompareDiffWithUncommitted(repoPath, 'main');
+      const entries = diff.files.filter((f) => f.path === 'tracked.txt');
+      expect(entries).toHaveLength(2);
+      expect(entries.map((f) => f.isUncommitted ?? false)).toEqual([false, true]);
+      // Both carry a real diff, not just a header.
+      for (const entry of entries) {
+        expect(entry.diff.lines.some((l) => l.type === 'addition')).toBe(true);
+      }
+      // The uncommitted entry shows the working-tree edit, not the commit's.
+      expect(entries[1].diff.lines.some((l) => l.content.includes('+D'))).toBe(true);
+    } finally {
+      resetRepo();
+    }
+  });
+
+  it('carries staged AND unstaged edits to one file in a single entry', async () => {
+    // Read as two diffs, the staged chunk won and the unstaged one was
+    // dropped — while the stats still counted both.
+    writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nc\nSTAGED\ne\n');
+    gitExec(repoPath, 'add tracked.txt');
+    writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nUNSTAGED\nSTAGED\ne\n');
+    try {
+      const diff = await getCompareDiffWithUncommitted(repoPath, 'main');
+      const entry = diff.files.find((f) => f.path === 'tracked.txt' && f.isUncommitted);
+      expect(entry).toBeDefined();
+      const raw = entry!.diff.lines.map((l) => l.content).join('\n');
+      expect(raw).toContain('+STAGED');
+      expect(raw).toContain('+UNSTAGED');
+      expect(entry!.additions).toBe(2);
+      expect(entry!.deletions).toBe(2);
+    } finally {
+      resetRepo();
+    }
+  });
+
+  it('includes untracked files and skips ignored ones', async () => {
+    writeFixtureFile(repoPath, 'new.txt', 'fresh\n');
+    writeFixtureFile(repoPath, 'ignored.txt', 'noise\n');
+    try {
+      const diff = await getCompareDiffWithUncommitted(repoPath, 'main');
+      const untracked = diff.files.find((f) => f.path === 'new.txt');
+      expect(untracked).toMatchObject({ status: 'added', isUncommitted: true, additions: 1 });
+      expect(untracked!.diff.lines.some((l) => l.content === '+fresh')).toBe(true);
+      expect(diff.files.some((f) => f.path === 'ignored.txt')).toBe(false);
+    } finally {
+      resetRepo();
     }
   });
 });

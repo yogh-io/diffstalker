@@ -91,7 +91,7 @@ import type {
   WireSharedState,
 } from '@diffstalker/client';
 import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
-import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
+import type { CompareDiff, CompareFileDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type {
@@ -167,6 +167,16 @@ export interface WorkingDiffsState {
  */
 export function workingDiffKey(file: FileEntry): string {
   return `${file.staged ? 's' : 'u'}:${file.path}`;
+}
+
+/**
+ * Stack key for a compare row. The path alone is NOT unique: with
+ * "include uncommitted" on, a file the branch's commits touch and that
+ * also has uncommitted edits is listed twice, once per side. Same
+ * `c:`/`u:` shape as workingDiffKey so both views key rows alike.
+ */
+export function compareFileKey(file: CompareFileDiff): string {
+  return `${file.isUncommitted ? 'u' : 'c'}:${file.path}`;
 }
 
 /** One queued /media fetch; `settle` releases whoever awaited ensureMedia. */

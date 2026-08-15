@@ -329,11 +329,12 @@ describe('file tree', () => {
     const { wrapper, repo } = mountView();
     const spy = vi.spyOn(repo, 'selectCompareFile');
 
-    // The stack keys sections by path and emits that key from its
-    // scroll-spy; feeding it the path drives the SAME selection (and thus
+    // The stack keys sections by side + path and emits that key from its
+    // scroll-spy; feeding it the key drives the SAME selection (and thus
     // the same `.selected` focus indicator) a click would.
-    const path = wrapper.findAll('.file-row')[2].attributes('title');
-    wrapper.findComponent(DiffStack).vm.$emit('active-file', path);
+    const row = wrapper.findAll('.file-row')[2];
+    const key = `${row.classes().includes('uncommitted') ? 'u' : 'c'}:${row.attributes('title')}`;
+    wrapper.findComponent(DiffStack).vm.$emit('active-file', key);
     await wrapper.vm.$nextTick();
 
     expect(spy).toHaveBeenCalledWith(2);
@@ -400,7 +401,7 @@ describe('file tree', () => {
     // scroller (scrollTo — never scrollIntoView, which would drag every
     // ancestor and ignore the sticky header).
     expect(scrollSpy).toHaveBeenCalledTimes(1);
-    expect(wrapper.findComponent(DiffStack).emitted('active-file')).toEqual([['src/a.ts']]);
+    expect(wrapper.findComponent(DiffStack).emitted('active-file')).toEqual([['c:src/a.ts']]);
   });
 
   test('the selected file row is aria-selected and highlighted', async () => {
@@ -757,7 +758,7 @@ describe('portrait layout', () => {
     await flushPromises();
     // The stacked diffs scroll to a.ts's sticky header — nothing filters.
     expect(scrollSpy).toHaveBeenCalledTimes(1);
-    expect(wrapper.findComponent(DiffStack).emitted('active-file')).toEqual([['src/a.ts']]);
+    expect(wrapper.findComponent(DiffStack).emitted('active-file')).toEqual([['c:src/a.ts']]);
     expect(repo.compare.selection).toMatchObject({ type: 'file', index: 1 });
     expect(wrapper.findAll('[data-testid="file-diff"]')).toHaveLength(2);
   });

@@ -23,7 +23,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useDaemonStore } from './stores/daemon';
 import { useExplorerStore } from './stores/explorer';
-import { useRepoStore, workingDiffKey } from './stores/repo';
+import { compareFileKey, useRepoStore, workingDiffKey } from './stores/repo';
 import { useUiStore } from './stores/ui';
 import { useRepoOpen } from './composables/useRepoOpen';
 import { useGlobalKeys } from './composables/useGlobalKeys';
@@ -312,7 +312,8 @@ async function applyCompareAnchor(state: UrlState, ctx: RestoreContext): Promise
   const index = files.findIndex((f) => f.path === state.at);
   if (index === -1) return;
   repo.selectCompareFile(index);
-  ui.requestStackScroll(state.at);
+  // The URL carries a path; the stack is keyed by side + path.
+  ui.requestStackScroll(compareFileKey(files[index]));
 }
 
 // The parked anchor lands when its data does. Both watchers check the view
@@ -337,7 +338,7 @@ watch(
     const index = compareDiff.files.findIndex((f) => f.path === parked.at);
     if (index === -1) return;
     repo.selectCompareFile(index);
-    ui.requestStackScroll(parked.at);
+    ui.requestStackScroll(compareFileKey(compareDiff.files[index]));
   }
 );
 

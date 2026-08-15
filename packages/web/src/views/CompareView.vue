@@ -24,7 +24,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { beginUserNav } from '../composables/useUrlSync';
-import { useRepoStore } from '../stores/repo';
+import { compareFileKey, useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import { buildFileTree, flattenTree, type TreeRowItem } from '@diffstalker/core/view/fileTree';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
@@ -203,8 +203,9 @@ function selectFile(index: number): void {
   repo.selectCompareFile(index);
   const file = files.value[index];
   if (!file) return;
-  collapsedFiles.delete(file.path); // selecting always reveals
-  void nextTick(() => stackEl.value?.scrollToFile(file.path));
+  const key = compareFileKey(file);
+  collapsedFiles.delete(key); // selecting always reveals
+  void nextTick(() => stackEl.value?.scrollToFile(key));
 }
 
 /** Same contract as Changes: a restored link lands at its file, no tween. */
@@ -261,7 +262,7 @@ function moveFileSelection(delta: number): void {
  * `.selected` highlight a click produces.
  */
 function onActiveFile(key: string): void {
-  const index = files.value.findIndex((f) => f.path === key);
+  const index = files.value.findIndex((f) => compareFileKey(f) === key);
   if (index !== -1) repo.selectCompareFile(index);
 }
 
@@ -293,14 +294,15 @@ watch(
 
 // --- Per-file diff sections (right, DiffStack) ---
 
-function toggleFileCollapsed(path: string): void {
-  if (collapsedFiles.has(path)) collapsedFiles.delete(path);
-  else collapsedFiles.add(path);
+function toggleFileCollapsed(key: string): void {
+  if (collapsedFiles.has(key)) collapsedFiles.delete(key);
+  else collapsedFiles.add(key);
 }
 
-/** Compare files mapped onto the stack's shape; keyed by path (unique
- *  within a compare — no staged/unstaged split here). Diffs are
- *  pre-embedded, so the stack's placeholder branch never triggers. */
+/** Compare files mapped onto the stack's shape, keyed by compareFileKey
+ *  — NOT by path: a file that is both committed on the branch and edited
+ *  in the working tree is listed twice. Diffs are pre-embedded, so the
+ *  stack's placeholder branch never triggers. */
 /**
  * Every file in TREE order — the same order, and the same directory
  * grouping, the tree above shows. The daemon returns files in git's flat
@@ -323,19 +325,21 @@ const treeOrderedFiles = computed<CompareFileDiff[]>(() =>
 
 const stackFiles = computed<StackFile[]>(() =>
   treeOrderedFiles.value.map((file) => ({
-    key: file.path,
+    key: compareFileKey(file),
     path: file.path,
     status: file.status,
     uncommitted: file.isUncommitted,
     stats: { insertions: file.additions, deletions: file.deletions },
     diff: file.diff,
-    collapsed: collapsedFiles.has(file.path),
+    collapsed: collapsedFiles.has(compareFileKey(file)),
   }))
 );
 
 const activeStackKey = computed(() => {
   const index = selectedFileIndex.value;
-  return index !== null ? (files.value[index]?.path ?? null) : null;
+  if (index === null) return null;
+  const file = files.value[index];
+  return file ? compareFileKey(file) : null;
 });
 
 // --- Portrait: rotate the PR body (file band above, diffs below) ---
@@ -495,7 +499,9 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
           @pointerenter="onPointerEnter"
           @pointerleave="onPointerLeave"
         >
-          <template v-for="row in renderRows" :key="`${row.type}:${row.fullPath}`">
+          <!-- fileIndex is in the key: two rows can carry the same
+               fullPath (a file both committed and uncommitted). -->
+          <template v-for="row in renderRows" :key="`${row.type}:${row.fullPath}:${row.fileIndex}`">
             <!-- role=presentation: only file rows are listbox options.
                  The whole row toggles; the button is the a11y surface
                  (aria-expanded + native Enter/Space activation). -->
