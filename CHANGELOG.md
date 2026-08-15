@@ -24,6 +24,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   null when the daemon bound only a socket). A socket client could not
   otherwise tell whether a browser URL exists at all; `diffstalker link` says
   so plainly instead of guessing a port.
+- **Whole-file mode in the web UI's Changes view.** A `whole file` toggle in
+  each diff header draws that one file in full — every line numbered, the
+  changed ones marked in place — instead of hunks with three lines of context.
+  It is for reading a change in the context of the file it happened in, which
+  is the one thing `view file` could not do: it gave you the file and dropped
+  every change marker.
+  You never pick a ref. The view already fixes the pair and the mode inherits
+  it. It applies to one file at a time — the anchored one — which is what lets
+  it live in the URL as `whole=1`, so F5 lands in the same view, a link shares
+  it, and Back turns it off. Untracked files do not offer it (their diff is
+  already the whole file); binary files and diffs withheld over the size cap
+  disable it with the reason, and keep their hunks on screen.
+  Changes only for now: Compare and History need rename-preserving path-scoped
+  diffs first. The Explorer gains the mirror of `view file` — a `show changes`
+  button, shown only for a file that actually has one — so the trip between
+  reading a file and reading its diff finally goes both ways. The Explorer
+  renders no diff and holds no ref. See `docs/whole-file-mode.md`.
+- **`GET /repos/:id/diff?whole=true`** — the wire behind it. Requires `path`
+  (400 without one: a wide whole-tree diff is unbounded work behind an
+  unthrottled GET), and is never annotated with hunk edit times, because a
+  whole-file diff is one hunk per file and stamping it would write keys the
+  daemon's own `-U3` refresh never produces — the file would read back as
+  edited just now.
 
 ### Fixed
 

@@ -175,6 +175,20 @@ function toggleFileCollapsed(key: string): void {
   else collapsedFiles.add(key);
 }
 
+/**
+ * Whole-file mode for one section. It also makes that file the anchor:
+ * the mode is carried in the URL as a property OF the anchor (`whole=1`
+ * beside `at=`), so a URL claiming whole-file for a file the view is not
+ * aimed at would be unreadable on restore. beginUserNav makes the pair
+ * one history entry, so Back turns the mode off rather than replaying it.
+ */
+function toggleWholeFile(key: string): void {
+  beginUserNav({ view: 'changes' });
+  const next = repo.wholeFile?.key === key ? null : key;
+  if (next !== null) ui.setActiveStackKey(next);
+  void repo.setWholeFile(next); // never rejects; failures land in shared.error
+}
+
 // Per-repo UI state: a repo switch must not leak the previous repo's
 // active/collapsed state onto a same-path file in the new repo. The
 // DiffStack subtree is additionally keyed by repoId in the template,
@@ -197,15 +211,21 @@ watch(
  */
 const stackFiles = computed<StackFile[]>(() => {
   const { byKey } = repo.workingDiffs;
+  const whole = repo.wholeFile;
   return categories.value.ordered.map((file) => {
     const key = rowKey(file);
+    // Whole-file mode swaps ONE section's body for the wide-context pull
+    // of the same file. It replaces the DiffResult object, which is what
+    // DiffStack's identity check treats as an ordinary content commit —
+    // so the swap flows through the anchor sandwich like any other edit.
+    const diff = whole?.key === key ? whole.diff : (byKey.get(key)?.diff ?? null);
     return {
       key,
       path: file.path,
       status: file.status,
       staged: file.staged,
       stats: { insertions: file.insertions ?? 0, deletions: file.deletions ?? 0 },
-      diff: byKey.get(key)?.diff ?? null,
+      diff,
       collapsed: collapsedFiles.has(key),
     };
   });
@@ -711,9 +731,13 @@ const rootStyle = computed(() => ({
       :mode="ui.diffMode"
       :wrap="ui.wrapEnabled"
       :media-keys="mediaKeys"
+      show-whole-toggle
+      :whole-key="repo.wholeFile?.key ?? null"
+      :whole-loading="repo.wholeFileLoading"
       v-bind="payloadAttrs"
       @active-file="ui.setActiveStackKey"
       @toggle-collapse="toggleFileCollapsed"
+      @toggle-whole="toggleWholeFile"
     >
       <!-- The picture card for a binary section. Only reached for keys
            mediaKeys vouched for, so the pair is always there.

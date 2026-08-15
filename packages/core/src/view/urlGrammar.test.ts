@@ -144,3 +144,58 @@ describe('encoding helpers', () => {
     expect(isViewName(undefined)).toBe(false);
   });
 });
+
+describe('whole=1 — the anchored file drawn in full', () => {
+  test('parses, and defaults to false when absent', () => {
+    expect(parseUrl('/changes/~/w/ds', '?at=u:a.ts').whole).toBe(false);
+    expect(parseUrl('/changes/~/w/ds', '?whole=1&at=u:a.ts').whole).toBe(true);
+  });
+
+  test('reaches the repo-less early return too', () => {
+    // The two returns in parseUrl are easy to update by halves; a view
+    // with no repo segments must still carry the flag.
+    expect(parseUrl('/changes', '?whole=1').whole).toBe(true);
+  });
+
+  test('only the literal 1 is on — there is no third state to encode', () => {
+    expect(parseUrl('/changes/~/w/ds', '?whole=true').whole).toBe(false);
+    expect(parseUrl('/changes/~/w/ds', '?whole=0').whole).toBe(false);
+    expect(parseUrl('/changes/~/w/ds', '?whole=').whole).toBe(false);
+  });
+
+  test('writes at a PINNED position: base, whole, at', () => {
+    // Order is load-bearing: writeUrl compares path+search as a STRING,
+    // so a differently ordered URL never compares equal and would be
+    // rewritten on the first write after landing on a shared link.
+    expect(
+      buildUrlPath({
+        view: 'changes',
+        repoPath: '/home/j/w/ds',
+        home: '/home/j',
+        at: 'u:a.ts',
+        base: 'origin/main',
+        whole: true,
+      })
+    ).toBe('/changes/~/w/ds?base=origin/main&whole=1&at=u:a.ts');
+  });
+
+  test('omitted and false both write nothing', () => {
+    const place = { view: 'changes' as const, repoPath: '/home/j/w/ds', home: '/home/j', at: 'u:a.ts' };
+    expect(buildUrlPath(place)).toBe('/changes/~/w/ds?at=u:a.ts');
+    expect(buildUrlPath({ ...place, whole: false })).toBe('/changes/~/w/ds?at=u:a.ts');
+  });
+
+  test('round-trips: what buildUrlPath writes, parseUrl reads back', () => {
+    const url = buildUrlPath({
+      view: 'changes',
+      repoPath: '/home/j/w/ds',
+      home: '/home/j',
+      at: 'u:src/a b+c.ts',
+      whole: true,
+    });
+    const [pathname, search] = url.split('?');
+    const back = parseUrl(pathname, `?${search}`);
+    expect(back.whole).toBe(true);
+    expect(back.at).toBe('u:src/a b+c.ts');
+  });
+});

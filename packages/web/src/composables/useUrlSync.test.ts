@@ -80,9 +80,19 @@ function commit(hash: string): CommitInfo {
   };
 }
 
+/** An open repo the URL can name, without a daemon behind it. */
+function activeRepo(path = `${HOME}/w/diffstalker`): void {
+  const daemon = useDaemonStore();
+  const repo = useRepoStore();
+  daemon.repos = [{ id: 'r1', path, branch: 'main' }];
+  daemon.activeRepoId = 'r1';
+  repo.repoId = 'r1';
+  repo.repoPath = path;
+}
+
 /** Every UrlState field, so a test only spells out what it is about. */
 function state(part: Partial<UrlState>): UrlState {
-  return { repo: null, view: null, at: null, base: null, ...part };
+  return { repo: null, view: null, at: null, base: null, whole: false, ...part };
 }
 
 describe('parseUrl', () => {
@@ -150,15 +160,6 @@ describe('parseUrl', () => {
 });
 
 describe('writing the path', () => {
-  function activeRepo(path = `${HOME}/w/diffstalker`): void {
-    const daemon = useDaemonStore();
-    const repo = useRepoStore();
-    daemon.repos = [{ id: 'r1', path, branch: 'main' }];
-    daemon.activeRepoId = 'r1';
-    repo.repoId = 'r1';
-    repo.repoPath = path;
-  }
-
   test('no repo open is the root, not a view keyword standing alone', async () => {
     mount(Harness);
     await flushPromises();
@@ -437,5 +438,76 @@ describe('back and forward', () => {
     // The stale restore neither applied nor wrote.
     expect(applied).toEqual(['explorer']);
     expect(ui.activeView).toBe('explorer');
+  });
+});
+
+describe('whole-file mode in the URL (F5 must land in the same view)', () => {
+  /** Whole-file mode on for one key, without a daemon behind it. */
+  function wholeOn(repo: ReturnType<typeof useRepoStore>, key: string): void {
+    repo.wholeFile = { key, diff: { lines: [] } };
+  }
+
+  test('writes whole=1 when the mode is on for the anchored file', async () => {
+    activeRepo();
+    const repo = useRepoStore();
+    const ui = useUiStore();
+    ui.setActiveView('changes');
+    ui.setActiveStackKey('u:src/a.ts');
+    wholeOn(repo, 'u:src/a.ts');
+    mount(Harness);
+    await flushPromises();
+    expect(here()).toBe('/changes/~/w/diffstalker?whole=1&at=u:src/a.ts');
+  });
+
+  test('writes nothing when the mode is on for a DIFFERENT file', async () => {
+    // The flag describes the anchor. Claiming it for a file the view is
+    // not aimed at would be unreadable on restore.
+    activeRepo();
+    const repo = useRepoStore();
+    const ui = useUiStore();
+    ui.setActiveView('changes');
+    ui.setActiveStackKey('u:src/a.ts');
+    wholeOn(repo, 'u:src/other.ts');
+    mount(Harness);
+    await flushPromises();
+    expect(here()).toBe('/changes/~/w/diffstalker?at=u:src/a.ts');
+  });
+
+  test('turning the mode on is undoable — it does not vanish into the anchor throttle', async () => {
+    // The regression this guards: anchorOnly() decides "only the anchor
+    // moved", and a change it cannot see is deferred into the 400ms
+    // throttle and flushed as replace — so the toggle could never mint a
+    // Back entry. `whole` has to be part of that comparison.
+    activeRepo();
+    const repo = useRepoStore();
+    const ui = useUiStore();
+    ui.setActiveView('changes');
+    ui.setActiveStackKey('u:src/a.ts');
+    mount(Harness);
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+
+    beginUserNav({ view: 'changes' });
+    wholeOn(repo, 'u:src/a.ts');
+    await flushPromises();
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(here()).toBe('/changes/~/w/diffstalker?whole=1&at=u:src/a.ts');
+  });
+
+  test('the mode is part of the document title, so two Back entries differ', async () => {
+    activeRepo();
+    const repo = useRepoStore();
+    const ui = useUiStore();
+    ui.setActiveView('changes');
+    ui.setActiveStackKey('u:src/a.ts');
+    mount(Harness);
+    await flushPromises();
+    const hunksTitle = document.title;
+
+    wholeOn(repo, 'u:src/a.ts');
+    await flushPromises();
+    expect(document.title).not.toBe(hunksTitle);
+    expect(document.title).toContain('whole');
   });
 });

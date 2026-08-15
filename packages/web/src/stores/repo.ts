@@ -316,6 +316,29 @@ export const useRepoStore = defineStore('repo', () => {
    */
   const selectedCompareBase = shallowRef<string | null>(null);
 
+  /**
+   * Whole-file mode: the one file currently drawn in full instead of as
+   * hunks, and its wide-context diff. ONE slot, not a variant dimension
+   * on workingDiffs — the mode applies to exactly one file at a time (the
+   * anchored one), which is what keeps it addressable as a single URL key
+   * rather than an expansion set. See docs/whole-file-mode.md.
+   *
+   * It lives in the store rather than the component because the working
+   * tree moves underneath: the U3 entry refreshes on every file-watcher
+   * state-change, and a component-held body would keep rendering the text
+   * the file used to have — a lying diff in exactly the case the mode is
+   * most wanted.
+   *
+   * Deliberately NOT stamped with hunk edit times (the daemon skips
+   * stampDiff for it), so whole-file mode shows no per-hunk age. The U3
+   * body stays in workingDiffs, so toggling back restores all of it.
+   */
+  const wholeFile = shallowRef<{ key: string; diff: DiffResult } | null>(null);
+  /** Whole-file fetch in flight (the toggle renders busy). */
+  const wholeFileLoading = shallowRef(false);
+  /** Guards against an older whole-file response landing over a newer one. */
+  let wholeFileFetchSeq = 0;
+
   const isRepo = computed(() => repoId.value !== null);
 
   // --- Non-reactive internals ---
@@ -481,6 +504,12 @@ export const useRepoStore = defineStore('repo', () => {
     journalRestarted.value = false;
     compare.value = initialCompare();
     selectedCompareBase.value = null;
+    // Repo B must not inherit repo A's whole-file key: it would name a
+    // file that may not exist here, and the first URL write would carry
+    // `whole=1` into the new repo's address.
+    wholeFile.value = null;
+    wholeFileLoading.value = false;
+    wholeFileFetchSeq++;
   }
 
   /**
@@ -1092,6 +1121,73 @@ export const useRepoStore = defineStore('repo', () => {
   }
 
   /**
+   * Turn whole-file mode on for one key, or off with null. Turning it on
+   * for another file turns it off for the previous one — one slot.
+   *
+   * Never rejects. A failed fetch leaves the mode OFF rather than on-and-
+   * empty: the hunks stay on screen, which is the truthful fallback.
+   * An untracked file is refused here rather than fetched — its diff is
+   * already the whole file, and the daemon has no wider context to give.
+   */
+  async function setWholeFile(key: string | null): Promise<void> {
+    const id = repoId.value;
+    const token = ++wholeFileFetchSeq;
+    if (key === null || id === null) {
+      wholeFile.value = null;
+      wholeFileLoading.value = false;
+      return;
+    }
+    const entry = workingSnapshot?.files.get(key);
+    if (!entry || entry.status === 'untracked') {
+      wholeFile.value = null;
+      wholeFileLoading.value = false;
+      return;
+    }
+    // Drop the old body immediately: keeping file A's text on screen
+    // while file B loads would render one file's diff under another's
+    // header.
+    wholeFile.value = null;
+    wholeFileLoading.value = true;
+    const gen = generation;
+    try {
+      const diff = await client.diff(id, {
+        path: entry.path,
+        staged: entry.staged,
+        whole: true,
+      });
+      if (gen !== generation || token !== wholeFileFetchSeq) return;
+      wholeFile.value = { key, diff: markRaw(diff) };
+    } catch (err) {
+      if (gen !== generation || token !== wholeFileFetchSeq) return;
+      if (isConnectionError(err)) {
+        handleConnectionLoss();
+        return;
+      }
+      setError(`Failed to load whole file: ${errorMessage(err)}`);
+    } finally {
+      if (gen === generation && token === wholeFileFetchSeq) {
+        wholeFileLoading.value = false;
+      }
+    }
+  }
+
+  /**
+   * Keep the whole-file body honest across a state-change: drop it when
+   * its file leaves the status set, re-pull it when the file moved. The
+   * U3 cache does the same for every other row; a whole-file body that
+   * skipped this would be the one stale diff on screen.
+   */
+  function refreshWholeFileAfterState(changed: FileEntry[]): void {
+    const key = wholeFile.value?.key ?? null;
+    if (key === null) return;
+    if (workingSnapshot !== null && !workingSnapshot.files.has(key)) {
+      void setWholeFile(null);
+      return;
+    }
+    if (changed.some((file) => workingDiffKey(file) === key)) void setWholeFile(key);
+  }
+
+  /**
    * The state-change cascade: evict entries whose file left the status
    * set, then refetch ONLY the files the new wire state marks as
    * changed (vs the previous snapshot). Past the threshold, one
@@ -1116,6 +1212,9 @@ export const useRepoStore = defineStore('repo', () => {
     }
 
     const changed = computeChangedFiles(prev, next);
+    // Before the early return: the whole-file body must be dropped when
+    // its file leaves the status set even if nothing else changed.
+    refreshWholeFileAfterState(changed);
     if (changed.length === 0) return;
     if (changed.length > WHOLE_TREE_REPULL_THRESHOLD) {
       pendingChangedFiles.clear();
@@ -1808,6 +1907,8 @@ export const useRepoStore = defineStore('repo', () => {
     isRepo,
     shared,
     workingDiffs,
+    wholeFile,
+    wholeFileLoading,
     mediaMeta,
     selection,
     history,
@@ -1831,6 +1932,7 @@ export const useRepoStore = defineStore('repo', () => {
     selectFile,
     // working-diff cache
     refreshAllDiffs,
+    setWholeFile,
     diffModelFor,
     // image metadata (on demand, per changed binary file)
     ensureMedia,

@@ -1,12 +1,33 @@
 /**
  * useUrlSync: the URL is the app's address bar in the literal sense — it
- * names ONE PLACE (a repo, a view, and the one anchor you are aimed at
- * inside it) and nothing else. Preferences, modes, expansion sets and
- * scroll offsets are not places and never appear.
+ * names ONE PLACE: a repo, a view, the one anchor you are aimed at inside
+ * it, what that anchor is resolved against, and how much of it is shown.
+ * Nothing else.
  *
- *   /<view>/<repo-segments…>[?at=…][&base=…]
+ * THE TEST is anchor scope plus ownership. A key belongs here when it is
+ * scoped to the anchor (or to what the anchor resolves against) AND is
+ * decided per visit rather than owned by the reader.
+ *
+ *  - `base` passes: it decides what `at` is resolved against, and it is an
+ *    explicit per-visit pick (a detected base is never written back).
+ *  - `whole` passes: it decides how much of `at` is drawn. One file at a
+ *    time, by construction — that is what keeps it a property of the
+ *    anchor and not an expansion set.
+ *  - wrap, split view and image-diff mode FAIL on ownership. They belong
+ *    to the reader rather than to a link, and live in localStorage.
+ *  - the explorer's dotfiles/ignored/changed toggles FAIL on scope. They
+ *    are view-wide switches, not properties of one anchor, and stay in
+ *    their stores.
+ *  - scroll offsets and expansion sets are neither, and never appear.
+ *
+ * Do NOT cite `whole` as precedent for putting a preference here. It is in
+ * the URL because it is per-anchor and per-visit; a preference is neither.
+ * See docs/whole-file-mode.md §8.2.
+ *
+ *   /<view>/<repo-segments…>[?base=…][&whole=1][&at=…]
  *   /                                                  (no repo open)
  *   /changes/~/w/diffstalker?at=u:packages/web/src/App.vue
+ *   /changes/~/w/diffstalker?whole=1&at=u:src/App.vue
  *   /history/~/w/diffstalker?at=4d1c44a
  *   /compare/~/w/calculator/fix-bbox?base=upstream/main&at=src/a.ts
  *   /explorer/srv/git/thing?at=packages/web/src/App.vue
@@ -154,6 +175,8 @@ interface Place {
   view: ViewName;
   at: string | null;
   base: string | null;
+  /** Changes only: the anchored file is drawn whole rather than as hunks. */
+  whole: boolean;
 }
 
 export interface RestoreContext {
@@ -241,20 +264,29 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     const view = ui.activeView;
     const at = abs === null ? null : currentAnchor();
     const base = abs !== null && view === 'compare' ? repo.selectedCompareBase : null;
-    if (abs === null) return { url: '/', repoPath: null, view, at: null, base: null };
+    // Whole-file mode is a property OF the anchor, so it is only written
+    // when it describes the file the view is actually aimed at. Changes
+    // only for now — Compare and History do not serve the mode yet.
+    const whole =
+      abs !== null && view === 'changes' && at !== null && repo.wholeFile?.key === at;
+    if (abs === null)
+      return { url: '/', repoPath: null, view, at: null, base: null, whole: false };
     return {
-      url: buildUrlPath({ view, repoPath: abs, home: home.value, at, base }),
+      url: buildUrlPath({ view, repoPath: abs, home: home.value, at, base, whole }),
       repoPath: abs,
       view,
       at,
       base,
+      whole,
     };
   }
 
   /** `<anchor> — <view> — <repo>`, so a deep Back menu is readable. */
   function titleFor(place: Place): string {
     const parts: string[] = [];
-    if (place.at !== null) parts.push(place.at);
+    // The mode is part of the name: two Back entries for the same file,
+    // one whole and one in hunks, must not read identically in the menu.
+    if (place.at !== null) parts.push(place.whole ? `${place.at} (whole)` : place.at);
     parts.push(place.view);
     if (place.repoPath !== null) parts.push(place.repoPath.split('/').filter(Boolean).pop() ?? '');
     return parts.filter(Boolean).join(' — ') || 'diffstalker';
@@ -290,7 +322,11 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       written !== null &&
       written.repoPath === next.repoPath &&
       written.view === next.view &&
-      written.base === next.base
+      written.base === next.base &&
+      // WITHOUT this, toggling whole-file looks like plain anchor movement:
+      // it would be deferred into the 400ms throttle and always flushed as
+      // 'replace', so the toggle could never mint a Back entry.
+      written.whole === next.whole
     );
   }
 
@@ -393,6 +429,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       () => ui.activeView,
       () => ui.activeStackKey,
       () => repo.selectedCompareBase,
+      () => repo.wholeFile,
       () => repo.compare.selection,
       () => repo.history.selectedCommit,
       () => explorer.selectedPath,

@@ -38,6 +38,7 @@ import { REFUSAL_TEXT } from '../utils/imageRefusal';
 import { highlightContent } from '../utils/highlight';
 import { formatBytes } from '../utils/format';
 import WrapToggle from './WrapToggle.vue';
+import ShowChangesButton from './ShowChangesButton.vue';
 import ImageView from './ImageView.vue';
 
 const props = defineProps<{
@@ -151,6 +152,7 @@ const frames = computed(() => {
         >
         <span v-if="frames" data-testid="file-frames">{{ frames }} frames</span>
         <span v-if="file" class="file-size">{{ formatBytes(file.size) }}</span>
+        <ShowChangesButton v-if="path" :path="path" />
         <WrapToggle />
       </span>
     </header>

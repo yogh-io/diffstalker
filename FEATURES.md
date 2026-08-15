@@ -775,6 +775,33 @@ git operations.
   says `copied` — or `copy failed`, since the clipboard API is missing
   outside a secure context, and a click that silently does nothing reads as
   a broken UI.
+- **"whole file" toggle in the Changes diff headers** — draws that one file
+  in full, every line numbered, with the changed lines marked in place,
+  instead of hunks with three lines of context around each. The point is
+  reading a change in the context of the file it happened in, without
+  losing the change markers the way "view file" does.
+  - The ref pair is never chosen. Each view already fixes one (Changes
+    compares the index against the working tree, or HEAD against the
+    index), and the mode inherits it. There is no ref input anywhere.
+  - **One file at a time**, the anchored one: turning it on for another
+    file turns it off for the first. That is what makes it a property of
+    the anchor rather than an expansion set, and so addressable as a
+    single URL key.
+  - Carried in the URL as `whole=1` beside `at=`, so F5 lands in the same
+    view and a link shares it. Back turns it off.
+  - Hidden for untracked files (their diff is the whole file already),
+    disabled with a reason for binary files and diffs the daemon withheld
+    over the size cap — where the hunks stay on screen rather than the
+    section going blank.
+  - No hunk edit times in this mode (the daemon does not stamp a
+    whole-file diff); toggling back restores them.
+  - Changes only for now. Compare and History need rename-preserving
+    path-scoped diffs first — see `docs/whole-file-mode.md`.
+- **"show changes" button in the Explorer's file header** — the mirror of
+  "view file", and the Explorer's only way out. It appears only when the
+  open file actually has a working-tree change, and jumps to that file's
+  row in Changes. It renders no diff and holds no ref: the Explorer stays
+  a file viewer.
 - Consistent panel separation across every split view: the index panel and the
   payload beside it are separated by page background, not a rule. Each payload
   is a card (a diff stack's files, Explorer's file contents, History's commit

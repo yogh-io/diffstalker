@@ -1950,3 +1950,96 @@ describe('a refused stage/unstage survives the next state-change', () => {
     expect(store.shared.error).toBeNull();
   });
 });
+
+describe('whole-file mode (the single slot)', () => {
+  const WIDE = fileDiffRaw('a.ts', 'WIDE');
+
+  /** Answers the whole-file pull; everything else falls through. */
+  function serveWhole(raw = WIDE): void {
+    onRequest = (call) => {
+      if (call.url.includes('whole=true')) return { body: diffBody(raw) };
+      return undefined;
+    };
+  }
+
+  test('setWholeFile fetches with whole=true and fills the slot', async () => {
+    serveWhole();
+    const { store } = await openStore([fileEntry('a.ts')]);
+    await store.setWholeFile('u:a.ts');
+    expect(store.wholeFile?.key).toBe('u:a.ts');
+    expect(rawFromLines(store.wholeFile!.diff.lines)).toBe(WIDE);
+    expect(diffCalls().some((u) => u.includes('path=a.ts') && u.includes('whole=true'))).toBe(true);
+  });
+
+  test('one slot: turning it on for another file turns it off for the first', async () => {
+    serveWhole();
+    const { store } = await openStore([fileEntry('a.ts'), fileEntry('b.ts')]);
+    await store.setWholeFile('u:a.ts');
+    await store.setWholeFile('u:b.ts');
+    expect(store.wholeFile?.key).toBe('u:b.ts');
+  });
+
+  test('null clears it', async () => {
+    serveWhole();
+    const { store } = await openStore([fileEntry('a.ts')]);
+    await store.setWholeFile('u:a.ts');
+    await store.setWholeFile(null);
+    expect(store.wholeFile).toBeNull();
+  });
+
+  test('an untracked file is refused — its diff is already the whole file', async () => {
+    serveWhole();
+    const { store } = await openStore([fileEntry('u.txt', { status: 'untracked' as FileStatus })]);
+    await store.setWholeFile('u:u.txt');
+    expect(store.wholeFile).toBeNull();
+    expect(diffCalls().some((u) => u.includes('whole=true'))).toBe(false);
+  });
+
+  test('the body is re-pulled when the file changes underneath', async () => {
+    // The whole point of the slot living in the store: a component-held
+    // body would keep rendering the text the file used to have.
+    let raw = WIDE;
+    onRequest = (call) => (call.url.includes('whole=true') ? { body: diffBody(raw) } : undefined);
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+    await store.setWholeFile('u:a.ts');
+    expect(rawFromLines(store.wholeFile!.diff.lines)).toBe(WIDE);
+
+    raw = fileDiffRaw('a.ts', 'FRESH');
+    source.emit('state-change', wireState([fileEntry('a.ts')], { mtimes: { 'a.ts': 99 } }));
+    await flush();
+    await flush();
+    expect(rawFromLines(store.wholeFile!.diff.lines)).toBe(raw);
+  });
+
+  test('the slot is dropped when its file leaves the status set', async () => {
+    serveWhole();
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+    await store.setWholeFile('u:a.ts');
+    expect(store.wholeFile).not.toBeNull();
+
+    source.emit('state-change', wireState([])); // committed / discarded
+    await flush();
+    expect(store.wholeFile).toBeNull();
+  });
+
+  test('a repo switch does not carry the mode into the new repo', async () => {
+    serveWhole();
+    const { store } = await openStore([fileEntry('a.ts')]);
+    await store.setWholeFile('u:a.ts');
+    expect(store.wholeFile).not.toBeNull();
+
+    await store.open('/other-repo');
+    expect(store.wholeFile).toBeNull();
+  });
+
+  test('a failed pull leaves the mode OFF rather than on-and-empty', async () => {
+    // The hunks stay on screen: the truthful fallback.
+    onRequest = (call) =>
+      call.url.includes('whole=true') ? { status: 500, body: { error: 'boom' } } : undefined;
+    const { store } = await openStore([fileEntry('a.ts')]);
+    await store.setWholeFile('u:a.ts');
+    expect(store.wholeFile).toBeNull();
+    expect(store.wholeFileLoading).toBe(false);
+    expect(store.shared.error).toContain('whole file');
+  });
+});

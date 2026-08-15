@@ -9,7 +9,31 @@ Status per slice (§10):
 - **Slice 0 — done.** Context pinned to `-U3` on every diff function
   (`DIFF_CONTEXT_LINES` in `packages/core/src/git/diff.ts`), with tests that
   fail without it. A defect fix; it needed no trigger and shipped on its own.
-- **Slices A–D — proposed.** Not built.
+- **Slice B — done.** Whole-file mode in Changes, the `whole` parameter, the
+  store slot, the URL key and its principle rewrite, and the Explorer's
+  `show changes` button.
+- **Slice A (the always-on ref-pair label) — not built.** It was specified to
+  ship first and did not; the mode was asked for directly. It stands on its own
+  and is still worth doing.
+- **Slices C–D — proposed.** Not built.
+
+**Where the build deviated from this document, and why.** Both are corrections
+to it, not shortcuts around it:
+
+1. **§8.2 said `pendingAnchor` needs no widening.** It does. A cold load parks
+   the anchor before any status has arrived, and replaying it without the flag
+   drops `whole=1` on the floor — the next truthful write then rewrites the URL
+   without it, so F5 on a whole-file link silently gives you hunks. That is the
+   one requirement the author stated as hard. `pendingAnchor` carries `whole`.
+2. **§6.5 said to re-express `HUGE_FILE_CHANGED_LINES` against `rowCount`.**
+   Not done, deliberately. That gate decides whether a body renders at all, and
+   rowCount-gating it would collapse the whole-file body the reader just asked
+   for behind "Load diff". The stats it reads do not move with context, so a
+   whole-file body cannot trip it, and `renderedSmallKeys` already latches a
+   file being read. The payload is bounded by the daemon's per-file cap, which
+   is where that job belongs. `estimateBodyHeight` DID need the rowCount path
+   and got it — the stats guess under-sizes a whole-file body about twentyfold,
+   and the stack's arithmetic offsets are built on that number.
 
 The analysis is kept as written, the way `docs/search-design.md` keeps its own.
 §9 is the override section: which §6 trigger fired, on what evidence, the one

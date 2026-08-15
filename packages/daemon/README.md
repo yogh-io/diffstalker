@@ -200,7 +200,7 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | GET    | `/repos/:id/worktrees`     | Registered worktrees (`path`, `branch`, `head`, `isBare`, `lastActivity`, `aheadOfBase`): main worktree, linked worktrees, and the bare entry in a bare-worktree layout |
 | GET    | `/worktrees?path=`         | Same as above, but for a raw filesystem path instead of an already-opened repo id (e.g. a recently-visited repo a client hasn't opened on this daemon) |
 | GET    | `/repos/:id/status`        | Shared state: status, hunk counts, stash list, in-progress operation, error, working-file mtimes (path → mtimeMs; what browser clients build mtime-based auto mode on) |
-| GET    | `/repos/:id/diff?path=&staged=` | Diff; whole tree without `path`, staged side with `staged=true`. Per-file cap: a file's diff over 256 KB or 5,000 lines is withheld — its headers are kept and its body becomes one `Large file — diff not shown (…)` line, the same shape git uses for `Binary files … differ`. Applies to every diff-bearing response (compare, commit diffs, journal) |
+| GET    | `/repos/:id/diff?path=&staged=&whole=` | Diff; whole tree without `path`, staged side with `staged=true`. `whole=true` draws ONE file in full instead of as hunks (wide context, so every unchanged line is present and the changed ones are marked in place) — it **requires** `path` (400 without one: a wide whole-tree diff is unbounded work behind an unthrottled GET), it is never annotated with hunk edit times (see the note under this table), and it is ignored for an untracked file, whose diff is the whole file already. Per-file cap: a file's diff over 256 KB or 5,000 lines is withheld — its headers are kept and its body becomes one `Large file — diff not shown (…)` line, the same shape git uses for `Binary files … differ`. Applies to every diff-bearing response (compare, commit diffs, journal), and it is what bounds a whole-file diff |
 | GET    | `/repos/:id/history?count=` | Commit history (`CommitInfo[]`, default 100, ISO dates) |
 | GET    | `/repos/:id/commits/:hash` | One commit by hash or short hash (404 on unknown) — what a link to a commit outside a client's loaded log resolves through |
 | GET    | `/repos/:id/commits/:hash/diff` | Diff introduced by one commit (404 on unknown hash; merge and `--allow-empty` commits are 200 with an empty diff, matching the CLI) |
@@ -263,6 +263,16 @@ Note on `/file`'s `truncated` flag: it strictly means the content was cut
 at the display line limit. A merely large file that fits within the limit
 is served whole with `truncated: false` (the old TUI code conflated the
 two: a >100KB file used to be flagged truncated regardless).
+
+Note on `whole=true` and hunk edit times: a whole-file diff is **never**
+stamped. Stamping WRITES into the repo's shared hunk-time map, keyed by a
+hash of each hunk's +/- body, and a whole-file diff is one hunk per file —
+so it would write keys the manager's own `-U3` refresh never produces, and
+the file would read back as edited just now. `/commits/:hash/diff` skips
+stamping for the same reason. Whole-file mode therefore shows no per-hunk
+age; the `-U3` read is a separate request and keeps all of it. Requesting
+`whole=true` on an untracked file changes nothing at all, stamping
+included: the response is byte-identical to the plain one.
 
 Repo ids are stable hashes of the worktree root, so a cached id still
 addresses the same repo after a daemon restart.

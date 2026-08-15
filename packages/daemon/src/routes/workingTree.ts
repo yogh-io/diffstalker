@@ -3,7 +3,7 @@
  * stage/unstage, and the SSE event stream.
  */
 
-import { getDiff, getDiffForUntracked } from '@diffstalker/core/git/diff';
+import { getDiff, getDiffForUntracked, WHOLE_FILE_CONTEXT } from '@diffstalker/core/git/diff';
 import { getInProgressOperation } from '@diffstalker/core/git/status';
 import {
   validateCommit,
@@ -56,9 +56,24 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
     const handle = requireRepo(registry, params.id);
     const filePath = query.get('path') ?? undefined;
     const staged = parseBoolParam(query, 'staged', false);
+    const whole = parseBoolParam(query, 'whole', false);
+
+    // `whole` REQUIRES a path. Without one this is `git diff -U100000` over
+    // the entire tree: unbounded work behind a GET, which on a --port
+    // daemon is CSRF-exempt by design, needs no body, and is not throttled.
+    // One file at a time is also all the mode ever means (see
+    // docs/whole-file-mode.md) — so the guard costs nothing real.
+    if (whole && !filePath) {
+      throw new HttpError(400, 'whole=true requires a path (one file at a time)');
+    }
+    const context = whole ? WHOLE_FILE_CONTEXT : undefined;
 
     // Stateless: never touches the manager's per-client selection.
     let diff;
+    // Whether the response actually carries wide context — which is what
+    // decides stamping below, and is NOT the same as `whole` being asked
+    // for: an untracked file ignores it (see below).
+    let widened = false;
     if (filePath) {
       const status = await ensureStatus(handle.manager.workingTree);
       const isUntracked = status.files.some((f) => f.path === filePath && f.status === 'untracked');
@@ -68,14 +83,27 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
           `staged=true is meaningless for untracked file: ${filePath} (untracked files have no staged diff)`
         );
       }
+      // An untracked file is already whole — its "diff" is the file read
+      // in full — so `whole` has nothing to widen, and the response must
+      // be byte-identical with and without it, stamping included.
+      widened = whole && !isUntracked;
       diff = isUntracked
         ? await getDiffForUntracked(handle.path, filePath)
-        : await getDiff(handle.path, filePath, staged);
+        : await getDiff(handle.path, filePath, staged, { context });
     } else {
       diff = await getDiff(handle.path, undefined, staged);
     }
-    // Annotate hunks with edit times, same as diffs served to the TUI.
-    handle.manager.workingTree.stampDiff(diff);
+    // Annotate hunks with edit times, same as diffs served to the TUI —
+    // but NEVER for a widened diff. stampDiff WRITES into the repo's
+    // shared hunk-time map, keyed by a hash of the hunk's +/- body. A
+    // whole-file diff is one hunk per file, so it would write keys the
+    // manager's own -U3 refresh never produces, and the file would read
+    // back as edited just now. /commits/:hash/diff skips it for the same
+    // reason. Whole-file mode therefore has no edit times; toggling back
+    // restores them, since the U3 body is a separate read.
+    if (!widened) {
+      handle.manager.workingTree.stampDiff(diff);
+    }
     sendJson(res, 200, diff);
   });
 

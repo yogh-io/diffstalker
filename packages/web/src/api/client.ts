@@ -205,10 +205,20 @@ export class DiffstalkerClient {
     return request('GET', this.repoPath(id, '/status'));
   }
 
-  diff(id: string, opts: { path?: string; staged?: boolean } = {}): Promise<DiffResult> {
+  /**
+   * `whole` draws the file in full instead of as hunks. It REQUIRES a
+   * path (the daemon 400s otherwise — one file at a time), and the
+   * response carries no hunk edit times, since the daemon does not stamp
+   * a whole-file diff. See docs/whole-file-mode.md.
+   */
+  diff(
+    id: string,
+    opts: { path?: string; staged?: boolean; whole?: boolean } = {}
+  ): Promise<DiffResult> {
     return request(
       'GET',
-      this.repoPath(id, '/diff') + toQuery({ path: opts.path, staged: opts.staged })
+      this.repoPath(id, '/diff') +
+        toQuery({ path: opts.path, staged: opts.staged, whole: opts.whole })
     );
   }
 

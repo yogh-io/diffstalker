@@ -163,7 +163,7 @@ const urlSync = useUrlSync({ onRestore: applyUrlState });
  * it is aiming at and returns; the watchers below apply it when the data
  * arrives, and drop it if the user moves first.
  */
-const pendingAnchor = ref<{ view: ViewName; at: string } | null>(null);
+const pendingAnchor = ref<{ view: ViewName; at: string; whole?: boolean } | null>(null);
 
 /**
  * Show the place a URL names — a deep link on cold load and every Back /
@@ -236,7 +236,7 @@ async function applyAnchor(state: UrlState, ctx: RestoreContext): Promise<void> 
       await applyCompareAnchor(state, ctx);
       return;
     case 'changes':
-      applyChangesAnchor(state.at);
+      applyChangesAnchor(state.at, state.whole);
       return;
     default:
       return; // journal: the repo and the view, nothing else
@@ -250,15 +250,20 @@ async function applyAnchor(state: UrlState, ctx: RestoreContext): Promise<void> 
  * the EXACT FileEntry from the current status — rows and re-anchoring are
  * identity-based. No status yet means no files to match: park it.
  */
-function applyChangesAnchor(at: string | null): void {
+function applyChangesAnchor(at: string | null, whole: boolean = false): void {
   if (at === null) {
     repo.selectFile(null);
     ui.setActiveStackKey(null);
+    void repo.setWholeFile(null);
     return;
   }
   const files = repo.shared.status?.files;
   if (!files) {
-    pendingAnchor.value = { view: 'changes', at };
+    // The flag is parked WITH the anchor. A cold load lands here (no
+    // status yet), and replaying without it would drop `whole=1` on the
+    // floor — the next truthful write would then rewrite the URL without
+    // it, so F5 on a whole-file link would silently give you hunks.
+    pendingAnchor.value = { view: 'changes', at, whole };
     return;
   }
   const path = at.slice(at.indexOf(':') + 1);
@@ -266,8 +271,15 @@ function applyChangesAnchor(at: string | null): void {
     files.find((f) => workingDiffKey(f) === at) ?? files.find((f) => f.path === path) ?? null;
   if (!match) return; // committed, discarded, gone: ordinary churn
   repo.selectFile(match);
-  ui.setActiveStackKey(workingDiffKey(match));
-  ui.requestStackScroll(workingDiffKey(match));
+  const key = workingDiffKey(match);
+  ui.setActiveStackKey(key);
+  ui.requestStackScroll(key);
+  // ABSENT MEANS OFF, never "leave as-is". Without this, Back out of
+  // whole-file mode stops one step short: the history entry says hunks
+  // while the app still draws the file whole, and the truthful rewrite
+  // that follows puts `whole=1` straight back into the entry the reader
+  // was trying to leave.
+  void repo.setWholeFile(whole ? key : null);
 }
 
 /**
@@ -325,7 +337,7 @@ watch(
     const parked = pendingAnchor.value;
     if (parked?.view !== 'changes' || ui.activeView !== 'changes') return;
     pendingAnchor.value = null;
-    applyChangesAnchor(parked.at);
+    applyChangesAnchor(parked.at, parked.whole ?? false);
   }
 );
 

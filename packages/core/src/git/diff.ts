@@ -80,15 +80,32 @@ export interface FileHunkCounts {
  */
 export const DIFF_CONTEXT_LINES = 3;
 
+/**
+ * Context width for whole-file mode: wide enough that git emits the file
+ * as one hunk rather than several, so the reader sees every line with the
+ * changed ones marked in place.
+ *
+ * A number, not `Infinity`: git takes an integer. It is deliberately not
+ * user-settable and not a wire parameter — the API carries `whole` as a
+ * boolean precisely so "some more context" cannot be expressed. See
+ * docs/whole-file-mode.md.
+ *
+ * The daemon's per-file diff cap (5,000 lines) bounds the payload well
+ * below this, so the value only has to exceed any file the cap lets
+ * through.
+ */
+export const WHOLE_FILE_CONTEXT = 100000;
+
 export async function getDiff(
   repoPath: string,
   file?: string,
-  staged: boolean = false
+  staged: boolean = false,
+  opts: { context?: number } = {}
 ): Promise<DiffResult> {
   const git = createGit(repoPath);
 
   try {
-    const args: string[] = [`-U${DIFF_CONTEXT_LINES}`];
+    const args: string[] = [`-U${opts.context ?? DIFF_CONTEXT_LINES}`];
     if (staged) {
       args.push('--cached');
     }

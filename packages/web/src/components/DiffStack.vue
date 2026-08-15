@@ -251,6 +251,7 @@ import {
 import DiffView from './DiffView.vue';
 import ViewFileButton from './ViewFileButton.vue';
 import CopyPathButton from './CopyPathButton.vue';
+import WholeFileToggle from './WholeFileToggle.vue';
 import WrapToggle from './WrapToggle.vue';
 
 const props = defineProps<{
@@ -283,11 +284,21 @@ const props = defineProps<{
    * sandwich around it.
    */
   mediaKeys?: Set<string>;
+  /**
+   * Whole-file mode, opt-in per surface. Undefined (Compare, for now)
+   * renders no toggle at all — the control only appears where the owner
+   * can actually serve it, which today is Changes. `wholeKey` is the one
+   * section drawn in full; the mode is one file at a time by design.
+   */
+  wholeKey?: string | null;
+  wholeLoading?: boolean;
+  showWholeToggle?: boolean;
 }>();
 
 const emit = defineEmits<{
   'active-file': [key: string];
   'toggle-collapse': [key: string];
+  'toggle-whole': [key: string];
 }>();
 
 const scrollerEl = ref<HTMLElement | null>(null);
@@ -352,6 +363,37 @@ latchSmallKeys(props.files);
 
 function isHuge(item: StackFile): boolean {
   return item.stats.insertions + item.stats.deletions > HUGE_FILE_CHANGED_LINES;
+}
+
+/**
+ * Whether the "whole file" toggle appears for a section at all.
+ *
+ * An untracked file is excluded rather than disabled: its diff already IS
+ * the whole file, so a control offering to widen it would be a control
+ * that does nothing. Everything else that cannot widen (binary, image,
+ * a diff the daemon withheld) keeps the control and disables it with a
+ * reason — those are cases where the reader might reasonably expect it.
+ *
+ * Deliberately NOT gated on isHuge. The huge-file threshold reads stats,
+ * which context does not move, so a whole-file body can never trip it;
+ * and the latch in renderedSmallKeys already keeps a file the reader is
+ * looking at from being yanked behind "Load diff". The payload itself is
+ * bounded by the daemon's per-file diff cap, not by this gate.
+ */
+function canGoWhole(item: StackFile): boolean {
+  return item.status !== 'untracked';
+}
+
+/** Why the toggle is disabled, or null when it works. */
+function wholeDisabledReason(item: StackFile): string | null {
+  const notShown = notShownFor(item);
+  if (notShown !== null) {
+    return notShown.kind === 'binary'
+      ? 'Binary file — there is no text to show'
+      : 'Diff withheld: this file is over the size cap';
+  }
+  if (isUnloaded(item)) return 'Load the diff first';
+  return null;
 }
 
 /** True while a huge file's body is gated behind "Load diff". */
@@ -485,6 +527,17 @@ const CHANGED_LINES_PER_HUNK = 10; // rough hunk-count guess
 const MIN_PX = 48;
 
 function estimateBodyHeight(item: StackFile): number {
+  // With a diff in hand, COUNT the rows instead of guessing from stats.
+  // The stats guess assumes ~3 lines of context per hunk, which is true
+  // only of a -U3 body: a whole-file diff carries every unchanged line
+  // too, so the guess under-sizes it by roughly twenty times, and the
+  // stack's arithmetic offsets are built on this number. Counting is
+  // also strictly better for the ordinary path — diffModel is memoized
+  // per DiffResult, and every caller here already builds it.
+  if (item.diff) {
+    const rows = diffModel(item.diff, item.staged ?? false).rowCount;
+    if (rows > 0) return Math.max(rows * ROW_PX, MIN_PX);
+  }
   const changed = item.stats.insertions + item.stats.deletions;
   const hunks = Math.max(1, Math.ceil(changed / CHANGED_LINES_PER_HUNK));
   return Math.max((changed + hunks * CONTEXT_ROWS_PER_HUNK) * ROW_PX, MIN_PX);
@@ -1296,6 +1349,14 @@ defineExpose({
         </button>
         <span class="letter mono" :data-status="item.status">{{ statusLetter(item.status) }}</span>
         <span class="path mono" :title="item.path">{{ item.path }}</span>
+        <WholeFileToggle
+          v-if="props.showWholeToggle && canGoWhole(item)"
+          :on="props.wholeKey === item.key"
+          :busy="props.wholeLoading && props.wholeKey === item.key"
+          :disabled="wholeDisabledReason(item) !== null"
+          :disabled-reason="wholeDisabledReason(item) ?? undefined"
+          @toggle="emit('toggle-whole', item.key)"
+        />
         <ViewFileButton :path="item.path" />
         <CopyPathButton :path="item.path" />
         <span v-if="item.uncommitted" class="uncommitted-tag mono">[uncommitted]</span>
