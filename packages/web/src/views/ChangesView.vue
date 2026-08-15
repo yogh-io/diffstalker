@@ -184,9 +184,15 @@ function toggleFileCollapsed(key: string): void {
  */
 function toggleWholeFile(key: string): void {
   beginUserNav({ view: 'changes' });
-  const next = repo.wholeFile?.key === key ? null : key;
-  if (next !== null) ui.setActiveStackKey(next);
-  void repo.setWholeFile(next); // never rejects; failures land in shared.error
+  if (repo.wholeFile?.key === key) {
+    void repo.setWholeFile(null);
+    return;
+  }
+  const file = categories.value.ordered.find((f) => rowKey(f) === key);
+  if (!file) return;
+  ui.setActiveStackKey(key);
+  // Never rejects; failures land in shared.error or the toggle's reason.
+  void repo.setWholeFile({ view: 'changes', key, path: file.path });
 }
 
 // Per-repo UI state: a repo switch must not leak the previous repo's
@@ -227,6 +233,7 @@ const stackFiles = computed<StackFile[]>(() => {
       stats: { insertions: file.insertions ?? 0, deletions: file.deletions ?? 0 },
       diff,
       collapsed: collapsedFiles.has(key),
+      refPair: { kind: 'working', staged: file.staged, status: file.status } as const,
     };
   });
 });
@@ -734,6 +741,7 @@ const rootStyle = computed(() => ({
       show-whole-toggle
       :whole-key="repo.wholeFile?.key ?? null"
       :whole-loading="repo.wholeFileLoading"
+      :whole-refusal="repo.wholeFileRefusal"
       v-bind="payloadAttrs"
       @active-file="ui.setActiveStackKey"
       @toggle-collapse="toggleFileCollapsed"

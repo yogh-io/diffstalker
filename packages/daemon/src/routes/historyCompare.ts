@@ -15,9 +15,11 @@ import {
   getCandidateBaseBranches,
   getDefaultBaseBranch,
   resolveEffectiveBaseBranch,
+  getFileDiffInRange,
+  WHOLE_FILE_CONTEXT,
   NoCommonHistoryError,
 } from '@diffstalker/core/git/diff';
-import type { CompareDiff } from '@diffstalker/core/git/diff';
+import type { CompareDiff, DiffRange } from '@diffstalker/core/git/diff';
 import {
   getCommit,
   getCommitHistory,
@@ -104,7 +106,7 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     sendJson(res, 200, commit);
   });
 
-  router.get('/repos/:id/commits/:hash/diff', async ({ params, res }) => {
+  router.get('/repos/:id/commits/:hash/diff', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
     const hash = params.hash;
     if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
@@ -116,9 +118,56 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     if (!(await commitExists(handle.path, hash))) {
       throw new HttpError(404, `Unknown commit: ${hash}`);
     }
+    // `path` narrows to one file, and `whole` widens its context — the
+    // read behind whole-file mode in History. The pathspec carries both
+    // sides of a rename (core's getFileDiffInRange), because scoping to
+    // the new path alone would report a rename as a plain add.
+    const filePath = query.get('path') ?? undefined;
+    const whole = parseBoolParam(query, 'whole', false);
+    if (whole && !filePath) {
+      throw new HttpError(400, 'whole=true requires a path (one file at a time)');
+    }
     // Historical diff: deliberately NOT stamped with hunk edit times —
     // stamping only applies to the live working-tree diff.
-    sendJson(res, 200, await getCommitDiff(handle.path, hash));
+    const diff = filePath
+      ? await getFileDiffInRange(
+          handle.path,
+          { kind: 'commit', hash },
+          filePath,
+          whole ? { context: WHOLE_FILE_CONTEXT } : {}
+        )
+      : await getCommitDiff(handle.path, hash);
+    sendJson(res, 200, diff);
+  });
+
+  /**
+   * One file's diff inside a comparison — what the Compare stack needs for
+   * whole-file mode, since it pulls the range whole and splits it
+   * client-side and so has no per-file request of its own.
+   *
+   * `uncommitted=true` means the row sits against HEAD rather than against
+   * the base: Compare's stack mixes the two, and they are genuinely
+   * different comparisons.
+   */
+  router.get('/repos/:id/compare/file', async ({ params, query, res }) => {
+    const handle = requireRepo(registry, params.id);
+    const filePath = query.get('path');
+    if (!filePath) throw new HttpError(400, 'path is required');
+    const whole = parseBoolParam(query, 'whole', false);
+    const uncommitted = parseBoolParam(query, 'uncommitted', false);
+    const range: DiffRange = uncommitted
+      ? { kind: 'head' }
+      : { kind: 'compare', base: await resolveRequestedBase(handle.path, query) };
+    sendJson(
+      res,
+      200,
+      await getFileDiffInRange(
+        handle.path,
+        range,
+        filePath,
+        whole ? { context: WHOLE_FILE_CONTEXT } : {}
+      )
+    );
   });
 
   router.get('/repos/:id/head-message', async ({ params, res }) => {

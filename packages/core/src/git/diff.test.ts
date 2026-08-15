@@ -17,6 +17,8 @@ import {
   getCommitCountBetweenRefs,
   getDiffBetweenRefs,
   getCompareDiffWithUncommitted,
+  getFileDiffInRange,
+  WHOLE_FILE_CONTEXT,
   commitExists,
   resolveEffectiveBaseBranch,
   NoCommonHistoryError,
@@ -693,5 +695,84 @@ describe('diff.context is pinned, not inherited (fixture)', () => {
     resetRepo();
     gitExec(repoPath, 'checkout main');
     gitExec(repoPath, 'branch -D ctx-uncommitted');
+  });
+});
+
+describe('getFileDiffInRange (fixture)', () => {
+  // The reason this function exists: path-scoping destroys rename
+  // detection, so asking for one file by its new path reports the whole
+  // file as an addition. In whole-file mode that turns a rename with two
+  // edited lines into a thousand lines of additions.
+  const REPO_NAME = 'file-diff-range-test';
+  let repoPath: string;
+  let renameHash: string;
+
+  const BASE = Array.from({ length: 40 }, (_, i) => `line${i + 1}`).join('\n') + '\n';
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    writeFixtureFile(repoPath, 'old.txt', BASE);
+    gitExec(repoPath, 'add -A');
+    gitExec(repoPath, 'commit -m "base"');
+    gitExec(repoPath, 'checkout -b rename-feature');
+    gitExec(repoPath, 'mv old.txt new.txt');
+    writeFixtureFile(repoPath, 'new.txt', BASE.replace('line3\n', 'EDITED3\n'));
+    gitExec(repoPath, 'add -A');
+    gitExec(repoPath, 'commit -m "rename and edit"');
+    renameHash = gitExec(repoPath, 'rev-parse HEAD').trim();
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  it('keeps a rename a rename instead of reporting a whole new file', async () => {
+    const diff = await getFileDiffInRange(repoPath, { kind: 'commit', hash: renameHash }, 'new.txt');
+    const raw = rawFromLines(diff.lines);
+    expect(raw).toContain('rename from old.txt');
+    expect(raw).toContain('rename to new.txt');
+    // One line changed, not forty added.
+    expect(diff.lines.filter((l) => l.type === 'addition').length).toBe(1);
+    expect(diff.lines.filter((l) => l.type === 'deletion').length).toBe(1);
+  });
+
+  it('whole-file context carries every unchanged line of a renamed file', async () => {
+    const diff = await getFileDiffInRange(
+      repoPath,
+      { kind: 'commit', hash: renameHash },
+      'new.txt',
+      { context: WHOLE_FILE_CONTEXT }
+    );
+    expect(diff.lines.filter((l) => l.type === 'context').length).toBe(39);
+    expect(diff.lines.filter((l) => l.type === 'addition').length).toBe(1);
+    expect(rawFromLines(diff.lines)).toContain('rename from old.txt');
+  });
+
+  it('compare range: the rename survives base...HEAD too', async () => {
+    const diff = await getFileDiffInRange(repoPath, { kind: 'compare', base: 'main' }, 'new.txt');
+    expect(rawFromLines(diff.lines)).toContain('rename from old.txt');
+  });
+
+  it('head range reads the working tree against HEAD', async () => {
+    writeFixtureFile(repoPath, 'new.txt', BASE.replace('line3\n', 'EDITED3\n').replace('line9\n', 'EDITED9\n'));
+    const diff = await getFileDiffInRange(repoPath, { kind: 'head' }, 'new.txt');
+    expect(diff.lines.filter((l) => l.type === 'addition').length).toBe(1);
+    const whole = await getFileDiffInRange(repoPath, { kind: 'head' }, 'new.txt', {
+      context: WHOLE_FILE_CONTEXT,
+    });
+    expect(whole.lines.filter((l) => l.type === 'context').length).toBe(39);
+    gitExec(repoPath, 'checkout -- .');
+  });
+
+  it('an unchanged file yields nothing — the mode is not a file reader', async () => {
+    const diff = await getFileDiffInRange(repoPath, { kind: 'head' }, 'new.txt', {
+      context: WHOLE_FILE_CONTEXT,
+    });
+    expect(diff.lines).toEqual([]);
+  });
+
+  it('a path that does not exist is empty, not a throw', async () => {
+    const diff = await getFileDiffInRange(repoPath, { kind: 'head' }, 'nope.txt');
+    expect(diff.lines).toEqual([]);
   });
 });

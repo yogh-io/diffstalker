@@ -92,7 +92,7 @@ function activeRepo(path = `${HOME}/w/diffstalker`): void {
 
 /** Every UrlState field, so a test only spells out what it is about. */
 function state(part: Partial<UrlState>): UrlState {
-  return { repo: null, view: null, at: null, base: null, whole: false, ...part };
+  return { repo: null, view: null, at: null, base: null, whole: null, ...part };
 }
 
 describe('parseUrl', () => {
@@ -444,10 +444,10 @@ describe('back and forward', () => {
 describe('whole-file mode in the URL (F5 must land in the same view)', () => {
   /** Whole-file mode on for one key, without a daemon behind it. */
   function wholeOn(repo: ReturnType<typeof useRepoStore>, key: string): void {
-    repo.wholeFile = { key, diff: { lines: [] } };
+    repo.wholeFile = { key, path: key.slice(key.indexOf(':') + 1), diff: { lines: [] } };
   }
 
-  test('writes whole=1 when the mode is on for the anchored file', async () => {
+  test('writes the path of the file drawn whole', async () => {
     activeRepo();
     const repo = useRepoStore();
     const ui = useUiStore();
@@ -456,7 +456,7 @@ describe('whole-file mode in the URL (F5 must land in the same view)', () => {
     wholeOn(repo, 'u:src/a.ts');
     mount(Harness);
     await flushPromises();
-    expect(here()).toBe('/changes/~/w/diffstalker?whole=1&at=u:src/a.ts');
+    expect(here()).toBe('/changes/~/w/diffstalker?whole=src/a.ts&at=u:src/a.ts');
   });
 
   test('writes nothing when the mode is on for a DIFFERENT file', async () => {
@@ -492,7 +492,7 @@ describe('whole-file mode in the URL (F5 must land in the same view)', () => {
     await flushPromises();
 
     expect(push).toHaveBeenCalledTimes(1);
-    expect(here()).toBe('/changes/~/w/diffstalker?whole=1&at=u:src/a.ts');
+    expect(here()).toBe('/changes/~/w/diffstalker?whole=src/a.ts&at=u:src/a.ts');
   });
 
   test('the mode is part of the document title, so two Back entries differ', async () => {

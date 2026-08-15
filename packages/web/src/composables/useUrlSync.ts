@@ -10,9 +10,11 @@
  *
  *  - `base` passes: it decides what `at` is resolved against, and it is an
  *    explicit per-visit pick (a detected base is never written back).
- *  - `whole` passes: it decides how much of `at` is drawn. One file at a
- *    time, by construction — that is what keeps it a property of the
- *    anchor and not an expansion set.
+ *  - `whole` passes: it names the ONE file drawn in full rather than as
+ *    hunks. One file at a time, by construction — that is what keeps it a
+ *    property of the anchor and not an expansion set. It carries a PATH,
+ *    not a flag, because History anchors a COMMIT and the mode names a
+ *    file inside it; `whole=1` could not say which.
  *  - wrap, split view and image-diff mode FAIL on ownership. They belong
  *    to the reader rather than to a link, and live in localStorage.
  *  - the explorer's dotfiles/ignored/changed toggles FAIL on scope. They
@@ -24,10 +26,11 @@
  * the URL because it is per-anchor and per-visit; a preference is neither.
  * See docs/whole-file-mode.md §8.2.
  *
- *   /<view>/<repo-segments…>[?base=…][&whole=1][&at=…]
+ *   /<view>/<repo-segments…>[?base=…][&whole=<path>][&at=…]
  *   /                                                  (no repo open)
  *   /changes/~/w/diffstalker?at=u:packages/web/src/App.vue
- *   /changes/~/w/diffstalker?whole=1&at=u:src/App.vue
+ *   /changes/~/w/diffstalker?whole=src/App.vue&at=u:src/App.vue
+ *   /history/~/w/diffstalker?whole=src/App.vue&at=4d1c44a
  *   /history/~/w/diffstalker?at=4d1c44a
  *   /compare/~/w/calculator/fix-bbox?base=upstream/main&at=src/a.ts
  *   /explorer/srv/git/thing?at=packages/web/src/App.vue
@@ -175,8 +178,8 @@ interface Place {
   view: ViewName;
   at: string | null;
   base: string | null;
-  /** Changes only: the anchored file is drawn whole rather than as hunks. */
-  whole: boolean;
+  /** Path of the file drawn whole, or null. */
+  whole: string | null;
 }
 
 export interface RestoreContext {
@@ -258,6 +261,29 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     }
   }
 
+  /**
+   * The repo-relative path an anchor names, for the views whose anchor IS
+   * a file. Changes' anchor is a row key (`u:`/`s:` + path); Compare's is
+   * the bare path.
+   */
+  function anchorNamesFile(view: ViewName, at: string): string | null {
+    if (view === 'changes') return at.slice(at.indexOf(':') + 1);
+    if (view === 'compare') return at;
+    return null;
+  }
+
+  /**
+   * Whether `whole` describes the place being written. History anchors a
+   * COMMIT and the mode names a file inside it, so the path stands on its
+   * own there; everywhere else the anchor IS the file, and a mode set on
+   * some other file must not be written down.
+   */
+  function wholeWritable(view: ViewName, at: string | null, wholePath: string | null): boolean {
+    if (wholePath === null) return false;
+    if (view === 'history') return true;
+    return at !== null && anchorNamesFile(view, at) === wholePath;
+  }
+
   /** Derive the place the app is currently showing. */
   function derive(): Place {
     const abs = urlRepoPath.value;
@@ -265,12 +291,20 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     const at = abs === null ? null : currentAnchor();
     const base = abs !== null && view === 'compare' ? repo.selectedCompareBase : null;
     // Whole-file mode is a property OF the anchor, so it is only written
-    // when it describes the file the view is actually aimed at. Changes
-    // only for now — Compare and History do not serve the mode yet.
-    const whole =
-      abs !== null && view === 'changes' && at !== null && repo.wholeFile?.key === at;
+    // when it describes the file the view is actually aimed at.
+    //
+    // The two surfaces name that file differently: Changes' anchor IS the
+    // row key (`u:`/`s:` + path), while Compare's anchor is the bare PATH
+    // and its row key carries a `c:`/`u:` prefix. Comparing the wrong one
+    // would silently never write the key on Compare.
+    // `whole` names the FILE drawn whole. Changes and Compare draw the
+    // anchored file, so it is only written when the mode is on for that
+    // file; History anchors a COMMIT, and the mode names a file inside it,
+    // which is the whole reason this key carries a path and not a flag.
+    const wholePath = repo.wholeFile?.path ?? null;
+    const whole = wholeWritable(view, at, wholePath) ? wholePath : null;
     if (abs === null)
-      return { url: '/', repoPath: null, view, at: null, base: null, whole: false };
+      return { url: '/', repoPath: null, view, at: null, base: null, whole: null };
     return {
       url: buildUrlPath({ view, repoPath: abs, home: home.value, at, base, whole }),
       repoPath: abs,
@@ -286,7 +320,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     const parts: string[] = [];
     // The mode is part of the name: two Back entries for the same file,
     // one whole and one in hunks, must not read identically in the menu.
-    if (place.at !== null) parts.push(place.whole ? `${place.at} (whole)` : place.at);
+    if (place.at !== null) parts.push(place.whole !== null ? `${place.at} (whole)` : place.at);
     parts.push(place.view);
     if (place.repoPath !== null) parts.push(place.repoPath.split('/').filter(Boolean).pop() ?? '');
     return parts.filter(Boolean).join(' — ') || 'diffstalker';

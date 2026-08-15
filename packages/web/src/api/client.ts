@@ -254,8 +254,42 @@ export class DiffstalkerClient {
     );
   }
 
-  commitDiff(id: string, hash: string): Promise<DiffResult> {
-    return request('GET', this.repoPath(id, `/commits/${encodeURIComponent(hash)}/diff`));
+  /**
+   * `path` narrows to one file and `whole` widens its context — the read
+   * behind whole-file mode in History. The daemon carries both sides of a
+   * rename in the pathspec, so a renamed file stays a rename.
+   */
+  commitDiff(
+    id: string,
+    hash: string,
+    opts: { path?: string; whole?: boolean } = {}
+  ): Promise<DiffResult> {
+    return request(
+      'GET',
+      this.repoPath(id, `/commits/${encodeURIComponent(hash)}/diff`) +
+        toQuery({ path: opts.path, whole: opts.whole })
+    );
+  }
+
+  /**
+   * One file's diff inside a comparison. `uncommitted` selects the row's
+   * actual comparison: Compare's stack mixes rows measured against the
+   * base with rows measured against HEAD.
+   */
+  compareFileDiff(
+    id: string,
+    opts: { path: string; base?: string; uncommitted?: boolean; whole?: boolean }
+  ): Promise<DiffResult> {
+    return request(
+      'GET',
+      this.repoPath(id, '/compare/file') +
+        toQuery({
+          path: opts.path,
+          base: opts.base,
+          uncommitted: opts.uncommitted,
+          whole: opts.whole,
+        })
+    );
   }
 
   baseBranches(id: string): Promise<string[]> {

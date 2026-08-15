@@ -9,15 +9,18 @@ Status per slice (§10):
 - **Slice 0 — done.** Context pinned to `-U3` on every diff function
   (`DIFF_CONTEXT_LINES` in `packages/core/src/git/diff.ts`), with tests that
   fail without it. A defect fix; it needed no trigger and shipped on its own.
+- **Slice A — done.** The ref-pair label on all four diff surfaces
+  (`utils/refPair.ts` holds the vocabulary; `RefPairLabel.vue` renders it).
 - **Slice B — done.** Whole-file mode in Changes, the `whole` parameter, the
   store slot, the URL key and its principle rewrite, and the Explorer's
   `show changes` button.
-- **Slice A (the always-on ref-pair label) — not built.** It was specified to
-  ship first and did not; the mode was asked for directly. It stands on its own
-  and is still worth doing.
-- **Slices C–D — proposed.** Not built.
+- **Slice C — done.** Compare and History, on a rename-preserving pathspec
+  (`getFileDiffInRange` in core, `GET /compare/file` and `path`/`whole` on
+  `GET /commits/:hash/diff`).
+- **Slice D — done.** Per-side document highlighting in whole-file mode
+  (`documentRuns` in `utils/diffHighlight.ts`).
 
-**Where the build deviated from this document, and why.** Both are corrections
+**Where the build deviated from this document, and why.** All are corrections
 to it, not shortcuts around it:
 
 1. **§8.2 said `pendingAnchor` needs no widening.** It does. A cold load parks
@@ -34,6 +37,23 @@ to it, not shortcuts around it:
    is where that job belongs. `estimateBodyHeight` DID need the rowCount path
    and got it — the stats guess under-sizes a whole-file body about twentyfold,
    and the stack's arithmetic offsets are built on that number.
+3. **The URL key carries a PATH, not the boolean this document specified.**
+   `whole=1` works for Changes and Compare, whose anchor IS a file. History's
+   anchor is a COMMIT and the mode names a file inside it, so a flag could not
+   say which file. `whole=<path>` is uniform across all three and keeps every
+   property the boolean was chosen for: one value, never a list; unable to
+   express "ten more lines"; scoped to the anchor. The §7 argument against
+   `?context=N` is untouched — the key still cannot name an amount.
+4. **A refusal path the document assumed but did not specify.** At full context
+   a big file trips the per-file diff cap, and the daemon answers with a
+   "Large file — diff not shown" notice. Installing that response REPLACED a
+   working hunk view with the notice: the reader asked for more of the file and
+   was left with none of it. Caught by testing a 4,900-line fixture; the store
+   now refuses the response, keeps the hunks, and puts the reason on the
+   toggle. This was also the cause of an intermittent renderer freeze, since it
+   swapped a diff body for a note strip.
+5. **`canGoWhole` excludes `added` as well as `untracked`.** A file with no old
+   side is already whole; wider context has nothing to reveal.
 
 The analysis is kept as written, the way `docs/search-design.md` keeps its own.
 §9 is the override section: which §6 trigger fired, on what evidence, the one

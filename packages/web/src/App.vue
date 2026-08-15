@@ -163,7 +163,7 @@ const urlSync = useUrlSync({ onRestore: applyUrlState });
  * it is aiming at and returns; the watchers below apply it when the data
  * arrives, and drop it if the user moves first.
  */
-const pendingAnchor = ref<{ view: ViewName; at: string; whole?: boolean } | null>(null);
+const pendingAnchor = ref<{ view: ViewName; at: string; whole?: string | null } | null>(null);
 
 /**
  * Show the place a URL names — a deep link on cold load and every Back /
@@ -230,7 +230,7 @@ async function applyAnchor(state: UrlState, ctx: RestoreContext): Promise<void> 
       else if (state.at !== explorer.selectedPath) await explorer.revealFile(state.at);
       return;
     case 'history':
-      await applyHistoryAnchor(state.at, ctx);
+      await applyHistoryAnchor(state.at, state.whole, ctx);
       return;
     case 'compare':
       await applyCompareAnchor(state, ctx);
@@ -250,7 +250,7 @@ async function applyAnchor(state: UrlState, ctx: RestoreContext): Promise<void> 
  * the EXACT FileEntry from the current status — rows and re-anchoring are
  * identity-based. No status yet means no files to match: park it.
  */
-function applyChangesAnchor(at: string | null, whole: boolean = false): void {
+function applyChangesAnchor(at: string | null, whole: string | null = null): void {
   if (at === null) {
     repo.selectFile(null);
     ui.setActiveStackKey(null);
@@ -279,7 +279,12 @@ function applyChangesAnchor(at: string | null, whole: boolean = false): void {
   // while the app still draws the file whole, and the truthful rewrite
   // that follows puts `whole=1` straight back into the entry the reader
   // was trying to leave.
-  void repo.setWholeFile(whole ? key : null);
+  // ABSENT MEANS OFF, and a `whole` naming a DIFFERENT file than the
+  // anchor is not honoured either: Changes draws the anchored file whole
+  // or nothing at all.
+  void repo.setWholeFile(
+    whole === match.path ? { view: 'changes', key, path: match.path } : null
+  );
 }
 
 /**
@@ -288,20 +293,40 @@ function applyChangesAnchor(at: string | null, whole: boolean = false): void {
  * resolved by hash on its own so a deep link to an old commit works
  * without re-pulling the whole log at a larger count.
  */
-async function applyHistoryAnchor(hash: string | null, ctx: RestoreContext): Promise<void> {
+async function applyHistoryAnchor(
+  hash: string | null,
+  whole: string | null,
+  ctx: RestoreContext
+): Promise<void> {
   if (hash === null) {
     await repo.selectHistoryCommit(null);
+    void repo.setWholeFile(null);
     return;
   }
-  if (repo.history.selectedCommit?.hash.startsWith(hash)) return;
+  const applyWhole = (fullHash: string): void => {
+    // ABSENT MEANS OFF, as everywhere else. The key carries the commit, so
+    // a `whole` restored onto a different commit cannot be honoured by
+    // accident.
+    void repo.setWholeFile(
+      whole === null
+        ? null
+        : { view: 'history', key: `h:${fullHash}:${whole}`, path: whole, hash: fullHash }
+    );
+  };
+  if (repo.history.selectedCommit?.hash.startsWith(hash)) {
+    applyWhole(repo.history.selectedCommit.hash);
+    return;
+  }
   const match = repo.history.commits.find((c) => c.hash.startsWith(hash));
   if (match) {
     await repo.selectHistoryCommit(match);
+    applyWhole(match.hash);
     return;
   }
   const commit = await repo.resolveCommit(hash);
   if (commit === null || ctx.isStale()) return;
   await repo.selectHistoryCommit(commit);
+  applyWhole(commit.hash);
 }
 
 /**
@@ -315,17 +340,32 @@ async function applyCompareAnchor(state: UrlState, ctx: RestoreContext): Promise
     await repo.setSelectedCompareBase(state.base);
     if (ctx.isStale()) return;
   }
-  if (state.at === null) return;
+  if (state.at === null) {
+    void repo.setWholeFile(null);
+    return;
+  }
   const files = repo.compare.compareDiff?.files;
   if (!files) {
-    pendingAnchor.value = { view: 'compare', at: state.at };
+    pendingAnchor.value = { view: 'compare', at: state.at, whole: state.whole };
     return;
   }
   const index = files.findIndex((f) => f.path === state.at);
   if (index === -1) return;
   repo.selectCompareFile(index);
+  const file = files[index];
   // The URL carries a path; the stack is keyed by side + path.
-  ui.requestStackScroll(compareFileKey(files[index]));
+  ui.requestStackScroll(compareFileKey(file));
+  // ABSENT MEANS OFF here too — see applyChangesAnchor.
+  void repo.setWholeFile(
+    state.whole === file.path
+      ? {
+          view: 'compare',
+          key: compareFileKey(file),
+          path: file.path,
+          uncommitted: file.isUncommitted === true,
+        }
+      : null
+  );
 }
 
 // The parked anchor lands when its data does. Both watchers check the view
@@ -337,7 +377,7 @@ watch(
     const parked = pendingAnchor.value;
     if (parked?.view !== 'changes' || ui.activeView !== 'changes') return;
     pendingAnchor.value = null;
-    applyChangesAnchor(parked.at, parked.whole ?? false);
+    applyChangesAnchor(parked.at, parked.whole ?? null);
   }
 );
 
@@ -350,7 +390,18 @@ watch(
     const index = compareDiff.files.findIndex((f) => f.path === parked.at);
     if (index === -1) return;
     repo.selectCompareFile(index);
-    ui.requestStackScroll(compareFileKey(compareDiff.files[index]));
+    const file = compareDiff.files[index];
+    ui.requestStackScroll(compareFileKey(file));
+    void repo.setWholeFile(
+      parked.whole === file.path
+        ? {
+            view: 'compare',
+            key: compareFileKey(file),
+            path: file.path,
+            uncommitted: file.isUncommitted === true,
+          }
+        : null
+    );
   }
 );
 

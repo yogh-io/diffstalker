@@ -79,6 +79,7 @@ import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import { DaemonError, errorMessage, isConnectionError } from '../api/errors';
 import { splitDiffByFile } from '@diffstalker/core/view/splitDiffByFile';
+import { isLargeFileDiff } from '@diffstalker/core/git/diffParse';
 import { diffModel } from '../utils/diffRows';
 import type { DiffModel } from '../utils/diffRows';
 import type { SseHandle } from '../api/transport';
@@ -95,6 +96,7 @@ import type { CompareDiff, CompareFileDiff, DiffResult } from '@diffstalker/core
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type {
+  WholeFileRequest,
   RepoSharedState,
   RepoSelectionState,
   RepoHistoryState,
@@ -333,9 +335,17 @@ export const useRepoStore = defineStore('repo', () => {
    * stampDiff for it), so whole-file mode shows no per-hunk age. The U3
    * body stays in workingDiffs, so toggling back restores all of it.
    */
-  const wholeFile = shallowRef<{ key: string; diff: DiffResult } | null>(null);
+  const wholeFile = shallowRef<{ key: string; path: string; diff: DiffResult } | null>(null);
+  /** The request that filled the slot, replayed when the tree moves. */
+  let wholeFileRequest: WholeFileRequest | null = null;
   /** Whole-file fetch in flight (the toggle renders busy). */
   const wholeFileLoading = shallowRef(false);
+  /**
+   * Why the last whole-file request could not be served, keyed by the row
+   * that asked. The mode stays OFF and the hunks stay on screen — asking
+   * for MORE context must never leave you with less than you had.
+   */
+  const wholeFileRefusal = shallowRef<{ key: string; reason: string } | null>(null);
   /** Guards against an older whole-file response landing over a newer one. */
   let wholeFileFetchSeq = 0;
 
@@ -509,6 +519,8 @@ export const useRepoStore = defineStore('repo', () => {
     // `whole=1` into the new repo's address.
     wholeFile.value = null;
     wholeFileLoading.value = false;
+    wholeFileRefusal.value = null;
+    wholeFileRequest = null;
     wholeFileFetchSeq++;
   }
 
@@ -1121,28 +1133,66 @@ export const useRepoStore = defineStore('repo', () => {
   }
 
   /**
-   * Turn whole-file mode on for one key, or off with null. Turning it on
-   * for another file turns it off for the previous one — one slot.
+   * The read behind one whole-file request. Compare's rows are pulled per
+   * file from the daemon (the stack pulls the range whole and splits it
+   * client-side, so there is no per-file request to widen), and its
+   * uncommitted rows sit against HEAD rather than against the base.
+   */
+  function fetchWholeDiff(id: string, request: WholeFileRequest): Promise<DiffResult> {
+    if (request.view === 'history') {
+      return client.commitDiff(id, request.hash, { path: request.path, whole: true });
+    }
+    if (request.view === 'compare') {
+      return client.compareFileDiff(id, {
+        path: request.path,
+        base: selectedCompareBase.value ?? undefined,
+        uncommitted: request.uncommitted,
+        whole: true,
+      });
+    }
+    const entry = workingSnapshot?.files.get(request.key);
+    return client.diff(id, {
+      path: entry?.path ?? request.path,
+      staged: entry?.staged ?? false,
+      whole: true,
+    });
+  }
+
+  /**
+   * Turn whole-file mode on for one row, or off with null. Turning it on
+   * for another row turns it off for the previous one — one slot.
+   *
+   * The request names its SURFACE, not just a key: Changes and Compare
+   * both use `u:`-prefixed keys, and the two mean different comparisons
+   * (index-vs-worktree, and HEAD-vs-worktree inside a branch comparison).
+   * A key alone could not pick the right read.
    *
    * Never rejects. A failed fetch leaves the mode OFF rather than on-and-
    * empty: the hunks stay on screen, which is the truthful fallback.
    * An untracked file is refused here rather than fetched — its diff is
    * already the whole file, and the daemon has no wider context to give.
    */
-  async function setWholeFile(key: string | null): Promise<void> {
+  async function setWholeFile(request: WholeFileRequest | null): Promise<void> {
     const id = repoId.value;
     const token = ++wholeFileFetchSeq;
-    if (key === null || id === null) {
+    wholeFileRequest = request;
+    if (request === null || id === null) {
       wholeFile.value = null;
       wholeFileLoading.value = false;
+      wholeFileRefusal.value = null;
       return;
     }
-    const entry = workingSnapshot?.files.get(key);
-    if (!entry || entry.status === 'untracked') {
-      wholeFile.value = null;
-      wholeFileLoading.value = false;
-      return;
+    const key = request.key;
+    if (request.view === 'changes') {
+      const entry = workingSnapshot?.files.get(key);
+      if (!entry || entry.status === 'untracked') {
+        wholeFile.value = null;
+        wholeFileLoading.value = false;
+        wholeFileRefusal.value = null;
+        return;
+      }
     }
+    wholeFileRefusal.value = null;
     // Drop the old body immediately: keeping file A's text on screen
     // while file B loads would render one file's diff under another's
     // header.
@@ -1150,13 +1200,21 @@ export const useRepoStore = defineStore('repo', () => {
     wholeFileLoading.value = true;
     const gen = generation;
     try {
-      const diff = await client.diff(id, {
-        path: entry.path,
-        staged: entry.staged,
-        whole: true,
-      });
+      const diff = await fetchWholeDiff(id, request);
       if (gen !== generation || token !== wholeFileFetchSeq) return;
-      wholeFile.value = { key, diff: markRaw(diff) };
+      // The daemon withheld it: at full context this file is over the
+      // per-file diff cap. Installing that response would REPLACE a
+      // perfectly good hunk view with "Large file — diff not shown" — the
+      // reader asked for more of the file and would be left with none of
+      // it. Refuse instead, keep the hunks, and say why on the toggle.
+      if (isLargeFileDiff(diff)) {
+        wholeFileRefusal.value = {
+          key,
+          reason: 'Too large to show whole — the hunks are all of it that fits',
+        };
+        return;
+      }
+      wholeFile.value = { key, path: request.path, diff: markRaw(diff) };
     } catch (err) {
       if (gen !== generation || token !== wholeFileFetchSeq) return;
       if (isConnectionError(err)) {
@@ -1178,13 +1236,17 @@ export const useRepoStore = defineStore('repo', () => {
    * skipped this would be the one stale diff on screen.
    */
   function refreshWholeFileAfterState(changed: FileEntry[]): void {
-    const key = wholeFile.value?.key ?? null;
-    if (key === null) return;
-    if (workingSnapshot !== null && !workingSnapshot.files.has(key)) {
+    const request = wholeFileRequest;
+    if (request === null || wholeFile.value === null) return;
+    // Only Changes' rows live in the working-tree status set; a Compare
+    // row's identity is the comparison, which a status change does not
+    // invalidate on its own.
+    if (request.view !== 'changes') return;
+    if (workingSnapshot !== null && !workingSnapshot.files.has(request.key)) {
       void setWholeFile(null);
       return;
     }
-    if (changed.some((file) => workingDiffKey(file) === key)) void setWholeFile(key);
+    if (changed.some((file) => workingDiffKey(file) === request.key)) void setWholeFile(request);
   }
 
   /**
@@ -1909,6 +1971,7 @@ export const useRepoStore = defineStore('repo', () => {
     workingDiffs,
     wholeFile,
     wholeFileLoading,
+    wholeFileRefusal,
     mediaMeta,
     selection,
     history,

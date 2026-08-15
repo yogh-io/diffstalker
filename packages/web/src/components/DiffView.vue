@@ -47,11 +47,14 @@ import type { DiffResult } from '@diffstalker/core/git/diff';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import { buildDiffModel } from '../utils/diffRows';
 import type { DiffContentRow, DiffFileSection, DiffHunkGroup } from '../utils/diffRows';
-import { diffLanguage, syntaxPieces } from '../utils/diffHighlight';
+import { diffLanguage, documentRuns, syntaxPieces } from '../utils/diffHighlight';
 import { splitRows } from '../utils/diffSplit';
 import DiffLineContent from './DiffLineContent.vue';
 import ViewFileButton from './ViewFileButton.vue';
 import CopyPathButton from './CopyPathButton.vue';
+import RefPairLabel from './RefPairLabel.vue';
+import WholeFileToggle from './WholeFileToggle.vue';
+import type { RefPair } from '../utils/refPair';
 
 const props = defineProps<{
   diff: DiffResult | null;
@@ -61,6 +64,21 @@ const props = defineProps<{
   mode?: 'unified' | 'split';
   /** Syntax-highlight content lines (global toggle). Off by default. */
   syntax?: boolean;
+  /**
+   * What this diff is between, printed in each file header. Omitted
+   * renders nothing — the surfaces that do not fix a single pair for the
+   * whole view (a mixed stack) label per section instead.
+   */
+  refPair?: RefPair;
+  /**
+   * Whole-file mode, opt-in per surface (History only for now). `wholePath`
+   * is the one file drawn whole; the toggle appears on every file header
+   * when `showWholeToggle` is set.
+   */
+  showWholeToggle?: boolean;
+  wholePath?: string | null;
+  wholeLoading?: boolean;
+  wholeRefusal?: { key: string; reason: string } | null;
   /**
    * Wrap long lines instead of horizontal-scrolling them (global toggle,
    * off by default). Unified rows lose their row-level content-visibility
@@ -93,6 +111,8 @@ const props = defineProps<{
   embedded?: boolean;
 }>();
 
+const emit = defineEmits<{ 'toggle-whole': [path: string] }>();
+
 /**
  * hljs language per file section (null = plain), memoized by section
  * key so a multi-file diff resolves each file once. A headerless
@@ -107,11 +127,35 @@ const sectionLang = computed(() => {
 });
 
 /**
+ * Per-section document runs, for a section drawn WHOLE. With full context
+ * each side is a complete file, so it can be highlighted in one pass —
+ * which is both more correct (block comments and template blocks keep
+ * their state across rows) and cheaper (two hljs calls per file instead
+ * of one per row). Absent for a hunk view, where per-line is the only
+ * honest option.
+ */
+const sectionDocRuns = computed(() => {
+  const map = new Map<string, ReturnType<typeof documentRuns>>();
+  if (props.syntax !== true || props.wholePath == null) return map;
+  for (const section of model.value.sections) {
+    if ((section.filePath ?? props.filePath) !== props.wholePath) continue;
+    const rows = section.hunks.flatMap((h) => h.rows);
+    map.set(section.key, documentRuns(rows, sectionLang.value.get(section.key) ?? null));
+  }
+  return map;
+});
+
+/**
  * Tokenized pieces for a content row, or null when the plain / word-hl
  * path should render instead (syntax off, unknown language, huge line).
  */
 function pieces(row: DiffContentRow, section: DiffFileSection): ReturnType<typeof syntaxPieces> {
-  return syntaxPieces(row, sectionLang.value.get(section.key) ?? null, props.syntax === true);
+  return syntaxPieces(
+    row,
+    sectionLang.value.get(section.key) ?? null,
+    props.syntax === true,
+    sectionDocRuns.value.get(section.key)
+  );
 }
 
 /** Pieces for one side of a split row (null cell = empty padding). */
@@ -262,7 +306,14 @@ onBeforeUnmount(() => {
              both pin to left:0 and overlap once scrolled horizontally. -->
         <span class="pin-x"
           ><span class="file-path">{{ s.filePath }}</span
-          ><ViewFileButton :path="s.filePath" /><CopyPathButton :path="s.filePath"
+          ><RefPairLabel v-if="refPair" :pair="refPair" /><WholeFileToggle
+            v-if="showWholeToggle"
+            :on="wholePath === s.filePath"
+            :busy="wholeLoading && wholePath === s.filePath"
+            :disabled="wholeRefusal?.key === s.filePath"
+            :disabled-reason="wholeRefusal?.key === s.filePath ? wholeRefusal.reason : undefined"
+            @toggle="emit('toggle-whole', s.filePath)" /><ViewFileButton
+            :path="s.filePath" /><CopyPathButton :path="s.filePath"
         /></span>
       </div>
       <div v-for="(note, i) in s.notes" :key="i" class="file-note">

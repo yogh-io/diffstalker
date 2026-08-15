@@ -24,23 +24,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   null when the daemon bound only a socket). A socket client could not
   otherwise tell whether a browser URL exists at all; `diffstalker link` says
   so plainly instead of guessing a port.
-- **Whole-file mode in the web UI's Changes view.** A `whole file` toggle in
-  each diff header draws that one file in full — every line numbered, the
-  changed ones marked in place — instead of hunks with three lines of context.
+- **Whole-file mode in the web UI.** A `whole file` toggle in each diff header
+  (Changes, Compare, History) draws that one file in full — every line
+  numbered, the changed ones marked in place — instead of hunks with three
+  lines of context.
   It is for reading a change in the context of the file it happened in, which
   is the one thing `view file` could not do: it gave you the file and dropped
   every change marker.
   You never pick a ref. The view already fixes the pair and the mode inherits
   it. It applies to one file at a time — the anchored one — which is what lets
-  it live in the URL as `whole=1`, so F5 lands in the same view, a link shares
-  it, and Back turns it off. Untracked files do not offer it (their diff is
+  it live in the URL as `whole=<path>`, so F5 lands in the same view, a link
+  shares it, and Back turns it off. Untracked files do not offer it (their diff is
   already the whole file); binary files and diffs withheld over the size cap
   disable it with the reason, and keep their hunks on screen.
-  Changes only for now: Compare and History need rename-preserving path-scoped
-  diffs first. The Explorer gains the mirror of `view file` — a `show changes`
-  button, shown only for a file that actually has one — so the trip between
-  reading a file and reading its diff finally goes both ways. The Explorer
-  renders no diff and holds no ref. See `docs/whole-file-mode.md`.
+  In History it is the only correct answer to "show me this in context":
+  `view file` there opens TODAY's copy of the path, which is different bytes
+  than the historical diff is about. A file over the per-file diff cap keeps
+  its hunks and says why on the toggle, rather than replacing a working diff
+  with a "not shown" notice.
+  The Explorer gains the mirror of `view file` — a `show changes` button, shown
+  only for a file that actually has one — so the trip between reading a file
+  and reading its diff finally goes both ways. The Explorer renders no diff and
+  holds no ref. See `docs/whole-file-mode.md`.
+- **Every diff header now says what it is comparing.** `index → working tree`,
+  `HEAD → index`, `origin/main…HEAD`, `a1b2c3d^ → a1b2c3d`. Each view always
+  fixed a ref pair and none of them said which, which is what made the question
+  feel unanswerable. It also separates Compare's two kinds of row: committed
+  ones sit against the merge-base, uncommitted ones against HEAD.
+- **Syntax highlighting is document-wide in whole-file mode.** With full
+  context each side of the diff is a complete file, so a block comment stays a
+  comment for all twenty of its lines instead of being re-tokenized row by row.
+  Hunk views keep per-line highlighting — a hunk interleaves two file versions
+  and has no single valid document to feed the highlighter.
+- **`GET /repos/:id/compare/file?path=&base=&uncommitted=&whole=`** and
+  `path`/`whole` on **`GET /repos/:id/commits/:hash/diff`** — one file's diff
+  inside a comparison or a commit, which the stacked views need because they
+  pull a range whole and split it client-side. Both carry BOTH sides of a
+  rename in the pathspec: scoped to the new path alone, git reports a rename as
+  a plain add, which at full context would turn a two-line edit into a whole
+  file of additions.
 - **`GET /repos/:id/diff?whole=true`** — the wire behind it. Requires `path`
   (400 without one: a wide whole-tree diff is unbounded work behind an
   unthrottled GET), and is never annotated with hunk edit times, because a

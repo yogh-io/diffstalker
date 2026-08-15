@@ -775,11 +775,20 @@ git operations.
   says `copied` — or `copy failed`, since the clipboard API is missing
   outside a secure context, and a click that silently does nothing reads as
   a broken UI.
-- **"whole file" toggle in the Changes diff headers** — draws that one file
-  in full, every line numbered, with the changed lines marked in place,
-  instead of hunks with three lines of context around each. The point is
-  reading a change in the context of the file it happened in, without
-  losing the change markers the way "view file" does.
+- **Ref-pair label in every diff header** — what this diff is actually
+  between: `index → working tree`, `HEAD → index`, `origin/main…HEAD`,
+  `a1b2c3d^ → a1b2c3d`. Every view already fixed a pair and none of them
+  said so, which is what made "what am I comparing against" feel
+  unanswerable. Not a picker: nothing here is editable. It also disambiguates
+  Compare's mixed stack, where committed rows sit against the merge-base and
+  uncommitted rows against HEAD.
+- **"whole file" toggle in the Changes, Compare and History diff headers** —
+  draws that one file in full, every line numbered, with the changed lines
+  marked in place, instead of hunks with three lines of context around each.
+  The point is reading a change in the context of the file it happened in,
+  without losing the change markers the way "view file" does. In History it
+  is the only correct answer: "view file" there opens TODAY's copy of the
+  path, which is different bytes than the historical diff is about.
   - The ref pair is never chosen. Each view already fixes one (Changes
     compares the index against the working tree, or HEAD against the
     index), and the mode inherits it. There is no ref input anywhere.
@@ -795,8 +804,16 @@ git operations.
     section going blank.
   - No hunk edit times in this mode (the daemon does not stamp a
     whole-file diff); toggling back restores them.
-  - Changes only for now. Compare and History need rename-preserving
-    path-scoped diffs first — see `docs/whole-file-mode.md`.
+  - In Compare and History the request is path-scoped, which would normally
+    destroy rename detection (`git diff -M -- new.txt` reports a rename as a
+    plain add). The pathspec carries BOTH sides of a rename, so a
+    rename-with-edits stays a rename instead of becoming a whole file of
+    additions.
+  - Syntax highlighting switches to per-side DOCUMENT highlighting in this
+    mode. With full context each side is a complete file, so block comments
+    and template blocks keep their state across rows instead of being
+    re-tokenized line by line — and it costs two highlight calls per file
+    instead of one per row.
 - **"show changes" button in the Explorer's file header** — the mirror of
   "view file", and the Explorer's only way out. It appears only when the
   open file actually has a working-tree change, and jumps to that file's

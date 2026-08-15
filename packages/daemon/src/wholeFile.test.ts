@@ -48,6 +48,8 @@ const LINE_COUNT = 60;
 const BASE = Array.from({ length: LINE_COUNT }, (_, i) => `line${i + 1}`).join('\n') + '\n';
 const EDITED = BASE.replace('line2\n', 'EDITED2\n').replace('line55\n', 'EDITED55\n');
 
+let renameHash = '';
+
 beforeAll(async () => {
   repoDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalkerd-whole-')));
   tempDirs.push(repoDir);
@@ -55,8 +57,16 @@ beforeAll(async () => {
   gitExec(repoDir, 'config user.email "test@test.com"');
   gitExec(repoDir, 'config user.name "Test User"');
   fs.writeFileSync(path.join(repoDir, 'long.txt'), BASE);
+  fs.writeFileSync(path.join(repoDir, 'old.txt'), BASE);
   gitExec(repoDir, 'add .');
   gitExec(repoDir, 'commit -m "base"');
+  // A rename WITH an edit, on a branch — the case path-scoping destroys.
+  gitExec(repoDir, 'checkout -b feature');
+  gitExec(repoDir, 'mv old.txt renamed.txt');
+  fs.writeFileSync(path.join(repoDir, 'renamed.txt'), EDITED);
+  gitExec(repoDir, 'add -A');
+  gitExec(repoDir, 'commit -m "rename and edit"');
+  renameHash = gitExec(repoDir, 'rev-parse HEAD').trim();
   fs.writeFileSync(path.join(repoDir, 'long.txt'), EDITED);
   fs.writeFileSync(path.join(repoDir, 'fresh.txt'), 'brand new\n');
 
@@ -151,6 +161,83 @@ describe('GET /diff?whole=true', () => {
       expect(res.status).toBe(200);
       const lines = ((await res.json()) as { lines: WireDiffLine[] }).lines;
       expect(lines.filter((l) => l.type === 'context').length).toBe(LINE_COUNT - 2);
+    } finally {
+      await webDaemon.close();
+    }
+  });
+});
+
+describe('one file inside a range (History and Compare)', () => {
+  test('GET /commits/:hash/diff?path= keeps a rename a rename', async () => {
+    // Scoped to the new path alone git reports `A renamed.txt` — the whole
+    // file as an addition. In whole-file mode that would turn a two-line
+    // edit into a wall of green.
+    const res = await request(
+      `/repos/${repoId}/commits/${renameHash}/diff?path=renamed.txt&whole=true`
+    );
+    expect(res.status).toBe(200);
+    const lines = ((await res.json()) as { lines: WireDiffLine[] }).lines;
+    const raw = lines.map((l) => l.content).join('\n');
+    expect(raw).toContain('rename from old.txt');
+    expect(raw).toContain('rename to renamed.txt');
+    expect(lines.filter((l) => l.type === 'addition').length).toBe(2);
+    expect(lines.filter((l) => l.type === 'context').length).toBe(LINE_COUNT - 2);
+  });
+
+  test('GET /commits/:hash/diff?whole=true without a path is a 400', async () => {
+    const res = await request(`/repos/${repoId}/commits/${renameHash}/diff?whole=true`);
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /commits/:hash/diff unscoped is unchanged', async () => {
+    const res = await request(`/repos/${repoId}/commits/${renameHash}/diff`);
+    expect(res.status).toBe(200);
+    const lines = ((await res.json()) as { lines: WireDiffLine[] }).lines;
+    expect(lines.length).toBeGreaterThan(0);
+  });
+
+  test('GET /compare/file keeps the rename across base…HEAD', async () => {
+    const res = await request(
+      `/repos/${repoId}/compare/file?path=renamed.txt&base=main&whole=true`
+    );
+    expect(res.status).toBe(200);
+    const lines = ((await res.json()) as { lines: WireDiffLine[] }).lines;
+    const raw = lines.map((l) => l.content).join('\n');
+    expect(raw).toContain('rename from old.txt');
+    expect(lines.filter((l) => l.type === 'context').length).toBe(LINE_COUNT - 2);
+  });
+
+  test('GET /compare/file requires a path', async () => {
+    const res = await request(`/repos/${repoId}/compare/file?base=main`);
+    expect(res.status).toBe(400);
+  });
+
+  test('GET /compare/file?uncommitted=true reads against HEAD, not the base', async () => {
+    // long.txt is dirty in the working tree but identical at HEAD on this
+    // branch, so the two comparisons genuinely differ.
+    const res = await request(
+      `/repos/${repoId}/compare/file?path=long.txt&uncommitted=true&whole=true`
+    );
+    expect(res.status).toBe(200);
+    const lines = ((await res.json()) as { lines: WireDiffLine[] }).lines;
+    expect(lines.filter((l) => l.type === 'context').length).toBe(LINE_COUNT - 2);
+  });
+
+  test('/compare/file is routed on the web surface', async () => {
+    const webDaemon = createDaemon({ followEnabled: false, apiMode: 'web' });
+    await webDaemon.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const addr = webDaemon.address();
+      if (addr === null || typeof addr === 'string') throw new Error('no TCP address');
+      const base = `http://127.0.0.1:${addr.port}`;
+      const opened = await fetch(`${base}/repos`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: repoDir }),
+      });
+      const id = ((await opened.json()) as { id: string }).id;
+      const res = await fetch(`${base}/repos/${id}/compare/file?path=renamed.txt&base=main`);
+      expect(res.status).toBe(200);
     } finally {
       await webDaemon.close();
     }

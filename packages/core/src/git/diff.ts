@@ -579,6 +579,106 @@ export async function getCommitCountBetweenRefs(
 }
 
 /**
+ * Which two things a single-file diff is between. The three ranges the
+ * diff surfaces actually show, named rather than passed as raw revspecs —
+ * nothing here lets a caller name an arbitrary ref.
+ */
+export type DiffRange =
+  /** History: what one commit changed, against its parent. */
+  | { kind: 'commit'; hash: string }
+  /** Compare's committed rows: base…HEAD, three-dot. */
+  | { kind: 'compare'; base: string }
+  /** Compare's uncommitted rows: HEAD against the working tree. */
+  | { kind: 'head' };
+
+/**
+ * How a range is spelled as git arguments, with the SUBCOMMAND first —
+ * one place, so the rename lookup and the diff itself can never disagree
+ * about what range they are reading.
+ *
+ * `extra` is an argument that must sit before `--end-of-options` (which
+ * exists so a flag-shaped hash cannot be read as an option).
+ */
+function rangeArgs(range: DiffRange, flags: string[]): string[] {
+  switch (range.kind) {
+    case 'commit':
+      // Flags must precede --end-of-options, which is what keeps a
+      // flag-shaped hash from being read as an option.
+      return ['show', '--format=', ...flags, '--end-of-options', range.hash];
+    case 'compare':
+      return ['diff', ...flags, `${range.base}...HEAD`];
+    case 'head':
+      return ['diff', ...flags, 'HEAD'];
+  }
+}
+
+/**
+ * The old path of a file that was RENAMED within a range, or null.
+ *
+ * This exists because path-scoping destroys rename detection. Verified:
+ * after `git mv old.txt new.txt` plus an edit,
+ *
+ *   git show --name-status -M HEAD                 -> R087  old.txt  new.txt
+ *   git show --name-status -M HEAD -- new.txt      -> A     new.txt
+ *   git show --name-status -M HEAD -- old.txt new.txt -> R087 old.txt new.txt
+ *
+ * So asking for one file by its new path alone reports the whole file as
+ * an addition. In hunk form that is merely wrong; in whole-file form it
+ * turns a rename-with-two-edited-lines into a thousand-line block of
+ * additions — a confidently wrong answer from the mode whose entire point
+ * is showing the change in context.
+ *
+ * `--diff-filter=R` keeps this to the renames only, which is a short list
+ * in any realistic range.
+ */
+async function renamedFrom(repoPath: string, range: DiffRange, file: string): Promise<string | null> {
+  const git = createGit(repoPath);
+  const args = rangeArgs(range, ['--name-status', '-M', '--diff-filter=R']);
+  let raw: string;
+  try {
+    raw = await git.raw(args);
+  } catch {
+    // A rename lookup that fails must not fail the diff: the worst case
+    // is the pre-existing behaviour (the file read as an add).
+    return null;
+  }
+  for (const line of raw.trim().split('\n')) {
+    if (!line) continue;
+    // "R087\told.txt\tnew.txt"
+    const parts = line.split('\t');
+    if (parts.length >= 3 && parts[2] === file) return parts[1];
+  }
+  return null;
+}
+
+/**
+ * One file's diff within a named range — the read behind whole-file mode
+ * in Compare and History, where the stack pulls the range whole and
+ * splits it client-side and so has no per-file request of its own.
+ *
+ * The pathspec carries BOTH sides of a rename (see renamedFrom), which is
+ * the whole reason this is not just `getDiff` with a different revspec.
+ */
+export async function getFileDiffInRange(
+  repoPath: string,
+  range: DiffRange,
+  file: string,
+  opts: { context?: number } = {}
+): Promise<DiffResult> {
+  const git = createGit(repoPath);
+  const context = opts.context ?? DIFF_CONTEXT_LINES;
+  try {
+    const oldPath = await renamedFrom(repoPath, range, file);
+    const paths = oldPath === null ? [file] : [oldPath, file];
+    const args = rangeArgs(range, ['-M', `-U${context}`]);
+    const raw = capLargeFileDiffs(await git.raw([...args, '--', ...paths]));
+    return { lines: parseDiffWithLineNumbers(raw) };
+  } catch {
+    return { lines: [] };
+  }
+}
+
+/**
  * Get diff for a specific commit.
  * Shows the changes introduced by that commit.
  */

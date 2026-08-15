@@ -299,6 +299,33 @@ function toggleFileCollapsed(key: string): void {
   else collapsedFiles.add(key);
 }
 
+/**
+ * Whole-file mode for one compare row. The row carries which comparison
+ * it belongs to: a committed row is measured against the base, an
+ * uncommitted one against HEAD, and the daemon needs to be told which.
+ */
+function toggleWholeFile(key: string): void {
+  beginUserNav({ view: 'compare' });
+  if (repo.wholeFile?.key === key) {
+    void repo.setWholeFile(null);
+    return;
+  }
+  const file = treeOrderedFiles.value.find((f) => compareFileKey(f) === key);
+  if (!file) return;
+  // Turning the mode on also ANCHORS the view here, exactly as it does in
+  // Changes. The URL carries `whole=1` as a property of `at`, so a mode
+  // set on a file the view is not aimed at could never be written down —
+  // and F5 would silently drop it.
+  const index = files.value.findIndex((f) => compareFileKey(f) === key);
+  if (index !== -1) selectFile(index);
+  void repo.setWholeFile({
+    view: 'compare',
+    key,
+    path: file.path,
+    uncommitted: file.isUncommitted === true,
+  });
+}
+
 /** Compare files mapped onto the stack's shape, keyed by compareFileKey
  *  — NOT by path: a file that is both committed on the branch and edited
  *  in the working tree is listed twice. Diffs are pre-embedded, so the
@@ -330,8 +357,16 @@ const stackFiles = computed<StackFile[]>(() =>
     status: file.status,
     uncommitted: file.isUncommitted,
     stats: { insertions: file.additions, deletions: file.deletions },
-    diff: file.diff,
+    diff:
+      repo.wholeFile?.key === compareFileKey(file) ? repo.wholeFile.diff : file.diff,
     collapsed: collapsedFiles.has(compareFileKey(file)),
+    // The two kinds of row in this stack sit against DIFFERENT bases: the
+    // committed ones against the merge-base, the uncommitted ones against
+    // HEAD. Until now only an [uncommitted] tag hinted at that, and it
+    // never mentioned a base at all.
+    refPair: file.isUncommitted
+      ? ({ kind: 'compare-uncommitted' } as const)
+      : ({ kind: 'compare', base: compare.value.baseBranch ?? null } as const),
   }))
 );
 
@@ -579,9 +614,14 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
           :syntax="ui.diffSyntaxEnabled"
           :mode="ui.diffMode"
           :wrap="ui.wrapEnabled"
+          show-whole-toggle
+          :whole-key="repo.wholeFile?.key ?? null"
+          :whole-loading="repo.wholeFileLoading"
+          :whole-refusal="repo.wholeFileRefusal"
           v-bind="payloadAttrs"
           @active-file="onActiveFile"
           @toggle-collapse="toggleFileCollapsed"
+          @toggle-whole="toggleWholeFile"
         />
       </div>
     </template>

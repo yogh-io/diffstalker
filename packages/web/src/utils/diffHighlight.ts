@@ -33,6 +33,7 @@
  */
 
 import hljs from './hljs';
+import { splitHighlightedHtml } from './highlight';
 import { getLanguageFromPath } from '@diffstalker/core/view/languageDetection';
 import type { WordDiffSegment } from '@diffstalker/core/view/wordDiff';
 import type { DiffContentRow } from './diffRows';
@@ -90,7 +91,16 @@ function decodeEntities(text: string): string {
  * that keeps the merge one-dimensional.
  */
 function highlightToRuns(text: string, language: string): Run[] {
-  const html = hljs.highlight(text, { language, ignoreIllegals: true }).value;
+  return runsFromHtmlLine(hljs.highlight(text, { language, ignoreIllegals: true }).value);
+}
+
+/**
+ * Flatten ONE line of already-highlighted hljs HTML into runs. Split out
+ * of highlightToRuns so the document path (which highlights a whole file
+ * in one call and then splits it per line) can reuse the identical walk
+ * rather than keeping a second copy of it.
+ */
+function runsFromHtmlLine(html: string): Run[] {
   const runs: Run[] = [];
   const stack: string[] = [];
   for (const match of html.matchAll(TOKEN_RE)) {
@@ -162,6 +172,58 @@ function mergePieces(runs: Run[], segments: WordDiffSegment[] | undefined): Diff
   return pieces;
 }
 
+/**
+ * Per-row runs for a section rendered with FULL context, where each side
+ * is a complete document and can therefore be highlighted as one.
+ *
+ * This is the fix for the tradeoff highlightToRuns is stuck with: a
+ * hunk interleaves two file versions, so per-line highlighting is the
+ * only honest option there and cross-line constructs (block comments,
+ * template literals, a Vue `<template>` block) lose their state at every
+ * row boundary. In whole-file mode that stops being true — the old side
+ * is exactly the old file and the new side exactly the new one — and a
+ * twenty-line doc comment rendered as if it were code is very visible
+ * over a whole file.
+ *
+ * Also strictly cheaper: two hljs calls per file instead of one per row.
+ *
+ * Returns null when the section is not safely reconstructible (no
+ * language, or a line over the per-line cap that the row path would have
+ * skipped anyway), so the caller falls back to per-line.
+ */
+export function documentRuns(
+  rows: DiffContentRow[],
+  language: string | null
+): WeakMap<DiffContentRow, Run[]> | null {
+  if (language === null) return null;
+  const oldRows: DiffContentRow[] = [];
+  const newRows: DiffContentRow[] = [];
+  for (const row of rows) {
+    // 'no-newline' is git's prose about the row before it, not a line of
+    // either file: including it would shift every following line.
+    if (row.kind === 'no-newline') continue;
+    if (row.content.length > MAX_HIGHLIGHT_LINE_LENGTH) return null;
+    if (row.kind !== 'add') oldRows.push(row);
+    if (row.kind !== 'del') newRows.push(row);
+  }
+  const out = new WeakMap<DiffContentRow, Run[]>();
+  for (const side of [oldRows, newRows]) {
+    if (side.length === 0) continue;
+    const html = hljs.highlight(side.map((r) => r.content).join('\n'), {
+      language,
+      ignoreIllegals: true,
+    }).value;
+    const perLine = splitHighlightedHtml(html);
+    // A context row appears on BOTH sides; the new side runs last and
+    // wins, which is what the reader is looking at.
+    side.forEach((row, i) => {
+      const line = perLine[i];
+      if (line !== undefined) out.set(row, runsFromHtmlLine(line));
+    });
+  }
+  return out;
+}
+
 const cache = new WeakMap<DiffContentRow, { sig: string; pieces: DiffPiece[] | null }>();
 
 /**
@@ -173,11 +235,18 @@ const cache = new WeakMap<DiffContentRow, { sig: string; pieces: DiffPiece[] | n
 export function syntaxPieces(
   row: DiffContentRow,
   language: string | null,
-  enabled: boolean
+  enabled: boolean,
+  docRuns?: WeakMap<DiffContentRow, Run[]> | null
 ): DiffPiece[] | null {
-  const sig = `${enabled ? '1' : '0'}|${language ?? ''}`;
+  const docRun = docRuns?.get(row);
+  const sig = `${enabled ? '1' : '0'}|${language ?? ''}|${docRun ? 'd' : 'l'}`;
   const hit = cache.get(row);
   if (hit && hit.sig === sig) return hit.pieces;
+  if (docRun !== undefined) {
+    const docPieces = coalesce(mergePieces(docRun, row.segments));
+    cache.set(row, { sig, pieces: docPieces });
+    return docPieces;
+  }
   const pieces =
     // A "\ No newline" row is git's prose, not code — highlighting it
     // would colour the sentence as if it were part of the file.

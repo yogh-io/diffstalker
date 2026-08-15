@@ -1,7 +1,7 @@
 /**
  * The web UI's URL grammar, as pure functions — the ONE copy of it.
  *
- *   /<view>/<repo-segments…>[?base=…][&whole=1][&at=…]
+ *   /<view>/<repo-segments…>[?base=…][&whole=<path>][&at=…]
  *
  * The web client reads these URLs (useUrlSync) and `diffstalker link`
  * writes them, and the two must agree byte for byte: a link that encodes a
@@ -76,8 +76,13 @@ export interface UrlState {
   at: string | null;
   /** Compare only: the explicitly picked base branch. */
   base: string | null;
-  /** Draw the anchored file whole instead of as hunks (`whole=1`). */
-  whole: boolean;
+  /**
+   * Repo-relative path of the ONE file drawn whole instead of as hunks,
+   * or null. A path rather than a flag because History's anchor is a
+   * commit, not a file: `whole=1` there could not say which file it
+   * meant. One value, never a list — the mode is one file at a time.
+   */
+  whole: string | null;
 }
 
 export const EMPTY_URL_STATE: UrlState = {
@@ -85,7 +90,7 @@ export const EMPTY_URL_STATE: UrlState = {
   view: null,
   at: null,
   base: null,
-  whole: false,
+  whole: null,
 };
 
 /**
@@ -101,9 +106,8 @@ export function parseUrl(pathname: string, search: string = ''): UrlState {
   const query = readQuery(search);
   const at = query.get('at') ?? null;
   const base = query.get('base') ?? null;
-  // Present means on, absent means off — there is no third state, so the
-  // value is the literal `1` and anything else reads as off.
-  const whole = query.get('whole') === '1';
+  // The file drawn whole. An empty value is the same as absent: no file.
+  const whole = query.get('whole') || null;
   if (rest.length === 0) return { repo: null, view, at, base, whole };
   // The sentinel test runs on the RAW segment: a directory named `~` is
   // written `%7E` and must not be read as "under $HOME".
@@ -142,8 +146,8 @@ export interface UrlPlace {
   at?: string | null;
   /** Compare only, and only when explicitly picked. */
   base?: string | null;
-  /** Draw the anchored file whole. Optional: omitting it means hunks. */
-  whole?: boolean;
+  /** Path of the file drawn whole. Omitted or null means hunks. */
+  whole?: string | null;
 }
 
 /**
@@ -159,8 +163,8 @@ export function buildUrlPath(place: UrlPlace): string {
   if (place.base !== null && place.base !== undefined) {
     query.push(`base=${encodeQueryValue(place.base)}`);
   }
-  if (place.whole === true) {
-    query.push('whole=1');
+  if (place.whole !== null && place.whole !== undefined && place.whole !== '') {
+    query.push(`whole=${encodeQueryValue(place.whole)}`);
   }
   if (place.at !== null && place.at !== undefined) {
     query.push(`at=${encodeQueryValue(place.at)}`);

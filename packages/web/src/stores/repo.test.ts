@@ -1965,7 +1965,7 @@ describe('whole-file mode (the single slot)', () => {
   test('setWholeFile fetches with whole=true and fills the slot', async () => {
     serveWhole();
     const { store } = await openStore([fileEntry('a.ts')]);
-    await store.setWholeFile('u:a.ts');
+    await store.setWholeFile({ view: 'changes', key: 'u:a.ts', path: 'a.ts' });
     expect(store.wholeFile?.key).toBe('u:a.ts');
     expect(rawFromLines(store.wholeFile!.diff.lines)).toBe(WIDE);
     expect(diffCalls().some((u) => u.includes('path=a.ts') && u.includes('whole=true'))).toBe(true);
@@ -1974,15 +1974,15 @@ describe('whole-file mode (the single slot)', () => {
   test('one slot: turning it on for another file turns it off for the first', async () => {
     serveWhole();
     const { store } = await openStore([fileEntry('a.ts'), fileEntry('b.ts')]);
-    await store.setWholeFile('u:a.ts');
-    await store.setWholeFile('u:b.ts');
+    await store.setWholeFile({ view: 'changes', key: 'u:a.ts', path: 'a.ts' });
+    await store.setWholeFile({ view: 'changes', key: 'u:b.ts', path: 'b.ts' });
     expect(store.wholeFile?.key).toBe('u:b.ts');
   });
 
   test('null clears it', async () => {
     serveWhole();
     const { store } = await openStore([fileEntry('a.ts')]);
-    await store.setWholeFile('u:a.ts');
+    await store.setWholeFile({ view: 'changes', key: 'u:a.ts', path: 'a.ts' });
     await store.setWholeFile(null);
     expect(store.wholeFile).toBeNull();
   });
@@ -1990,7 +1990,7 @@ describe('whole-file mode (the single slot)', () => {
   test('an untracked file is refused — its diff is already the whole file', async () => {
     serveWhole();
     const { store } = await openStore([fileEntry('u.txt', { status: 'untracked' as FileStatus })]);
-    await store.setWholeFile('u:u.txt');
+    await store.setWholeFile({ view: 'changes', key: 'u:u.txt', path: 'u.txt' });
     expect(store.wholeFile).toBeNull();
     expect(diffCalls().some((u) => u.includes('whole=true'))).toBe(false);
   });
@@ -2001,7 +2001,7 @@ describe('whole-file mode (the single slot)', () => {
     let raw = WIDE;
     onRequest = (call) => (call.url.includes('whole=true') ? { body: diffBody(raw) } : undefined);
     const { store, source } = await openStore([fileEntry('a.ts')]);
-    await store.setWholeFile('u:a.ts');
+    await store.setWholeFile({ view: 'changes', key: 'u:a.ts', path: 'a.ts' });
     expect(rawFromLines(store.wholeFile!.diff.lines)).toBe(WIDE);
 
     raw = fileDiffRaw('a.ts', 'FRESH');
@@ -2014,7 +2014,7 @@ describe('whole-file mode (the single slot)', () => {
   test('the slot is dropped when its file leaves the status set', async () => {
     serveWhole();
     const { store, source } = await openStore([fileEntry('a.ts')]);
-    await store.setWholeFile('u:a.ts');
+    await store.setWholeFile({ view: 'changes', key: 'u:a.ts', path: 'a.ts' });
     expect(store.wholeFile).not.toBeNull();
 
     source.emit('state-change', wireState([])); // committed / discarded
@@ -2025,11 +2025,56 @@ describe('whole-file mode (the single slot)', () => {
   test('a repo switch does not carry the mode into the new repo', async () => {
     serveWhole();
     const { store } = await openStore([fileEntry('a.ts')]);
-    await store.setWholeFile('u:a.ts');
+    await store.setWholeFile({ view: 'changes', key: 'u:a.ts', path: 'a.ts' });
     expect(store.wholeFile).not.toBeNull();
 
     await store.open('/other-repo');
     expect(store.wholeFile).toBeNull();
+  });
+
+  test('a diff the daemon withheld is REFUSED, not installed', async () => {
+    // The defect this guards: at full context a big file trips the
+    // per-file cap, so the response is a "Large file — diff not shown"
+    // notice. Installing it replaced a perfectly good hunk view with that
+    // notice — the reader asked for more of the file and was left with
+    // none of it. Refuse, keep the hunks, and say why.
+    const withheld = [
+      'diff --git a/a.ts b/a.ts',
+      'index 1111111..2222222 100644',
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      'Large file — diff not shown (414 KB, 4,908 lines)',
+      '',
+    ].join('\n');
+    onRequest = (call) =>
+      call.url.includes('whole=true') ? { body: diffBody(withheld) } : undefined;
+    const { store } = await openStore([fileEntry('a.ts')]);
+    await store.setWholeFile({ view: 'changes', key: 'u:a.ts', path: 'a.ts' });
+
+    expect(store.wholeFile).toBeNull();
+    expect(store.wholeFileRefusal?.key).toBe('u:a.ts');
+    expect(store.wholeFileRefusal?.reason).toContain('Too large');
+    // Not an error banner: the hunks are still there and still correct.
+    expect(store.shared.error).toBeNull();
+  });
+
+  test('a refusal is cleared by the next request', async () => {
+    let raw = [
+      'diff --git a/a.ts b/a.ts',
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      'Large file — diff not shown (414 KB, 4,908 lines)',
+      '',
+    ].join('\n');
+    onRequest = (call) => (call.url.includes('whole=true') ? { body: diffBody(raw) } : undefined);
+    const { store } = await openStore([fileEntry('a.ts'), fileEntry('b.ts')]);
+    await store.setWholeFile({ view: 'changes', key: 'u:a.ts', path: 'a.ts' });
+    expect(store.wholeFileRefusal).not.toBeNull();
+
+    raw = WIDE;
+    await store.setWholeFile({ view: 'changes', key: 'u:b.ts', path: 'b.ts' });
+    expect(store.wholeFileRefusal).toBeNull();
+    expect(store.wholeFile?.key).toBe('u:b.ts');
   });
 
   test('a failed pull leaves the mode OFF rather than on-and-empty', async () => {
@@ -2037,7 +2082,7 @@ describe('whole-file mode (the single slot)', () => {
     onRequest = (call) =>
       call.url.includes('whole=true') ? { status: 500, body: { error: 'boom' } } : undefined;
     const { store } = await openStore([fileEntry('a.ts')]);
-    await store.setWholeFile('u:a.ts');
+    await store.setWholeFile({ view: 'changes', key: 'u:a.ts', path: 'a.ts' });
     expect(store.wholeFile).toBeNull();
     expect(store.wholeFileLoading).toBe(false);
     expect(store.shared.error).toContain('whole file');

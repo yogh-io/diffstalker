@@ -28,6 +28,8 @@ export interface StackFile {
   diff: DiffResult | null;
   /** Collapse is parent-owned: this renders it, toggle-collapse reports. */
   collapsed?: boolean;
+  /** What this section's diff is between; omitted renders no label. */
+  refPair?: RefPair;
 }
 
 /**
@@ -252,6 +254,8 @@ import DiffView from './DiffView.vue';
 import ViewFileButton from './ViewFileButton.vue';
 import CopyPathButton from './CopyPathButton.vue';
 import WholeFileToggle from './WholeFileToggle.vue';
+import RefPairLabel from './RefPairLabel.vue';
+import type { RefPair } from '../utils/refPair';
 import WrapToggle from './WrapToggle.vue';
 
 const props = defineProps<{
@@ -293,6 +297,8 @@ const props = defineProps<{
   wholeKey?: string | null;
   wholeLoading?: boolean;
   showWholeToggle?: boolean;
+  /** Key + reason when the last whole-file request could not be served. */
+  wholeRefusal?: { key: string; reason: string } | null;
 }>();
 
 const emit = defineEmits<{
@@ -381,11 +387,18 @@ function isHuge(item: StackFile): boolean {
  * bounded by the daemon's per-file diff cap, not by this gate.
  */
 function canGoWhole(item: StackFile): boolean {
-  return item.status !== 'untracked';
+  // A file that did not exist on the old side is ALREADY whole: every one
+  // of its lines is an addition, and there is no unchanged text for wider
+  // context to reveal. Offering the control there would be offering a
+  // control that does nothing.
+  return item.status !== 'untracked' && item.status !== 'added';
 }
 
 /** Why the toggle is disabled, or null when it works. */
 function wholeDisabledReason(item: StackFile): string | null {
+  // A refusal the reader just triggered outranks the static reasons: it
+  // explains why the click they made did nothing visible.
+  if (props.wholeRefusal?.key === item.key) return props.wholeRefusal.reason;
   const notShown = notShownFor(item);
   if (notShown !== null) {
     return notShown.kind === 'binary'
@@ -1349,6 +1362,7 @@ defineExpose({
         </button>
         <span class="letter mono" :data-status="item.status">{{ statusLetter(item.status) }}</span>
         <span class="path mono" :title="item.path">{{ item.path }}</span>
+        <RefPairLabel v-if="item.refPair" :pair="item.refPair" />
         <WholeFileToggle
           v-if="props.showWholeToggle && canGoWhole(item)"
           :on="props.wholeKey === item.key"
@@ -1429,6 +1443,7 @@ defineExpose({
           :syntax="props.syntax"
           :mode="props.mode"
           :wrap="props.wrap"
+          :whole-path="props.wholeKey === item.key ? item.path : null"
           embedded
         />
         <div

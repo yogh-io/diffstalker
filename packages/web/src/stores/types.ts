@@ -131,3 +131,13 @@ export interface RepoCompareState {
   noBaseBranch: boolean;
   selection: CompareSelectionState;
 }
+
+/**
+ * One whole-file request, naming the SURFACE that asked. Changes and
+ * Compare both use `u:`-prefixed row keys and mean different comparisons,
+ * so the key alone cannot decide which read to make.
+ */
+export type WholeFileRequest =
+  | { view: 'changes'; key: string; path: string }
+  | { view: 'compare'; key: string; path: string; uncommitted: boolean }
+  | { view: 'history'; key: string; path: string; hash: string };

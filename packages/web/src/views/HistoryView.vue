@@ -26,6 +26,9 @@ import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
 import DiffView from '../components/DiffView.vue';
+import { splitDiffByFile } from '@diffstalker/core/view/splitDiffByFile';
+import type { DiffLine, DiffResult } from '@diffstalker/core/git/diffParse';
+import type { RefPair } from '../utils/refPair';
 import WrapToggle from '../components/WrapToggle.vue';
 import SplitResizer from '../components/SplitResizer.vue';
 import { errorMessage } from '../api/errors';
@@ -46,6 +49,70 @@ const listEl = ref<HTMLElement | null>(null);
 
 const commits = computed(() => history.value.commits);
 const selected = computed(() => history.value.selectedCommit);
+
+/**
+ * What the shown diff is between: this commit against its parent.
+ *
+ * No merge-commit case is needed. `git show --format=` returns an EMPTY
+ * diff for a merge (we do not render combined diffs), so there are no
+ * file sections and therefore no header to label — the situation cannot
+ * reach the screen.
+ */
+const commitRefPair = computed<RefPair | undefined>(() =>
+  selected.value ? { kind: 'commit', shortHash: selected.value.shortHash } : undefined
+);
+
+/**
+ * The commit's diff with ONE file's section swapped for its whole-file
+ * pull. History renders the whole commit in a single DiffView, so the
+ * substitution happens at the DiffResult level: split by file, replace
+ * one entry, rejoin in order. splitDiffByFile carries line objects across
+ * as-is, so nothing else in the commit is re-parsed or re-ordered.
+ */
+const shownCommitDiff = computed<DiffResult | null>(() => {
+  const diff = history.value.commitDiff;
+  const whole = repo.wholeFile;
+  if (!diff || !whole || whole.key !== historyWholeKey(whole.path)) return diff;
+  const byPath = splitDiffByFile(diff);
+  if (!byPath.has(whole.path)) return diff;
+  const lines: DiffLine[] = [];
+  for (const [path, section] of byPath) {
+    lines.push(...(path === whole.path ? whole.diff.lines : section.lines));
+  }
+  return { lines };
+});
+
+/** History's slot key: the commit plus the file, since a path alone
+ *  would collide with the same path in another view. */
+function historyWholeKey(path: string): string {
+  return `h:${selected.value?.hash ?? ''}:${path}`;
+}
+
+/**
+ * Whole-file mode for one file inside the shown commit. This is the
+ * surface where it matters most: "view file" opens TODAY's copy of the
+ * path, which is different bytes than a historical diff is about, so it
+ * was never an answer here.
+ */
+// A different commit invalidates the slot: its key names the commit, and
+// the file may not even appear in the new one.
+watch(selected, (commit, previous) => {
+  if (previous && commit?.hash !== previous.hash && repo.wholeFile !== null) {
+    void repo.setWholeFile(null);
+  }
+});
+
+function toggleWholeFile(path: string): void {
+  const commit = selected.value;
+  if (!commit) return;
+  const key = historyWholeKey(path);
+  if (repo.wholeFile?.key === key) {
+    void repo.setWholeFile(null);
+    return;
+  }
+  beginUserNav({ view: 'history' });
+  void repo.setWholeFile({ view: 'history', key, path, hash: commit.hash });
+}
 
 /** The log filled the requested page — more commits may exist. */
 const mayHaveMore = computed(() => commits.value.length >= requestedCount.value);
@@ -277,11 +344,17 @@ function selectAndFocusPayload(commit: CommitInfo): void {
           <DiffView
             v-else
             class="detail-diffview"
-            :diff="history.commitDiff"
+            :diff="shownCommitDiff"
             show-file-headers
+            :ref-pair="commitRefPair"
+            show-whole-toggle
+            :whole-path="repo.wholeFile?.path ?? null"
+            :whole-loading="repo.wholeFileLoading"
+            :whole-refusal="repo.wholeFileRefusal"
             :syntax="ui.diffSyntaxEnabled"
             :mode="ui.diffMode"
             :wrap="ui.wrapEnabled"
+            @toggle-whole="toggleWholeFile"
           />
         </div>
       </template>

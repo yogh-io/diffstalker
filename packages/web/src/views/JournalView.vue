@@ -92,8 +92,17 @@ import { DIFF_ROW_PX } from '../utils/diffRows';
 import { useScrollAnchor, type AnchorCandidate } from '../composables/useScrollAnchor';
 import DiffView from '../components/DiffView.vue';
 import ViewFileButton from '../components/ViewFileButton.vue';
+import RefPairLabel from '../components/RefPairLabel.vue';
+import type { RefPair } from '../utils/refPair';
 import CopyPathButton from '../components/CopyPathButton.vue';
 import { errorMessage } from '../api/errors';
+
+/**
+ * Every journal entry is worktree-vs-HEAD by construction — the journal
+ * observes one `git diff -U3 HEAD` — so the pair is a constant here, not
+ * something derived per row.
+ */
+const JOURNAL_PAIR: RefPair = { kind: 'journal' };
 
 /** Pinned-to-head band: this close to the top, appends auto-follow. */
 const TOP_PIN_PX = 40;
@@ -702,6 +711,7 @@ onBeforeUnmount(() => {
                 ><span class="path-name">{{ fileName(row.tip.path) }}</span></span
               >
 
+              <RefPairLabel :pair="JOURNAL_PAIR" />
               <ViewFileButton :path="row.tip.path" />
               <CopyPathButton :path="row.tip.path" />
 

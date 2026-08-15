@@ -146,21 +146,32 @@ describe('encoding helpers', () => {
 });
 
 describe('whole=1 — the anchored file drawn in full', () => {
-  test('parses, and defaults to false when absent', () => {
-    expect(parseUrl('/changes/~/w/ds', '?at=u:a.ts').whole).toBe(false);
-    expect(parseUrl('/changes/~/w/ds', '?whole=1&at=u:a.ts').whole).toBe(true);
+  test('parses the path of the file drawn whole; absent is null', () => {
+    expect(parseUrl('/changes/~/w/ds', '?at=u:a.ts').whole).toBeNull();
+    expect(parseUrl('/changes/~/w/ds', '?whole=src/a.ts&at=u:src/a.ts').whole).toBe('src/a.ts');
   });
 
   test('reaches the repo-less early return too', () => {
     // The two returns in parseUrl are easy to update by halves; a view
     // with no repo segments must still carry the flag.
-    expect(parseUrl('/changes', '?whole=1').whole).toBe(true);
+    expect(parseUrl('/changes', '?whole=src/a.ts').whole).toBe('src/a.ts');
   });
 
-  test('only the literal 1 is on — there is no third state to encode', () => {
-    expect(parseUrl('/changes/~/w/ds', '?whole=true').whole).toBe(false);
-    expect(parseUrl('/changes/~/w/ds', '?whole=0').whole).toBe(false);
-    expect(parseUrl('/changes/~/w/ds', '?whole=').whole).toBe(false);
+  test('an empty value is the same as absent', () => {
+    expect(parseUrl('/changes/~/w/ds', '?whole=').whole).toBeNull();
+  });
+
+  test('a path with awkward characters round-trips', () => {
+    // The same encoding `at` gets: a `+` must not become a space.
+    const url = buildUrlPath({
+      view: 'changes',
+      repoPath: '/home/j/w/ds',
+      home: '/home/j',
+      whole: 'src/a b+c.ts',
+      at: 'u:src/a b+c.ts',
+    });
+    const [pathname, search] = url.split('?');
+    expect(parseUrl(pathname, `?${search}`).whole).toBe('src/a b+c.ts');
   });
 
   test('writes at a PINNED position: base, whole, at', () => {
@@ -174,15 +185,16 @@ describe('whole=1 — the anchored file drawn in full', () => {
         home: '/home/j',
         at: 'u:a.ts',
         base: 'origin/main',
-        whole: true,
+        whole: 'a.ts',
       })
-    ).toBe('/changes/~/w/ds?base=origin/main&whole=1&at=u:a.ts');
+    ).toBe('/changes/~/w/ds?base=origin/main&whole=a.ts&at=u:a.ts');
   });
 
-  test('omitted and false both write nothing', () => {
+  test('omitted, null and empty all write nothing', () => {
     const place = { view: 'changes' as const, repoPath: '/home/j/w/ds', home: '/home/j', at: 'u:a.ts' };
     expect(buildUrlPath(place)).toBe('/changes/~/w/ds?at=u:a.ts');
-    expect(buildUrlPath({ ...place, whole: false })).toBe('/changes/~/w/ds?at=u:a.ts');
+    expect(buildUrlPath({ ...place, whole: null })).toBe('/changes/~/w/ds?at=u:a.ts');
+    expect(buildUrlPath({ ...place, whole: '' })).toBe('/changes/~/w/ds?at=u:a.ts');
   });
 
   test('round-trips: what buildUrlPath writes, parseUrl reads back', () => {
@@ -191,11 +203,11 @@ describe('whole=1 — the anchored file drawn in full', () => {
       repoPath: '/home/j/w/ds',
       home: '/home/j',
       at: 'u:src/a b+c.ts',
-      whole: true,
+      whole: 'src/a b+c.ts',
     });
     const [pathname, search] = url.split('?');
     const back = parseUrl(pathname, `?${search}`);
-    expect(back.whole).toBe(true);
+    expect(back.whole).toBe('src/a b+c.ts');
     expect(back.at).toBe('u:src/a b+c.ts');
   });
 });
