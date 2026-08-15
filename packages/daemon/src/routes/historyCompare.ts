@@ -82,6 +82,11 @@ async function resolveRequestedBase(repoPath: string, query: URLSearchParams): P
   return requestedBase;
 }
 
+/** Widen the context to the whole file, or leave core's default alone. */
+function contextOpts(whole: boolean): { context?: number } {
+  return whole ? { context: WHOLE_FILE_CONTEXT } : {};
+}
+
 export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): void {
   const { registry } = deps;
 
@@ -130,12 +135,7 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     // Historical diff: deliberately NOT stamped with hunk edit times —
     // stamping only applies to the live working-tree diff.
     const diff = filePath
-      ? await getFileDiffInRange(
-          handle.path,
-          { kind: 'commit', hash },
-          filePath,
-          whole ? { context: WHOLE_FILE_CONTEXT } : {}
-        )
+      ? await getFileDiffInRange(handle.path, { kind: 'commit', hash }, filePath, contextOpts(whole))
       : await getCommitDiff(handle.path, hash);
     sendJson(res, 200, diff);
   });
@@ -161,12 +161,7 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     sendJson(
       res,
       200,
-      await getFileDiffInRange(
-        handle.path,
-        range,
-        filePath,
-        whole ? { context: WHOLE_FILE_CONTEXT } : {}
-      )
+      await getFileDiffInRange(handle.path, range, filePath, contextOpts(whole))
     );
   });
 
