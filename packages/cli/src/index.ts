@@ -42,6 +42,15 @@ if (rawArgs.includes('--version') || rawArgs.includes('-v')) {
   process.exit(0);
 }
 
+// Subcommands are answered here, above the terminal setup: they print one
+// line to stdout and exit, so they must never touch the alternate screen
+// buffer or mouse modes. `link` also deliberately does NOT spawn a daemon —
+// a link into a web UI that is not running is not worth printing.
+if (rawArgs[0] === 'link') {
+  const { runLink } = await import('./commands/link.js');
+  process.exit(await runLink(rawArgs.slice(1), process.env));
+}
+
 // Cleanup function to reset terminal state on exit
 function cleanupTerminal(): void {
   // Leave the alternate screen buffer first, so anything printed after

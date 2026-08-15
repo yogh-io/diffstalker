@@ -48,6 +48,12 @@ export interface RouteDeps {
    * state reported through /health, not a degraded one.
    */
   symbols: SymbolSupport | null;
+  /**
+   * The loopback TCP port the web UI is served on, or null when only a
+   * socket (or an inherited fd) is bound. A function, not a value: routes
+   * are registered before listen() binds anything.
+   */
+  httpPort: () => number | null;
 }
 
 export interface SymbolSupport {

@@ -255,6 +255,23 @@ Terminal UI config: `~/.config/diffstalker/config.json`
   -h, --help           Show help
 ```
 
+**Link** — `diffstalker link [view] [target]`, prints one URL into the web UI:
+```
+  diffstalker link                        # journal: the whole session
+  diffstalker link src/App.vue            # explorer (the default with a target)
+  diffstalker link changes src/App.vue    # resolves the staged/unstaged side
+  diffstalker link history HEAD           # resolves to a short hash
+  diffstalker link compare src/a.ts --base main
+
+  --base REF           compare only: the base branch
+  DIFFSTALKER_WEB_URL  base URL to build against, when the daemon's own
+                       loopback port is not how you reach it
+```
+Every part is checked against the running daemon before anything prints — the
+repo, the file, the row, the commit — because a wrong diffstalker URL does not
+error, it quietly lands somewhere else. It never starts a daemon: a link into a
+web UI that is not running is not worth printing.
+
 **Daemon** — `diffstalkerd [options]`:
 ```
   --port N             Bind TCP port N (loopback only) and serve the web UI at GET /

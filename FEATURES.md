@@ -852,6 +852,29 @@ git operations.
   the loaded log, which resolves through `GET /repos/:id/commits/:hash`.
   What the URL cannot name any more just drops (a file that was committed,
   a commit rebased away), which is ordinary churn, not an error.
+- **`diffstalker link` writes those URLs, and refuses to write a bad one.**
+  One command, one line of stdout, for pointing someone (or a coding agent
+  pointing you) at a place instead of pasting a copy of the code:
+  `diffstalker link` (the journal — the whole session in one place),
+  `diffstalker link src/App.vue` (the explorer; the view defaults from
+  whether a target is given), `diffstalker link changes src/App.vue`,
+  `diffstalker link history HEAD`, `diffstalker link compare src/a.ts
+  --base main`. A view keyword wins over reading the token as a path, the
+  same closed-set rule the URL uses, so `./history` is how you name the
+  directory. Every input is checked against the daemon before anything is
+  printed: the repo resolves to a worktree root, the file exists, a
+  `changes` target actually has a row (and which side it is on — `u:` vs
+  `s:` — is read from status, not guessed), a `history` target resolves to
+  a real short hash. This matters because a hand-written diffstalker URL
+  fails *silently*: a non-view-first path names no place, and an `at` that
+  matches nothing leaves the view aimed at nothing, neither of which looks
+  broken to whoever clicks it. Failing at build time, on stderr, with a
+  non-zero exit is the only place it can be fixed. The base URL comes from
+  the port the daemon reports on `GET /health`; a socket-only daemon is an
+  error rather than a guessed port, and `$DIFFSTALKER_WEB_URL` overrides it
+  for an ssh tunnel or a `.localhost` hostname. The command never spawns a
+  daemon (a link into a web UI that is not running is not worth printing)
+  and releases the repo ref it takes, including on failure.
 - **A history entry means you did something.** Back walks back through what
   you chose, not through what happened to you. A gesture — a tab, a repo or
   worktree switch, "view file", the finder, activating a row in any list, a

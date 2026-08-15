@@ -87,94 +87,28 @@ import { computed, nextTick, onScopeDispose, ref, watch } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useExplorerStore } from '../stores/explorer';
 import { useRepoStore } from '../stores/repo';
-import { useUiStore, VIEWS } from '../stores/ui';
+import { useUiStore } from '../stores/ui';
 import { DiffstalkerClient } from '../api/client';
+import {
+  EMPTY_URL_STATE,
+  HOME_SENTINEL,
+  buildUrlPath,
+  parseUrl,
+} from '@diffstalker/core/view/urlGrammar';
+import type { UrlRepo, UrlState } from '@diffstalker/core/view/urlGrammar';
 import type { ViewName } from '../prefs';
 
-/** Segment 1 when the repo path is relative to the daemon's $HOME. */
-const HOME_SENTINEL = '~';
+// The grammar itself — the sentinel, the segment and query encoding, the
+// parser — lives in core, because `diffstalker link` writes these URLs and
+// a second copy of the rules would diverge silently (see urlGrammar.ts).
+export { parseUrl, HOME_SENTINEL };
+export type { UrlRepo, UrlState } from '@diffstalker/core/view/urlGrammar';
 
 /** How long a declared gesture stays open, covering its async work. */
 const NAV_INTENT_MS = 3000;
 
 /** Trailing-edge budget for ambient anchor-only writes (scroll-spy). */
 const ANCHOR_THROTTLE_MS = 400;
-
-function isViewName(value: string | undefined): value is ViewName {
-  return value !== undefined && VIEWS.some((v) => v.name === value);
-}
-
-/**
- * decodeURIComponent, but a malformed escape (`%zz` — hand-typed, or a
- * mangled paste) yields the raw text instead of throwing. The address bar
- * is untrusted input; a URIError here would take the whole app down at
- * startup.
- */
-function safeDecode(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-/** Query value encoding: `/` and `:` stay readable, everything else escapes. */
-function encodeQueryValue(value: string): string {
-  return encodeURIComponent(value).split('%2F').join('/').split('%3A').join(':');
-}
-
-/** Read a query string without URLSearchParams (which eats `+`). */
-function readQuery(search: string): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const part of search.replace(/^\?/, '').split('&')) {
-    if (part === '') continue;
-    const eq = part.indexOf('=');
-    const key = eq === -1 ? part : part.slice(0, eq);
-    const value = eq === -1 ? '' : part.slice(eq + 1);
-    out.set(safeDecode(key), safeDecode(value));
-  }
-  return out;
-}
-
-/** A repo named by a URL: home-relative, or an absolute path. */
-export interface UrlRepo {
-  homeRelative: boolean;
-  /** Path with no leading slash — under $HOME, or from the filesystem root. */
-  path: string;
-}
-
-export interface UrlState {
-  repo: UrlRepo | null;
-  view: ViewName | null;
-  /** The view's anchor (see the header): stack key, hash, or path. */
-  at: string | null;
-  /** Compare only: the explicitly picked base branch. */
-  base: string | null;
-}
-
-const EMPTY_STATE: UrlState = { repo: null, view: null, at: null, base: null };
-
-/**
- * Parse a location into the place it names. Anything that is not
- * view-first — `/`, a stale repo-first link from the old grammar, junk —
- * names no place at all: the app resolves normally and the first write
- * replaces it.
- */
-export function parseUrl(pathname: string, search: string = ''): UrlState {
-  const raw = pathname.split('/').filter(Boolean);
-  if (raw.length === 0 || !isViewName(raw[0])) return EMPTY_STATE;
-  const view = raw[0];
-  const rest = raw.slice(1);
-  const query = readQuery(search);
-  const at = query.get('at') ?? null;
-  const base = query.get('base') ?? null;
-  if (rest.length === 0) return { repo: null, view, at, base };
-  // The sentinel test runs on the RAW segment: a directory named `~` is
-  // written `%7E` and must not be read as "under $HOME".
-  const homeRelative = rest[0] === HOME_SENTINEL;
-  const segs = (homeRelative ? rest.slice(1) : rest).map(safeDecode);
-  return { repo: { homeRelative, path: segs.join('/') }, view, at, base };
-}
 
 /** Where a user gesture is going. Omit a field the gesture leaves alone. */
 export interface NavTarget {
@@ -214,8 +148,8 @@ export function resetUserNav(): void {
 
 /** What the last write recorded — every decision compares against it. */
 interface Place {
-  path: string;
-  search: string;
+  /** Path + search together — the whole thing pushState is given. */
+  url: string;
   repoPath: string | null;
   view: ViewName;
   at: string | null;
@@ -261,7 +195,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
 
   const initial =
     typeof window === 'undefined'
-      ? EMPTY_STATE
+      ? EMPTY_URL_STATE
       : parseUrl(window.location.pathname, window.location.search);
 
   if (typeof window !== 'undefined' && 'scrollRestoration' in window.history) {
@@ -280,15 +214,6 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
 
   function isActiveRepo(target: UrlRepo): boolean {
     return urlRepoPath.value !== null && toAbsolute(target) === urlRepoPath.value;
-  }
-
-  /** Absolute repo path -> URL segments, `~`-prefixed when under $HOME. */
-  function repoSegments(abs: string): string[] {
-    const h = home.value;
-    const underHome = h !== null && (abs === h || abs.startsWith(h + '/'));
-    const rel = underHome ? abs.slice(h.length) : abs;
-    const segs = rel.split('/').filter(Boolean).map(encodeURIComponent);
-    return underHome ? [HOME_SENTINEL, ...segs] : segs;
   }
 
   /** The one thing the active view is aimed at, or null. */
@@ -316,13 +241,9 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     const view = ui.activeView;
     const at = abs === null ? null : currentAnchor();
     const base = abs !== null && view === 'compare' ? repo.selectedCompareBase : null;
-    if (abs === null) return { path: '/', search: '', repoPath: null, view, at: null, base: null };
-    const query: string[] = [];
-    if (base !== null) query.push(`base=${encodeQueryValue(base)}`);
-    if (at !== null) query.push(`at=${encodeQueryValue(at)}`);
+    if (abs === null) return { url: '/', repoPath: null, view, at: null, base: null };
     return {
-      path: '/' + [view, ...repoSegments(abs)].join('/'),
-      search: query.length === 0 ? '' : '?' + query.join('&'),
+      url: buildUrlPath({ view, repoPath: abs, home: home.value, at, base }),
       repoPath: abs,
       view,
       at,
@@ -419,7 +340,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     // exactly where the URL already pointed writes nothing, and would
     // otherwise leave the tab named after wherever the user came from.
     document.title = titleFor(next);
-    const url = next.path + next.search;
+    const url = next.url;
     if (url === window.location.pathname + window.location.search) {
       written = next; // nothing to write, but this IS where we are
       return;
@@ -442,7 +363,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
   }
 
   function flushWrite(next: Place, verdict: 'push' | 'replace'): void {
-    const url = next.path + next.search;
+    const url = next.url;
     if (url !== window.location.pathname + window.location.search) {
       if (verdict === 'push') {
         serial += 1;

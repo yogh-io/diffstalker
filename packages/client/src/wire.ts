@@ -113,6 +113,12 @@ export interface HealthState {
   /** The daemon's $HOME, so clients can show/store paths relative to it
    * (a home-relative URL drops the /home/<user> prefix). Null if unknown. */
   home?: string | null;
+  /**
+   * How a browser reaches this daemon: the loopback port it bound, or null
+   * when it is socket-only and there is no web UI to link into. Absent from
+   * a daemon older than this field — treat that like null.
+   */
+  http?: { port: number | null };
 }
 
 /** How the running daemon relates to the latest version published on npm. */

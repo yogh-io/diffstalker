@@ -111,6 +111,26 @@ describe('daemon over unix socket', () => {
     expect(await res.json()).toMatchObject({ ok: true, ready: true });
   });
 
+  test('GET /health reports no http port on a socket-only daemon', async () => {
+    // `diffstalker link` refuses to guess a URL from this, rather than
+    // printing one that fails in someone's browser.
+    const res = await request('/health');
+    expect(await res.json()).toMatchObject({ http: { port: null } });
+  });
+
+  test('GET /health reports the port a browser can reach', async () => {
+    const ported = createDaemon({ fetchLatestVersion: () => Promise.resolve('99.0.0') });
+    try {
+      await ported.listen({ port: 0 });
+      const addr = ported.address();
+      const port = typeof addr === 'object' && addr !== null ? addr.port : 0;
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(await res.json()).toMatchObject({ http: { port } });
+    } finally {
+      await ported.close();
+    }
+  });
+
   test('GET /version reports the running version against npm', async () => {
     const res = await request('/version');
     expect(res.status).toBe(200);

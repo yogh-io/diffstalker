@@ -32,14 +32,22 @@ module.exports = {
       from: { path: "^src/daemon/" },
       to: { path: "^src/(ui|state)/" },
     },
+    {
+      name: "commands-no-ui-or-state",
+      comment:
+        "commands/ are non-TUI subcommands (diffstalker link): they talk to the daemon and print. No blessed, no UI state.",
+      severity: "error",
+      from: { path: "^src/commands/" },
+      to: { path: "^src/(ui|state)/" },
+    },
 
     // --- Only top-level orchestrators may import top-level orchestrators ---
     {
       name: "lower-layers-no-top-level",
       comment:
-        "ui/, state/, daemon/, utils/, and types/ must not import App, index, KeyBindings, MouseHandlers, NavigationController, StagingOperations, ModalController, or FollowMode",
+        "ui/, state/, daemon/, commands/, utils/, and types/ must not import App, index, KeyBindings, MouseHandlers, NavigationController, StagingOperations, ModalController, or FollowMode",
       severity: "error",
-      from: { path: "^src/(ui|state|daemon|utils|types)/" },
+      from: { path: "^src/(ui|state|daemon|commands|utils|types)/" },
       to: {
         path: "^src/(App|index|KeyBindings|MouseHandlers|NavigationController|StagingOperations|ModalController|FollowMode)\\.ts$",
       },

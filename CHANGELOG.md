@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`diffstalker link` — print a web-UI URL for a place in a repo.** For
+  pointing someone at code instead of pasting a copy of it, and written for a
+  coding agent as much as for a person: `diffstalker link` gives the journal
+  (a whole session in one place), `diffstalker link src/App.vue` the explorer,
+  and `changes` / `history` / `compare` take the anchor each of those views
+  understands. The command exists because a hand-written diffstalker URL fails
+  silently — a non-view-first path names no place, an `at` that matches nothing
+  leaves the view aimed at nothing — so it proves every part against the daemon
+  first: the repo, the file, the `u:`/`s:` side a changes row is actually on,
+  the short hash a commit-ish resolves to. Anything it cannot prove is an error
+  on stderr with a non-zero exit, not a URL that breaks in someone's browser.
+- **`GET /health` reports the port the web UI is reachable on** (`http.port`,
+  null when the daemon bound only a socket). A socket client could not
+  otherwise tell whether a browser URL exists at all; `diffstalker link` says
+  so plainly instead of guessing a port.
+
+### Fixed
+
+- **A repo directory literally named `~` produced a link to a different
+  repo.** The URL grammar documented that such a segment is written `%7E`, but
+  `encodeURIComponent` leaves `~` alone (it is an unreserved character), so a
+  repo at `/~/x` wrote `/~/x` and read back as `$HOME/x`. The sentinel is now
+  escaped explicitly. Found by extracting the grammar into
+  `@diffstalker/core/view/urlGrammar` — one copy shared by the web client and
+  `diffstalker link`, with a round-trip test — instead of two copies that could
+  disagree about a URL without either erroring.
+- **Compare with "include uncommitted" dropped the uncommitted changes to any
+  file the branch's commits already touched.** The compare returns such a file
+  twice — once for the committed side, once for the working tree — but the file
+  tree keyed leaves by path and merged the two into one row, so the second
+  entry's diff never reached the view. On a branch where you edit the files you
+  have been committing to (the normal case), ticking the box added nothing. The
+  tree now gives every entry its own row, and both views key compare rows by
+  side + path the way the Changes list already does.
+- **Untracked files never showed in the compare at all.** `git diff` does not
+  report them, and nothing else looked. They now appear as new-file diffs, with
+  the same gitignore filter the Changes view applies, so both views agree on
+  what counts as untracked.
+- **A file with both staged and unstaged edits showed only the staged half.**
+  The uncommitted side was read as two separate diffs and de-duplicated by path,
+  so the unstaged chunk was thrown away while the stats still counted its lines.
+  It is one `git diff HEAD` now: staged and unstaged together, in one entry,
+  with stats that match what is drawn.
+
 ## [0.12.3] - 2026-08-12
 
 ### Added

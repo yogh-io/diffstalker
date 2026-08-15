@@ -7,15 +7,16 @@
 
 import { isThemeName } from './theme/themes';
 import type { ThemeName } from './theme/themes';
+import { isViewName } from '@diffstalker/core/view/urlGrammar';
+import type { ViewName } from '@diffstalker/core/view/urlGrammar';
 
 export const PREFS_KEY = 'diffstalker:prefs';
 
-export const VIEW_NAMES = ['changes', 'journal', 'history', 'compare', 'explorer'] as const;
-export type ViewName = (typeof VIEW_NAMES)[number];
-
-export function isViewName(value: unknown): value is ViewName {
-  return typeof value === 'string' && (VIEW_NAMES as readonly string[]).includes(value);
-}
+// The view names are the URL grammar's closed first segment, so core owns
+// them (`diffstalker link` builds the same URLs); re-exported here because
+// this is where the rest of the app already reads them from.
+export { VIEW_NAMES, isViewName } from '@diffstalker/core/view/urlGrammar';
+export type { ViewName } from '@diffstalker/core/view/urlGrammar';
 
 export const DIFF_MODES = ['unified', 'split'] as const;
 export type DiffMode = (typeof DIFF_MODES)[number];

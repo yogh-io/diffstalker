@@ -250,6 +250,7 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
       apiMode: mode,
       version,
       symbols: symbolSupport,
+      httpPort,
     };
     registerHealthRoutes(router, deps);
     registerVersionRoutes(router, deps);
@@ -310,6 +311,20 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
     socketPath: string | null;
   }
   const listeners: Listener[] = [];
+
+  /**
+   * The port a browser can reach this daemon on, for GET /health. A TCP
+   * bind reports an AddressInfo object; a unix socket reports its path as
+   * a string. An inherited fd is included on purpose — a `.socket` unit
+   * with a TCP ListenStream serves the web UI just as a --port bind does.
+   */
+  function httpPort(): number | null {
+    for (const entry of listeners) {
+      const addr = entry.server.address();
+      if (addr !== null && typeof addr === 'object') return addr.port;
+    }
+    return null;
+  }
 
   function createServer(mode: ApiMode): http.Server {
     const router = routerFor(mode);
