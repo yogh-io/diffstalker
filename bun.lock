@@ -14,7 +14,7 @@
     },
     "packages/cli": {
       "name": "diffstalker",
-      "version": "0.12.3",
+      "version": "0.13.0",
       "bin": {
         "diffstalker": "bin/diffstalker",
       },
@@ -83,7 +83,7 @@
     },
     "packages/daemon": {
       "name": "diffstalkerd",
-      "version": "0.12.3",
+      "version": "0.13.0",
       "bin": {
         "diffstalkerd": "bin/diffstalkerd",
       },
@@ -108,7 +108,7 @@
     },
     "packages/grammars": {
       "name": "diffstalkerd-grammars",
-      "version": "0.12.3",
+      "version": "0.13.0",
     },
     "packages/web": {
       "name": "@diffstalker/web",
