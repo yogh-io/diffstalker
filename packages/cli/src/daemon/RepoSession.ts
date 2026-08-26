@@ -599,7 +599,13 @@ export class RepoSession extends EventEmitter<SessionEventMap> {
     this._compare = { ...this._compare, loading: true, error: null, noBaseBranch: false };
     this.emit('compare-change');
     try {
-      const diff = await this.client.compare(this.id, { uncommitted: includeUncommitted });
+      // The TUI's `u` is one switch over all three uncommitted categories;
+      // the per-category control is the web UI's.
+      const diff = await this.client.compare(this.id, {
+        staged: includeUncommitted,
+        unstaged: includeUncommitted,
+        untracked: includeUncommitted,
+      });
       this._compare = {
         ...this._compare,
         compareDiff: diff,

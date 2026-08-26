@@ -362,7 +362,7 @@ async function applyCompareAnchor(state: UrlState, ctx: RestoreContext): Promise
           view: 'compare',
           key: compareFileKey(file),
           path: file.path,
-          uncommitted: file.isUncommitted === true,
+          side: file.uncommitted,
         }
       : null
   );
@@ -398,7 +398,7 @@ watch(
             view: 'compare',
             key: compareFileKey(file),
             path: file.path,
-            uncommitted: file.isUncommitted === true,
+            side: file.uncommitted,
           }
         : null
     );

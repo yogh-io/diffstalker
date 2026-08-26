@@ -1485,29 +1485,29 @@ describe('compare', () => {
     expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
   });
 
-  test('compare is re-pulled on state-change once loaded, keeping the uncommitted flag', async () => {
+  test('compare is re-pulled on state-change once loaded, keeping the categories', async () => {
     const { store, source } = await openStore();
-    await store.refreshCompare(true);
+    await store.refreshCompare({ staged: true, unstaged: true, untracked: true });
     // '/compare?' and not '/compare': the standalone count endpoint shares
     // the prefix, and these assertions are about the diff pulls only.
-    expect(fake.callsTo('/compare?')[0].url).toBe('/repos/r1/compare?uncommitted=true');
+    expect(fake.callsTo('/compare?')[0].url).toBe('/repos/r1/compare?staged=true&unstaged=true&untracked=true');
 
     source.emit('state-change', wireState());
     await flush();
     expect(fake.callsTo('/compare?')).toHaveLength(2);
-    expect(fake.callsTo('/compare?')[1].url).toBe('/repos/r1/compare?uncommitted=true');
+    expect(fake.callsTo('/compare?')[1].url).toBe('/repos/r1/compare?staged=true&unstaged=true&untracked=true');
   });
 
   test('out-of-order refreshCompare responses apply only the latest request', async () => {
     const { store } = await openStore();
 
-    // Request A (uncommitted ON) is slow; request B (OFF) resolves fast.
+    // Request A (all categories ON) is slow; request B (OFF) resolves fast.
     const slow = new Deferred<FakeResponse>();
     onRequest = (call) =>
-      call.url === '/repos/r1/compare?uncommitted=true' ? slow.promise : undefined;
+      call.url === '/repos/r1/compare?staged=true&unstaged=true&untracked=true' ? slow.promise : undefined;
 
-    const first = store.refreshCompare(true);
-    const second = store.refreshCompare(false);
+    const first = store.refreshCompare({ staged: true, unstaged: true, untracked: true });
+    const second = store.refreshCompare({ staged: false, unstaged: false, untracked: false });
     await second;
     await flush();
     expect(store.compare.compareDiff!.baseBranch).toBe('origin/main');
@@ -1525,10 +1525,10 @@ describe('compare', () => {
 
     const slow = new Deferred<FakeResponse>();
     onRequest = (call) =>
-      call.url === '/repos/r1/compare?uncommitted=true' ? slow.promise : undefined;
+      call.url === '/repos/r1/compare?staged=true&unstaged=true&untracked=true' ? slow.promise : undefined;
 
-    const first = store.refreshCompare(true);
-    await store.refreshCompare(false);
+    const first = store.refreshCompare({ staged: true, unstaged: true, untracked: true });
+    await store.refreshCompare({ staged: false, unstaged: false, untracked: false });
     slow.resolve({ status: 500, body: { error: 'git exploded' } });
     await first;
     await flush();
@@ -1577,11 +1577,15 @@ describe('compare', () => {
     expect(store.compare.selection).toEqual({ type: null, index: 0, diff: null });
   });
 
-  test('getLastIncludeUncommitted remembers the last requested flag', async () => {
+  test('getLastUncommitted remembers the last requested categories', async () => {
     const { store } = await openStore();
-    expect(store.getLastIncludeUncommitted()).toBe(false);
-    await store.refreshCompare(true);
-    expect(store.getLastIncludeUncommitted()).toBe(true);
+    expect(store.getLastUncommitted()).toEqual({ staged: false, unstaged: false, untracked: false });
+    await store.refreshCompare({ staged: false, unstaged: true, untracked: false });
+    expect(store.getLastUncommitted()).toEqual({
+      staged: false,
+      unstaged: true,
+      untracked: false,
+    });
   });
 
   test('setSelectedCompareBase reads with ?base= and issues NO PUT', async () => {
@@ -1591,7 +1595,7 @@ describe('compare', () => {
     expect(store.selectedCompareBase).toBe('origin/dev');
     expect(fake.callsTo('/compare?')[0]).toMatchObject({
       method: 'GET',
-      url: '/repos/r1/compare?base=origin%2Fdev&uncommitted=false',
+      url: '/repos/r1/compare?base=origin%2Fdev&staged=false&unstaged=false&untracked=false',
     });
     // Read-only: nothing was persisted daemon-side.
     expect(fake.calls.some((c) => c.method === 'PUT')).toBe(false);
@@ -1610,14 +1614,14 @@ describe('compare', () => {
 
   test('the picked base rides every later refresh, including the state-change re-pull', async () => {
     const { store, source } = await openStore();
-    await store.setSelectedCompareBase('origin/dev', true);
+    await store.setSelectedCompareBase('origin/dev', { staged: true, unstaged: true, untracked: true });
 
     source.emit('state-change', wireState());
     await flush();
     const urls = fake.callsTo('/compare?').map((c) => c.url);
     expect(urls).toEqual([
-      '/repos/r1/compare?base=origin%2Fdev&uncommitted=true',
-      '/repos/r1/compare?base=origin%2Fdev&uncommitted=true',
+      '/repos/r1/compare?base=origin%2Fdev&staged=true&unstaged=true&untracked=true',
+      '/repos/r1/compare?base=origin%2Fdev&staged=true&unstaged=true&untracked=true',
     ]);
   });
 

@@ -477,7 +477,7 @@ describe('view routing', () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ activeView: 'compare' }));
     const wrapper = await mountWithRepos([REPO_ONE]);
     await flushPromises();
-    expect(wrapper.text()).toContain('include uncommitted');
+    expect(wrapper.text()).toContain('includestagedunstageduntracked');
     // The active tab is Compare, and its title carries the commit count the
     // rail badges it with (0 against this fake's empty compare).
     expect(wrapper.find('button[aria-current="page"]').attributes('title')).toBe(

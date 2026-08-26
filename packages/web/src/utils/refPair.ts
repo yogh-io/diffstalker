@@ -20,6 +20,7 @@
  */
 
 import type { FileStatus } from '@diffstalker/core/git/status';
+import type { UncommittedSide } from '@diffstalker/core/git/diff';
 
 /** A diff's two sides, described structurally by the surface showing it. */
 export type RefPair =
@@ -27,8 +28,13 @@ export type RefPair =
   | { kind: 'working'; staged: boolean; status: FileStatus }
   /** Compare: the branch's own commits, base…HEAD (three-dot). */
   | { kind: 'compare'; base: string | null }
-  /** Compare: the uncommitted rows, which sit against HEAD instead. */
-  | { kind: 'compare-uncommitted' }
+  /**
+   * Compare: the uncommitted rows. Which two things they sit between
+   * depends on the category — the staged row is HEAD against the index,
+   * the unstaged row the index against the working tree — and none of
+   * them is the compare base.
+   */
+  | { kind: 'compare-uncommitted'; side: UncommittedSide }
   /** History: what one commit changed, against its parent. */
   | { kind: 'commit'; shortHash: string }
   /** Journal: every entry is worktree-vs-HEAD by construction. */
@@ -36,6 +42,20 @@ export type RefPair =
 
 /** U+2192 RIGHTWARDS ARROW — the direction of the change, old to new. */
 const ARROW = '→';
+
+/** What one uncommitted category actually compares. */
+function uncommittedPairLabel(side: UncommittedSide): string {
+  switch (side) {
+    case 'staged':
+      return `HEAD ${ARROW} index`;
+    case 'unstaged':
+      return `index ${ARROW} working tree`;
+    case 'both':
+      return `HEAD ${ARROW} working tree`;
+    case 'untracked':
+      return `nothing ${ARROW} new file`;
+  }
+}
 
 /**
  * One line of text for a pair. Kept short enough to sit inline in a file
@@ -60,7 +80,7 @@ export function refPairLabel(pair: RefPair): string {
     case 'compare-uncommitted':
       // A DIFFERENT base from the committed rows in the same stack, which
       // is exactly why this is worth printing.
-      return `HEAD ${ARROW} working tree`;
+      return uncommittedPairLabel(pair.side);
     case 'commit':
       return `${pair.shortHash}^ ${ARROW} ${pair.shortHash}`;
     case 'journal':
@@ -80,7 +100,7 @@ export function refPairTitle(pair: RefPair): string {
     case 'compare':
       return 'Everything this branch adds on top of its base (three-dot diff)';
     case 'compare-uncommitted':
-      return 'Uncommitted work, compared against HEAD — not against the compare base';
+      return `Uncommitted work: ${uncommittedPairLabel(pair.side)} — not the compare base`;
     case 'commit':
       return 'What this commit changed, against its parent';
     case 'journal':

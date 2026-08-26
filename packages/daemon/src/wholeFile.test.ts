@@ -212,15 +212,20 @@ describe('one file inside a range (History and Compare)', () => {
     expect(res.status).toBe(400);
   });
 
-  test('GET /compare/file?uncommitted=true reads against HEAD, not the base', async () => {
+  test('GET /compare/file?side=both reads against HEAD, not the base', async () => {
     // long.txt is dirty in the working tree but identical at HEAD on this
     // branch, so the two comparisons genuinely differ.
     const res = await request(
-      `/repos/${repoId}/compare/file?path=long.txt&uncommitted=true&whole=true`
+      `/repos/${repoId}/compare/file?path=long.txt&side=both&whole=true`
     );
     expect(res.status).toBe(200);
     const lines = ((await res.json()) as { lines: WireDiffLine[] }).lines;
     expect(lines.filter((l) => l.type === 'context').length).toBe(LINE_COUNT - 2);
+  });
+
+  test('GET /compare/file with an unknown side is a 400', async () => {
+    const res = await request(`/repos/${repoId}/compare/file?path=long.txt&side=sideways`);
+    expect(res.status).toBe(400);
   });
 
   test('/compare/file is routed on the web surface', async () => {

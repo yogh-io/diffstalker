@@ -15,7 +15,7 @@ import type {
   InProgressOperation,
   CommitInfo,
 } from '@diffstalker/core/git/status';
-import type { DiffResult, CompareDiff } from '@diffstalker/core/git/diff';
+import type { DiffResult, CompareDiff, UncommittedSide } from '@diffstalker/core/git/diff';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type { WireHunkCounts } from '@diffstalker/client';
 
@@ -139,5 +139,5 @@ export interface RepoCompareState {
  */
 export type WholeFileRequest =
   | { view: 'changes'; key: string; path: string }
-  | { view: 'compare'; key: string; path: string; uncommitted: boolean }
+  | { view: 'compare'; key: string; path: string; side?: UncommittedSide }
   | { view: 'history'; key: string; path: string; hash: string };

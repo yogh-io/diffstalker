@@ -120,7 +120,8 @@ Every feature below is preserved; only the plumbing moved. The git state engine 
   - File rows showing: status char, path, (+additions -deletions)
 - Uncommitted files marked with `*` prefix and `[uncommitted]` suffix (magenta)
 - Base branch shown in header
-- Toggle uncommitted with `u`
+- Toggle uncommitted with `u` (all three categories at once — the
+  per-category control is the web UI's)
 - Change base branch with `b`
 
 **Bottom Pane: Compare Diff**
@@ -230,7 +231,7 @@ Every feature below is preserved; only the plumbing moved. The git state engine 
 
 | Key | Action |
 |-----|--------|
-| `u` | Toggle include uncommitted changes |
+| `u` | Toggle include uncommitted changes (all three categories) |
 | `b` | Open base branch picker modal |
 
 ### Explorer View Specific
@@ -750,8 +751,15 @@ git operations.
   headers.
 - **Compare** — a GitHub-PR-style view against a base branch: base selector
   (a client-side pick read via `GET /compare?base=…` — never persisted
-  daemon-side), include-uncommitted toggle, stats, a collapsible commits list,
-  a file tree, and stacked per-file diffs with sticky collapse headers.
+  daemon-side), three independent include toggles — staged, unstaged,
+  untracked — stats, a collapsible commits list, a file tree, and stacked
+  per-file diffs with sticky collapse headers. The toggles are separate
+  because they are separate reviews: "what am I about to commit" is not
+  "what have I touched". Each folded-in row is tagged with the side it came
+  from (`[staged]`, `[unstaged]`, `[untracked]`, or `[uncommitted]` when
+  staged and unstaged are read together as one diff against HEAD), and a
+  file that a branch commit touched AND has uncommitted edits is listed
+  once per side.
   Tree folders collapse per-directory (chevron button or row click,
   Enter/Space/Left/Right on the button) — view state only; keyboard file
   navigation skips files hidden under a collapsed folder, and the stacked
@@ -781,7 +789,8 @@ git operations.
   said so, which is what made "what am I comparing against" feel
   unanswerable. Not a picker: nothing here is editable. It also disambiguates
   Compare's mixed stack, where committed rows sit against the merge-base and
-  uncommitted rows against HEAD.
+  each uncommitted row against its own side (`HEAD → index`,
+  `index → working tree`, `HEAD → working tree`, `nothing → new file`).
 - **"whole file" toggle in the Changes, Compare and History diff headers** —
   draws that one file in full, every line numbered, with the changed lines
   marked in place, instead of hunks with three lines of context around each.

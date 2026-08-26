@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { DiffLine, DiffResult } from '@diffstalker/core/git/diff';
+import type { DiffLine, DiffResult, UncommittedSide } from '@diffstalker/core/git/diff';
 import type { FileStatus } from '@diffstalker/core/git/status';
 import { LARGE_DIFF_NOTICE_PREFIX } from '@diffstalker/core/git/diffParse';
 import { diffModel, DIFF_ROW_PX, type DiffNotShown } from '../utils/diffRows';
@@ -17,8 +17,9 @@ export interface StackFile {
   status: FileStatus;
   /** Staged-side section (Changes, phase 1); unused by Compare. */
   staged?: boolean;
-  /** Compare's [uncommitted] marker on the header. */
-  uncommitted?: boolean;
+  /** Compare's uncommitted marker on the header: which side the row is,
+   *  absent on a committed row. */
+  uncommitted?: UncommittedSide;
   stats: { insertions: number; deletions: number };
   /**
    * null = the diff hasn't landed yet (Changes' untracked-file queue,
@@ -1373,7 +1374,9 @@ defineExpose({
         />
         <ViewFileButton :path="item.path" />
         <CopyPathButton :path="item.path" />
-        <span v-if="item.uncommitted" class="uncommitted-tag mono">[uncommitted]</span>
+        <span v-if="item.uncommitted" class="uncommitted-tag mono">{{
+          item.uncommitted === 'both' ? '[uncommitted]' : `[${item.uncommitted}]`
+        }}</span>
         <span class="stats mono">
           <span v-if="item.stats.insertions" class="count-add">+{{ item.stats.insertions }}</span>
           <span v-if="item.stats.deletions" class="count-del"

@@ -41,9 +41,9 @@ describe('refPairLabel', () => {
 
   test('compare’s uncommitted rows sit against a DIFFERENT base, and say so', () => {
     // The whole reason this is worth printing: one stack, two bases.
-    expect(refPairLabel({ kind: 'compare-uncommitted' })).toBe('HEAD → working tree');
+    expect(refPairLabel({ kind: 'compare-uncommitted', side: 'both' })).toBe('HEAD → working tree');
     expect(refPairLabel({ kind: 'compare', base: 'origin/main' })).not.toBe(
-      refPairLabel({ kind: 'compare-uncommitted' })
+      refPairLabel({ kind: 'compare-uncommitted', side: 'both' })
     );
   });
 
@@ -64,7 +64,7 @@ describe('refPairTitle', () => {
       working(false, 'untracked' as FileStatus),
       working(false, 'deleted' as FileStatus),
       { kind: 'compare', base: 'origin/main' },
-      { kind: 'compare-uncommitted' },
+      { kind: 'compare-uncommitted', side: 'both' },
       { kind: 'commit', shortHash: 'a1b2c3d' },
       { kind: 'journal' },
     ];

@@ -29,7 +29,11 @@ import { useUiStore } from '../stores/ui';
 import { buildFileTree, flattenTree, type TreeRowItem } from '@diffstalker/core/view/fileTree';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
-import type { CompareFileDiff } from '@diffstalker/core/git/diff';
+import type {
+  CompareFileDiff,
+  UncommittedParts,
+  UncommittedSide,
+} from '@diffstalker/core/git/diff';
 import { statusLetter } from '../utils/format';
 import { nextIndex } from '../utils/listNav';
 import { TOP_MIN, TOP_MAX } from '../prefs';
@@ -45,8 +49,19 @@ const ui = useUiStore();
 const { compare } = storeToRefs(repo);
 
 // Seeded from the store so the choice survives a tab switch (the ref
-// itself is component-local and would otherwise reset to false).
-const includeUncommitted = ref(repo.getLastIncludeUncommitted());
+// itself is component-local and would otherwise reset to all-off).
+//
+// Three independent categories, not one "uncommitted" switch: staged
+// (HEAD vs index), unstaged (index vs working tree) and untracked. They
+// are separate reviews — "what am I about to commit" is not "what have I
+// touched" — and folding them into one flag made it impossible to tell
+// which of them a missing file belonged to.
+const uncommitted = reactive<UncommittedParts>(repo.getLastUncommitted());
+const UNCOMMITTED_LABELS: ReadonlyArray<{ key: keyof UncommittedParts; label: string }> = [
+  { key: 'staged', label: 'staged' },
+  { key: 'unstaged', label: 'unstaged' },
+  { key: 'untracked', label: 'untracked' },
+];
 const candidates = ref<string[]>([]);
 const commitsOpen = ref(false);
 const collapsedFiles = reactive(new Set<string>());
@@ -61,7 +76,7 @@ onMounted(() => {
 });
 
 async function refreshNow(): Promise<void> {
-  await repo.refreshCompare(includeUncommitted.value);
+  await repo.refreshCompare({ ...uncommitted });
 }
 
 async function loadCandidates(): Promise<void> {
@@ -97,7 +112,7 @@ async function onBaseChange(event: Event): Promise<void> {
   beginUserNav({ view: 'compare' });
   // Read-only: the pick rides the next GET /compare as ?base=… —
   // nothing is persisted daemon-side.
-  await repo.setSelectedCompareBase(branch, includeUncommitted.value);
+  await repo.setSelectedCompareBase(branch, { ...uncommitted });
 }
 
 /**
@@ -105,9 +120,19 @@ async function onBaseChange(event: Event): Promise<void> {
  * @change listener can run before the model updates and re-query with
  * the stale flag.
  */
-async function onUncommittedToggle(event: Event): Promise<void> {
-  includeUncommitted.value = (event.target as HTMLInputElement).checked;
-  await repo.refreshCompare(includeUncommitted.value);
+async function onUncommittedToggle(key: keyof UncommittedParts, event: Event): Promise<void> {
+  uncommitted[key] = (event.target as HTMLInputElement).checked;
+  await repo.refreshCompare({ ...uncommitted });
+}
+
+/**
+ * The tag an uncommitted row carries. It names the SIDE, not just the
+ * fact of being uncommitted: with the categories controlled separately,
+ * "which of these three is this row" is the question the tag has to
+ * answer. `both` is staged and unstaged read together as one diff.
+ */
+function sideTag(side: UncommittedSide): string {
+  return side === 'both' ? '[uncommitted]' : `[${side}]`;
 }
 
 function relTime(commit: CommitInfo): string {
@@ -322,7 +347,7 @@ function toggleWholeFile(key: string): void {
     view: 'compare',
     key,
     path: file.path,
-    uncommitted: file.isUncommitted === true,
+    side: file.uncommitted,
   });
 }
 
@@ -355,7 +380,7 @@ const stackFiles = computed<StackFile[]>(() =>
     key: compareFileKey(file),
     path: file.path,
     status: file.status,
-    uncommitted: file.isUncommitted,
+    uncommitted: file.uncommitted,
     stats: { insertions: file.additions, deletions: file.deletions },
     diff:
       repo.wholeFile?.key === compareFileKey(file) ? repo.wholeFile.diff : file.diff,
@@ -364,8 +389,8 @@ const stackFiles = computed<StackFile[]>(() =>
     // committed ones against the merge-base, the uncommitted ones against
     // HEAD. Until now only an [uncommitted] tag hinted at that, and it
     // never mentioned a base at all.
-    refPair: file.isUncommitted
-      ? ({ kind: 'compare-uncommitted' } as const)
+    refPair: file.uncommitted
+      ? ({ kind: 'compare-uncommitted', side: file.uncommitted } as const)
       : ({ kind: 'compare', base: compare.value.baseBranch ?? null } as const),
   }))
 );
@@ -432,15 +457,18 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
         </label>
       </Teleport>
 
-      <label class="uncommitted-toggle">
-        <input
-          type="checkbox"
-          data-testid="uncommitted-toggle"
-          :checked="includeUncommitted"
-          @change="onUncommittedToggle"
-        />
-        <span>include uncommitted</span>
-      </label>
+      <fieldset class="uncommitted-toggles" data-testid="uncommitted-toggles">
+        <legend>include</legend>
+        <label v-for="part in UNCOMMITTED_LABELS" :key="part.key" class="uncommitted-toggle">
+          <input
+            type="checkbox"
+            :data-testid="`uncommitted-toggle-${part.key}`"
+            :checked="uncommitted[part.key]"
+            @change="onUncommittedToggle(part.key, $event)"
+          />
+          <span>{{ part.label }}</span>
+        </label>
+      </fieldset>
 
       <p v-if="compareDiff" class="stats mono" data-testid="compare-stats">
         <span class="files-changed"
@@ -566,7 +594,7 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
               class="file-row mono list-row"
               :class="{
                 selected: selectedFileIndex === row.fileIndex,
-                uncommitted: row.file.isUncommitted,
+                uncommitted: row.file.uncommitted !== undefined,
               }"
               :style="{ '--depth': row.depth }"
               :data-file-index="row.fileIndex"
@@ -586,10 +614,10 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
               }}</span>
               <span class="name">{{ row.name }}</span>
               <span
-                v-if="row.file.isUncommitted"
+                v-if="row.file.uncommitted"
                 class="uncommitted-tag"
                 data-testid="uncommitted-tag"
-                >[uncommitted]</span
+                >{{ sideTag(row.file.uncommitted) }}</span
               >
               <span class="stats">
                 <span v-if="row.file.additions" class="count-add"
@@ -692,6 +720,22 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
 .topbar-busy {
   color: var(--text-dim);
   font-size: var(--fs-small);
+}
+
+.uncommitted-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.uncommitted-toggles legend {
+  display: contents;
+  font-size: var(--fs-small);
+  color: var(--text-dim);
 }
 
 .uncommitted-toggle {

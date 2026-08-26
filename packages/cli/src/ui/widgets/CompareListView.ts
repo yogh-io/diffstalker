@@ -150,7 +150,7 @@ function formatFileRow(
   width: number
 ): string {
   const isHighlighted = isSelected && isFocused;
-  const isUncommitted = file.isUncommitted ?? false;
+  const isUncommitted = file.uncommitted !== undefined;
 
   const prefix = buildTreePrefix(treeRow);
 

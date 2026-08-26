@@ -9,8 +9,8 @@
 import {
   commitExists,
   getCommitDiff,
-  getDiffBetweenRefs,
-  getCompareDiffWithUncommitted,
+  getDiffForUntracked,
+  getCompareDiff,
   getCommitCountBetweenRefs,
   getCandidateBaseBranches,
   getDefaultBaseBranch,
@@ -19,7 +19,7 @@ import {
   WHOLE_FILE_CONTEXT,
   NoCommonHistoryError,
 } from '@diffstalker/core/git/diff';
-import type { CompareDiff, DiffRange } from '@diffstalker/core/git/diff';
+import type { CompareDiff, DiffRange, UncommittedSide } from '@diffstalker/core/git/diff';
 import {
   getCommit,
   getCommitHistory,
@@ -80,6 +80,31 @@ async function resolveRequestedBase(repoPath: string, query: URLSearchParams): P
     throw new HttpError(400, `Unknown base ref: ${requestedBase}`);
   }
   return requestedBase;
+}
+
+/** The `side` values GET /compare/file accepts — the four an
+ *  UncommittedSide can be, plus the absent case meaning "committed". */
+const UNCOMMITTED_SIDES: ReadonlySet<string> = new Set<UncommittedSide>([
+  'staged',
+  'unstaged',
+  'both',
+  'untracked',
+]);
+
+/**
+ * Which uncommitted work a compare request folds in. The three categories
+ * are independent query flags; naming none is the plain committed compare.
+ */
+function uncommittedParts(query: URLSearchParams): {
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+} {
+  return {
+    staged: parseBoolParam(query, 'staged', false),
+    unstaged: parseBoolParam(query, 'unstaged', false),
+    untracked: parseBoolParam(query, 'untracked', false),
+  };
 }
 
 /** Widen the context to the whole file, or leave core's default alone. */
@@ -154,10 +179,22 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     const filePath = query.get('path');
     if (!filePath) throw new HttpError(400, 'path is required');
     const whole = parseBoolParam(query, 'whole', false);
-    const uncommitted = parseBoolParam(query, 'uncommitted', false);
-    const range: DiffRange = uncommitted
-      ? { kind: 'head' }
-      : { kind: 'compare', base: await resolveRequestedBase(handle.path, query) };
+    const sideParam = query.get('side');
+    if (sideParam !== null && !UNCOMMITTED_SIDES.has(sideParam)) {
+      throw new HttpError(400, `Unknown side: ${sideParam}`);
+    }
+    const side = sideParam as UncommittedSide | null;
+    // An untracked file has no git range at all — every line of it is an
+    // addition, so the whole file IS its diff and git diff would answer
+    // empty. It is read from disk exactly as the compare list reads it.
+    if (side === 'untracked') {
+      sendJson(res, 200, await getDiffForUntracked(handle.path, filePath));
+      return;
+    }
+    const range: DiffRange =
+      side === null
+        ? { kind: 'compare', base: await resolveRequestedBase(handle.path, query) }
+        : { kind: side === 'both' ? 'head' : side };
     sendJson(
       res,
       200,
@@ -230,17 +267,16 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
 
   router.get('/repos/:id/compare', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
-    const uncommitted = parseBoolParam(query, 'uncommitted', false);
+    const parts = uncommittedParts(query);
     const base = await resolveRequestedBase(handle.path, query);
 
     // Response is the CompareDiff itself — consistent with /diff returning
     // the DiffResult directly. It already carries the resolved base as
-    // `baseBranch`; uncommitted inclusion shows in `files[].isUncommitted`.
+    // `baseBranch`; which uncommitted work was folded in shows per row in
+    // `files[].uncommitted`.
     let diff: CompareDiff;
     try {
-      diff = uncommitted
-        ? await getCompareDiffWithUncommitted(handle.path, base)
-        : await getDiffBetweenRefs(handle.path, base);
+      diff = await getCompareDiff(handle.path, base, parts);
     } catch (err) {
       // A resolvable base with no shared history: a real, non-empty
       // answer ("nothing to compare"), not a silent empty diff.

@@ -16,7 +16,8 @@ import {
   getDefaultBaseBranch,
   getCommitCountBetweenRefs,
   getDiffBetweenRefs,
-  getCompareDiffWithUncommitted,
+  getCompareDiff,
+  ALL_UNCOMMITTED,
   getFileDiffInRange,
   WHOLE_FILE_CONTEXT,
   commitExists,
@@ -299,7 +300,7 @@ describe('getCandidateBaseBranches / getDefaultBaseBranch / getDiffBetweenRefs (
   });
 });
 
-describe('getCompareDiffWithUncommitted (fixture)', () => {
+describe('getCompareDiff (fixture)', () => {
   const REPO_NAME = 'compare-uncommitted-test';
   let repoPath: string;
 
@@ -331,10 +332,10 @@ describe('getCompareDiffWithUncommitted (fixture)', () => {
     // file the branch already touches simply vanished from the compare.
     writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nc\nD\ne\n');
     try {
-      const diff = await getCompareDiffWithUncommitted(repoPath, 'main');
+      const diff = await getCompareDiff(repoPath, 'main', ALL_UNCOMMITTED);
       const entries = diff.files.filter((f) => f.path === 'tracked.txt');
       expect(entries).toHaveLength(2);
-      expect(entries.map((f) => f.isUncommitted ?? false)).toEqual([false, true]);
+      expect(entries.map((f) => f.uncommitted ?? 'committed')).toEqual(['committed', 'both']);
       // Both carry a real diff, not just a header.
       for (const entry of entries) {
         expect(entry.diff.lines.some((l) => l.type === 'addition')).toBe(true);
@@ -353,8 +354,8 @@ describe('getCompareDiffWithUncommitted (fixture)', () => {
     gitExec(repoPath, 'add tracked.txt');
     writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nUNSTAGED\nSTAGED\ne\n');
     try {
-      const diff = await getCompareDiffWithUncommitted(repoPath, 'main');
-      const entry = diff.files.find((f) => f.path === 'tracked.txt' && f.isUncommitted);
+      const diff = await getCompareDiff(repoPath, 'main', ALL_UNCOMMITTED);
+      const entry = diff.files.find((f) => f.path === 'tracked.txt' && f.uncommitted);
       expect(entry).toBeDefined();
       const raw = entry!.diff.lines.map((l) => l.content).join('\n');
       expect(raw).toContain('+STAGED');
@@ -366,13 +367,61 @@ describe('getCompareDiffWithUncommitted (fixture)', () => {
     }
   });
 
+  it('reads each uncommitted category on its own', async () => {
+    // The three categories are independent controls, not one switch:
+    // "what am I about to commit" and "what have I touched" are different
+    // reviews, and a file must land in exactly the one it belongs to.
+    writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nc\nSTAGED\ne\n');
+    gitExec(repoPath, 'add tracked.txt');
+    writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nUNSTAGED\nSTAGED\ne\n');
+    writeFixtureFile(repoPath, 'new.txt', 'fresh\n');
+    try {
+      const stagedOnly = await getCompareDiff(repoPath, 'main', {
+        staged: true,
+        unstaged: false,
+        untracked: false,
+      });
+      const staged = stagedOnly.files.filter((f) => f.uncommitted);
+      expect(staged.map((f) => [f.path, f.uncommitted])).toEqual([['tracked.txt', 'staged']]);
+      const stagedRaw = staged[0].diff.lines.map((l) => l.content).join('\n');
+      expect(stagedRaw).toContain('+STAGED');
+      expect(stagedRaw).not.toContain('+UNSTAGED');
+
+      const unstagedOnly = await getCompareDiff(repoPath, 'main', {
+        staged: false,
+        unstaged: true,
+        untracked: false,
+      });
+      const unstaged = unstagedOnly.files.filter((f) => f.uncommitted);
+      expect(unstaged.map((f) => [f.path, f.uncommitted])).toEqual([['tracked.txt', 'unstaged']]);
+      const unstagedRaw = unstaged[0].diff.lines.map((l) => l.content).join('\n');
+      expect(unstagedRaw).toContain('+UNSTAGED');
+      expect(unstagedRaw).not.toContain('+STAGED');
+
+      const untrackedOnly = await getCompareDiff(repoPath, 'main', {
+        staged: false,
+        unstaged: false,
+        untracked: true,
+      });
+      expect(untrackedOnly.files.filter((f) => f.uncommitted).map((f) => f.path)).toEqual([
+        'new.txt',
+      ]);
+
+      // None of them: the plain committed compare, nothing folded in.
+      const committedOnly = await getCompareDiff(repoPath, 'main');
+      expect(committedOnly.files.some((f) => f.uncommitted)).toBe(false);
+    } finally {
+      resetRepo();
+    }
+  });
+
   it('includes untracked files and skips ignored ones', async () => {
     writeFixtureFile(repoPath, 'new.txt', 'fresh\n');
     writeFixtureFile(repoPath, 'ignored.txt', 'noise\n');
     try {
-      const diff = await getCompareDiffWithUncommitted(repoPath, 'main');
+      const diff = await getCompareDiff(repoPath, 'main', ALL_UNCOMMITTED);
       const untracked = diff.files.find((f) => f.path === 'new.txt');
-      expect(untracked).toMatchObject({ status: 'added', isUncommitted: true, additions: 1 });
+      expect(untracked).toMatchObject({ status: 'added', uncommitted: 'untracked', additions: 1 });
       expect(untracked!.diff.lines.some((l) => l.content === '+fresh')).toBe(true);
       expect(diff.files.some((f) => f.path === 'ignored.txt')).toBe(false);
     } finally {
@@ -685,10 +734,10 @@ describe('diff.context is pinned, not inherited (fixture)', () => {
     resetRepo();
   });
 
-  it('getCompareDiffWithUncommitted pins context on the uncommitted side', async () => {
+  it('getCompareDiff pins context on the uncommitted side', async () => {
     gitExec(repoPath, 'checkout -b ctx-uncommitted');
     writeFixtureFile(repoPath, 'wide.txt', EDITED);
-    const compare = await getCompareDiffWithUncommitted(repoPath, 'main');
+    const compare = await getCompareDiff(repoPath, 'main', ALL_UNCOMMITTED);
     const file = compare.files.find((f) => f.path === 'wide.txt');
     expect(file).toBeDefined();
     expect(countHunks(rawFromLines(file!.diff.lines))).toBe(2);

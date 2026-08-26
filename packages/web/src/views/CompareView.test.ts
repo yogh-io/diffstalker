@@ -33,7 +33,7 @@ function fileDiff(
   status: CompareFileDiff['status'],
   additions: number,
   deletions: number,
-  isUncommitted = false
+  uncommitted: 'staged' | 'unstaged' | 'both' | 'untracked' | null = null
 ): CompareFileDiff {
   const diff: DiffResult = {
     lines: [
@@ -42,7 +42,7 @@ function fileDiff(
       { type: 'addition', content: `+changed ${path}`, newLineNum: 1 },
     ],
   };
-  return { path, status, additions, deletions, diff, ...(isUncommitted && { isUncommitted }) };
+  return { path, status, additions, deletions, diff, ...(uncommitted && { uncommitted }) };
 }
 
 function commit(hash: string, message: string): CommitInfo {
@@ -59,7 +59,7 @@ function commit(hash: string, message: string): CommitInfo {
 const FILES: CompareFileDiff[] = [
   fileDiff('src/app/main.ts', 'modified', 30, 10),
   fileDiff('src/util.ts', 'added', 10, 0),
-  fileDiff('notes.txt', 'deleted', 0, 2, true),
+  fileDiff('notes.txt', 'deleted', 0, 2, 'both'),
 ];
 
 function makeCompareDiff(
@@ -75,7 +75,7 @@ function makeCompareDiff(
     },
     files,
     commits,
-    uncommittedCount: files.filter((f) => f.isUncommitted).length,
+    uncommittedCount: files.filter((f) => f.uncommitted).length,
   };
 }
 
@@ -114,12 +114,12 @@ afterEach(() => {
 });
 
 describe('activation', () => {
-  test('refreshes the compare diff on mount (uncommitted off by default)', () => {
+  test('refreshes the compare diff on mount (every category off by default)', () => {
     const repo = useRepoStore();
     const spy = vi.spyOn(repo, 'refreshCompare').mockResolvedValue(undefined);
     mount(CompareView, { global: { plugins: [pinia] } });
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith(false);
+    expect(spy).toHaveBeenCalledWith({ staged: false, unstaged: false, untracked: false });
   });
 });
 
@@ -135,7 +135,7 @@ describe('top bar', () => {
     expect((select.element as HTMLSelectElement).value).toBe('origin/main');
   });
 
-  test('picking a base calls the read-only setSelectedCompareBase with branch + toggle state', async () => {
+  test('picking a base calls the read-only setSelectedCompareBase with branch + categories', async () => {
     const repo = useRepoStore();
     vi.spyOn(repo, 'getCandidateBaseBranches').mockResolvedValue(['origin/main', 'origin/dev']);
     const setBase = vi.spyOn(repo, 'setSelectedCompareBase').mockResolvedValue(undefined);
@@ -144,7 +144,11 @@ describe('top bar', () => {
 
     await wrapper.find('[data-testid="base-select"]').setValue('origin/dev');
     expect(setBase).toHaveBeenCalledTimes(1);
-    expect(setBase).toHaveBeenCalledWith('origin/dev', false);
+    expect(setBase).toHaveBeenCalledWith('origin/dev', {
+      staged: false,
+      unstaged: false,
+      untracked: false,
+    });
   });
 
   test('the base pick stays client-side: a GET with ?base=…, never a PUT', async () => {
@@ -172,7 +176,7 @@ describe('top bar', () => {
       await flushPromises();
 
       expect(fake.calls.map((c) => [c.method, c.url])).toEqual([
-        ['GET', '/repos/r1/compare?base=origin%2Fdev&uncommitted=false'],
+        ['GET', '/repos/r1/compare?base=origin%2Fdev&staged=false&unstaged=false&untracked=false'],
       ]);
     } finally {
       vi.unstubAllGlobals();
@@ -200,42 +204,58 @@ describe('top bar', () => {
     expect(options.map((o) => o.text())).toEqual(['origin/main', 'origin/dev']);
   });
 
-  test('the include-uncommitted toggle re-queries with the flag', async () => {
+  test('each uncommitted category toggles on its own', async () => {
+    // The point of three boxes: ticking "unstaged" must not drag staged
+    // or untracked work in with it.
     const { wrapper, repo } = mountView();
     const spy = vi.spyOn(repo, 'refreshCompare').mockResolvedValue(undefined);
 
-    await wrapper.find('[data-testid="uncommitted-toggle"]').setValue(true);
-    expect(spy).toHaveBeenLastCalledWith(true);
+    await wrapper.find('[data-testid="uncommitted-toggle-unstaged"]').setValue(true);
+    expect(spy).toHaveBeenLastCalledWith({ staged: false, unstaged: true, untracked: false });
 
-    await wrapper.find('[data-testid="uncommitted-toggle"]').setValue(false);
-    expect(spy).toHaveBeenLastCalledWith(false);
+    await wrapper.find('[data-testid="uncommitted-toggle-staged"]').setValue(true);
+    expect(spy).toHaveBeenLastCalledWith({ staged: true, unstaged: true, untracked: false });
+
+    await wrapper.find('[data-testid="uncommitted-toggle-untracked"]').setValue(true);
+    expect(spy).toHaveBeenLastCalledWith({ staged: true, unstaged: true, untracked: true });
+
+    await wrapper.find('[data-testid="uncommitted-toggle-unstaged"]').setValue(false);
+    expect(spy).toHaveBeenLastCalledWith({ staged: true, unstaged: false, untracked: true });
   });
 
-  test('uncommitted ON, then a base change: setSelectedCompareBase gets the flag', async () => {
+  test('a category ON, then a base change: setSelectedCompareBase gets the categories', async () => {
     const repo = useRepoStore();
     vi.spyOn(repo, 'getCandidateBaseBranches').mockResolvedValue(['origin/main', 'origin/dev']);
     const setBase = vi.spyOn(repo, 'setSelectedCompareBase').mockResolvedValue(undefined);
     const { wrapper } = mountView();
     await flushPromises();
 
-    await wrapper.find('[data-testid="uncommitted-toggle"]').setValue(true);
+    await wrapper.find('[data-testid="uncommitted-toggle-staged"]').setValue(true);
     await wrapper.find('[data-testid="base-select"]').setValue('origin/dev');
-    expect(setBase).toHaveBeenCalledWith('origin/dev', true);
+    expect(setBase).toHaveBeenCalledWith('origin/dev', {
+      staged: true,
+      unstaged: false,
+      untracked: false,
+    });
   });
 
-  test('the include-uncommitted choice survives a tab re-entry (remount)', async () => {
+  test('the category choices survive a tab re-entry (remount)', async () => {
     const { wrapper, repo } = mountView();
     // The REAL refreshCompare runs (repoId null → no fetch) and records
-    // the flag; the remounted component must seed its ref from it.
-    await wrapper.find('[data-testid="uncommitted-toggle"]').setValue(true);
+    // the categories; the remounted component must seed its state from it.
+    await wrapper.find('[data-testid="uncommitted-toggle-untracked"]').setValue(true);
     wrapper.unmount();
 
     const spy = vi.spyOn(repo, 'refreshCompare').mockResolvedValue(undefined);
     const second = mount(CompareView, { global: { plugins: [pinia] } });
-    const box = second.find('[data-testid="uncommitted-toggle"]');
-    expect((box.element as HTMLInputElement).checked).toBe(true);
-    // And the activation refresh re-queries WITH uncommitted.
-    expect(spy).toHaveBeenCalledWith(true);
+    const boxes = ['staged', 'unstaged', 'untracked'].map(
+      (key) =>
+        (second.find(`[data-testid="uncommitted-toggle-${key}"]`).element as HTMLInputElement)
+          .checked
+    );
+    expect(boxes).toEqual([false, false, true]);
+    // And the activation refresh re-queries WITH untracked.
+    expect(spy).toHaveBeenCalledWith({ staged: false, unstaged: false, untracked: true });
   });
 
   test('shows the diff-colored stats line', () => {
@@ -333,7 +353,7 @@ describe('file tree', () => {
     // scroll-spy; feeding it the key drives the SAME selection (and thus
     // the same `.selected` focus indicator) a click would.
     const row = wrapper.findAll('.file-row')[2];
-    const key = `${row.classes().includes('uncommitted') ? 'u' : 'c'}:${row.attributes('title')}`;
+    const key = `${row.classes().includes('uncommitted') ? 'both' : 'c'}:${row.attributes('title')}`;
     wrapper.findComponent(DiffStack).vm.$emit('active-file', key);
     await wrapper.vm.$nextTick();
 
@@ -728,9 +748,9 @@ describe('portrait layout', () => {
       wrapper.find('[data-testid="compare-topbar"] [data-testid="base-select"]').exists()
     ).toBe(false);
     expect(wrapper.find('.commits-section [data-testid="commits-toggle"]').exists()).toBe(false);
-    // The uncommitted toggle stays in the topbar.
+    // The uncommitted toggles stay in the topbar.
     expect(
-      wrapper.find('[data-testid="compare-topbar"] [data-testid="uncommitted-toggle"]').exists()
+      wrapper.find('[data-testid="compare-topbar"] [data-testid="uncommitted-toggles"]').exists()
     ).toBe(true);
   });
 

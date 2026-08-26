@@ -341,13 +341,28 @@ export class DiffstalkerClient {
     return base;
   }
 
+  /**
+   * The branch-vs-base compare. The three uncommitted categories are
+   * independent: naming none is the plain committed compare.
+   */
   async compare(
     id: string,
-    opts: { base?: string; uncommitted?: boolean } = {}
+    opts: {
+      base?: string;
+      staged?: boolean;
+      unstaged?: boolean;
+      untracked?: boolean;
+    } = {}
   ): Promise<CompareDiff> {
     const diff = await this.transport.request<WireCompareDiff>(
       'GET',
-      this.repoPath(id, '/compare') + toQuery({ base: opts.base, uncommitted: opts.uncommitted })
+      this.repoPath(id, '/compare') +
+        toQuery({
+          base: opts.base,
+          staged: opts.staged,
+          unstaged: opts.unstaged,
+          untracked: opts.untracked,
+        })
     );
     return { ...diff, commits: diff.commits.map(reviveCommit) };
   }

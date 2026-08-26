@@ -92,7 +92,13 @@ import type {
   WireSharedState,
 } from '@diffstalker/client';
 import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
-import type { CompareDiff, CompareFileDiff, DiffResult } from '@diffstalker/core/git/diff';
+import { NO_UNCOMMITTED } from '@diffstalker/core/git/diff';
+import type {
+  CompareDiff,
+  CompareFileDiff,
+  DiffResult,
+  UncommittedParts,
+} from '@diffstalker/core/git/diff';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type {
@@ -172,13 +178,13 @@ export function workingDiffKey(file: FileEntry): string {
 }
 
 /**
- * Stack key for a compare row. The path alone is NOT unique: with
- * "include uncommitted" on, a file the branch's commits touch and that
- * also has uncommitted edits is listed twice, once per side. Same
- * `c:`/`u:` shape as workingDiffKey so both views key rows alike.
+ * Stack key for a compare row. The path alone is NOT unique: with any
+ * uncommitted category included, a file the branch's commits touch and
+ * that also has uncommitted edits is listed twice, once per side. The
+ * side is part of the key so the two rows can never collapse into one.
  */
 export function compareFileKey(file: CompareFileDiff): string {
-  return `${file.isUncommitted ? 'u' : 'c'}:${file.path}`;
+  return `${file.uncommitted ?? 'c'}:${file.path}`;
 }
 
 /** One queued /media fetch; `settle` releases whoever awaited ensureMedia. */
@@ -403,13 +409,14 @@ export const useRepoStore = defineStore('repo', () => {
    * would reopen the very hole the epoch check exists to close).
    */
   let epochResetBuffer: JournalAppendEvent[] = [];
-  let lastIncludeUncommitted = false;
+  /** Which uncommitted categories the last compare pull folded in. */
+  let lastUncommitted: UncommittedParts = { ...NO_UNCOMMITTED };
   let historyCount = 100;
   /**
    * Monotonic refreshCompare sequence: each request captures the counter
    * and only the latest one may apply its response, so a slow older pull
-   * (e.g. uncommitted ON) landing after a fast newer one (uncommitted
-   * OFF) cannot overwrite the state the UI's controls reflect.
+   * (e.g. untracked ON) landing after a fast newer one (untracked OFF)
+   * cannot overwrite the state the UI's controls reflect.
    */
   let compareRequestSeq = 0;
   /**
@@ -489,7 +496,7 @@ export const useRepoStore = defineStore('repo', () => {
     journalSyncedTo = 0;
     preloadAppendEpoch = null;
     epochResetBuffer = [];
-    lastIncludeUncommitted = false;
+    lastUncommitted = { ...NO_UNCOMMITTED };
     historyCount = 100;
 
     workingDiffsActive = false;
@@ -746,7 +753,7 @@ export const useRepoStore = defineStore('repo', () => {
       void reloadHistory();
     }
     if (compare.value.compareDiff !== null && !compare.value.loading) {
-      void refreshCompare(lastIncludeUncommitted);
+      void refreshCompare(lastUncommitted);
     } else {
       // Compare is not open: still keep the rail's commit count current,
       // which costs one rev-list rather than a whole CompareDiff. (When it
@@ -1146,7 +1153,7 @@ export const useRepoStore = defineStore('repo', () => {
       return client.compareFileDiff(id, {
         path: request.path,
         base: selectedCompareBase.value ?? undefined,
-        uncommitted: request.uncommitted,
+        side: request.side,
         whole: true,
       });
     }
@@ -1788,10 +1795,10 @@ export const useRepoStore = defineStore('repo', () => {
 
   // --- Compare ---
 
-  /** The include-uncommitted flag of the most recent compare pull — lets
-   * the view's toggle survive a tab switch (the ref is component-local). */
-  function getLastIncludeUncommitted(): boolean {
-    return lastIncludeUncommitted;
+  /** The uncommitted categories of the most recent compare pull — lets
+   * the view's toggles survive a tab switch (the refs are component-local). */
+  function getLastUncommitted(): UncommittedParts {
+    return { ...lastUncommitted };
   }
 
   /**
@@ -1842,8 +1849,10 @@ export const useRepoStore = defineStore('repo', () => {
     }
   }
 
-  async function refreshCompare(includeUncommitted: boolean = false): Promise<void> {
-    lastIncludeUncommitted = includeUncommitted;
+  async function refreshCompare(
+    uncommitted: UncommittedParts = NO_UNCOMMITTED
+  ): Promise<void> {
+    lastUncommitted = { ...uncommitted };
     const id = repoId.value;
     if (id === null) return;
     const gen = generation;
@@ -1852,7 +1861,7 @@ export const useRepoStore = defineStore('repo', () => {
     try {
       const diff = await client.compare(id, {
         base: selectedCompareBase.value ?? undefined,
-        uncommitted: includeUncommitted,
+        ...uncommitted,
       });
       if (gen !== generation || seq !== compareRequestSeq) return;
       // The loaded list is the authority on its own length: take the count
@@ -1916,10 +1925,10 @@ export const useRepoStore = defineStore('repo', () => {
    */
   async function setSelectedCompareBase(
     branch: string,
-    includeUncommitted: boolean = false
+    uncommitted: UncommittedParts = NO_UNCOMMITTED
   ): Promise<void> {
     selectedCompareBase.value = branch;
-    await refreshCompare(includeUncommitted);
+    await refreshCompare(uncommitted);
   }
 
   async function selectCompareCommit(index: number): Promise<void> {
@@ -2008,7 +2017,7 @@ export const useRepoStore = defineStore('repo', () => {
     // compare
     refreshCompare,
     refreshCompareCount,
-    getLastIncludeUncommitted,
+    getLastUncommitted,
     getCandidateBaseBranches,
     setSelectedCompareBase,
     selectCompareCommit,

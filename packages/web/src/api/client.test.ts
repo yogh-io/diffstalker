@@ -125,8 +125,10 @@ describe('history / compare decoding', () => {
         uncommittedCount: 0,
       },
     });
-    const diff = await client.compare('r1', { uncommitted: true });
-    expect(fake.calls[0].url).toBe('/repos/r1/compare?uncommitted=true');
+    const diff = await client.compare('r1', { staged: true, unstaged: true, untracked: false });
+    expect(fake.calls[0].url).toBe(
+      '/repos/r1/compare?staged=true&unstaged=true&untracked=false'
+    );
     expect(diff.commits[0].date).toBeInstanceOf(Date);
   });
 
@@ -140,10 +142,10 @@ describe('history / compare decoding', () => {
         uncommittedCount: 0,
       },
     });
-    await client.compare('r1', { base: 'origin/dev', uncommitted: false });
+    await client.compare('r1', { base: 'origin/dev' });
     expect(fake.calls[0]).toMatchObject({
       method: 'GET',
-      url: '/repos/r1/compare?base=origin%2Fdev&uncommitted=false',
+      url: '/repos/r1/compare?base=origin%2Fdev',
     });
     expect(fake.calls.every((c) => c.method === 'GET')).toBe(true);
   });

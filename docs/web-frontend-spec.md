@@ -243,7 +243,7 @@ come from `GET …/commits/:hash/diff`. `count` is pageable (default 100) — ad
 ### 6.3 Compare (PR) view — GitHub-style
 
 ```
-┌─ base: origin/main ▾   [ ] include uncommitted   12 files  +340 −120 ──────┐
+┌─ base: origin/main ▾  include [ ]staged [ ]unstaged [ ]untracked  12 files ┐
 ├─ Commits (5) ▸ ─────────────────────────────────────────────────────────────┤
 ├─ Files ▾ ────────────┬─ Diffs (unified ▾ / split) ─────────────────────────┤
 │  ▾ src/              │  ▸ src/foo.ts   +40 −10                    [collapse]│
@@ -256,11 +256,13 @@ come from `GET …/commits/:hash/diff`. `count` is pageable (default 100) — ad
 
 The PR-review view, done properly:
 - **Base selector** (`GET/PUT …/compare/base`, candidates from `GET …/base-branches`) and the
-  **include-uncommitted** toggle (re-queries `GET …/compare?uncommitted=`), both persistent at the top.
+  three **include** toggles — staged, unstaged, untracked (re-queries
+  `GET …/compare?staged=&unstaged=&untracked=`), all persistent at the top.
 - **Stats** header (`filesChanged`, `+additions −deletions`).
 - **Collapsible commits** section (`CompareDiff.commits`).
 - **File tree** (left) built with `fileTree`, status icons (`+ ● − →`), per-file `+/−`, uncommitted
-  files flagged magenta `[uncommitted]`.
+  files flagged magenta with the side they came from (`[staged]`, `[unstaged]`, `[untracked]`,
+  or `[uncommitted]` for staged+unstaged read together).
 - **Diffs** (right): file-by-file like a GitHub PR, each with a sticky header, collapsible, and a
   **unified / side-by-side toggle** (§7). Clicking a file in the tree scrolls to its diff.
 - Distinct empty state when there's **no remote base branch** (base detection uses remote refs only),
@@ -512,7 +514,7 @@ server-side repo browser, keyboard-shortcut help, accessibility pass.
 |---|---|---|---|
 | Changes | `GET …/status`, `GET …/diff?path=&staged=`, `GET …/head-message` | `…/events` `state-change` | `stage`/`unstage`/`stage-all`/`unstage-all`/`discard`/`stage-hunk`/`unstage-hunk`/`commit` |
 | History | `GET …/history?count=`, `GET …/commits/:hash/diff` | re-pull on `state-change` | `cherry-pick`/`revert`/`soft-reset` |
-| Compare | `GET …/base-branches`, `…/branches`, `GET/PUT …/compare/base`, `GET …/compare?base=&uncommitted=` | re-pull on `state-change` | `compare/base` (PUT) |
+| Compare | `GET …/base-branches`, `…/branches`, `GET/PUT …/compare/base`, `GET …/compare?base=&staged=&unstaged=&untracked=` | re-pull on `state-change` | `compare/base` (PUT) |
 | Explorer | `GET …/tree?dir=&hidden=&ignored=`, `GET …/file?path=`, `GET …/files` | re-pull on `state-change` | — |
 | Global | `GET /repos`, `GET /follow`, `POST /repos`, `DELETE /repos/:id` | `/events` `repo-opened`/`repo-closed`/`follow-change` | push/fetch/pull/stash/branch/abort/rebase-continue |
 

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-08-26
+
+### Changed
+
+- **Compare's "include uncommitted" is now three independent toggles: staged,
+  unstaged, untracked.** One switch could not answer the question a reader
+  actually has — "what am I about to commit" and "what have I touched" are
+  different reviews, and with one flag there was no way to tell which of the
+  three a row belonged to, or to leave one of them out. Each folded-in row is
+  now tagged with the side it came from and its ref-pair label names that
+  side's own comparison (`HEAD → index`, `index → working tree`,
+  `HEAD → working tree`, `nothing → new file`). Staged and unstaged asked for
+  together are still read as ONE `git diff HEAD`, never two diffs — a file
+  changed on both sides is one row, not two chunks of which only the first
+  survives.
+- **Wire:** `GET /compare?uncommitted=` is replaced by
+  `?staged=&unstaged=&untracked=`, and `GET /compare/file?uncommitted=` by
+  `?side=staged|unstaged|both|untracked`. A `CompareFileDiff`'s
+  `isUncommitted: boolean` becomes `uncommitted?: UncommittedSide`.
+- **Whole-file mode works on an untracked compare row.** It used to ask git
+  for a diff of a file git does not track and get nothing back; the row is now
+  read from disk, which is what its hunks were already doing.
+- The TUI's `u` key still toggles all three categories at once — the
+  per-category control is the web UI's.
+
 ## [0.13.0] - 2026-08-26
 
 ### Added

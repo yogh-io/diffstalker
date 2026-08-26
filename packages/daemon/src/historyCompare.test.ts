@@ -56,7 +56,7 @@ interface WireCommit {
 interface WireCompareDiff {
   baseBranch: string;
   stats: { filesChanged: number; additions: number; deletions: number };
-  files: Array<{ path: string; status: string; isUncommitted?: boolean; diff: { raw: string } }>;
+  files: Array<{ path: string; status: string; uncommitted?: string; diff: { raw: string } }>;
   commits: WireCommit[];
   uncommittedCount: number;
 }
@@ -100,7 +100,7 @@ beforeAll(async () => {
   writeFixtureFile(repoPath, 'feature.txt', 'feature line\n');
   gitExec(repoPath, 'add .');
   gitExec(repoPath, 'commit -m "feature commit"');
-  // Uncommitted tracked-file change for uncommitted=true (untracked files
+  // Uncommitted tracked-file change for ?unstaged=true (untracked files
   // never show up in git diff, so modify a tracked one).
   writeFixtureFile(repoPath, 'base.txt', 'line one\nline two\nuncommitted line\n');
 
@@ -405,22 +405,36 @@ describe('compare endpoints', () => {
     expect(body.error).toContain('No common history');
   });
 
-  test('GET /compare?uncommitted=true includes the working-tree change', async () => {
-    const res = await request(`/repos/${repoId}/compare?base=main&uncommitted=true`);
-    expect(res.status).toBe(200);
-    const diff = (await res.json()) as WireCompareDiff;
-    const uncommitted = diff.files.filter((f) => f.isUncommitted);
-    expect(uncommitted.map((f) => f.path)).toEqual(['base.txt']);
-    expect(wireDiffText(uncommitted[0].diff)).toContain('+uncommitted line');
+  test('GET /compare folds in each uncommitted category on its own', async () => {
+    // base.txt is dirty in the working tree only — so it must appear
+    // under ?unstaged=true and NOT under ?staged=true. One "uncommitted"
+    // flag could not tell those two apart.
+    const unstaged = (await (
+      await request(`/repos/${repoId}/compare?base=main&unstaged=true`)
+    ).json()) as WireCompareDiff;
+    const rows = unstaged.files.filter((f) => f.uncommitted);
+    expect(rows.map((f) => [f.path, f.uncommitted])).toEqual([['base.txt', 'unstaged']]);
+    expect(wireDiffText(rows[0].diff)).toContain('+uncommitted line');
     // The committed side is still there too.
-    expect(diff.files.some((f) => f.path === 'feature.txt' && !f.isUncommitted)).toBe(true);
+    expect(unstaged.files.some((f) => f.path === 'feature.txt' && !f.uncommitted)).toBe(true);
+
+    const staged = (await (
+      await request(`/repos/${repoId}/compare?base=main&staged=true`)
+    ).json()) as WireCompareDiff;
+    expect(staged.files.some((f) => f.uncommitted)).toBe(false);
+
+    // Naming none of them is the plain committed compare.
+    const committed = (await (
+      await request(`/repos/${repoId}/compare?base=main`)
+    ).json()) as WireCompareDiff;
+    expect(committed.files.some((f) => f.uncommitted)).toBe(false);
   });
 
-  test('GET /compare with a malformed uncommitted param is a 400', async () => {
-    const res = await request(`/repos/${repoId}/compare?base=main&uncommitted=yes`);
+  test('GET /compare with a malformed category param is a 400', async () => {
+    const res = await request(`/repos/${repoId}/compare?base=main&unstaged=yes`);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('uncommitted');
+    expect(body.error).toContain('unstaged');
   });
 
   test('GET /compare with an unknown base ref is a 400 naming the ref', async () => {

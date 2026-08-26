@@ -44,7 +44,12 @@ import type {
   WireSharedState,
 } from '@diffstalker/client';
 import type { CommitInfo } from '@diffstalker/core/git/status';
-import type { CompareDiff, DiffResult } from '@diffstalker/core/git/diff';
+import type {
+  CompareDiff,
+  DiffResult,
+  UncommittedParts,
+  UncommittedSide,
+} from '@diffstalker/core/git/diff';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
 import type { GrepResult } from '@diffstalker/core/git/grep';
 import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
@@ -279,13 +284,14 @@ export class DiffstalkerClient {
   }
 
   /**
-   * One file's diff inside a comparison. `uncommitted` selects the row's
-   * actual comparison: Compare's stack mixes rows measured against the
-   * base with rows measured against HEAD.
+   * One file's diff inside a comparison. `side` selects the row's actual
+   * comparison: Compare's stack mixes rows measured against the base with
+   * rows measured against HEAD, the index, or (untracked) nothing at all.
+   * Absent means a committed row, measured against the base.
    */
   compareFileDiff(
     id: string,
-    opts: { path: string; base?: string; uncommitted?: boolean; whole?: boolean }
+    opts: { path: string; base?: string; side?: UncommittedSide; whole?: boolean }
   ): Promise<DiffResult> {
     return request(
       'GET',
@@ -293,7 +299,7 @@ export class DiffstalkerClient {
         toQuery({
           path: opts.path,
           base: opts.base,
-          uncommitted: opts.uncommitted,
+          side: opts.side,
           whole: opts.whole,
         })
     );
@@ -311,13 +317,23 @@ export class DiffstalkerClient {
     return base;
   }
 
+  /**
+   * The branch-vs-base compare. The three uncommitted categories are
+   * independent: naming none is the plain committed compare.
+   */
   async compare(
     id: string,
-    opts: { base?: string; uncommitted?: boolean } = {}
+    opts: { base?: string } & Partial<UncommittedParts> = {}
   ): Promise<CompareDiff> {
     const diff = await request<WireCompareDiff>(
       'GET',
-      this.repoPath(id, '/compare') + toQuery({ base: opts.base, uncommitted: opts.uncommitted })
+      this.repoPath(id, '/compare') +
+        toQuery({
+          base: opts.base,
+          staged: opts.staged,
+          unstaged: opts.unstaged,
+          untracked: opts.untracked,
+        })
     );
     return { ...diff, commits: diff.commits.map(reviveCommit) };
   }

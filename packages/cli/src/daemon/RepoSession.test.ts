@@ -346,9 +346,12 @@ describe('RepoSession history and compare', () => {
     await session.refreshCompare(true);
     expect(session.compare.baseBranch).toBe('develop');
     expect(session.compare.compareDiff).not.toBeNull();
-    expect((fake.callsTo('compare')[0].args[1] as { uncommitted?: boolean }).uncommitted).toBe(
-      true
-    );
+    // The TUI's single `u` switch asks for all three categories at once.
+    expect(fake.callsTo('compare')[0].args[1]).toMatchObject({
+      staged: true,
+      unstaged: true,
+      untracked: true,
+    });
 
     const failing = fakeClient({ compare: () => Promise.reject(new DaemonError(400, 'no base')) });
     const failingSession = makeSession(failing);
