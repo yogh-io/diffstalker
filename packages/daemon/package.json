@@ -1,6 +1,6 @@
 {
   "name": "diffstalkerd",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "diffstalker daemon: REST API + SSE git state over a unix socket",
   "author": "yogh-io",
   "license": "MIT",
