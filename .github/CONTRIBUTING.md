@@ -34,7 +34,7 @@ Requires Node `>= 20.10` and a recent Bun.
   warnings is expected (see CLAUDE.md); do not add new ones.
 - Keep the change focused and match the style and comment density of the code
   around it. Add tests for new behavior — the project is test-heavy on purpose.
-- When you add a user-facing feature, update `FEATURES.md`.
+- When you add a user-facing feature, update `docs/FEATURES.md`.
 
 ## Architecture guardrails
 

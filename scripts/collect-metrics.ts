@@ -138,7 +138,7 @@ async function runEslintMetrics(pkgDir: string): Promise<ESLintFileResult[]> {
   // of each package). The config resolves the package's own base config via
   // cwd, so it must run with cwd set to the package dir.
   const eslintBin = join(pkgDir, 'node_modules', '.bin', 'eslint');
-  const metricsConfig = join(ROOT, 'eslint.metrics.js');
+  const metricsConfig = join(ROOT, 'scripts', 'eslint.metrics.js');
   const proc = Bun.spawn([eslintBin, '--config', metricsConfig, '--format', 'json', 'src/'], {
     cwd: pkgDir,
     stderr: 'pipe',

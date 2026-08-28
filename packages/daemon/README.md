@@ -107,7 +107,7 @@ loopback `Host`, so they pass. Every response also carries hardening
 headers (`X-Content-Type-Options`, `X-Frame-Options: DENY`,
 `Referrer-Policy`, and a strict `Content-Security-Policy` for the served
 SPA). To reach the daemon from another machine, forward the port over SSH
-(`ssh -L`). See `SECURITY.md` at the repo root.
+(`ssh -L`). See `.github/SECURITY.md` at the repo root.
 
 The API surface is chosen **per listener**, by how well that transport is
 protected — not per daemon. A unix socket (or an inherited activation fd) is

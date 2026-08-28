@@ -71,9 +71,9 @@ That's it. The UI streams live over SSE — status, diffs, and the change timeli
 
 Plus, everywhere: word-level diff highlighting, an app-wide **unified / split** diff toggle, optional **syntax highlighting** in diffs, **follow** and **auto** mode, **search** (`Ctrl+P` — file names, file contents, or the open file's outline, each named on the overlay so you never have to remember which key), six themes, a hotkeys overlay (`?`), and a layout that reflows for portrait (vertical) monitors.
 
-The web UI is a viewer with one write: file-level stage / unstage from the Changes list. Commit, discard, hunk-level staging, and remote/branch operations live in the terminal UI. See the [Web UI section of FEATURES.md](FEATURES.md#web-ui-browser-client) for the full list.
+The web UI is a viewer with one write: file-level stage / unstage from the Changes list. Commit, discard, hunk-level staging, and remote/branch operations live in the terminal UI. See the [Web UI section of FEATURES.md](docs/FEATURES.md#web-ui-browser-client) for the full list.
 
-> **Security:** the daemon has no authentication, so it binds **loopback only** — a unix socket, or `--port` on `127.0.0.1` (there is no option to bind a routable interface). While on a port it also runs an origin guard: a `Host` allow-list blocks DNS-rebinding and cross-site requests are rejected (CSRF), plus a strict CSP and hardening headers on every response. To reach it from another machine, use an SSH tunnel (`ssh -L 7337:localhost:7337 …`). See [SECURITY.md](SECURITY.md).
+> **Security:** the daemon has no authentication, so it binds **loopback only** — a unix socket, or `--port` on `127.0.0.1` (there is no option to bind a routable interface). While on a port it also runs an origin guard: a `Host` allow-list blocks DNS-rebinding and cross-site requests are rejected (CSRF), plus a strict CSP and hardening headers on every response. To reach it from another machine, use an SSH tunnel (`ssh -L 7337:localhost:7337 …`). See [SECURITY.md](.github/SECURITY.md).
 
 ## The terminal UI
 

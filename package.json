@@ -9,8 +9,15 @@
   "engines": {
     "node": ">=20.19.0"
   },
+  "prettier": {
+    "semi": true,
+    "singleQuote": true,
+    "tabWidth": 2,
+    "trailingComma": "es5",
+    "printWidth": 100
+  },
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks",
+    "prepare": "git config core.hooksPath scripts/githooks",
     "dev": "cd packages/cli && bun run dev",
     "dev:web": "cd packages/web && bun run dev",
     "serve": "bun scripts/serve.ts",

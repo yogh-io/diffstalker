@@ -1212,4 +1212,4 @@ git operations.
   **reduced REST surface**: only the endpoints the web UI uses (reads, repo
   open/release, file stage/unstage). The CLI-only mutations (commit, discard,
   hunk staging, remote/branch ops, persisted compare base) are not routed on a
-  port at all. See `SECURITY.md`.
+  port at all. See `.github/SECURITY.md`.

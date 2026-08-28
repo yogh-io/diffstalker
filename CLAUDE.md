@@ -10,7 +10,7 @@ The git state engine now lives in a **daemon** (`diffstalkerd`): a Node http ser
 
 ## Feature Documentation
 
-**IMPORTANT:** After adding a new feature, update `FEATURES.md` to document it. Keep the feature list organized by category (Views, Navigation, Operations, etc.).
+**IMPORTANT:** After adding a new feature, update `docs/FEATURES.md` to document it. Keep the feature list organized by category (Views, Navigation, Operations, etc.).
 
 **Before starting a feature, read `docs/feature-review-0.9.0.md`.** The project is
 deliberately not growing features right now. That doc records what was already
@@ -257,7 +257,7 @@ When building UI structures with rows (diff views, file lists), always use a sin
 ### Adding a keybinding
 1. Add handler in `src/KeyBindings.ts` (respect the `hasActiveModal()` guard for non-modal keys)
 2. Add the action to `KeyBindingActions` and implement it in `App.setupKeyboardHandlers()`
-3. Update `Footer.ts` and `ui/modals/HotkeysModal.ts` to show the hint, and FEATURES.md
+3. Update `Footer.ts` and `ui/modals/HotkeysModal.ts` to show the hint, and docs/FEATURES.md
 
 ### Adding a modal
 1. Create a class in `src/ui/modals/` implementing the `Modal` interface
@@ -281,7 +281,7 @@ When building UI structures with rows (diff views, file lists), always use a sin
 
 ### Pre-commit Hook
 
-A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `.githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 20 pre-existing warnings are expected (6 in packages/core + 11 in packages/cli + 3 in packages/web; daemon and client 0), 0 errors. 18 of them are sonarjs cognitive-complexity; web's 3 are 1 cognitive-complexity plus 2 `vue/one-component-per-file` from the two inline test components in `src/composables/useActiveRowScroll.test.ts`.
+A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `scripts/githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 20 pre-existing warnings are expected (6 in packages/core + 11 in packages/cli + 3 in packages/web; daemon and client 0), 0 errors. 18 of them are sonarjs cognitive-complexity; web's 3 are 1 cognitive-complexity plus 2 `vue/one-component-per-file` from the two inline test components in `src/composables/useActiveRowScroll.test.ts`.
 
 ### Architecture Layering (dependency-cruiser)
 
