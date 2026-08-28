@@ -16,3 +16,8 @@ package-lock.json
 npm-shrinkwrap.json
 pnpm-lock.yaml
 yarn.lock
+
+# Demo recordings: regenerate with scripts/demo/record.sh. The scripts are
+# the source of truth, the video files are build output — and a 20MB capture
+# has no business in git history.
+scripts/demo/out/

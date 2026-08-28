@@ -2,6 +2,12 @@
 
 A live, always-on view of everything changing in your git repos — open it in your **browser** or your **terminal**. It watches your repositories in real time, follows you as you switch projects, and shows word-level diffs so you always know exactly what changed.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/compare-demo.gif" alt="diffstalker's Compare view: a feature branch reviewed like a pull request, with uncommitted work folded in" width="100%">
+</p>
+
+*Review a feature branch like a pull request — **before you push it**. The **Compare** view puts the branch's commits, its file tree and every diff in one place, against any base you pick. Tick `unstaged` and `untracked` and the work you haven't committed yet folds into the same review — then it keeps up on its own: the new file above appears mid-clip because it was written to disk, not because anything was clicked. No forge can show you this; none of it has left your machine.*
+
 <p>
   <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-changes-dark.jpg" alt="diffstalker web — Changes view" width="49%">
   <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-changes-light.jpg" alt="" width="49%">
