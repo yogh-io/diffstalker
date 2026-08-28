@@ -43,7 +43,7 @@ if (demoRepo === undefined) {
 // further down that actually use it.
 const DEMO_REPO: string = demoRepo;
 
-const TOGGLES = '[data-testid="uncommitted-toggles"]';
+const DEMO_DISPLAY = process.env.DEMO_DISPLAY ?? ':99';
 
 // ---------------------------------------------------------------- CDP
 
@@ -152,27 +152,75 @@ async function waitFor(expression: string, label: string, timeoutMs = 20_000): P
   throw new Error(`timed out waiting for ${label}${await snapshot()}`);
 }
 
-// --------------------------------------------------------- the actors
+// --------------------------------------------------------- the pointer
+//
+// The cursor is REAL: xdotool moves the X pointer on the virtual display and
+// ffmpeg composites it in (-draw_mouse 1). CDP's Input.dispatchMouseEvent
+// would not do — it delivers events to the page without moving the pointer X
+// draws, so the recording would show clicks happening with no cursor anywhere
+// near them. Which is what the first cut of this video looked like.
 
-/** Press a bare key the way the app's global layer hears it. */
-function press(key: string): Promise<unknown> {
-  return evaluate(
-    `window.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true }))`
-  );
+/** Where the pointer is now, in screen coordinates. */
+let pointer = { x: 1180, y: 700 };
+
+function xdotool(args: string[]): Promise<unknown> {
+  return run('xdotool', args, { env: { ...process.env, DISPLAY: DEMO_DISPLAY } });
 }
 
-/** Tick one of the three uncommitted checkboxes by its label text. */
-function toggleUncommitted(label: string): Promise<unknown> {
-  return evaluate(`(() => {
-    const scope = document.querySelector('${TOGGLES}');
-    if (!scope) throw new Error('no uncommitted toggles');
-    const box = [...scope.querySelectorAll('input[type=checkbox]')].find((input) => {
-      const text = (input.closest('label') ?? input.parentElement)?.textContent ?? '';
-      return text.trim().toLowerCase().includes(${JSON.stringify(label)});
+/**
+ * Glide the pointer to a screen position, eased at both ends.
+ *
+ * One xdotool invocation for the whole path, using its own `sleep` between
+ * steps: spawning a process per step costs more than the step itself and the
+ * motion comes out lumpy.
+ */
+async function moveTo(x: number, y: number, ms = 520): Promise<void> {
+  const steps = 26;
+  const ease = (t: number) => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2);
+  const from = pointer;
+  const args: string[] = [];
+
+  for (let i = 1; i <= steps; i++) {
+    const k = ease(i / steps);
+    args.push(
+      'mousemove',
+      String(Math.round(from.x + (x - from.x) * k)),
+      String(Math.round(from.y + (y - from.y) * k))
+    );
+    if (i < steps) args.push('sleep', (ms / steps / 1000).toFixed(3));
+  }
+
+  await xdotool(args);
+  pointer = { x, y };
+}
+
+/**
+ * The centre of an element, in SCREEN coordinates.
+ *
+ * screenX/screenY place the window; the outer/inner height difference skips
+ * whatever chrome sits above the viewport. In an --app window that difference
+ * is zero, but computing it means the take does not silently drift if the
+ * window ever grows a toolbar.
+ */
+async function centreOf(selector: string): Promise<{ x: number; y: number }> {
+  const raw = await evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) throw new Error('no element: ' + ${JSON.stringify(selector)});
+    const r = el.getBoundingClientRect();
+    return JSON.stringify({
+      x: Math.round(window.screenX + r.left + r.width / 2),
+      y: Math.round(window.screenY + (window.outerHeight - window.innerHeight) + r.top + r.height / 2),
     });
-    if (!box) throw new Error('no toggle: ' + ${JSON.stringify(label)});
-    box.click();
   })()`);
+  return JSON.parse(String(raw)) as { x: number; y: number };
+}
+
+/** Move to an element and actually click it — a real button press, in X. */
+async function clickOn(selector: string, moveMs?: number): Promise<void> {
+  const { x, y } = await centreOf(selector);
+  await moveTo(x, y, moveMs);
+  await sleep(180); // land, then press — clicking mid-glide reads as a twitch
+  await xdotool(['click', '1']);
 }
 
 /**
@@ -268,19 +316,6 @@ proxy, not the caller — \`X-Forwarded-For\` is the next step.
 `;
 
 /**
- * The changes the take is about: one tracked file edited, two new files.
- * Written together so they land in a single watcher tick and the Changes list
- * fills in at once rather than dribbling in over three renders.
- */
-async function writeChanges(): Promise<void> {
-  await Promise.all([
-    writeIntoRepo('src/config.ts', CONFIG_TS),
-    writeIntoRepo('src/rateLimit.test.ts', RATE_LIMIT_TEST),
-    writeIntoRepo('docs/rate-limit.md', RATE_LIMIT_DOC),
-  ]);
-}
-
-/**
  * Commit them, with git — not with the UI, which cannot commit anyway (the
  * web client is a viewer with one write, file-level staging). That is the
  * point of the beat: the commit happens in a terminal, or in an agent's tool
@@ -321,6 +356,11 @@ await waitFor(
   'the app document'
 );
 
+// Park the real pointer where `pointer` claims it is. X starts it in the
+// middle of the screen; without this the first glide would begin from the
+// wrong place and read as a jump.
+await xdotool(['mousemove', String(pointer.x), String(pointer.y)]);
+
 // ------------------------------------------------------------- script
 
 interface Beat {
@@ -328,42 +368,60 @@ interface Beat {
   run: () => Promise<unknown>;
 }
 
+/** The Compare tab in the rail — the whole button, not just its count badge. */
+const COMPARE_TAB = 'button:has([data-testid="compare-count"])';
+
 const beats: Beat[] = [
-  // Roughly eleven seconds, because this loops in a README. The holds are the
-  // tunable part: they exist so a reader can take in what just changed, and
-  // nothing more.
+  // Roughly fifteen seconds. The holds are the tunable part: they exist so a
+  // reader can take in what just changed, and nothing more.
 
   // 1. Changes, with nothing in it. A clean working tree — so everything that
   //    appears from here on appeared while the camera was running.
-  { label: 'hold on the empty Changes tab', run: () => sleep(1400) },
+  { label: 'hold on the empty Changes tab', run: () => sleep(1200) },
 
-  // 2. Three files land on disk. Nothing is clicked; the list fills itself in.
-  { label: 'write changes to disk', run: writeChanges },
-  { label: 'hold while Changes fills in', run: () => sleep(2200) },
-
-  // 3. Over to Compare: the branch so far, one commit against main.
+  // 2. Three files land on disk, ONE AT A TIME. Writing them together is
+  //    faster but unreadable: the list jumps from empty to full in a single
+  //    frame and there is nothing to notice. A beat apart, you watch each one
+  //    arrive — and nothing is clicked to make any of it happen.
+  { label: 'write src/config.ts', run: () => writeIntoRepo('src/config.ts', CONFIG_TS) },
+  { label: 'hold', run: () => sleep(1400) },
   {
-    label: 'switch to Compare',
+    label: 'write src/rateLimit.test.ts',
+    run: () => writeIntoRepo('src/rateLimit.test.ts', RATE_LIMIT_TEST),
+  },
+  { label: 'hold', run: () => sleep(1400) },
+  { label: 'write docs/rate-limit.md', run: () => writeIntoRepo('docs/rate-limit.md', RATE_LIMIT_DOC) },
+  { label: 'hold', run: () => sleep(1600) },
+
+  // 3. Over to Compare: the branch so far, one commit against origin/main.
+  {
+    label: 'click the Compare tab',
     run: async () => {
-      await press('4');
-      await sleep(300);
+      await clickOn(COMPARE_TAB, 620);
+      await sleep(350);
       await openCommits();
     },
   },
-  { label: 'hold on the branch review', run: () => sleep(1800) },
+  { label: 'hold on the branch review', run: () => sleep(1600) },
 
   // 4. Fold in the work that is not committed yet. No forge can show this.
-  { label: 'tick unstaged', run: () => toggleUncommitted('unstaged') },
+  {
+    label: 'click unstaged',
+    run: () => clickOn('[data-testid="uncommitted-toggle-unstaged"]', 560),
+  },
   { label: 'settle', run: settle },
-  { label: 'hold', run: () => sleep(600) },
-  { label: 'tick untracked', run: () => toggleUncommitted('untracked') },
+  { label: 'hold', run: () => sleep(900) },
+  {
+    label: 'click untracked',
+    run: () => clickOn('[data-testid="uncommitted-toggle-untracked"]', 320),
+  },
   { label: 'settle', run: settle },
   { label: 'hold', run: () => sleep(1700) },
 
   // 5. Commit, in git. The commits list gains an entry, and the rows that were
   //    tagged a moment ago are just part of the branch now.
   { label: 'commit', run: commitEverything },
-  { label: 'hold on the new commit', run: () => sleep(2900) },
+  { label: 'hold on the new commit', run: () => sleep(2600) },
 ];
 
 // Do not start the clock until the repo is open and Changes has rendered, or

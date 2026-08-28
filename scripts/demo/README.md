@@ -14,24 +14,30 @@ nothing can wander in front of the camera. It is safe to run while you work.
 ## What it shows, and why
 
 The story is the one users actually live: *you write some code, and the review
-keeps up.* Twelve seconds, because it loops in a README:
+keeps up.* Sixteen seconds, because it loops in a README:
 
 | at | beat |
 | --- | --- |
 | 0s | **Changes**, empty. The working tree is clean, so everything after this appears on camera |
-| 1.4s | **Three files are written to disk.** Nothing is clicked; Changes fills itself in — one modified, two untracked |
-| 3.6s | Switch to **Compare**: the branch so far, one commit against `origin/main` |
-| 5.7s | Tick `unstaged` and `untracked` — the uncommitted work joins the review, tagged |
-| 8.4s | **`git commit` runs in a terminal.** The commits list goes 1 → 2, the tags fall away, Changes drops to 0 |
+| 1.2s | `src/config.ts` is written to disk — the list fills itself in |
+| 2.6s | `src/rateLimit.test.ts` |
+| 4.0s | `docs/rate-limit.md` |
+| 5.6s | Click over to **Compare**: the branch so far, one commit against `origin/main` |
+| 8.4s | Tick `unstaged`, then `untracked` — the uncommitted work joins the review, tagged |
+| 12.9s | **`git commit` runs in a terminal.** The commits list goes 1 → 2, the tags fall away, Changes drops to 0 |
 
-The two beats that change anything change it **on disk** — a real write into the
-working tree, a real `git commit` — and never through the UI. The web client
-could not make that commit anyway; it is a viewer with one write (file-level
-staging). That is the point: the video is not a tour of buttons, it is the app
-absorbing work done somewhere else, which is what it does when the work is
-yours in an editor, or an agent's.
+The files land **one at a time, a beat apart**. Writing them together is faster
+but unreadable: the list jumps from empty to full in a single frame and there
+is nothing to notice.
 
-So three claims, and only three, because twelve seconds does not fit more:
+The two beats that change anything change it **on disk** — a real write into
+the working tree, a real `git commit` — and never through the UI. The web
+client could not make that commit anyway; it is a viewer with one write
+(file-level staging). That is the point, and the visible cursor now makes it
+legible: you can see which things were clicked (a tab, two checkboxes) and,
+by contrast, that nothing was clicked to make the changes or the commit appear.
+
+So three claims, and only three, because sixteen seconds does not fit more:
 
 1. It **keeps up by itself** as you work.
 2. You can review an **unpushed** branch like a pull request.
@@ -66,10 +72,15 @@ never lands the same way twice. Here every take is the same take. Concretely:
   history for remote-tracking refs, so a repo with only local branches has no
   base and the view opens with nothing to compare. The remote URL is
   unreachable on purpose; only the ref matters.
-- **The UI is driven through `Runtime.evaluate`, not mouse coordinates.** The
-  app's keyboard layer listens on `window`, its rows carry data attributes,
-  and `.click()` on a real checkbox fires a real change event. Pixel
-  coordinates would break on the next re-layout; these beats do not.
+- **The cursor is a real X pointer.** `xdotool` moves it on the virtual
+  display and ffmpeg composites it in (`-draw_mouse 1`). CDP's
+  `Input.dispatchMouseEvent` will not do: it delivers events to the page
+  without moving the pointer X draws, so the recording shows things being
+  clicked with no cursor anywhere near them.
+- **Click targets are resolved from the DOM, never hardcoded.** `centreOf()`
+  asks the page for an element's rect and converts it to screen coordinates,
+  so a re-layout moves the pointer with it. Hardcoded pixels would silently
+  start clicking the wrong thing.
 - **Scrolling is a hand-written rAF tween.** `scrollTo({behavior:'smooth'})`
   picks its own duration, so a beat that runs long desynchronises every beat
   after it.

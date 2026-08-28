@@ -124,7 +124,7 @@ step "Cueing the choreography"
 mkfifo "$WORK/cue"
 # DEMO_REPO: the choreography edits a file on disk mid-take, so the view can
 # be seen refreshing itself. That is the one claim a screenshot cannot make.
-DEMO_REPO="$REPO" \
+DEMO_REPO="$REPO" DEMO_DISPLAY="$DISPLAY_NUM" \
   bun scripts/demo/choreograph.ts "$CDP_PORT" "$URL" <"$WORK/cue" >"$WORK/ready" &
 choreo=$!
 exec 3>"$WORK/cue"
@@ -139,8 +139,11 @@ grep -q ready "$WORK/ready" 2>/dev/null || { echo "compare never rendered" >&2; 
 step "Recording"
 # Lossless here, encoded later: one take, many outputs, and no generation
 # loss from re-encoding an already-compressed capture.
+# -draw_mouse 1: the take moves a real X pointer (choreograph.ts drives it
+# with xdotool), and a demo where things get clicked with no cursor on screen
+# is genuinely confusing to watch.
 ffmpeg -hide_banner -loglevel error -y \
-  -f x11grab -draw_mouse 0 -framerate "$FPS" -video_size "${WIDTH}x${HEIGHT}" \
+  -f x11grab -draw_mouse 1 -framerate "$FPS" -video_size "${WIDTH}x${HEIGHT}" \
   -i "$DISPLAY_NUM.0" \
   -c:v libx264rgb -crf 0 -preset ultrafast \
   "$OUT/raw.mkv" </dev/null &
