@@ -6,7 +6,7 @@ A live, always-on view of everything changing in your git repos — open it in y
   <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/compare-demo.gif" alt="diffstalker's Compare view: a feature branch reviewed like a pull request, with uncommitted work folded in" width="100%">
 </p>
 
-*Review a feature branch like a pull request — **before you push it**. The **Compare** view puts the branch's commits, its file tree and every diff in one place, against any base you pick. Tick `unstaged` and `untracked` and the work you haven't committed yet folds into the same review — then it keeps up on its own: the new file above appears mid-clip because it was written to disk, not because anything was clicked. No forge can show you this; none of it has left your machine.*
+*Nothing is clicked to make the changes appear, and nothing is clicked to commit them. Files are written to disk and `git commit` is run in a terminal; the open view keeps up on its own. **Changes** fills in as you work, **Compare** reviews the whole branch like a pull request — before you push it — and ticking `unstaged` and `untracked` folds in work you haven't committed yet. Commit, and those rows simply become part of the branch. No forge can show you this: none of it has left your machine.*
 
 <p>
   <img src="https://raw.githubusercontent.com/yogh-io/diffstalker/main/assets/web-changes-dark.jpg" alt="diffstalker web — Changes view" width="49%">

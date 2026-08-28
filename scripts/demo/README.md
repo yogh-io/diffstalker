@@ -13,29 +13,33 @@ nothing can wander in front of the camera. It is safe to run while you work.
 
 ## What it shows, and why
 
-The story is the one users actually live: *you built a feature, now review the
-whole branch before you push it.* Ten seconds, because it loops in a README:
+The story is the one users actually live: *you write some code, and the review
+keeps up.* Twelve seconds, because it loops in a README:
 
 | at | beat |
 | --- | --- |
-| 0s | The branch as a review: 4 commits, 4 files, `+118 −1`, against `main` |
-| 1.5s | **Tick `unstaged` and `untracked`** — the header goes `4 files` → `6` |
-| 3.6s | **A file is written to disk.** Nothing clicks anything; the view refreshes itself and the header goes `6` → `7` |
-| 5.6s | Open the file that did not exist when the take started |
-| 8.4s | Hold on a stack mixing committed, unstaged and untracked diffs |
+| 0s | **Changes**, empty. The working tree is clean, so everything after this appears on camera |
+| 1.4s | **Three files are written to disk.** Nothing is clicked; Changes fills itself in — one modified, two untracked |
+| 3.6s | Switch to **Compare**: the branch so far, one commit against `origin/main` |
+| 5.7s | Tick `unstaged` and `untracked` — the uncommitted work joins the review, tagged |
+| 8.4s | **`git commit` runs in a terminal.** The commits list goes 1 → 2, the tags fall away, Changes drops to 0 |
 
-Three claims, and only three, because ten seconds does not fit more:
+The two beats that change anything change it **on disk** — a real write into the
+working tree, a real `git commit` — and never through the UI. The web client
+could not make that commit anyway; it is a viewer with one write (file-level
+staging). That is the point: the video is not a tour of buttons, it is the app
+absorbing work done somewhere else, which is what it does when the work is
+yours in an editor, or an agent's.
 
-1. You can review an **unpushed** branch like a pull request.
-2. Work you have not committed folds into that same review.
-3. It **keeps up by itself** as you keep editing.
+So three claims, and only three, because twelve seconds does not fit more:
 
-The third one is why the take writes a real file into the real working tree
-instead of poking the UI. The daemon's watcher sees the write, emits a
-`state-change`, and the open Compare re-pulls (`stores/repo.ts` refreshes
-compare on every state-change, with the flags the view already had). If that
-ever stops being true, this beat records nothing happening — which is the
-correct outcome for a demo of a feature that broke.
+1. It **keeps up by itself** as you work.
+2. You can review an **unpushed** branch like a pull request.
+3. Work you have not committed folds into that same review — and stops being
+   folded in the moment it is committed.
+
+If the daemon ever stops watching, these beats record nothing happening — which
+is the correct outcome for a demo of a feature that broke.
 
 ## The pieces
 
@@ -56,7 +60,12 @@ never lands the same way twice. Here every take is the same take. Concretely:
 - **The repo is a fixture, not a real project.** A real repo leaks paths and
   private code, its diffs change under you, and its history is not shaped like
   the story. The fixture's commits are dated relative to now, so the UI shows
-  plausible "2 hours ago" rather than a frozen date.
+  plausible "2 hours ago" rather than a frozen date, and it is left with a
+  **clean working tree** — the changes in the video are written by the take.
+- **The fixture has an `origin`.** Compare discovers its base by scanning
+  history for remote-tracking refs, so a repo with only local branches has no
+  base and the view opens with nothing to compare. The remote URL is
+  unreachable on purpose; only the ref matters.
 - **The UI is driven through `Runtime.evaluate`, not mouse coordinates.** The
   app's keyboard layer listens on `window`, its rows carry data attributes,
   and `.click()` on a real checkbox fires a real change event. Pixel

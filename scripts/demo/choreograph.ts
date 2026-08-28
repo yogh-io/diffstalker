@@ -3,24 +3,28 @@
  *
  * The camera is dumb (ffmpeg grabs a rectangle); this file is the direction.
  * It talks CDP to the Chrome that record.sh started, so every take is the
- * same take: same pauses, same scroll distances, same easing. Hand-piloting a
- * demo means re-shooting it every time a beat lands wrong.
+ * same take: same pauses, same keystrokes, same order. Hand-piloting a demo
+ * means re-shooting it every time a beat lands wrong.
  *
- * Everything is driven through Runtime.evaluate rather than synthetic mouse
- * coordinates: the app's own keyboard layer listens on `window`, its rows
- * expose data attributes, and `.click()` on a real checkbox fires a real
- * change event. So the beats survive a re-layout, which pixel coordinates
- * would not.
+ * The story, in one line: you write some code, and the review keeps up.
  *
- * Scrolling is a hand-written rAF tween, not scrollTo({behavior:'smooth'}) —
- * the browser picks its own duration for that, and a beat that runs long
- * desynchronises everything after it.
+ * What makes it worth filming is that the beats which change anything change
+ * it on DISK — a file written into the working tree, a real `git commit` — and
+ * never through the UI. The daemon's watcher notices, emits a state-change,
+ * and the open view re-pulls itself. So the video is not a tour of buttons; it
+ * is the app reacting to work happening somewhere else, which is exactly what
+ * it does when the work is being done by you in an editor, or by an agent.
  *
- * Usage: bun scripts/demo/choreograph.ts <cdp-port>
+ * Usage: bun scripts/demo/choreograph.ts <cdp-port> <url>
+ * Env:   DEMO_REPO (required), DEMO_THEME (default 'dark')
  */
 
+import { execFile } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
+
+const run = promisify(execFile);
 
 const CDP_PORT = process.argv[2];
 const TARGET_URL = process.argv[3];
@@ -39,28 +43,26 @@ if (demoRepo === undefined) {
 // further down that actually use it.
 const DEMO_REPO: string = demoRepo;
 
-const DIFFS = '[data-testid="compare-diffs"]';
-const FILES = '[data-testid="compare-files"]';
 const TOGGLES = '[data-testid="uncommitted-toggles"]';
 
 // ---------------------------------------------------------------- CDP
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 let nextId = 1;
 const pending = new Map<number, Pending>();
 
 /**
- * Chrome's app window. record.sh opens it on about:blank and this script
- * navigates it, so any page target will do — there is only one window, and
- * whatever it is showing now is about to be replaced.
+ * Chrome's app window. record.sh opens it on the target URL and this script
+ * navigates it again after seeding prefs, so any page target will do — there
+ * is only one window.
  */
 async function findPageTarget(): Promise<string> {
   // Chrome needs a moment to open the debugging port after exec.
@@ -104,8 +106,7 @@ socket.onmessage = (event) => {
   else if (msg.result?.exceptionDetails) {
     const details = msg.result.exceptionDetails;
     waiter.reject(new Error(details.exception?.description ?? details.text));
-  }
-  else waiter.resolve(msg.result?.result?.value);
+  } else waiter.resolve(msg.result?.result?.value);
 };
 
 function send(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -121,9 +122,9 @@ function evaluate(expression: string): Promise<unknown> {
 
 /**
  * What the page looked like when something timed out. A bare "timed out
- * waiting for compare view" says nothing about whether the app failed to
- * load, landed on the wrong view, or rendered an error banner — and the
- * stage is torn down before you can look, so the message has to carry it.
+ * waiting for the app" says nothing about whether it failed to load, landed
+ * on the wrong view, or rendered an error banner — and the stage is torn down
+ * before you can look, so the message has to carry it.
  */
 async function snapshot(): Promise<string> {
   try {
@@ -151,75 +152,13 @@ async function waitFor(expression: string, label: string, timeoutMs = 20_000): P
   throw new Error(`timed out waiting for ${label}${await snapshot()}`);
 }
 
-// ------------------------------------------------------------- motion
-
-/**
- * Tween a scroller to a fraction of its range over `ms`, eased at both ends.
- * Resolves when the tween is done, so a beat's duration is its real duration.
- */
-function scrollTo(selector: string, fraction: number, ms: number): Promise<unknown> {
-  return evaluate(`(async () => {
-    const el = document.querySelector(${JSON.stringify(selector)});
-    if (!el) throw new Error('no scroller: ' + ${JSON.stringify(selector)});
-    const from = el.scrollTop;
-    const to = (el.scrollHeight - el.clientHeight) * ${fraction};
-    const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-    const start = performance.now();
-    await new Promise((done) => {
-      const step = (now) => {
-        const t = Math.min(1, (now - start) / ${ms});
-        el.scrollTop = from + (to - from) * ease(t);
-        if (t < 1) requestAnimationFrame(step);
-        else done();
-      };
-      requestAnimationFrame(step);
-    });
-  })()`);
-}
+// --------------------------------------------------------- the actors
 
 /** Press a bare key the way the app's global layer hears it. */
 function press(key: string): Promise<unknown> {
   return evaluate(
     `window.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true }))`
   );
-}
-
-/**
- * Write a file into the demo repo, mid-take.
- *
- * This is the live-refresh beat, and it is deliberately a real write to a
- * real working tree: the daemon's watcher sees it, emits a state-change, and
- * the open Compare re-pulls itself (stores/repo.ts refreshes compare on every
- * state-change, with the uncommitted flags the view already had). Nothing
- * here pokes the UI — the view updates because the file changed.
- */
-async function writeIntoRepo(relPath: string, content: string): Promise<void> {
-  const full = join(DEMO_REPO, relPath);
-  await mkdir(dirname(full), { recursive: true });
-  await writeFile(full, content, 'utf8');
-}
-
-/**
- * Click a file row by its path, not its index. The band re-sorts and re-indexes
- * every time a category is folded in or a file appears, so an index that was
- * right when the beat was written points somewhere else by the time it runs.
- */
-function clickFileByPath(name: string): Promise<unknown> {
-  return evaluate(`(() => {
-    const rows = [...document.querySelectorAll('${FILES} .file-row')];
-    const row = rows.find((r) => (r.textContent ?? '').includes(${JSON.stringify(name)}));
-    if (!row) throw new Error('no file row for ' + ${JSON.stringify(name)});
-    row.click();
-  })()`);
-}
-
-/** Click the Nth file row in the compare file band. */
-function clickFileRow(index: number): Promise<unknown> {
-  return evaluate(`(() => {
-    const row = document.querySelector('${FILES} .file-row[data-file-index="${index}"]');
-    if (!row) throw new Error('no file row ' + ${index});
-    row.click();
-  })()`);
 }
 
 /** Tick one of the three uncommitted checkboxes by its label text. */
@@ -236,10 +175,123 @@ function toggleUncommitted(label: string): Promise<unknown> {
   })()`);
 }
 
+/**
+ * Open the commits list. It is a per-view `ref(false)`, so switching into
+ * Compare always lands with it closed — which reads as a pile of diffs rather
+ * than a branch. Opening it is what makes the view say "this is a branch, and
+ * these are its commits", which the last beat then adds to.
+ */
+async function openCommits(): Promise<void> {
+  await evaluate(`(() => {
+    const toggle = document.querySelector('[data-testid="commits-toggle"]');
+    if (toggle && toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+  })()`);
+}
+
 /** The compare reloads on every toggle; let it settle before the next beat. */
 async function settle(): Promise<void> {
   await sleep(200);
   await waitFor(`!document.querySelector('[data-testid="compare-busy"]')`, 'compare to settle');
+}
+
+// ------------------------------------------------- work, done for real
+
+/** Write a file into the demo repo's working tree, mid-take. */
+async function writeIntoRepo(relPath: string, content: string): Promise<void> {
+  const full = join(DEMO_REPO, relPath);
+  await mkdir(dirname(full), { recursive: true });
+  await writeFile(full, content, 'utf8');
+}
+
+const CONFIG_TS = `export interface Config {
+  /** Port the relay listens on. */
+  port: number;
+  /** Where requests are forwarded. */
+  upstream: string;
+  /** Give up on the upstream after this long. */
+  timeoutMs: number;
+  /** Requests a single client may burst before it is limited. */
+  burst: number;
+  /** Sustained requests per second, once the burst is spent. */
+  ratePerSecond: number;
+}
+
+export const config: Config = {
+  port: 8080,
+  upstream: 'http://127.0.0.1:9000',
+  timeoutMs: 5_000,
+  burst: 20,
+  ratePerSecond: 5,
+};
+`;
+
+const RATE_LIMIT_TEST = `import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { RateLimiter } from './rateLimit.js';
+
+test('spends the bucket, then refuses', () => {
+  const limiter = new RateLimiter({ capacity: 2, refillPerSecond: 1 });
+
+  assert.equal(limiter.take('a', 0), true);
+  assert.equal(limiter.take('a', 0), true);
+  assert.equal(limiter.take('a', 0), false);
+});
+
+test('refills over time, and never past capacity', () => {
+  const limiter = new RateLimiter({ capacity: 2, refillPerSecond: 1 });
+
+  limiter.take('a', 0);
+  limiter.take('a', 0);
+  assert.equal(limiter.take('a', 1_000), true);
+  assert.equal(limiter.take('a', 60_000), true);
+});
+
+test('retryAfter rounds up to the next whole token', () => {
+  const limiter = new RateLimiter({ capacity: 1, refillPerSecond: 2 });
+
+  limiter.take('a', 0);
+  assert.equal(limiter.retryAfter('a', 0), 1);
+});
+`;
+
+const RATE_LIMIT_DOC = `# Rate limiting
+
+Every client gets a token bucket: \`burst\` tokens, refilled at
+\`ratePerSecond\`. One request spends one token.
+
+An empty bucket answers \`429\` with a \`Retry-After\` header, in whole
+seconds, rounded up — a caller told to retry too early just earns a
+second \`429\`.
+
+Clients are keyed by socket address today. Behind a proxy that is the
+proxy, not the caller — \`X-Forwarded-For\` is the next step.
+`;
+
+/**
+ * The changes the take is about: one tracked file edited, two new files.
+ * Written together so they land in a single watcher tick and the Changes list
+ * fills in at once rather than dribbling in over three renders.
+ */
+async function writeChanges(): Promise<void> {
+  await Promise.all([
+    writeIntoRepo('src/config.ts', CONFIG_TS),
+    writeIntoRepo('src/rateLimit.test.ts', RATE_LIMIT_TEST),
+    writeIntoRepo('docs/rate-limit.md', RATE_LIMIT_DOC),
+  ]);
+}
+
+/**
+ * Commit them, with git — not with the UI, which cannot commit anyway (the
+ * web client is a viewer with one write, file-level staging). That is the
+ * point of the beat: the commit happens in a terminal, or in an agent's tool
+ * call, and the open review absorbs it. The rows that were tagged [unstaged]
+ * and [untracked] a second ago are simply part of the branch now.
+ */
+async function commitEverything(): Promise<void> {
+  await run('git', ['-C', DEMO_REPO, 'add', '-A']);
+  await run('git', ['-C', DEMO_REPO, 'commit', '-q', '-m', 'Configure the limits, and test them'], {
+    env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
+  });
 }
 
 // ------------------------------------------------------------ prepare
@@ -254,9 +306,6 @@ async function settle(): Promise<void> {
  * the time the shell has booted, useUrlSync has already rewritten the address
  * to `/` (no repo open yet) and the reload lands on the empty state with the
  * deep link gone.
- *
- * So: seed on every new document, and navigate ourselves. Chrome was started
- * on about:blank precisely so there is no first load to race.
  */
 await send('Page.enable', {});
 await send('Page.addScriptToEvaluateOnNewDocument', {
@@ -279,64 +328,48 @@ interface Beat {
   run: () => Promise<unknown>;
 }
 
-/** The file the live-refresh beat writes: short enough to read at a glance. */
-const NEW_FILE = 'src/burst.ts';
-const NEW_FILE_BODY = `/** Extra allowance for a client that has been quiet. */
-export function burstFor(idleSeconds: number, max: number): number {
-  return Math.min(max, Math.floor(idleSeconds / 2));
-}
-`;
-
 const beats: Beat[] = [
-  // Ten seconds, because this loops in a README. Everything that is merely
-  // nice to show has been cut; what is left is the three things only this
-  // tool does: review an unpushed branch, fold in uncommitted work, and keep
-  // up with the working tree by itself.
+  // Roughly eleven seconds, because this loops in a README. The holds are the
+  // tunable part: they exist so a reader can take in what just changed, and
+  // nothing more.
 
-  // 1. Establish: a branch, its commits, its files — a review, not a diff.
-  { label: 'hold on the opening frame', run: () => sleep(1500) },
+  // 1. Changes, with nothing in it. A clean working tree — so everything that
+  //    appears from here on appeared while the camera was running.
+  { label: 'hold on the empty Changes tab', run: () => sleep(1400) },
 
-  // 2. Fold in work that is not committed. The header goes 4 files -> 6.
-  //    No forge can show this: none of it has left the machine.
+  // 2. Three files land on disk. Nothing is clicked; the list fills itself in.
+  { label: 'write changes to disk', run: writeChanges },
+  { label: 'hold while Changes fills in', run: () => sleep(2200) },
+
+  // 3. Over to Compare: the branch so far, one commit against main.
+  {
+    label: 'switch to Compare',
+    run: async () => {
+      await press('4');
+      await sleep(300);
+      await openCommits();
+    },
+  },
+  { label: 'hold on the branch review', run: () => sleep(1800) },
+
+  // 4. Fold in the work that is not committed yet. No forge can show this.
   { label: 'tick unstaged', run: () => toggleUncommitted('unstaged') },
   { label: 'settle', run: settle },
-  { label: 'hold', run: () => sleep(700) },
+  { label: 'hold', run: () => sleep(600) },
   { label: 'tick untracked', run: () => toggleUncommitted('untracked') },
   { label: 'settle', run: settle },
-  { label: 'hold', run: () => sleep(1000) },
+  { label: 'hold', run: () => sleep(1700) },
 
-  // 3. The live beat: a file appears on disk and the review updates itself.
-  //    Nothing clicks anything here — that is the entire point.
-  { label: 'write a new file on disk', run: () => writeIntoRepo(NEW_FILE, NEW_FILE_BODY) },
-  { label: 'hold while the view catches up', run: () => sleep(2000) },
-
-  // 4. Land on the file that did not exist when the take started.
-  { label: 'open the new file', run: () => clickFileByPath('burst.ts') },
-  { label: 'hold on the new diff', run: () => sleep(1600) },
-  { label: 'scroll onto the rest', run: () => scrollTo(DIFFS, 0.18, 1200) },
-  { label: 'hold on the last frame', run: () => sleep(1500) },
+  // 5. Commit, in git. The commits list gains an entry, and the rows that were
+  //    tagged a moment ago are just part of the branch now.
+  { label: 'commit', run: commitEverything },
+  { label: 'hold on the new commit', run: () => sleep(2900) },
 ];
 
-/**
- * Open the commits list before the camera rolls. Collapsed, Compare reads as
- * a pile of diffs; expanded, the first frame says "this is a branch, these
- * are its commits, here is every file it touched" — which is the whole claim
- * the video is making.
- */
-async function openCommits(): Promise<void> {
-  await evaluate(`(() => {
-    const toggle = document.querySelector('[data-testid="commits-toggle"]');
-    if (toggle && toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
-  })()`);
-}
-
-// Do not start the clock until the compare has actually rendered, or the
-// opening beat records a spinner.
-await waitFor(`document.querySelector('${DIFFS}')`, 'compare view');
-await waitFor(`!document.querySelector('[data-testid="compare-loading"]')`, 'compare to load');
-await settle();
-await openCommits();
-await sleep(400);
+// Do not start the clock until the repo is open and Changes has rendered, or
+// the opening beat records an empty shell instead of an empty working tree.
+await waitFor(`document.querySelector('[data-testid="branch-info"]')`, 'the repo to open');
+await sleep(600);
 console.log('ready');
 
 // record.sh starts ffmpeg on that line, then releases us.

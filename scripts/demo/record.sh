@@ -91,11 +91,11 @@ curl -sf "http://127.0.0.1:$DEMO_PORT/health" >/dev/null || {
   echo "daemon did not come up:" >&2; cat "$WORK/daemon.log" >&2; exit 1
 }
 
-step "Opening Chrome at the Compare deep link"
-# The URL grammar is /<view>/<repo-segments…>?base=… — so the app lands in
-# Compare against main with the repo already open. No clicking through a
-# picker on camera, and no first frame of an empty state.
-URL="http://127.0.0.1:$DEMO_PORT/compare${REPO}?base=main"
+step "Opening Chrome on the Changes tab"
+# The take opens where a working session opens: Changes, on a clean tree, with
+# nothing in it. Everything that appears after this is written while the camera
+# is running.
+URL="http://127.0.0.1:$DEMO_PORT/changes${REPO}"
 echo "    $URL"
 
 # --app with the REAL url. It has to be a real one: Chrome rejects

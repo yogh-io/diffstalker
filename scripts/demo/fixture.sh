@@ -5,11 +5,13 @@
 # its diffs change under you, and its history is not shaped like the story. So
 # the video gets its own repo, rebuilt identically every run.
 #
-# The subject is a small HTTP relay gaining a rate limiter on a feature branch:
-# four commits against `main`, plus uncommitted work in two of the three
-# categories (unstaged + untracked) so the Compare toggles have something to
-# fold in. That last part is the whole point of the video — reviewing work that
-# is not committed yet, which no forge can show you.
+# The subject is a small HTTP relay that has just grown a rate limiter: `main`,
+# and a `feat/rate-limit` branch holding ONE commit that touches three files.
+#
+# The working tree is left CLEAN, deliberately. The take opens on the Changes
+# tab with nothing in it, and every change you see appear is written while the
+# camera is running (see choreograph.ts) — which is the thing a screenshot
+# cannot show and the reason the video exists.
 #
 # Lives under /tmp so scripts/rmrf.sh may remove it. The UI's header shows only
 # the repo's directory NAME, so the path never appears on camera.
@@ -26,7 +28,7 @@ case "$(realpath -m -- "$REPO")" in
 esac
 
 "$repo_root/scripts/rmrf.sh" "$REPO"
-mkdir -p "$REPO/src" "$REPO/docs"
+mkdir -p "$REPO/src"
 cd "$REPO"
 
 git init -q -b main
@@ -131,9 +133,22 @@ npm run dev
 EOF
 
 git add -A
-commit_at "3 days ago"  "Initial relay"
+commit_at "3 days ago" "Initial relay"
+
+# Give the fixture an origin. Compare discovers its base by scanning recent
+# history for REMOTE-tracking refs (getCandidateBaseBranches skips anything
+# without a `/`), so a repo with only local branches has no base at all and
+# the view opens with nothing to compare against. A real project has an
+# origin; the fixture should too. No network is ever touched — the remote URL
+# is unreachable on purpose and only the ref matters.
+git remote add origin https://example.invalid/relay.git
+git update-ref refs/remotes/origin/main main
 
 # ------------------------------------------------- feat/rate-limit
+#
+# ONE commit, three files. The final content is written directly rather than
+# built up through intermediate commits: the video only ever shows this
+# commit's diff, so the steps that would have led to it are just noise.
 
 git checkout -q -b feat/rate-limit
 
@@ -168,6 +183,19 @@ export class RateLimiter {
     return true;
   }
 
+  /**
+   * Whole seconds until `key` has a token again. Zero when it has one now.
+   * This is what the 429 promises, so it rounds UP: telling a caller to
+   * retry a moment too early just earns them a second 429.
+   */
+  retryAfter(key: string, now: number = Date.now()): number {
+    const bucket = this.refill(key, now);
+    if (bucket.tokens >= 1) return 0;
+
+    const missing = 1 - bucket.tokens;
+    return Math.ceil(missing / this.options.refillPerSecond);
+  }
+
   private refill(key: string, now: number): Bucket {
     const existing = this.buckets.get(key);
     if (existing === undefined) {
@@ -187,191 +215,75 @@ export class RateLimiter {
 }
 EOF
 
-git add -A
-commit_at "5 hours ago" "Add a token bucket"
+cat > src/routes.ts <<'EOF'
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
-python3 - <<'EOF'
-from pathlib import Path
-p = Path('src/server.ts')
-s = p.read_text()
-s = s.replace(
-    "import { notFound, routes } from './routes.js';",
-    "import { RateLimiter } from './rateLimit.js';\nimport { notFound, routes } from './routes.js';\n\n"
-    "const limiter = new RateLimiter({ capacity: 20, refillPerSecond: 5 });\n\n"
-    "/** Client identity, for now: the socket address. */\n"
-    "function clientKey(req: { socket: { remoteAddress?: string } }): string {\n"
-    "  return req.socket.remoteAddress ?? 'unknown';\n"
-    "}",
-)
-s = s.replace(
-    "  const handler = routes[path];",
-    "  if (!limiter.take(clientKey(req))) {\n"
-    "    res.writeHead(429).end();\n"
-    "    return;\n"
-    "  }\n\n"
-    "  const handler = routes[path];",
-)
-p.write_text(s)
+export type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+
+function json(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
+
+export const routes: Record<string, Handler> = {
+  '/health': (_req, res) => json(res, 200, { ok: true }),
+
+  '/version': (_req, res) => json(res, 200, { version: '1.4.0' }),
+};
+
+export function notFound(_req: IncomingMessage, res: ServerResponse): void {
+  json(res, 404, { error: 'no such route' });
+}
+
+/** Over budget. `Retry-After` is in seconds, per RFC 9110. */
+export function tooManyRequests(res: ServerResponse, retryAfter: number): void {
+  res.setHeader('retry-after', String(retryAfter));
+  json(res, 429, { error: 'rate limited', retryAfter });
+}
 EOF
 
-git add -A
-commit_at "4 hours ago" "Apply the limiter to every request"
-
-python3 - <<'EOF'
-from pathlib import Path
-
-p = Path('src/rateLimit.ts')
-s = p.read_text()
-s = s.replace(
-    "  /** Spend a token for `key`. False when the bucket is empty. */\n"
-    "  take(key: string, now: number = Date.now()): boolean {\n"
-    "    const bucket = this.refill(key, now);\n"
-    "    if (bucket.tokens < 1) return false;\n\n"
-    "    bucket.tokens -= 1;\n"
-    "    return true;\n"
-    "  }",
-    "  /** Spend a token for `key`. False when the bucket is empty. */\n"
-    "  take(key: string, now: number = Date.now()): boolean {\n"
-    "    const bucket = this.refill(key, now);\n"
-    "    if (bucket.tokens < 1) return false;\n\n"
-    "    bucket.tokens -= 1;\n"
-    "    return true;\n"
-    "  }\n\n"
-    "  /**\n"
-    "   * Whole seconds until `key` has a token again. Zero when it has one now.\n"
-    "   * This is what the 429 promises, so it rounds UP: telling a caller to\n"
-    "   * retry a moment too early just earns them a second 429.\n"
-    "   */\n"
-    "  retryAfter(key: string, now: number = Date.now()): number {\n"
-    "    const bucket = this.refill(key, now);\n"
-    "    if (bucket.tokens >= 1) return 0;\n\n"
-    "    const missing = 1 - bucket.tokens;\n"
-    "    return Math.ceil(missing / this.options.refillPerSecond);\n"
-    "  }",
-)
-p.write_text(s)
-
-p = Path('src/routes.ts')
-s = p.read_text()
-s = s.replace(
-    "export function notFound(_req: IncomingMessage, res: ServerResponse): void {\n"
-    "  json(res, 404, { error: 'no such route' });\n"
-    "}",
-    "export function notFound(_req: IncomingMessage, res: ServerResponse): void {\n"
-    "  json(res, 404, { error: 'no such route' });\n"
-    "}\n\n"
-    "/** Over budget. `Retry-After` is in seconds, per RFC 9110. */\n"
-    "export function tooManyRequests(res: ServerResponse, retryAfter: number): void {\n"
-    "  res.setHeader('retry-after', String(retryAfter));\n"
-    "  json(res, 429, { error: 'rate limited', retryAfter });\n"
-    "}",
-)
-p.write_text(s)
-
-p = Path('src/server.ts')
-s = p.read_text()
-s = s.replace(
-    "import { notFound, routes } from './routes.js';",
-    "import { notFound, routes, tooManyRequests } from './routes.js';",
-)
-s = s.replace(
-    "  if (!limiter.take(clientKey(req))) {\n"
-    "    res.writeHead(429).end();\n"
-    "    return;\n"
-    "  }",
-    "  const key = clientKey(req);\n"
-    "  if (!limiter.take(key)) {\n"
-    "    tooManyRequests(res, limiter.retryAfter(key));\n"
-    "    return;\n"
-    "  }",
-)
-p.write_text(s)
-EOF
-
-git add -A
-commit_at "2 hours ago" "Answer 429 with Retry-After"
-
-cat > src/rateLimit.test.ts <<'EOF'
-import assert from 'node:assert/strict';
-import { test } from 'node:test';
+cat > src/server.ts <<'EOF'
+import { createServer } from 'node:http';
+import { config } from './config.js';
 import { RateLimiter } from './rateLimit.js';
+import { notFound, routes, tooManyRequests } from './routes.js';
 
-test('spends the bucket, then refuses', () => {
-  const limiter = new RateLimiter({ capacity: 2, refillPerSecond: 1 });
+const limiter = new RateLimiter({ capacity: 20, refillPerSecond: 5 });
 
-  assert.equal(limiter.take('a', 0), true);
-  assert.equal(limiter.take('a', 0), true);
-  assert.equal(limiter.take('a', 0), false);
+/** Client identity, for now: the socket address. */
+function clientKey(req: { socket: { remoteAddress?: string } }): string {
+  return req.socket.remoteAddress ?? 'unknown';
+}
+
+const server = createServer((req, res) => {
+  const path = (req.url ?? '/').split('?')[0];
+
+  const key = clientKey(req);
+  if (!limiter.take(key)) {
+    tooManyRequests(res, limiter.retryAfter(key));
+    return;
+  }
+
+  const handler = routes[path];
+  if (handler === undefined) {
+    notFound(req, res);
+    return;
+  }
+
+  handler(req, res);
 });
 
-test('refills over time, and never past capacity', () => {
-  const limiter = new RateLimiter({ capacity: 2, refillPerSecond: 1 });
-
-  limiter.take('a', 0);
-  limiter.take('a', 0);
-  assert.equal(limiter.take('a', 1_000), true);
-  assert.equal(limiter.take('a', 60_000), true);
-  assert.equal(limiter.take('a', 60_000), true);
-  assert.equal(limiter.take('a', 60_000), false);
-});
-
-test('keys do not share a bucket', () => {
-  const limiter = new RateLimiter({ capacity: 1, refillPerSecond: 1 });
-
-  assert.equal(limiter.take('a', 0), true);
-  assert.equal(limiter.take('b', 0), true);
-});
-
-test('retryAfter rounds up to the next whole token', () => {
-  const limiter = new RateLimiter({ capacity: 1, refillPerSecond: 2 });
-
-  limiter.take('a', 0);
-  assert.equal(limiter.retryAfter('a', 0), 1);
-  assert.equal(limiter.retryAfter('a', 10_000), 0);
+server.listen(config.port, () => {
+  console.log(`relay listening on :${config.port} -> ${config.upstream}`);
 });
 EOF
 
 git add -A
-commit_at "40 minutes ago" "Cover the refill edge cases"
+commit_at "2 hours ago" "Add a token bucket"
 
-# ------------------------------------- uncommitted: the differentiator
-
-# Unstaged: the limits move out of the constructor call and into config.
-python3 - <<'EOF'
-from pathlib import Path
-p = Path('src/config.ts')
-s = p.read_text()
-s = s.replace(
-    "  /** Give up on the upstream after this long. */\n  timeoutMs: number;\n}",
-    "  /** Give up on the upstream after this long. */\n  timeoutMs: number;\n"
-    "  /** Requests a single client may burst before it is limited. */\n  burst: number;\n"
-    "  /** Sustained requests per second, once the burst is spent. */\n  ratePerSecond: number;\n}",
-)
-s = s.replace(
-    "  timeoutMs: 5_000,\n};",
-    "  timeoutMs: 5_000,\n  burst: 20,\n  ratePerSecond: 5,\n};",
-)
-p.write_text(s)
-EOF
-
-# Untracked: the doc that explains the feature.
-cat > docs/rate-limit.md <<'EOF'
-# Rate limiting
-
-Every client gets a token bucket: `burst` tokens, refilled at
-`ratePerSecond`. One request spends one token.
-
-An empty bucket answers `429` with a `Retry-After` header, in whole
-seconds, rounded up — a caller told to retry too early just earns a
-second `429`.
-
-| setting | default | meaning |
-| --- | --- | --- |
-| `burst` | 20 | requests a client may fire at once |
-| `ratePerSecond` | 5 | sustained rate once the burst is spent |
-
-Clients are keyed by socket address today. Behind a proxy that is the
-proxy, not the caller — `X-Forwarded-For` is the next step.
-EOF
-
+# The working tree is left clean on purpose. The take writes into it.
 echo "$REPO"
