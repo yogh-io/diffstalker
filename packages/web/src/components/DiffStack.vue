@@ -243,7 +243,7 @@ import {
   watch,
   type ComponentPublicInstance,
 } from 'vue';
-import { statusLetter } from '../utils/format';
+import { splitBasename, statusLetter } from '../utils/format';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useScrollAnchor, type AnchorCandidate } from '../composables/useScrollAnchor';
 import {
@@ -1362,7 +1362,12 @@ defineExpose({
           {{ isCollapsed(item) ? '▸' : '▾' }}
         </button>
         <span class="letter mono" :data-status="item.status">{{ statusLetter(item.status) }}</span>
-        <span class="path mono" :title="item.path">{{ item.path }}</span>
+        <!-- Two spans, not one: the head ellipsises and the filename stays
+             whole, so a deep path loses its middle instead of its end. -->
+        <span class="path mono" :title="item.path"
+          ><span class="path-head">{{ splitBasename(item.path).head }}</span
+          ><span class="path-tail">{{ splitBasename(item.path).tail }}</span></span
+        >
         <RefPairLabel v-if="item.refPair" :pair="item.refPair" />
         <WholeFileToggle
           v-if="props.showWholeToggle && canGoWhole(item)"
@@ -1652,11 +1657,25 @@ defineExpose({
 }
 
 .file-diff-header .path {
+  display: flex;
+  align-items: baseline;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+/* The head ellipsises at ITS end; the filename never shrinks, so a deep
+   path keeps both ends. Same idiom as the journal rows. */
+.file-diff-header .path-head {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
+}
+
+.file-diff-header .path-tail {
+  flex: none;
 }
 
 .file-diff.selected .file-diff-header .path {

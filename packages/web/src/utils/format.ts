@@ -75,3 +75,16 @@ export function formatClock(ts: number, nowMs: number): string {
     : { month: 'short', day: 'numeric', year: 'numeric' };
   return `${d.toLocaleDateString('en-US', dayOpts)} ${hhmm}`;
 }
+
+/**
+ * Split a path just before its last segment: 'a/b/c.ts' → head 'a/b',
+ * tail '/c.ts'. Rendered as two spans, this gives a middle ellipsis — the
+ * head ellipsises while the filename stays whole — which plain
+ * `text-overflow` cannot do (it always eats the end, the part that names
+ * the file). A bare filename is all tail.
+ */
+export function splitBasename(path: string): { head: string; tail: string } {
+  const cut = path.lastIndexOf('/');
+  if (cut === -1) return { head: '', tail: path };
+  return { head: path.slice(0, cut), tail: path.slice(cut) };
+}

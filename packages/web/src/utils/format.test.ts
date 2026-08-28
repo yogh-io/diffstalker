@@ -10,7 +10,14 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { basename, parentDir, formatBytes, statusLetter, formatClock } from './format';
+import {
+  basename,
+  parentDir,
+  splitBasename,
+  formatBytes,
+  statusLetter,
+  formatClock,
+} from './format';
 import type { FileStatus } from '@diffstalker/core/git/status';
 
 describe('path helpers', () => {
@@ -25,6 +32,12 @@ describe('path helpers', () => {
     expect(parentDir('/a/b/c/')).toBe('/a/b');
     expect(parentDir('/a')).toBe('/');
     expect(parentDir('/')).toBe('/');
+  });
+
+  test('splitBasename keeps the filename whole so the head can ellipsise', () => {
+    expect(splitBasename('a/b/c.ts')).toEqual({ head: 'a/b', tail: '/c.ts' });
+    expect(splitBasename('c.ts')).toEqual({ head: '', tail: 'c.ts' });
+    expect(splitBasename('a/b/')).toEqual({ head: 'a/b', tail: '/' });
   });
 });
 

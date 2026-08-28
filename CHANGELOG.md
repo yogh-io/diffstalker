@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.2] - 2026-08-28
+
+### Changed
+
+- **A long path in the diff header keeps both of its ends.** The file header
+  clipped the path at its right edge, so a deep path lost the filename — the
+  part that says what you are looking at — and kept the directories nobody
+  needed. The directory half now shrinks and takes the ellipsis while the
+  filename stays whole — `source/calculator/aerius-connect-service/src/…` then
+  `/UiResource.java` — the same idiom the journal rows already use. The full
+  path is still on the element's title.
+
 ## [0.13.1] - 2026-08-26
 
 ### Changed
