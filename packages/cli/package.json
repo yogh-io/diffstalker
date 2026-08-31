@@ -68,7 +68,7 @@
     "@diffstalker/core": "workspace:*",
     "@eslint/js": "^10.0.1",
     "@types/blessed": "^0.1.27",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.4.0",
     "dependency-cruiser": "^18.1.0",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",

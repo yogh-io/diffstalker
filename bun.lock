@@ -5,7 +5,7 @@
     "": {
       "name": "diffstalker-monorepo",
       "dependencies": {
-        "@types/node": "^26.1.1",
+        "@types/node": "^26.4.0",
         "chokidar": "^5.0.0",
       },
       "devDependencies": {
@@ -31,7 +31,7 @@
         "@diffstalker/core": "workspace:*",
         "@eslint/js": "^10.0.1",
         "@types/blessed": "^0.1.27",
-        "@types/node": "^26.1.1",
+        "@types/node": "^26.4.0",
         "dependency-cruiser": "^18.1.0",
         "eslint": "^10.8.0",
         "eslint-config-prettier": "^10.1.8",
@@ -47,7 +47,7 @@
       "devDependencies": {
         "@diffstalker/core": "workspace:*",
         "@eslint/js": "^10.0.1",
-        "@types/node": "^26.1.1",
+        "@types/node": "^26.4.0",
         "dependency-cruiser": "^18.1.0",
         "diffstalkerd": "workspace:*",
         "eslint": "^10.8.0",
@@ -70,7 +70,7 @@
       },
       "devDependencies": {
         "@eslint/js": "^10.0.1",
-        "@types/node": "^26.1.1",
+        "@types/node": "^26.4.0",
         "dependency-cruiser": "^18.1.0",
         "eslint": "^10.8.0",
         "eslint-config-prettier": "^10.1.8",
@@ -95,7 +95,7 @@
       "devDependencies": {
         "@diffstalker/core": "workspace:*",
         "@eslint/js": "^10.0.1",
-        "@types/node": "^26.1.1",
+        "@types/node": "^26.4.0",
         "dependency-cruiser": "^18.1.0",
         "eslint": "^10.8.0",
         "eslint-config-prettier": "^10.1.8",
@@ -123,7 +123,7 @@
       },
       "devDependencies": {
         "@eslint/js": "^10.0.1",
-        "@types/node": "^26.1.1",
+        "@types/node": "^26.4.0",
         "@vitejs/plugin-vue": "^6.0.8",
         "@vue/test-utils": "^2.4.11",
         "dependency-cruiser": "^18.1.0",
@@ -260,7 +260,7 @@
 
     "@types/json-schema": ["@types/json-schema@7.0.15", "", {}, "sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA=="],
 
-    "@types/node": ["@types/node@26.1.1", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-nxAkRSVkN1Y0JC1W8ky/fTfkGsMmcrRsbx+3XoZE+rMOX71kLYTV7fLXpqud1GpbpP5TuffXFqfX7fH2GgZREw=="],
+    "@types/node": ["@types/node@26.4.0", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-faiGnoIrLH/V8cibOMEAZ8pMw6oXqSukl29ra4mN8GdaB2ZewzeaLj+INpV5N+Z1eKWzY+IzaIZH2EIR6YZRNQ=="],
 
     "@types/unist": ["@types/unist@3.0.3", "", {}, "sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q=="],
 
