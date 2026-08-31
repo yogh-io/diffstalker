@@ -6,6 +6,12 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    ignore:
+      # TypeScript major upgrades need coordinated vue-tsc/typescript-eslint
+      # upgrades; TS 7 removes the ./lib/tsc entry point used by vue-tsc 3.
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
     groups:
       # One PR per week for the routine dev-tooling bumps (eslint, tsc,
       # prettier, types) — runtime deps still come as individual PRs so a
