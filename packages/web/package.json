@@ -24,7 +24,7 @@
     "@diffstalker/core": "workspace:*",
     "fzf": "^0.5.2",
     "highlight.js": "^11.11.1",
-    "pinia": "^4.0.2",
+    "pinia": "^4.0.3",
     "vue": "^3.5.40"
   },
   "devDependencies": {
