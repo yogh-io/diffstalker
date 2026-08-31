@@ -1,7 +1,7 @@
 version: 2
 updates:
-  # npm workspace (root drives all packages/*).
-  - package-ecosystem: "npm"
+  # Bun workspace (root drives all packages/* and owns bun.lock).
+  - package-ecosystem: "bun"
     directory: "/"
     schedule:
       interval: "weekly"

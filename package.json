@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.13.2",
   "type": "module",
+  "packageManager": "bun@1.3.12",
   "workspaces": [
     "packages/*"
   ],
