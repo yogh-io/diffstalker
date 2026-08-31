@@ -40,7 +40,7 @@
     "release:major": "scripts/release.sh major"
   },
   "devDependencies": {
-    "dependency-cruiser": "^18.1.0"
+    "dependency-cruiser": "^18.2.0"
   },
   "dependencies": {
     "@types/node": "^26.1.1",

@@ -64,13 +64,13 @@
     "@diffstalker/core": "workspace:*",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.1",
-    "dependency-cruiser": "^18.1.0",
-    "eslint": "^10.8.0",
+    "dependency-cruiser": "^18.2.0",
+    "eslint": "^10.9.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-sonarjs": "^4.2.0",
-    "prettier": "^3.8.0",
+    "prettier": "^3.9.6",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.65.0",
-    "web-tree-sitter": "0.26.11"
+    "typescript-eslint": "^8.68.0",
+    "web-tree-sitter": "0.26.13"
   }
 }
