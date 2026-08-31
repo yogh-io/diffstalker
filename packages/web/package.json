@@ -23,28 +23,28 @@
     "@diffstalker/client": "workspace:*",
     "@diffstalker/core": "workspace:*",
     "fzf": "^0.5.2",
-    "highlight.js": "^11.11.1",
-    "pinia": "^4.0.2",
-    "vue": "^3.5.40"
+    "highlight.js": "^11.12.0",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.42"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.4.0",
     "@vitejs/plugin-vue": "^6.0.8",
-    "@vue/test-utils": "^2.4.11",
-    "dependency-cruiser": "^18.1.0",
-    "eslint": "^10.8.0",
+    "@vue/test-utils": "^2.5.0",
+    "dependency-cruiser": "^18.2.0",
+    "eslint": "^10.9.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-sonarjs": "^4.2.0",
     "eslint-plugin-vue": "^10.10.0",
-    "globals": "^17.7.0",
-    "happy-dom": "^20.11.0",
-    "prettier": "^3.8.0",
+    "globals": "^17.11.0",
+    "happy-dom": "^20.11.12",
+    "prettier": "^3.9.6",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.65.0",
-    "vite": "^8.1.5",
-    "vitest": "^4.1.10",
+    "typescript-eslint": "^8.68.0",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11",
     "vue-eslint-parser": "^10.4.1",
-    "vue-tsc": "^3.3.7"
+    "vue-tsc": "^3.3.11"
   }
 }

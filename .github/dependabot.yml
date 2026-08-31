@@ -12,6 +12,9 @@ updates:
       - dependency-name: "typescript"
         update-types:
           - "version-update:semver-major"
+      # This runtime version is coupled to vendored grammar artifacts and the
+      # BUNDLED_WEB_TREE_SITTER constant; update those together deliberately.
+      - dependency-name: "web-tree-sitter"
     groups:
       # One PR per week for the routine dev-tooling bumps (eslint, tsc,
       # prettier, types) — runtime deps still come as individual PRs so a
