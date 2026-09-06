@@ -57,7 +57,7 @@
   },
   "dependencies": {
     "chokidar": "^5.0.0",
-    "ignore": "^7.0.5",
+    "ignore": "^7.0.8",
     "simple-git": "^3.27.0"
   },
   "devDependencies": {
