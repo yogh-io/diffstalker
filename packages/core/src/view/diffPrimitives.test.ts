@@ -8,6 +8,7 @@ import {
 } from './diffPrimitives.js';
 import { getLineContent } from './diffRowCalculations.js';
 import type { DiffLine } from '../git/diff.js';
+import type { WordDiffSegment } from './wordDiff.js';
 
 describe('parseHunkHeader', () => {
   it('parses full ranges and trailing context', () => {
@@ -76,6 +77,22 @@ describe('pairChangeRuns', () => {
     expect(addSegments.has(0)).toBe(true);
     // the differing token is marked changed; shared text is not
     expect(addSegments.get(0)!.some((s) => s.type === 'changed')).toBe(true);
+  });
+
+  it('grows the highlight out to whole words', () => {
+    const line = (distro: string): string =>
+      `RUN --mount=id=aerius-apt-cache-debian-${distro},mode=0755`;
+    const { delSegments, addSegments } = pairChangeRuns(
+      [del(`-${line('bullseye')}`)],
+      [add(`+${line('bookworm')}`)],
+      getLineContent
+    );
+    const marked = (segments: WordDiffSegment[]): string[] =>
+      segments.filter((s) => s.type === 'changed').map((s) => s.text);
+    // Not 'ullseye'/'ookworm': the shared leading 'b' belongs to the word
+    // that was replaced, and the trailing ',mode=0755' does not.
+    expect(marked(delSegments.get(0)!)).toEqual(['bullseye']);
+    expect(marked(addSegments.get(0)!)).toEqual(['bookworm']);
   });
 
   it('leaves dissimilar pairs without segments', () => {

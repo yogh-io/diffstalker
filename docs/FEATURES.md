@@ -64,7 +64,12 @@ Every feature below is preserved; only the plumbing moved. The git state engine 
   - Context: no background, space symbol
   - Hunk header: `@@` prefix, dimmed
   - File header: `diff --git` prefix
-- Word-level highlighting within add/del lines (darker highlight for changed words)
+- Word-level highlighting within add/del lines (darker highlight for changed
+  words). The highlight covers whole words: a change inside a word — `bullseye`
+  to `bookworm` — highlights the whole word on each side, not just the part
+  after the shared `b`. Word edges are letters, digits and `_`, so `-`, `.`,
+  `:`, `/` and `,` end a word and the highlight never runs on into the rest of
+  a path or an argument list.
 - Optional line wrapping (toggle with `w`)
 - **Hunk edit times**: every hunk header shows when its content last changed ("just now", "42 seconds ago", "5 minutes ago", "2 days ago"). Times come from live observation while diffstalker runs (content-keyed, so a hunk keeps its time when line numbers shift); the file's mtime is the fallback for changes that predate the session. Sub-minute times tick every second.
 - **Fresh-hunk flash and auto-scroll**: a hunk whose content just changed flashes yellow (like the file list's newest-change flash), and in auto mode the diff pane scrolls so the fresh change is always on screen.

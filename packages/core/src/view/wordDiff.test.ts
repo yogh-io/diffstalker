@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { areSimilarEnough, computeWordDiff } from './wordDiff.js';
+import {
+  areSimilarEnough,
+  computeWordDiff,
+  expandSegmentsToWords,
+  type WordDiffSegment,
+} from './wordDiff.js';
 
 describe('areSimilarEnough', () => {
   it('returns true for identical strings', () => {
@@ -74,5 +79,70 @@ describe('computeWordDiff', () => {
     expect(newSegments.some((s) => s.type === 'changed')).toBe(true);
     expect(oldSegments.map((s) => s.text).join('')).toBe('hello');
     expect(newSegments.map((s) => s.text).join('')).toBe('hello world');
+  });
+});
+
+describe('expandSegmentsToWords', () => {
+  /** The changed text, with `|` between runs — what a reader sees highlighted. */
+  const changed = (oldText: string, newText: string): [string, string] => {
+    const { oldSegments, newSegments } = computeWordDiff(oldText, newText);
+    const marks = (segments: WordDiffSegment[]): string =>
+      expandSegmentsToWords(segments)
+        .filter((segment) => segment.type === 'changed')
+        .map((segment) => segment.text)
+        .join('|');
+    return [marks(oldSegments), marks(newSegments)];
+  };
+
+  it('grows a mid-word change out to the whole word', () => {
+    // fast-diff alone marks only 'ullseye'/'ookworm' — the shared 'b'
+    // stays unhighlighted and the highlight starts mid-word.
+    expect(changed('FROM debian:bullseye', 'FROM debian:bookworm')).toEqual([
+      'bullseye',
+      'bookworm',
+    ]);
+  });
+
+  it('stops at word boundaries instead of swallowing the line', () => {
+    expect(
+      changed(
+        'id=aerius-apt-cache-debian-bullseye,mode=0755',
+        'id=aerius-apt-cache-debian-bookworm,mode=0755'
+      )
+    ).toEqual(['bullseye', 'bookworm']);
+  });
+
+  it('grows a shared suffix into the highlight too', () => {
+    expect(changed('call(foo_id)', 'call(bar_id)')).toEqual(['foo_id', 'bar_id']);
+  });
+
+  it('leaves a change that already starts at a boundary alone', () => {
+    expect(changed('run --fast', 'run --fast --safe')).toEqual(['', ' --safe']);
+  });
+
+  it('merges two changes inside one word into one highlight', () => {
+    expect(changed('v1_2_3', 'v4_2_5')).toEqual(['v1_2_3', 'v4_2_5']);
+  });
+
+  it('does not cross a non-word character', () => {
+    expect(changed('a.b.c', 'a.x.c')).toEqual(['b', 'x']);
+  });
+
+  it('reconstructs the original text exactly', () => {
+    const { oldSegments } = computeWordDiff('const value = 1;', 'const other = 2;');
+    expect(
+      expandSegmentsToWords(oldSegments)
+        .map((segment) => segment.text)
+        .join('')
+    ).toBe('const value = 1;');
+  });
+
+  it('leaves an all-same line untouched', () => {
+    const segments: WordDiffSegment[] = [{ text: 'unchanged', type: 'same' }];
+    expect(expandSegmentsToWords(segments)).toEqual(segments);
+  });
+
+  it('handles empty input', () => {
+    expect(expandSegmentsToWords([])).toEqual([]);
   });
 });

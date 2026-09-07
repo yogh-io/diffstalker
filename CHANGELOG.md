@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The word-level highlight now covers whole words.** fast-diff works in
+  characters, so `bullseye` -> `bookworm` marked only `ullseye`/`ookworm`: the
+  shared `b` stayed unpainted and the highlight started mid-word, leaving the
+  reader to work out what the edit actually was. What gets replaced in practice
+  is the WORD, so the word is what is shown. A changed run grows outward only
+  over characters inside the same word — letters, digits and `_` — so `-`, `.`,
+  `:`, `/` and `,` still end it and the highlight never runs on into the rest of
+  a path or an argument list. A change that already begins at a boundary (a
+  whole added argument, a changed separator) is left exactly where fast-diff put
+  it. The similarity gate still reads the raw character diff, so no pair that
+  highlights today stops highlighting.
+
 ### Fixed
 
 - **Word-level diff highlighting is visible again in the web UI.** The changed

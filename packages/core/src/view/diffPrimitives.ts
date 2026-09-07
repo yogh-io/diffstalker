@@ -4,7 +4,7 @@
  */
 
 import type { DiffLine } from '../git/diff.js';
-import { computeWordDiff, WordDiffSegment } from './wordDiff.js';
+import { computeWordDiff, expandSegmentsToWords, WordDiffSegment } from './wordDiff.js';
 
 /** Parsed "@@ -a,b +c,d @@ ctx" hunk header. Counts default to 1 when omitted. */
 export interface ParsedHunkHeader {
@@ -95,10 +95,10 @@ function segmentsSimilarEnough(
 /**
  * Pair a run of consecutive deletions with the additions that follow it,
  * by position. Each pair whose contents pass the similarity gate gets
- * word-level segments from computeWordDiff; pairs where either side
- * exceeds WORD_DIFF_CHAR_CAP are never diffed and stay whole-line
- * changes. getContent supplies each line's display content (callers
- * clean control characters differently).
+ * word-level segments from computeWordDiff, grown out to whole words;
+ * pairs where either side exceeds WORD_DIFF_CHAR_CAP are never diffed
+ * and stay whole-line changes. getContent supplies each line's display
+ * content (callers clean control characters differently).
  */
 export function pairChangeRuns(
   deletions: DiffLine[],
@@ -122,8 +122,12 @@ export function pairChangeRuns(
     // both come from this single result.
     const { oldSegments, newSegments } = computeWordDiff(delContent, addContent);
     if (segmentsSimilarEnough(oldSegments, newSegments)) {
-      delSegments.set(j, oldSegments);
-      addSegments.set(j, newSegments);
+      // Gate on the raw character diff, highlight the expanded words:
+      // expansion moves shared characters into the changed side, which
+      // would drag the similarity ratio down and drop pairs that today
+      // highlight fine.
+      delSegments.set(j, expandSegmentsToWords(oldSegments));
+      addSegments.set(j, expandSegmentsToWords(newSegments));
     }
   }
 
