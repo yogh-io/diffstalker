@@ -102,10 +102,13 @@ describe('directory vs branch', () => {
   // A `main` worktree with a feature branch checked out: the switcher
   // names the PLACE, and the branch rides below it. The two used to
   // disagree — trigger showed the directory, rows showed the branch.
+  // Distinct timestamps, newest first: the rows below are read by index,
+  // and equal activity leaves the order to whichever `Date.now()` call
+  // happened to land in a later millisecond.
   const MIXED: WorktreeInfo[] = [
     worktree(`${CALC}/.bare`, null, { main: true, bare: true }),
     worktree(`${CALC}/main`, 'aer-4569-mobile-machinery-terms', { lastActivity: Date.now() }),
-    worktree(`${CALC}/fix-bbox`, 'fix-bbox', { lastActivity: Date.now() }),
+    worktree(`${CALC}/fix-bbox`, 'fix-bbox', { lastActivity: Date.now() - 60_000 }),
   ];
 
   test('the trigger and the row both name the DIRECTORY', async () => {
@@ -142,7 +145,7 @@ describe('directory vs branch', () => {
       [
         worktree(`${CALC}/.bare`, null, { main: true, bare: true }),
         worktree(`${CALC}/main`, 'main', { lastActivity: Date.now() }),
-        worktree(`${CALC}/spike`, null, { lastActivity: Date.now() }),
+        worktree(`${CALC}/spike`, null, { lastActivity: Date.now() - 60_000 }),
       ],
       `${CALC}/main`
     );
