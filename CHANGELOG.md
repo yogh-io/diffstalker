@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Word-level diff highlighting is visible again in the web UI.** The changed
+  words were computed and wrapped in spans all along — the CSS that paints them
+  never matched. The spans come from `DiffLineContent`, a fragment component, so
+  Vue cannot hand it `DiffView`'s scope attribute, and the scoped rule compiled
+  to `.word-hl[data-v-…]`, which matches nothing. Every diff therefore rendered
+  as whole-line add/del blocks, with no way to see that `bullseye` became
+  `bookworm`. The rules now use `:deep()`, and a test reads the style block and
+  fails on any `.word-hl` rule that does not.
+
 ## [0.13.2] - 2026-08-28
 
 ### Changed

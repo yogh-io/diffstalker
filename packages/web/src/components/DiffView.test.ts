@@ -9,6 +9,8 @@
  */
 
 import { describe, test, expect, vi, afterEach, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import * as path from 'node:path';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import DiffView from './DiffView.vue';
@@ -264,6 +266,27 @@ describe('word-level highlighting', () => {
     expect(addHl.map((s) => s.text()).join('')).toBe('2');
     // Unchanged segments are NOT highlighted.
     expect(wrapper.find('.row.del .content').text()).toBe('const value = 1;');
+  });
+
+  /**
+   * The DOM tests above prove the spans exist; they cannot prove the
+   * spans are PAINTED. DiffLineContent is a fragment component, so this
+   * file's scope attribute never reaches its spans — a bare scoped
+   * `.word-hl` rule compiles to `.word-hl[data-v-...]` and matches
+   * nothing, which is exactly how word highlighting shipped invisible.
+   * Read the style block and require :deep() on every .word-hl rule.
+   */
+  test('every scoped .word-hl rule reaches into the child component', () => {
+    // vitest's root is packages/web (see vite.config.ts).
+    const source = readFileSync(path.resolve('src/components/DiffView.vue'), 'utf8');
+    const style = source
+      .slice(source.indexOf('<style scoped>'))
+      .replace(/\/\*[\s\S]*?\*\//g, '');
+    const selectors = style.match(/^[^{}\n]*\.word-hl[^{}\n]*$/gm) ?? [];
+    expect(selectors.length).toBeGreaterThan(0);
+    for (const selector of selectors) {
+      expect(selector).toContain(':deep(.word-hl)');
+    }
   });
 
   test('a dissimilar del/add pair gets NO word highlighting', () => {

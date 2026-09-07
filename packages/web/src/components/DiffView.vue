@@ -690,8 +690,14 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.row.add .word-hl,
-.split-line.add .word-hl {
+/* :deep() is required, not cosmetic: the .word-hl spans are rendered by
+   DiffLineContent, a FRAGMENT component (multiple roots), so Vue cannot
+   pass this file's scope attribute down to them. A plain scoped
+   `.word-hl` selector compiles to `.word-hl[data-v-...]` and matches
+   nothing — word-level highlighting renders as spans with no background
+   at all. Same for the del rule below. */
+.row.add :deep(.word-hl),
+.split-line.add :deep(.word-hl) {
   background: var(--diff-add-highlight);
   border-radius: 2px;
 }
@@ -712,8 +718,8 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.row.del .word-hl,
-.split-line.del .word-hl {
+.row.del :deep(.word-hl),
+.split-line.del :deep(.word-hl) {
   background: var(--diff-del-highlight);
   border-radius: 2px;
 }
