@@ -70,11 +70,11 @@
     "@types/blessed": "^0.1.27",
     "@types/node": "^26.4.0",
     "dependency-cruiser": "^18.2.0",
-    "eslint": "^10.9.1",
+    "eslint": "^10.10.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-sonarjs": "^4.2.0",
     "prettier": "^3.9.6",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.68.0"
+    "typescript-eslint": "^8.70.0"
   }
 }
