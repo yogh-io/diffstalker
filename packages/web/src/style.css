@@ -6,8 +6,7 @@
  */
 
 :root {
-  --font-mono:
-    ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
   --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
   /* Type scale */
@@ -124,16 +123,10 @@ body {
   font-size: var(--fs-base);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
-  /* App-like chrome: nothing is selectable by default — labels, headers,
-     list rows, buttons, counts. The genuinely copyable surfaces (diff
-     text, the file viewer, inputs) opt back in with `user-select: text`;
-     because those are class selectors they outrank this element rule, so
-     the cascade lands the right way. Stops the accidental blue-selection
-     smear when you click or drag across the UI. (Selection is a
-     user-select concern — NOT pointer-events, which would also kill
-     clicks.) */
-  user-select: none;
-  -webkit-user-select: none;
+  /* Commit messages, metadata, paths and errors can all be copied with
+     normal browser selection. Controls and code gutters opt out below. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 #app {
@@ -172,6 +165,15 @@ button {
   cursor: pointer;
 }
 
+/* Keep control labels and resize handles out of text selections. */
+button,
+[role='button'],
+[role='tab'],
+[role='separator'] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 button:disabled {
   cursor: default;
   /* One disabled affordance for every button (load-more, refresh, open,
@@ -194,7 +196,7 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.375rem 0.5rem;
-  /* Typed/readable content: selectable, against the body-wide default. */
+  /* Inputs stay selectable even when nested inside a control. */
   user-select: text;
   -webkit-user-select: text;
 }
@@ -301,7 +303,7 @@ input::placeholder {
   tab-size: 4;
   padding-right: 1.5ch;
   color: var(--diff-text);
-  /* Opt back in against the body-wide non-selectable default. */
+  /* Code stays selectable even when nested inside a control. */
   user-select: text;
   -webkit-user-select: text;
 }
