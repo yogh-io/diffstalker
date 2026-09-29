@@ -5,7 +5,7 @@
  * rows must not jump around while typing.
  */
 
-import { describe, test, expect, beforeEach } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 import { computed, ref } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { useTextFilter } from './useTextFilter';
@@ -47,6 +47,21 @@ describe('useTextFilter', () => {
     store.setQuery('README');
     expect(filter.filtered.value.map((r) => r.path)).toEqual(['README.md']);
     expect(filter.active.value).toBe(true);
+  });
+
+  test('calls toText once per item per keystroke', () => {
+    const toText = vi.fn((row: Row) => row.path);
+    const filter = useTextFilter(
+      computed(() => ROWS),
+      toText
+    );
+    const store = useFilterStore();
+    store.setQuery('finder');
+    expect(filter.filtered.value).toHaveLength(3);
+    expect(toText).toHaveBeenCalledTimes(ROWS.length);
+    store.setQuery('finderM');
+    expect(filter.filtered.value).toHaveLength(1);
+    expect(toText).toHaveBeenCalledTimes(ROWS.length * 2);
   });
 
   test('preserves input order rather than fzf score order', () => {

@@ -37,7 +37,8 @@ export interface TextFilter<T> {
 
 /**
  * `toText` picks the string each item is matched on — a path, a subject.
- * It must be stable per item; it is called once per item per keystroke.
+ * It must be stable per item; it is called exactly once per item per
+ * keystroke.
  */
 export function useTextFilter<T>(
   items: Ref<T[]> | ComputedRef<T[]>,
@@ -53,6 +54,7 @@ export function useTextFilter<T>(
     if (query === '' || all.length === 0) return all;
 
     const scanned = all.slice(0, FILTER_MAX_ITEMS);
+    // One toText per item; the same texts drive the index and the filter.
     const texts = scanned.map(toText);
     const matched = new Set(
       createFinderIndex(texts, scanned.length)
@@ -62,7 +64,7 @@ export function useTextFilter<T>(
     // Filter the ORIGINAL list rather than mapping fzf's ranked output:
     // that keeps input order, and keeps duplicate texts (two entries for
     // one path, staged and unstaged) both visible.
-    return scanned.filter((item) => matched.has(toText(item)));
+    return scanned.filter((_, i) => matched.has(texts[i]));
   });
 
   const active = computed(() => filter.query !== '');
