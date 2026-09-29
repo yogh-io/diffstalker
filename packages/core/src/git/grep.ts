@@ -124,10 +124,6 @@ function decode(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('utf8');
 }
 
-/**
- * Parse `path\0lineno\0content\n` records. See the module comment for why
- * this walks NUL-first instead of splitting.
- */
 /** One `path\0lineno\0content\n` record, as raw byte slices. */
 interface RawRecord {
   pathBytes: Uint8Array;

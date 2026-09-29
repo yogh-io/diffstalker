@@ -9,7 +9,7 @@ export interface WordDiffSegment {
 
 /**
  * Check if two lines are similar enough to warrant word-level diffing.
- * Returns true if they share at least 30% common content.
+ * Returns true if they share at least 50% common content.
  */
 export function areSimilarEnough(oldText: string, newText: string): boolean {
   if (!oldText || !newText) return false;

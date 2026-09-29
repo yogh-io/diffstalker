@@ -1,8 +1,9 @@
 /**
  * GitOperationQueue - Serializes git operations to prevent index.lock conflicts.
  *
- * All git operations must go through this queue to ensure they execute
- * sequentially, preventing concurrent access to the git index.
+ * Mutations and refreshes go through this queue so they run one at a
+ * time, never touching the git index concurrently. Stateless reads
+ * (history, compare, explorer) run outside it.
  */
 
 interface QueuedOperation<T> {

@@ -3,8 +3,8 @@
  *
  * Kept dependency-free on purpose: the CLI imports `extractHunkPatch` (and
  * these types) for hunk staging, and pulling it from here instead of `diff.ts`
- * keeps the whole git-process layer (simple-git) out of the CLI bundle. The
- * daemon re-exports these through `diff.ts` alongside the exec functions.
+ * keeps the whole git-process layer (simple-git) out of the CLI bundle.
+ * `diff.ts` re-exports these alongside the exec functions.
  */
 
 export interface DiffLine {
@@ -62,9 +62,10 @@ export function diffByteSize(lines: readonly DiffLine[]): number {
  *
  * Without this cap one generated fixture (a 121k-line .gml, a
  * package-lock.json) can be tens of MB on its own, which the browser then
- * has to receive, parse, and lay out. The limits match the file-viewer
- * caps in `git/explorerData` (MAX_FILE_SIZE / MAX_DISPLAY_LINES) — the
- * same "too big to display" threshold, applied to diffs.
+ * has to receive, parse, and lay out. The line cap is the file viewer's
+ * MAX_DISPLAY_LINES (`git/explorerData`), the same "too big to display"
+ * threshold applied to diffs; the byte cap is its own, lower one (256 KiB
+ * against the viewer's 1 MiB).
  *
  * The line cap matters independently of the byte cap: 30k short lines
  * cost little to transfer but still build 30k row objects in the client.

@@ -16,9 +16,10 @@ import {
 import type { DiffLine, DiffResult } from './diffParse.js';
 import type { SimpleGit, StatusResult } from 'simple-git';
 
-// Re-export the pure diff/patch parsers so existing importers (the daemon,
-// tests) keep working through `git/diff`. The CLI imports them straight from
-// `git/diffParse` to avoid pulling this module's simple-git dependency.
+// Re-export the pure diff/patch parsers so the importers that reach them
+// through `git/diff` (the working-tree manager, tests) keep working. The
+// CLI and the web client import them straight from `git/diffParse` to
+// avoid pulling this module's simple-git dependency.
 export {
   parseDiffLine,
   parseHunkHeader,
@@ -125,9 +126,9 @@ export const DIFF_CONTEXT_LINES = 3;
  * boolean precisely so "some more context" cannot be expressed. See
  * docs/whole-file-mode.md.
  *
- * The daemon's per-file diff cap (5,000 lines) bounds the payload well
- * below this, so the value only has to exceed any file the cap lets
- * through.
+ * The per-file diff cap (MAX_FILE_DIFF_LINES, 5,000 lines, applied by
+ * capLargeFileDiffs) bounds the payload well below this, so the value
+ * only has to exceed any file the cap lets through.
  */
 export const WHOLE_FILE_CONTEXT = 100000;
 
@@ -416,8 +417,7 @@ export async function getCandidateBaseBranches(repoPath: string): Promise<string
     // Failed to get branches
   }
 
-  // Return unique candidates (Set deduplication)
-  return [...new Set(candidates)];
+  return candidates;
 }
 
 /**
@@ -642,7 +642,7 @@ export type DiffRange =
  * one place, so the rename lookup and the diff itself can never disagree
  * about what range they are reading.
  *
- * `extra` is an argument that must sit before `--end-of-options` (which
+ * `flags` are arguments that must sit before `--end-of-options` (which
  * exists so a flag-shaped hash cannot be read as an option).
  */
 function rangeArgs(range: DiffRange, flags: string[]): string[] {
