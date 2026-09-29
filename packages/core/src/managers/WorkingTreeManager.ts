@@ -43,9 +43,6 @@ import { splitDiffByFile } from '../view/splitDiffByFile.js';
 import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
 import type { JournalObservation } from '../types/journal.js';
 
-export type { FileHunkCounts } from '../git/diff.js';
-export type { StashEntry, InProgressOperation } from '../git/status.js';
-
 export interface GitState {
   status: GitStatus | null;
   isLoading: boolean;
@@ -71,7 +68,6 @@ export interface GitState {
 type WorkingTreeEventMap = {
   'state-change': [GitState];
   'journal-observation': [JournalObservation];
-  error: [string];
 };
 
 /** Untracked files above this size are not read for the journal; they get a header-only marker section instead. */

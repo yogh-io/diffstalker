@@ -2,13 +2,12 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { watch, FSWatcher } from 'chokidar';
 import { EventEmitter } from 'node:events';
+import * as logger from '../utils/logger.js';
 import { ensureTargetDir, expandPath, getLastNonEmptyLine } from '../utils/pathUtils.js';
 
 export interface WatcherState {
   path: string | null;
-  lastUpdate: Date | null;
   rawContent: string | null;
-  sourceFile: string | null;
 }
 
 type FilePathWatcherEventMap = {
@@ -21,23 +20,18 @@ type FilePathWatcherEventMap = {
  */
 export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
   private targetFile: string;
-  private debug: boolean;
   private watcher: FSWatcher | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private lastReadPath: string | null = null;
 
   private _state: WatcherState = {
     path: null,
-    lastUpdate: null,
     rawContent: null,
-    sourceFile: null,
   };
 
-  constructor(targetFile: string, debug: boolean = false) {
+  constructor(targetFile: string) {
     super();
     this.targetFile = targetFile;
-    this.debug = debug;
-    this._state.sourceFile = targetFile;
   }
 
   get state(): WatcherState {
@@ -73,20 +67,9 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
 
       if (content && content !== this.lastReadPath) {
         const resolved = this.processContent(content);
-        const now = new Date();
-
-        if (this.debug && resolved) {
-          process.stderr.write(`[diffstalker ${now.toISOString()}] Path change detected\n`);
-          process.stderr.write(`  Source file: ${this.targetFile}\n`);
-          process.stderr.write(`  Raw content: "${content}"\n`);
-          process.stderr.write(`  Previous:    "${this.lastReadPath ?? '(none)'}"\n`);
-          process.stderr.write(`  Resolved:    "${resolved}"\n`);
-        }
-
         this.lastReadPath = resolved;
         this.updateState({
           path: resolved,
-          lastUpdate: now,
           rawContent: content,
         });
       }
@@ -114,21 +97,10 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
 
       if (content) {
         const resolved = this.processContent(content);
-        const now = new Date();
-
-        if (this.debug && resolved) {
-          process.stderr.write(`[diffstalker ${now.toISOString()}] Initial path read\n`);
-          process.stderr.write(`  Source file: ${this.targetFile}\n`);
-          process.stderr.write(`  Raw content: "${content}"\n`);
-          process.stderr.write(`  Resolved:    "${resolved}"\n`);
-        }
-
         this.lastReadPath = resolved;
         this._state = {
           path: resolved,
-          lastUpdate: now,
           rawContent: content,
-          sourceFile: this.targetFile,
         };
         // Don't emit on initial read - caller should check state after start()
       }
@@ -144,6 +116,12 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
 
     this.watcher.on('change', () => this.readTargetDebounced());
     this.watcher.on('add', () => this.readTargetDebounced());
+    // An EventEmitter 'error' with no listener takes the daemon down. The
+    // other watchers surface theirs into state; this one has no error slot,
+    // so it is logged.
+    this.watcher.on('error', (err: unknown) => {
+      logger.warn(`Follow file watcher error: ${err instanceof Error ? err.message : String(err)}`);
+    });
   }
 
   /**

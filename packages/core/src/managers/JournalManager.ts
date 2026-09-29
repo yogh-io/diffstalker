@@ -3,8 +3,8 @@
  *
  * Listens to WorkingTreeManager's 'journal-observation' (wired by
  * GitStateManager) and appends immutable entries to a JournalStore. The
- * store is injected: phase 2 lifts it into a daemon-level map keyed by
- * repoId so it outlives the manager lifecycle.
+ * store is injected: the daemon's repo registry keeps one per repo id, so
+ * it outlives the manager lifecycle.
  *
  * Classification is strict boundary-before-kind:
  *   (a) operationInProgress transitions -> op-start/op-end boundaries;

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { discoverRepos, readHeadBranch } from './discoverRepos.js';
+import { discoverRepos } from './discoverRepos.js';
 
 /**
  * The scanner never runs git, so the fixtures don't either: a `.git`
@@ -114,16 +114,13 @@ describe('discoverRepos', () => {
   });
 });
 
-describe('readHeadBranch', () => {
-  it('is null for a directory that is not a repo', async () => {
-    expect(await readHeadBranch(path.join(root, 'notes'))).toBe(null);
-  });
-
-  it('is null when HEAD is in a shape we do not parse', async () => {
+describe('a HEAD in a shape we do not parse', () => {
+  it('is still listed as a repo, without a branch', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-odd-'));
     try {
-      makeRepo(dir, 'ref: refs/remotes/origin/main\n');
-      expect(await readHeadBranch(dir)).toBe(null);
+      makeRepo(path.join(dir, 'odd'), 'ref: refs/remotes/origin/main\n');
+      const result = await discoverRepos(dir);
+      expect(result.repos.map((repo) => [repo.name, repo.branch])).toEqual([['odd', null]]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

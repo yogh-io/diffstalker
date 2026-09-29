@@ -6,7 +6,6 @@ import {
   pullRebase as gitPullRebase,
   stashSave as gitStashSave,
   stashPop as gitStashPop,
-  getLocalBranches as gitGetLocalBranches,
   switchBranch as gitSwitchBranch,
   createBranch as gitCreateBranch,
   softResetHead as gitSoftResetHead,
@@ -14,12 +13,10 @@ import {
   revertCommit as gitRevertCommit,
   abortOperation as gitAbortOperation,
   rebaseContinue as gitRebaseContinue,
-  LocalBranch,
 } from '../git/status.js';
 import type { RemoteOperationState, RemoteOperation } from '../types/remote.js';
 
-export type { LocalBranch } from '../git/status.js';
-export type { RemoteOperationState, RemoteOperation } from '../types/remote.js';
+export type { RemoteOperationState } from '../types/remote.js';
 
 /** Callbacks for cross-manager coordination. */
 export interface RemoteCallbacks {
@@ -87,13 +84,6 @@ export class RemoteOperationManager extends EventEmitter<RemoteEventMap> {
     return this._remoteState;
   }
 
-  /**
-   * Clear the remote state (e.g. after auto-clear timeout).
-   */
-  clearRemoteState(): void {
-    this.updateRemoteState({ operation: null, error: null, lastResult: null });
-  }
-
   // --- Remote operations ---
   // Every operation returns its own final state snapshot, or null when it
   // was refused because another operation was already in progress.
@@ -134,10 +124,6 @@ export class RemoteOperationManager extends EventEmitter<RemoteEventMap> {
   }
 
   // --- Branch operations ---
-
-  async getLocalBranches(): Promise<LocalBranch[]> {
-    return this.queue.enqueue(() => gitGetLocalBranches(this.repoPath));
-  }
 
   async switchBranch(name: string): Promise<RemoteOperationState | null> {
     if (this._remoteState.inProgress) return null;

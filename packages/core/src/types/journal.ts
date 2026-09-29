@@ -105,8 +105,8 @@ export interface ObservedHunk {
 }
 
 /**
- * The journal's whole state. Held ABOVE the manager lifecycle (phase 2
- * lifts it into a daemon-level map keyed by repoId) so closing the last
+ * The journal's whole state. Held ABOVE the manager lifecycle (the
+ * daemon's repo registry keeps one per repo id) so closing the last
  * client does not wipe the session's chronology.
  */
 export interface JournalStore {

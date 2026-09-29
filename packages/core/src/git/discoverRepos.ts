@@ -142,17 +142,6 @@ async function branchFromHead(gitDir: string): Promise<string | null> {
 }
 
 /**
- * The branch a repo is on, without running git. Null when the directory
- * is not an openable repo, or when HEAD is missing or in a shape we don't
- * parse — a repo with an unreadable HEAD (a clone still in progress) is
- * still a repo, so callers show it without a branch.
- */
-export async function readHeadBranch(repoPath: string): Promise<string | null> {
-  const gitDir = await resolveGitDir(repoPath);
-  return gitDir === null ? null : branchFromHead(gitDir);
-}
-
-/**
  * When this repo was last touched: the newest mtime of the git dir's
  * `index` and `HEAD`. Null when neither can be stat'ed.
  */
