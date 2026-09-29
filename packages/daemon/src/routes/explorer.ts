@@ -30,6 +30,7 @@ import {
   fsErrorCode,
   isGitDirSegment,
   parseBoolParam,
+  requirePathParam,
   requireRepo,
   requireRealRepoPath,
   requireRepoRelPath,
@@ -43,7 +44,7 @@ export function registerExplorerRoutes(router: Router, deps: RouteDeps): void {
    * Attach an outline to a file read, when one was asked for and is
    * possible.
    *
-   * The plain `/file` response is byte-identical without `?symbols=1` —
+   * The plain `/file` response is byte-identical without `?symbols=true` —
    * asserted by a test, because every existing client depends on it.
    *
    * No `symbols` field at all for binary / too-large files: those stories
@@ -124,10 +125,7 @@ export function registerExplorerRoutes(router: Router, deps: RouteDeps): void {
 
   router.get('/repos/:id/file', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
-    const relPath = query.get('path');
-    if (!relPath) {
-      throw new HttpError(400, 'Missing "path" query parameter');
-    }
+    const relPath = requirePathParam(query);
     const rel = requireRepoRelPath(handle.path, relPath);
     await requireRealRepoPath(handle, rel);
     try {

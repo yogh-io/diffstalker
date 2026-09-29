@@ -26,8 +26,11 @@ import { requireStringArrayField, type RouteDeps } from './shared.js';
 export function registerSettingsRoutes(router: Router, deps: RouteDeps): void {
   const { settings, discovery, daemonEvents } = deps;
 
+  /** The settings as every reader sees them: the values plus whether they are on disk. */
+  const settingsPayload = () => ({ ...settings.settings, persisted: settings.persisted });
+
   router.get('/settings', ({ res }) => {
-    sendJson(res, 200, { ...settings.settings, persisted: settings.persisted });
+    sendJson(res, 200, settingsPayload());
   });
 
   router.put('/settings', async ({ body, res }) => {
@@ -56,7 +59,7 @@ export function registerSettingsRoutes(router: Router, deps: RouteDeps): void {
     // GET /discovered is not a race against its own save.
     await discovery.setRoots(watchRoots);
 
-    const payload = { ...settings.settings, persisted: settings.persisted };
+    const payload = settingsPayload();
     // Other clients (a second tab, another browser) learn about it here.
     daemonEvents.broadcast('settings-change', payload);
     sendJson(res, 200, payload);

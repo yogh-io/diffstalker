@@ -3,7 +3,7 @@
  * stage/unstage, and the SSE event stream.
  */
 
-import { getDiff, getDiffForUntracked, WHOLE_FILE_CONTEXT } from '@diffstalker/core/git/diff';
+import { getDiff, getDiffForUntracked } from '@diffstalker/core/git/diff';
 import { getInProgressOperation } from '@diffstalker/core/git/status';
 import {
   validateCommit,
@@ -16,6 +16,7 @@ import {
   ensureStatus,
   optionalBooleanField,
   parseBoolParam,
+  parseWholeParam,
   requireRepo,
   requireStringField,
   resolveFileEntry,
@@ -56,17 +57,7 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
     const handle = requireRepo(registry, params.id);
     const filePath = query.get('path') ?? undefined;
     const staged = parseBoolParam(query, 'staged', false);
-    const whole = parseBoolParam(query, 'whole', false);
-
-    // `whole` REQUIRES a path. Without one this is `git diff -U100000` over
-    // the entire tree: unbounded work behind a GET, which on a --port
-    // daemon is CSRF-exempt by design, needs no body, and is not throttled.
-    // One file at a time is also all the mode ever means (see
-    // docs/whole-file-mode.md) — so the guard costs nothing real.
-    if (whole && !filePath) {
-      throw new HttpError(400, 'whole=true requires a path (one file at a time)');
-    }
-    const context = whole ? WHOLE_FILE_CONTEXT : undefined;
+    const context = parseWholeParam(query, filePath);
 
     // Stateless: never touches the manager's per-client selection.
     let diff;
@@ -86,7 +77,7 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
       // An untracked file is already whole — its "diff" is the file read
       // in full — so `whole` has nothing to widen, and the response must
       // be byte-identical with and without it, stamping included.
-      widened = whole && !isUntracked;
+      widened = context !== undefined && !isUntracked;
       diff = isUntracked
         ? await getDiffForUntracked(handle.path, filePath)
         : await getDiff(handle.path, filePath, staged, { context });

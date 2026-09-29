@@ -17,10 +17,9 @@ import {
   getDefaultBaseBranch,
   resolveEffectiveBaseBranch,
   getFileDiffInRange,
-  WHOLE_FILE_CONTEXT,
   NoCommonHistoryError,
 } from '@diffstalker/core/git/diff';
-import type { CompareDiff, DiffRange, UncommittedSide } from '@diffstalker/core/git/diff';
+import type { DiffRange, UncommittedSide } from '@diffstalker/core/git/diff';
 import {
   getCommit,
   getCommitHistory,
@@ -35,10 +34,48 @@ import { Router, HttpError, sendJson } from '../router.js';
 import {
   parseBoolParam,
   parsePositiveIntParam,
+  parseWholeParam,
+  requirePathParam,
   requireRepo,
   requireRefField,
   type RouteDeps,
 } from './shared.js';
+
+/** A commit hash as the route accepts it: 4 to 40 hex digits, else a 400. */
+function requireCommitHash(hash: string): string {
+  if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
+    throw new HttpError(400, `Invalid commit hash: ${hash}`);
+  }
+  return hash;
+}
+
+/**
+ * 404 unless the commit exists. Existence and emptiness are distinct:
+ * merge commits (no --cc/-m, matching the CLI's rendering) and
+ * --allow-empty commits legitimately produce an empty diff and must be
+ * 200, not "Unknown commit".
+ */
+async function requireExistingCommit(repoPath: string, hash: string): Promise<void> {
+  if (!(await commitExists(repoPath, hash))) {
+    throw new HttpError(404, `Unknown commit: ${hash}`);
+  }
+}
+
+/**
+ * A resolvable base with no shared history is a real, non-empty answer
+ * ("nothing to compare"), not a silent empty diff and not a count of
+ * zero: it is a 422 for /compare and /compare/count alike.
+ */
+async function withoutCommonHistoryAs422<T>(read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (err) {
+    if (err instanceof NoCommonHistoryError) {
+      throw new HttpError(422, err.message);
+    }
+    throw err;
+  }
+}
 
 /**
  * The base to compare against when the request names none: the persisted
@@ -108,11 +145,6 @@ function uncommittedParts(query: URLSearchParams): {
   };
 }
 
-/** Widen the context to the whole file, or leave core's default alone. */
-function contextOpts(whole: boolean): { context?: number } {
-  return whole ? { context: WHOLE_FILE_CONTEXT } : {};
-}
-
 export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): void {
   const { registry } = deps;
 
@@ -128,10 +160,7 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
   // when it names one older than any page of the log the client holds.
   router.get('/repos/:id/commits/:hash', async ({ params, res }) => {
     const handle = requireRepo(registry, params.id);
-    const hash = params.hash;
-    if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
-      throw new HttpError(400, `Invalid commit hash: ${hash}`);
-    }
+    const hash = requireCommitHash(params.hash);
     const commit = await getCommit(handle.path, hash);
     if (commit === null) throw new HttpError(404, `Unknown commit: ${hash}`);
     sendJson(res, 200, commit);
@@ -139,29 +168,18 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
 
   router.get('/repos/:id/commits/:hash/diff', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
-    const hash = params.hash;
-    if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
-      throw new HttpError(400, `Invalid commit hash: ${hash}`);
-    }
-    // Existence and emptiness are distinct: merge commits (no --cc/-m,
-    // matching the CLI's rendering) and --allow-empty commits legitimately
-    // produce an empty diff and must be 200, not "Unknown commit".
-    if (!(await commitExists(handle.path, hash))) {
-      throw new HttpError(404, `Unknown commit: ${hash}`);
-    }
+    const hash = requireCommitHash(params.hash);
+    await requireExistingCommit(handle.path, hash);
     // `path` narrows to one file, and `whole` widens its context — the
     // read behind whole-file mode in History. The pathspec carries both
     // sides of a rename (core's getFileDiffInRange), because scoping to
     // the new path alone would report a rename as a plain add.
     const filePath = query.get('path') ?? undefined;
-    const whole = parseBoolParam(query, 'whole', false);
-    if (whole && !filePath) {
-      throw new HttpError(400, 'whole=true requires a path (one file at a time)');
-    }
+    const context = parseWholeParam(query, filePath);
     // Historical diff: deliberately NOT stamped with hunk edit times —
     // stamping only applies to the live working-tree diff.
     const diff = filePath
-      ? await getFileDiffInRange(handle.path, { kind: 'commit', hash }, filePath, contextOpts(whole))
+      ? await getFileDiffInRange(handle.path, { kind: 'commit', hash }, filePath, { context })
       : await getCommitDiff(handle.path, hash);
     sendJson(res, 200, diff);
   });
@@ -173,13 +191,8 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
    */
   router.get('/repos/:id/commits/:hash/files', async ({ params, res }) => {
     const handle = requireRepo(registry, params.id);
-    const hash = params.hash;
-    if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
-      throw new HttpError(400, `Invalid commit hash: ${hash}`);
-    }
-    if (!(await commitExists(handle.path, hash))) {
-      throw new HttpError(404, `Unknown commit: ${hash}`);
-    }
+    const hash = requireCommitHash(params.hash);
+    await requireExistingCommit(handle.path, hash);
     sendJson(res, 200, await getCommitFiles(handle.path, hash));
   });
 
@@ -194,9 +207,8 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
    */
   router.get('/repos/:id/compare/file', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
-    const filePath = query.get('path');
-    if (!filePath) throw new HttpError(400, 'path is required');
-    const whole = parseBoolParam(query, 'whole', false);
+    const filePath = requirePathParam(query);
+    const context = parseWholeParam(query, filePath);
     const sideParam = query.get('side');
     if (sideParam !== null && !UNCOMMITTED_SIDES.has(sideParam)) {
       throw new HttpError(400, `Unknown side: ${sideParam}`);
@@ -213,11 +225,7 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
       side === null
         ? { kind: 'compare', base: await resolveRequestedBase(handle.path, query) }
         : { kind: side === 'both' ? 'head' : side };
-    sendJson(
-      res,
-      200,
-      await getFileDiffInRange(handle.path, range, filePath, contextOpts(whole))
-    );
+    sendJson(res, 200, await getFileDiffInRange(handle.path, range, filePath, { context }));
   });
 
   router.get('/repos/:id/head-message', async ({ params, res }) => {
@@ -268,19 +276,10 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
   router.get('/repos/:id/compare/count', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
     const base = await resolveRequestedBase(handle.path, query);
-    try {
-      sendJson(res, 200, {
-        baseBranch: base,
-        commits: await getCommitCountBetweenRefs(handle.path, base),
-      });
-    } catch (err) {
-      // Same 422 as /compare: no shared history is a real answer, and a
-      // client must not render it as a count of zero.
-      if (err instanceof NoCommonHistoryError) {
-        throw new HttpError(422, err.message);
-      }
-      throw err;
-    }
+    const commits = await withoutCommonHistoryAs422(() =>
+      getCommitCountBetweenRefs(handle.path, base)
+    );
+    sendJson(res, 200, { baseBranch: base, commits });
   });
 
   router.get('/repos/:id/compare', async ({ params, query, res }) => {
@@ -292,17 +291,7 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     // the DiffResult directly. It already carries the resolved base as
     // `baseBranch`; which uncommitted work was folded in shows per row in
     // `files[].uncommitted`.
-    let diff: CompareDiff;
-    try {
-      diff = await getCompareDiff(handle.path, base, parts);
-    } catch (err) {
-      // A resolvable base with no shared history: a real, non-empty
-      // answer ("nothing to compare"), not a silent empty diff.
-      if (err instanceof NoCommonHistoryError) {
-        throw new HttpError(422, err.message);
-      }
-      throw err;
-    }
+    const diff = await withoutCommonHistoryAs422(() => getCompareDiff(handle.path, base, parts));
     sendJson(res, 200, diff);
   });
 }

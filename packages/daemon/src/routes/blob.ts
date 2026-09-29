@@ -70,6 +70,7 @@ import { guardImageSubresource } from '../security.js';
 import type { BlobSemaphore } from '../blobSemaphore.js';
 import type { RepoHandle } from '../repoRegistry.js';
 import {
+  requirePathParam,
   requireRepo,
   requireRealRepoPath,
   requireRepoRelPath,
@@ -141,14 +142,6 @@ const WHOLE_BLOB_BUDGET = MAX_IMAGE_BYTES;
 
 /** Refusals that mean "too big to be worth decoding", as opposed to "not allowed". */
 const OVERSIZE_REFUSALS: readonly ImageRefusal[] = ['too-large', 'too-many-pixels'];
-
-function requirePathParam(query: URLSearchParams): string {
-  const raw = query.get('path');
-  if (raw === null) {
-    throw new HttpError(400, 'Missing "path" query parameter');
-  }
-  return raw;
-}
 
 /**
  * The side to read. A closed set: anything else — a bogus word, a git option
@@ -269,8 +262,8 @@ async function inspectBlob(
  * Caching splits by side. The working tree is mutable and is never stored;
  * the index and HEAD sides are addressed by an immutable object id, so they
  * get a validator and `no-cache` (revalidate, do not blindly reuse). The oid
- * is safe in a header because core validated it against /^[0-9a-f]{40,64}$/
- * before it went anywhere near git.
+ * is safe in a header because core validated it as exactly 40 or 64 hex
+ * digits before it went anywhere near git.
  */
 function blobHeaders(side: BlobSide, mime: ImageMime, oid: string | null): Record<string, string> {
   const headers: Record<string, string> = {

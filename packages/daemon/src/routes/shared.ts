@@ -8,6 +8,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type * as http from 'node:http';
+import { WHOLE_FILE_CONTEXT } from '@diffstalker/core/git/diff';
 import { createGit } from '@diffstalker/core/git/gitClient';
 import type { FileEntry, GitStatus } from '@diffstalker/core/git/status';
 import type { RemoteOperationState } from '@diffstalker/core/managers/RemoteOperationManager';
@@ -173,6 +174,34 @@ export function parseBoolParam(query: URLSearchParams, name: string, fallback: b
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   throw new HttpError(400, `Invalid "${name}" (expected true or false): ${raw}`);
+}
+
+/** The `path` query param, which these routes require: absent or empty is a 400. */
+export function requirePathParam(query: URLSearchParams): string {
+  const raw = query.get('path');
+  if (!raw) throw new HttpError(400, 'Missing "path" query parameter');
+  return raw;
+}
+
+/**
+ * The `whole` query flag as a diff context width: WHOLE_FILE_CONTEXT when
+ * set, undefined for core's default.
+ *
+ * `whole` REQUIRES a path. Without one this is `git diff -U100000` over
+ * the entire tree: unbounded work behind a GET, which on a --port daemon
+ * is CSRF-exempt by design, needs no body, and is not throttled. One file
+ * at a time is also all the mode ever means (see docs/whole-file-mode.md)
+ * — so the guard costs nothing real.
+ */
+export function parseWholeParam(
+  query: URLSearchParams,
+  filePath: string | undefined
+): number | undefined {
+  const whole = parseBoolParam(query, 'whole', false);
+  if (whole && !filePath) {
+    throw new HttpError(400, 'whole=true requires a path (one file at a time)');
+  }
+  return whole ? WHOLE_FILE_CONTEXT : undefined;
 }
 
 /**

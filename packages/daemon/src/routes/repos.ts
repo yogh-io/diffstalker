@@ -3,7 +3,7 @@
 import { listWorktrees, resolveRepoRoot } from '@diffstalker/core/git/worktree';
 import { Router, HttpError, sendJson } from '../router.js';
 import { openAndWarm } from '../repoRegistry.js';
-import { requireRepo, requireStringField, type RouteDeps } from './shared.js';
+import { requirePathParam, requireRepo, requireStringField, type RouteDeps } from './shared.js';
 
 export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
   const { registry } = deps;
@@ -46,8 +46,7 @@ export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
    * `/worktrees` too: no activity stats, no base-branch discovery.
    */
   router.get('/resolve', async ({ query, res }) => {
-    const requested = query.get('path');
-    if (!requested) throw new HttpError(400, 'Missing "path" query parameter');
+    const requested = requirePathParam(query);
 
     const resolved = await resolveRepoRoot(requested, { mustExist: true });
     if (!resolved.ok && resolved.reason === 'not-absolute') {
@@ -76,9 +75,7 @@ export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
     // recently-visited repo) but hasn't opened on this daemon. Same
     // trust boundary as POST /repos, which already runs git against any
     // client-supplied path.
-    const path = query.get('path');
-    if (!path) throw new HttpError(400, 'Missing "path" query parameter');
-    sendJson(res, 200, await listWorktrees(path));
+    sendJson(res, 200, await listWorktrees(requirePathParam(query)));
   });
 
   router.delete('/repos/:id', ({ params, res }) => {

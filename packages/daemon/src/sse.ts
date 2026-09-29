@@ -11,9 +11,10 @@
  * keep-alive cleared) when the last subscriber disconnects.
  *
  * DaemonEventHub is the single daemon-scope channel (GET /events): named
- * events about the daemon itself — repo-opened, repo-closed, follow-change —
- * broadcast to every subscriber. It holds no per-repo state; producers
- * (registry callbacks, the follow controller) push events into it.
+ * events about the daemon itself — repo-opened, repo-closed, follow-change,
+ * discovery-change, settings-change — broadcast to every subscriber. It
+ * holds no per-repo state; producers (registry callbacks, the follow and
+ * discovery controllers, the settings route) push events into it.
  *
  * A response can be on both at once. `GET /events?repo=<id>` is ONE stream
  * that carries the daemon events and one repo's events, because a browser
@@ -32,7 +33,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
 import type { GitState } from '@diffstalker/core/managers/WorkingTreeManager';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
-import { serializeSharedState, serializeJournalEntries } from './serialize.js';
+import { serializeSharedState } from './serialize.js';
 
 const KEEP_ALIVE_MS = 25_000;
 
@@ -150,7 +151,7 @@ export class SseHub {
           // append racing a reset would splice into the wrong log).
           const data = JSON.stringify({
             epoch: manager.journal.journalStore.epoch,
-            entries: serializeJournalEntries(entries),
+            entries,
           });
           for (const subscriber of subscribers.keys()) {
             writeEvent(subscriber, 'journal-append', data);

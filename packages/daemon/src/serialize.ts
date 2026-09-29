@@ -85,16 +85,6 @@ export interface WireJournal {
 }
 
 /**
- * Encode journal entries for the wire: a pass-through. Entries are
- * JSON-native by design (ts is epoch ms, span/stats/supersedes are plain)
- * and the embedded DiffResult ({raw, lines}) crosses the wire exactly as
- * the existing /diff endpoints send it — plain JSON, no Dates or Maps.
- */
-export function serializeJournalEntries(entries: JournalEntry[]): JournalEntry[] {
-  return entries;
-}
-
-/**
  * Derive the highest pruned seq from the store: seqs start at 1, so any
  * gap below the first retained entry is pruned history. An empty store
  * that has assigned seqs (everything pruned) reports its last assigned
@@ -110,7 +100,10 @@ export function serializeJournal(store: JournalStore, since: number): WireJourna
   return {
     epoch: store.epoch,
     prunedBefore: journalPrunedBefore(store),
-    entries: serializeJournalEntries(entries),
+    // Entries need no encoding: they are JSON-native by design (ts is
+    // epoch ms, span/stats/supersedes are plain) and the embedded
+    // DiffResult crosses the wire exactly as /diff sends it.
+    entries,
   };
 }
 
