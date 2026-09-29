@@ -6,12 +6,61 @@
  * TUI's error surfacing) classify failures like conflicts and rejected
  * pushes by matching that text.
  */
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { simpleGit, SimpleGit, SimpleGitOptions } from 'simple-git';
 import { attributesFilePath } from './diffAttributes.js';
+
+const execFileAsync = promisify(execFile);
 
 /** Environment for every git child process: inherit, but force locale C. */
 export function gitEnv(): NodeJS.ProcessEnv {
   return { ...process.env, LC_ALL: 'C', LANG: 'C' };
+}
+
+/**
+ * Prefix on every git invocation that hands repository bytes to a client
+ * (blob and grep): fsmonitor off (no daemon spawned), pager `cat` (no
+ * pager process), hooks path `/dev/null` (no repo hook runs),
+ * `--literal-pathspecs` (a path is a path, not a pathspec). With it, a
+ * repo cannot make git run a program of its choosing, and `:(glob)`,
+ * `:(exclude)`, `:(attr:…)` and `:/` cannot resolve a blob other than the
+ * one the caller's guards validated.
+ */
+export const GIT_PREFIX = [
+  '-c',
+  'core.fsmonitor=',
+  '-c',
+  'core.pager=cat',
+  '-c',
+  'core.hooksPath=/dev/null',
+  '--literal-pathspecs',
+];
+
+/** A wedged git must not hold a request open. */
+export const GIT_EXEC_TIMEOUT_MS = 5000;
+
+/**
+ * Run git with the full `argv` (prefix included) and return stdout as
+ * BYTES. execFile's default encoding is utf8, which would decode stdout
+ * into a string and replace every byte that is not valid UTF-8 with
+ * U+FFFD; 'buffer' is the only setting that keeps repo bytes intact.
+ * Rejects with execFile's error, which carries the partial `stdout`.
+ */
+export async function execGitBytes(
+  repoPath: string,
+  argv: string[],
+  maxBuffer: number
+): Promise<Buffer> {
+  const { stdout } = await execFileAsync('git', argv, {
+    cwd: repoPath,
+    env: gitEnv(),
+    encoding: 'buffer',
+    maxBuffer,
+    timeout: GIT_EXEC_TIMEOUT_MS,
+    windowsHide: true,
+  });
+  return stdout;
 }
 
 /**

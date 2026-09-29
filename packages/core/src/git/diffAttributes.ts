@@ -44,10 +44,9 @@
  */
 
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { cacheDir } from '../utils/xdg.js';
+import { cacheDir, configHome } from '../utils/xdg.js';
 
 /**
  * Extension -> built-in git diff driver. Every driver named here was
@@ -139,8 +138,7 @@ export function userHasAttributesFile(): boolean {
     }
   }
 
-  const xdg = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-  userOwnsAttributes = fs.existsSync(path.join(xdg, 'git', 'attributes'));
+  userOwnsAttributes = fs.existsSync(path.join(configHome(), 'git', 'attributes'));
   return userOwnsAttributes;
 }
 

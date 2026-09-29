@@ -23,13 +23,11 @@
  * `--textconv`, so a `.gitattributes` smudge filter committed by whoever wrote
  * the repo cannot make us run a program.
  *
- * Every invocation carries the same prefix — fsmonitor off (no daemon
- * spawned), pager `cat` (no pager process), hooks path `/dev/null` (no repo
- * hook runs), `--literal-pathspecs` (a path is a path, not a pathspec) — and
- * the caller's path appears in argv exactly once, immediately after `--`.
- * `--literal-pathspecs` plus the leading-`:` refusal below is what stops
- * `:(glob)`, `:(exclude)`, `:(attr:…)` and `:/` from resolving a blob other
- * than the one the caller's guards validated.
+ * Every invocation carries GIT_PREFIX (see gitClient.ts for what each flag
+ * closes off), and the caller's path appears in argv exactly once,
+ * immediately after `--`. `--literal-pathspecs` plus the leading-`:` refusal
+ * below is what stops `:(glob)`, `:(exclude)`, `:(attr:…)` and `:/` from
+ * resolving a blob other than the one the caller's guards validated.
  *
  * The size of every side is known before a single byte is read, so an
  * over-cap file costs one metadata call and no transfer.
@@ -48,14 +46,12 @@
  * and kills a git that would otherwise sit paused on a pipe.
  */
 
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { promisify } from 'node:util';
 import type { BlobSide } from '../utils/blobRef.js';
-import { gitEnv } from './gitClient.js';
-
-const execFileAsync = promisify(execFile);
+import { READ_FLAGS, readAt } from '../utils/fdRead.js';
+import { gitEnv, GIT_PREFIX, GIT_EXEC_TIMEOUT_MS, execGitBytes } from './gitClient.js';
 
 /**
  * Thrown when the path resolves to something other than a regular file: a
@@ -116,20 +112,6 @@ export interface BlobHandle {
   close(): Promise<void>;
 }
 
-/** Prefix on every git invocation. See the module comment for the why of each. */
-const GIT_PREFIX = [
-  '-c',
-  'core.fsmonitor=',
-  '-c',
-  'core.pager=cat',
-  '-c',
-  'core.hooksPath=/dev/null',
-  '--literal-pathspecs',
-];
-
-/** A wedged git must not hold a request open. */
-const GIT_TIMEOUT_MS = 5000;
-
 /** One metadata record is a few hundred bytes; this is already generous. */
 const METADATA_MAX_BUFFER = 64 * 1024;
 
@@ -159,20 +141,9 @@ function assertSafeRelPath(relPath: string): void {
   if (relPath.startsWith(':')) throw new UnsafeBlobPathError('starts with ":"');
 }
 
-/** Run git and return stdout as BYTES. */
-async function runGit(repoPath: string, args: string[], maxBuffer: number): Promise<Buffer> {
-  const { stdout } = await execFileAsync('git', [...GIT_PREFIX, ...args], {
-    cwd: repoPath,
-    env: gitEnv(),
-    // execFile's default encoding is utf8, which would decode stdout into a
-    // string and destroy every non-UTF-8 byte. 'buffer' is the only setting
-    // that keeps blob bytes intact.
-    encoding: 'buffer',
-    maxBuffer,
-    timeout: GIT_TIMEOUT_MS,
-    windowsHide: true,
-  });
-  return stdout;
+/** Run git with the prefix and return stdout as BYTES. */
+function runGit(repoPath: string, args: string[], maxBuffer: number): Promise<Buffer> {
+  return execGitBytes(repoPath, [...GIT_PREFIX, ...args], maxBuffer);
 }
 
 /** Split `-z` output into records. Git terminates each with a NUL. */
@@ -286,27 +257,6 @@ async function blobSize(repoPath: string, oid: string, relPath: string): Promise
 
 /** The one empty read, so a zero-length read allocates nothing. */
 const NO_BYTES = Buffer.alloc(0);
-
-/**
- * Read `length` bytes from `position`. A regular file may hand back a short
- * read, hence the loop; a read of nothing means the file ended early (it
- * shrank under us), and then what is really there is returned rather than a
- * tail padded with zeroes.
- */
-async function readAt(
-  handle: fs.promises.FileHandle,
-  position: number,
-  length: number
-): Promise<Buffer> {
-  const buffer = Buffer.alloc(length);
-  let filled = 0;
-  while (filled < length) {
-    const { bytesRead } = await handle.read(buffer, filled, length - filled, position + filled);
-    if (bytesRead === 0) break;
-    filled += bytesRead;
-  }
-  return filled === length ? buffer : buffer.subarray(0, filled);
-}
 
 interface PrefixReader {
   read(n: number): Promise<Uint8Array>;
@@ -482,7 +432,7 @@ function catFileStream(repoPath: string, oid: string): BlobStream {
         const timer = setTimeout(() => {
           child?.kill('SIGKILL');
           fail(new Error(`git cat-file blob timed out for ${oid}`));
-        }, GIT_TIMEOUT_MS);
+        }, GIT_EXEC_TIMEOUT_MS);
         waiter = { want, resolve, reject, timer };
         // Resuming can emit synchronously, so the waiter is in place first.
         if (child === null) start();
@@ -514,10 +464,7 @@ async function openWorktreeBlob(
   const fullPath = path.join(repoPath, relPath);
   let handle: fs.promises.FileHandle;
   try {
-    handle = await fs.promises.open(
-      fullPath,
-      fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0)
-    );
+    handle = await fs.promises.open(fullPath, READ_FLAGS);
   } catch (err) {
     if (isMissing(err)) return null;
     throw err;

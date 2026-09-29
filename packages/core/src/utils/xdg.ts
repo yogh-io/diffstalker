@@ -12,9 +12,14 @@ import * as path from 'node:path';
 
 const APP = 'diffstalker';
 
+/** The XDG config base itself: $XDG_CONFIG_HOME or ~/.config. */
+export function configHome(): string {
+  return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+}
+
 /** Config directory: $XDG_CONFIG_HOME/diffstalker or ~/.config/diffstalker. */
 export function configDir(): string {
-  return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), APP);
+  return path.join(configHome(), APP);
 }
 
 /** Cache directory: $XDG_CACHE_HOME/diffstalker or ~/.cache/diffstalker. */

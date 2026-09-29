@@ -9,6 +9,7 @@ import {
   capLargeFileDiffs,
   largeDiffNotice,
   parseDiffWithLineNumbers,
+  parseNumstat,
   rawFromLines,
   MAX_FILE_DIFF_BYTES,
 } from './diffParse.js';
@@ -461,21 +462,7 @@ export async function commitExists(repoPath: string, revision: string): Promise<
  * Sorted by path.
  */
 function buildFileDiffs(numstat: string, nameStatus: string, rawDiff: string): CompareFileDiff[] {
-  // Parse numstat: "additions deletions filepath" per line
-  const numstatLines = numstat
-    .trim()
-    .split('\n')
-    .filter((l) => l);
-  const fileStats: Map<string, { additions: number; deletions: number }> = new Map();
-  for (const line of numstatLines) {
-    const parts = line.split('\t');
-    if (parts.length >= 3) {
-      const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
-      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-      const filepath = parts.slice(2).join('\t'); // Handle paths with tabs
-      fileStats.set(filepath, { additions, deletions });
-    }
-  }
+  const fileStats = parseNumstat(numstat);
 
   // Parse name-status: "A/M/D/R filepath" per line
   const nameStatusLines = nameStatus
@@ -815,20 +802,6 @@ function sideStatus(
   if (columns.includes('D')) return 'deleted';
   if (columns.includes('A') || columns.includes('?')) return 'added';
   return 'modified';
-}
-
-/** Parse `git diff --numstat` output into per-file addition/deletion counts. */
-function parseNumstat(raw: string): Map<string, { additions: number; deletions: number }> {
-  const stats = new Map<string, { additions: number; deletions: number }>();
-  for (const line of raw.trim().split('\n')) {
-    if (!line) continue;
-    const parts = line.split('\t');
-    if (parts.length < 3) continue;
-    const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
-    const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-    stats.set(parts.slice(2).join('\t'), { additions, deletions });
-  }
-  return stats;
 }
 
 /** The tracked (staged and/or unstaged) rows for one side. */

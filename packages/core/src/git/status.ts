@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createGit, gitEnv } from './gitClient.js';
 import { getIgnoredFiles } from './ignoreUtils.js';
-import { MAX_FILE_DIFF_BYTES } from './diffParse.js';
+import { MAX_FILE_DIFF_BYTES, parseNumstat } from './diffParse.js';
 
 export type FileStatus =
   | 'modified'
@@ -15,27 +15,6 @@ export type FileStatus =
   | 'copied'
   /** Unmerged path: a conflict a client must not stage or diff as an ordinary change. */
   | 'conflicted';
-
-interface FileStats {
-  insertions: number;
-  deletions: number;
-}
-
-// Parse git diff --numstat output into a map of path -> stats
-export function parseNumstat(output: string): Map<string, FileStats> {
-  const stats = new Map<string, FileStats>();
-  for (const line of output.trim().split('\n')) {
-    if (!line) continue;
-    const parts = line.split('\t');
-    if (parts.length >= 3) {
-      const insertions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
-      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-      const filepath = parts.slice(2).join('\t'); // Handle paths with tabs
-      stats.set(filepath, { insertions, deletions });
-    }
-  }
-  return stats;
-}
 
 /** Cap on the untracked file read below: the same per-file cap the diff path
  *  uses for an untracked file, so one threshold governs "too big to read". */
@@ -213,7 +192,7 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
   for (const file of processedFiles) {
     const stats = file.staged ? stagedStats.get(file.path) : unstagedStats.get(file.path);
     if (stats) {
-      file.insertions = stats.insertions;
+      file.insertions = stats.additions;
       file.deletions = stats.deletions;
     }
   }
@@ -313,8 +292,9 @@ export interface CommitInfo {
   refs: string;
 }
 
-export function stageHunk(repoPath: string, patch: string): void {
-  execFileSync('git', ['apply', '--cached', '--unidiff-zero'], {
+/** Apply a hunk patch to the index only; `reverse` takes it back out. */
+function applyToIndex(repoPath: string, patch: string, reverse: boolean): void {
+  execFileSync('git', ['apply', '--cached', ...(reverse ? ['--reverse'] : []), '--unidiff-zero'], {
     cwd: repoPath,
     input: patch,
     encoding: 'utf-8',
@@ -322,13 +302,12 @@ export function stageHunk(repoPath: string, patch: string): void {
   });
 }
 
+export function stageHunk(repoPath: string, patch: string): void {
+  applyToIndex(repoPath, patch, false);
+}
+
 export function unstageHunk(repoPath: string, patch: string): void {
-  execFileSync('git', ['apply', '--cached', '--reverse', '--unidiff-zero'], {
-    cwd: repoPath,
-    input: patch,
-    encoding: 'utf-8',
-    env: gitEnv(),
-  });
+  applyToIndex(repoPath, patch, true);
 }
 
 export async function push(repoPath: string): Promise<string> {

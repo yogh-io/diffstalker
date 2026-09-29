@@ -12,6 +12,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getIgnoredFiles } from './ignoreUtils.js';
 import { isBinaryContent } from '../utils/binaryDetect.js';
+import { READ_FLAGS, readAt } from '../utils/fdRead.js';
 import { sniffImage, sniffWindow, MAX_IMAGE_BYTES } from '../utils/imageSniff.js';
 import type { ImageInfo, ImageRefusal, SniffResult } from '../utils/imageSniff.js';
 import type { FileStatus } from './status.js';
@@ -174,34 +175,6 @@ export async function listDirectory(
 const PEEK_BYTES = 16;
 
 /**
- * Open read-only, and non-blocking where the platform has it. O_NONBLOCK is
- * what stops open(2) on a FIFO from parking a libuv thread forever if the
- * path is swapped between the stat and the open. Windows has no such flag,
- * hence the fallback to 0.
- */
-const READ_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0);
-
-/**
- * Read up to `length` bytes from `position`. One read(2) may come back short,
- * so this loops until the buffer is full or the file ends; the returned
- * buffer is exactly what was read.
- */
-async function readChunk(
-  handle: fs.promises.FileHandle,
-  length: number,
-  position: number
-): Promise<Buffer> {
-  const target = Buffer.alloc(length);
-  let filled = 0;
-  while (filled < length) {
-    const { bytesRead } = await handle.read(target, filled, length - filled, position + filled);
-    if (bytesRead === 0) break; // shorter than stat said: the file shrank under us
-    filled += bytesRead;
-  }
-  return filled === length ? target : target.subarray(0, filled);
-}
-
-/**
  * Sniff the head of an open file for an image, reading a BOUNDED window.
  * Returns the bytes that were read alongside the verdict, so the text path
  * below can reuse them instead of opening the file again.
@@ -216,7 +189,7 @@ async function sniffOpenFile(
   handle: fs.promises.FileHandle,
   size: number
 ): Promise<{ head: Buffer; result: SniffResult }> {
-  const peek = await readChunk(handle, Math.min(PEEK_BYTES, size), 0);
+  const peek = await readAt(handle, 0, Math.min(PEEK_BYTES, size));
 
   // A GIF over its own cap is refused on declared size alone, before any walk,
   // so the peek already holds the whole answer — no reason to pull megabytes
@@ -228,7 +201,7 @@ async function sniffOpenFile(
   const head =
     window <= peek.length
       ? peek.subarray(0, window)
-      : Buffer.concat([peek, await readChunk(handle, window - peek.length, peek.length)]);
+      : Buffer.concat([peek, await readAt(handle, peek.length, window - peek.length)]);
 
   return { head, result: sniffImage(head, size, head.length >= size) };
 }
@@ -312,7 +285,7 @@ async function classifyOpenFile(
   const buffer =
     head.length >= size
       ? head
-      : Buffer.concat([head, await readChunk(handle, size - head.length, head.length)]);
+      : Buffer.concat([head, await readAt(handle, head.length, size - head.length)]);
 
   return isBinaryContent(buffer) ? notTextFile(size, media) : textFile(buffer, size);
 }

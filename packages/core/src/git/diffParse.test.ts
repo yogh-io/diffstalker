@@ -13,6 +13,7 @@ import {
   LARGE_DIFF_NOTICE_PREFIX,
   MAX_FILE_DIFF_BYTES,
   MAX_FILE_DIFF_LINES,
+  parseNumstat,
   rawFromLines,
 } from './diffParse.js';
 
@@ -714,5 +715,63 @@ describe('capLargeFileDiffs', () => {
 
   it('leaves an empty diff alone', () => {
     expect(capLargeFileDiffs('')).toBe('');
+  });
+});
+
+describe('parseNumstat', () => {
+  it('parses single file numstat', () => {
+    const result = parseNumstat('10\t5\tfile.ts');
+    expect(result.get('file.ts')).toEqual({ additions: 10, deletions: 5 });
+  });
+
+  it('parses multiple files', () => {
+    const output = `10\t5\tfile1.ts
+20\t3\tfile2.ts
+1\t0\tfile3.ts`;
+    const result = parseNumstat(output);
+
+    expect(result.size).toBe(3);
+    expect(result.get('file1.ts')).toEqual({ additions: 10, deletions: 5 });
+    expect(result.get('file2.ts')).toEqual({ additions: 20, deletions: 3 });
+    expect(result.get('file3.ts')).toEqual({ additions: 1, deletions: 0 });
+  });
+
+  it('handles binary files (marked with -)', () => {
+    const result = parseNumstat('-\t-\timage.png');
+    expect(result.get('image.png')).toEqual({ additions: 0, deletions: 0 });
+  });
+
+  it('handles empty output', () => {
+    expect(parseNumstat('').size).toBe(0);
+  });
+
+  it('handles output with only whitespace', () => {
+    expect(parseNumstat('  \n  \n  ').size).toBe(0);
+  });
+
+  it('handles paths with tabs', () => {
+    const result = parseNumstat('5\t3\tpath\twith\ttabs.ts');
+    expect(result.get('path\twith\ttabs.ts')).toEqual({ additions: 5, deletions: 3 });
+  });
+
+  it('handles zero additions and deletions', () => {
+    const result = parseNumstat('0\t0\tfile.ts');
+    expect(result.get('file.ts')).toEqual({ additions: 0, deletions: 0 });
+  });
+
+  it('handles large numbers', () => {
+    const result = parseNumstat('1000\t500\tlarge.ts');
+    expect(result.get('large.ts')).toEqual({ additions: 1000, deletions: 500 });
+  });
+
+  it('skips malformed lines', () => {
+    const output = `10\t5\tvalid.ts
+malformed line
+20\t3\talso-valid.ts`;
+    const result = parseNumstat(output);
+
+    expect(result.size).toBe(2);
+    expect(result.has('valid.ts')).toBe(true);
+    expect(result.has('also-valid.ts')).toBe(true);
   });
 });

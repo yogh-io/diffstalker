@@ -38,11 +38,7 @@
  * render it as HTML.
  */
 
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { gitEnv } from './gitClient.js';
-
-const execFileAsync = promisify(execFile);
+import { GIT_PREFIX, execGitBytes } from './gitClient.js';
 
 /** Shortest query we will run. One character scans the tree per keystroke. */
 export const GREP_MIN_QUERY = 3;
@@ -66,21 +62,8 @@ export const GREP_MAX_QUERY = 500;
 export const GREP_MAX_RESULTS = 500;
 /** Output budget. The child is killed at the cap. */
 export const GREP_MAX_BYTES = 4 * 1024 * 1024;
-/** A wedged git must not hold a request open. */
-export const GREP_TIMEOUT_MS = 5000;
 /** Longest line handed to a UI; a minified bundle line is not readable anyway. */
 export const GREP_MAX_LINE_CHARS = 400;
-
-/** Prefix on every git invocation. Same reasons as blob.ts. */
-const GIT_PREFIX = [
-  '-c',
-  'core.fsmonitor=',
-  '-c',
-  'core.pager=cat',
-  '-c',
-  'core.hooksPath=/dev/null',
-  '--literal-pathspecs',
-];
 
 export interface GrepMatch {
   /** Repo-relative path, as git reports it (`--full-name`). */
@@ -267,17 +250,7 @@ export async function grepRepo(repoPath: string, query: string): Promise<GrepRes
   }
 
   try {
-    const { stdout } = await execFileAsync('git', grepArgs(query), {
-      cwd: repoPath,
-      env: gitEnv(),
-      // The only setting that keeps repo bytes intact; utf8 would replace
-      // every invalid byte with U+FFFD.
-      encoding: 'buffer',
-      maxBuffer: GREP_MAX_BYTES,
-      timeout: GREP_TIMEOUT_MS,
-      windowsHide: true,
-    });
-    return parseGrepOutput(stdout as unknown as Buffer);
+    return parseGrepOutput(await execGitBytes(repoPath, grepArgs(query), GREP_MAX_BYTES));
   } catch (err) {
     const e = err as { code?: number | string; killed?: boolean; stdout?: Buffer };
     // Exit 1 is "no matches", which is not an error.

@@ -398,3 +398,21 @@ export function countHunksPerFile(rawDiff: string): Map<string, number> {
   }
   return result;
 }
+
+/**
+ * Parse `git diff --numstat` output into per-file addition/deletion counts.
+ * A binary file prints `-` for both counts and is recorded as 0/0. A path
+ * may contain tabs, so everything after the second tab is the path.
+ */
+export function parseNumstat(raw: string): Map<string, { additions: number; deletions: number }> {
+  const stats = new Map<string, { additions: number; deletions: number }>();
+  for (const line of raw.trim().split('\n')) {
+    if (!line) continue;
+    const parts = line.split('\t');
+    if (parts.length < 3) continue;
+    const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
+    const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
+    stats.set(parts.slice(2).join('\t'), { additions, deletions });
+  }
+  return stats;
+}

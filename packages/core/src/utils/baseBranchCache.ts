@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { cacheDir } from './xdg.js';
+import { ensureTargetDir } from './pathUtils.js';
 
 function cachePath(): string {
   return path.join(cacheDir(), 'base-branches.json');
@@ -8,13 +9,6 @@ function cachePath(): string {
 
 interface BaseBranchCache {
   [repoPath: string]: string;
-}
-
-function ensureCacheDir(): void {
-  const dir = path.dirname(cachePath());
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
 }
 
 function loadCache(): BaseBranchCache {
@@ -30,7 +24,7 @@ function loadCache(): BaseBranchCache {
 }
 
 function saveCache(cache: BaseBranchCache): void {
-  ensureCacheDir();
+  ensureTargetDir(cachePath());
   fs.writeFileSync(cachePath(), JSON.stringify(cache, null, 2) + '\n');
 }
 
