@@ -15,7 +15,12 @@ import type {
   InProgressOperation,
   CommitInfo,
 } from '@diffstalker/core/git/status';
-import type { DiffResult, CompareDiff, UncommittedSide } from '@diffstalker/core/git/diff';
+import type {
+  DiffResult,
+  CompareDiff,
+  CompareFileDiff,
+  UncommittedSide,
+} from '@diffstalker/core/git/diff';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type { WireHunkCounts } from '@diffstalker/client';
 
@@ -54,7 +59,8 @@ export interface RepoSelectionState {
 export interface RepoHistoryState {
   commits: CommitInfo[];
   selectedCommit: CommitInfo | null;
-  commitDiff: DiffResult | null;
+  /** The selected commit's changes, one row per file; null while loading. */
+  commitFiles: CompareFileDiff[] | null;
   isLoading: boolean;
 }
 

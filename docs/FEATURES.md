@@ -751,9 +751,15 @@ git operations.
   and the full path is on hover); a per-entry copy button copies the full path.
   The kind badge and the "changed before the Journal started" (seeded) note
   explain themselves on hover.
-- **History** — commit list (hash, message, author, relative date, ref chips)
-  beside a commit detail: metadata + a multi-file diff with per-file section
-  headers.
+- **History** — three columns: the commit list (hash, message, author,
+  relative date, ref chips), the selected commit's changed files as a tree,
+  and the commit's metadata above stacked per-file diffs. The tree and the
+  stack are the same ones Compare uses: status letter and `+`/`-` counts per
+  file (from git, via `GET /repos/:id/commits/:hash/files`), collapsible
+  folders, clicking a file jumps the stack to it, and scrolling the stack
+  moves the tree's selection along. In the stacked (portrait/narrow) layout
+  the commit list and the file tree share the top band side by side, and the
+  diffs get the full width below.
 - **Compare** — a GitHub-PR-style view against a base branch: base selector
   (a client-side pick read via `GET /compare?base=…` — never persisted
   daemon-side), three independent include toggles — staged, unstaged,

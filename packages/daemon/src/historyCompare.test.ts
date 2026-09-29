@@ -255,6 +255,37 @@ describe('history endpoints', () => {
     // commit still exists and must not be reported "Unknown".
     expect(typeof wireDiffText(diff)).toBe('string');
   });
+
+  test('GET /commits/:hash/files lists each file with git status and counts', async () => {
+    const history = (await (
+      await request(`/repos/${repoId}/history?count=2`)
+    ).json()) as WireCommit[];
+    type Row = {
+      path: string;
+      status: string;
+      additions: number;
+      deletions: number;
+      diff: { lines: { content: string }[] };
+    };
+    const read = async (hash: string): Promise<Row[]> => {
+      const res = await request(`/repos/${repoId}/commits/${hash}/files`);
+      expect(res.status).toBe(200);
+      return (await res.json()) as Row[];
+    };
+
+    const [added] = await read(history[0].hash);
+    expect(added).toMatchObject({ path: 'feature.txt', status: 'added', additions: 1, deletions: 0 });
+    const [modified] = await read(history[1].hash);
+    expect(modified).toMatchObject({ path: 'base.txt', status: 'modified', additions: 1, deletions: 0 });
+    expect(wireDiffText(modified.diff)).toContain('+line two');
+  });
+
+  test('GET /commits/:hash/files: unknown hash is 404, merge commit is 200 with no rows', async () => {
+    expect((await request(`/repos/${repoId}/commits/deadbeefdead/files`)).status).toBe(404);
+    const res = await request(`/repos/${mergeRepoId}/commits/${mergeCommitHash}/files`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
 });
 
 describe('branch endpoints', () => {

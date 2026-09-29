@@ -451,32 +451,12 @@ export async function commitExists(repoPath: string, revision: string): Promise<
 }
 
 /**
- * Get diff between HEAD and a base ref (for PR-like view).
- * Uses three-dot diff (merge-base) to show only changes on current branch.
+ * Per-file rows from the three reads git gives for any range: numstat for
+ * the counts, name-status for the kind of change, and the patch itself.
+ * Compare and a single commit both build their file list this way.
+ * Sorted by path.
  */
-export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Promise<CompareDiff> {
-  const git = createGit(repoPath);
-
-  // Get merge-base for three-dot diff. With no common ancestor git exits 1
-  // with empty output (simple-git resolves with ''); the diff would then
-  // collapse to HEAD...HEAD and silently report an empty compare.
-  const mergeBase = await git.raw(['merge-base', '--end-of-options', baseRef, 'HEAD']);
-  const base = mergeBase.trim();
-  if (!base) {
-    throw new NoCommonHistoryError(baseRef);
-  }
-
-  // Get per-file stats with --numstat
-  const numstat = await git.raw(['diff', '--numstat', `${base}...HEAD`]);
-
-  // Get file statuses with --name-status
-  const nameStatus = await git.raw(['diff', '--name-status', `${base}...HEAD`]);
-
-  // Get full diff
-  const rawDiff = capLargeFileDiffs(
-    await git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, `${base}...HEAD`])
-  );
-
+function buildFileDiffs(numstat: string, nameStatus: string, rawDiff: string): CompareFileDiff[] {
   // Parse numstat: "additions deletions filepath" per line
   const numstatLines = numstat
     .trim()
@@ -545,6 +525,39 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
     });
   }
 
+  fileDiffs.sort((a, b) => a.path.localeCompare(b.path));
+  return fileDiffs;
+}
+
+/**
+ * Get diff between HEAD and a base ref (for PR-like view).
+ * Uses three-dot diff (merge-base) to show only changes on current branch.
+ */
+export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Promise<CompareDiff> {
+  const git = createGit(repoPath);
+
+  // Get merge-base for three-dot diff. With no common ancestor git exits 1
+  // with empty output (simple-git resolves with ''); the diff would then
+  // collapse to HEAD...HEAD and silently report an empty compare.
+  const mergeBase = await git.raw(['merge-base', '--end-of-options', baseRef, 'HEAD']);
+  const base = mergeBase.trim();
+  if (!base) {
+    throw new NoCommonHistoryError(baseRef);
+  }
+
+  // Get per-file stats with --numstat
+  const numstat = await git.raw(['diff', '--numstat', `${base}...HEAD`]);
+
+  // Get file statuses with --name-status
+  const nameStatus = await git.raw(['diff', '--name-status', `${base}...HEAD`]);
+
+  // Get full diff
+  const rawDiff = capLargeFileDiffs(
+    await git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, `${base}...HEAD`])
+  );
+
+  const fileDiffs = buildFileDiffs(numstat, nameStatus, rawDiff);
+
   // Calculate total stats
   let totalAdditions = 0;
   let totalDeletions = 0;
@@ -567,9 +580,6 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
     date: new Date(entry.date),
     refs: entry.refs || '',
   }));
-
-  // Sort files alphabetically by path
-  fileDiffs.sort((a, b) => a.path.localeCompare(b.path));
 
   return {
     baseBranch: baseRef,
@@ -718,6 +728,24 @@ export async function getFileDiffInRange(
   } catch {
     return { lines: [] };
   }
+}
+
+/**
+ * One commit's changes as per-file rows, the same shape Compare lists:
+ * status and counts come from git, not from reading the patch. A merge
+ * commit gives no rows, matching getCommitDiff (no combined diffs).
+ * Errors propagate; the caller checks the commit exists first.
+ */
+export async function getCommitFiles(repoPath: string, hash: string): Promise<CompareFileDiff[]> {
+  const git = createGit(repoPath);
+  // --end-of-options keeps a flag-shaped hash from being read as an
+  // option, so every real option goes before it.
+  const show = (options: string[]): Promise<string> =>
+    git.raw(['show', '--format=', ...options, '--end-of-options', hash]);
+  const numstat = await show(['--numstat']);
+  const nameStatus = await show(['--name-status']);
+  const rawDiff = capLargeFileDiffs(await show([`-U${DIFF_CONTEXT_LINES}`]));
+  return buildFileDiffs(numstat, nameStatus, rawDiff);
 }
 
 /**

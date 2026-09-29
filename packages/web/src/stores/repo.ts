@@ -249,7 +249,7 @@ function initialSelection(): RepoSelectionState {
 }
 
 function initialHistory(): RepoHistoryState {
-  return { commits: [], selectedCommit: null, commitDiff: null, isLoading: false };
+  return { commits: [], selectedCommit: null, commitFiles: null, isLoading: false };
 }
 
 function initialCompare(): RepoCompareState {
@@ -1486,9 +1486,9 @@ export const useRepoStore = defineStore('repo', () => {
       history.value = {
         commits,
         selectedCommit: reanchored,
-        // Same commit, same diff — refetching it would blank the pane for
-        // a round trip on every save.
-        commitDiff: reanchored === null ? null : history.value.commitDiff,
+        // Same commit, same files — refetching them would blank the pane
+        // for a round trip on every save.
+        commitFiles: reanchored === null ? null : history.value.commitFiles,
         isLoading: false,
       };
     } catch (err) {
@@ -1538,15 +1538,21 @@ export const useRepoStore = defineStore('repo', () => {
   }
 
   async function selectHistoryCommit(commit: CommitInfo | null): Promise<void> {
-    history.value = { ...history.value, selectedCommit: commit, commitDiff: null };
+    history.value = { ...history.value, selectedCommit: commit, commitFiles: null };
     const id = repoId.value;
     if (!commit || id === null) return;
     const gen = generation;
 
-    const diff = await read<DiffResult | null>(() => client.commitDiff(id, commit.hash), null);
-    if (diff === null || gen !== generation) return;
-    if (history.value.selectedCommit === commit) {
-      history.value = { ...history.value, commitDiff: diff };
+    const files = await read<CompareFileDiff[] | null>(
+      () => client.commitFiles(id, commit.hash),
+      null
+    );
+    if (files === null || gen !== generation) return;
+    // By hash, not identity: a history reload re-anchors the selection to a
+    // NEW object for the same commit (a link-restore races exactly that), and
+    // a commit's files never change, so the response is still the right one.
+    if (history.value.selectedCommit?.hash === commit.hash) {
+      history.value = { ...history.value, commitFiles: files };
     }
   }
 

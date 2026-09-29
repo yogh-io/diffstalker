@@ -26,23 +26,16 @@ import { storeToRefs } from 'pinia';
 import { beginUserNav } from '../composables/useUrlSync';
 import { compareFileKey, useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
-import { buildFileTree, flattenTree, type TreeRowItem } from '@diffstalker/core/view/fileTree';
 import { formatRelativeTime } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
-import type {
-  CompareFileDiff,
-  UncommittedParts,
-  UncommittedSide,
-} from '@diffstalker/core/git/diff';
-import { statusLetter } from '../utils/format';
-import { nextIndex } from '../utils/listNav';
+import type { UncommittedParts } from '@diffstalker/core/git/diff';
 import { TOP_MIN, TOP_MAX } from '../prefs';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
-import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
-import { useActiveRowScroll } from '../composables/useActiveRowScroll';
+import { portraitPayloadAttrs } from '../composables/usePortraitKeys';
 import DiffStack, { type StackFile } from '../components/DiffStack.vue';
 import SplitResizer from '../components/SplitResizer.vue';
+import ChangedFileTree, { inTreeOrder } from '../components/ChangedFileTree.vue';
 
 const repo = useRepoStore();
 const ui = useUiStore();
@@ -65,7 +58,6 @@ const UNCOMMITTED_LABELS: ReadonlyArray<{ key: keyof UncommittedParts; label: st
 const candidates = ref<string[]>([]);
 const commitsOpen = ref(false);
 const collapsedFiles = reactive(new Set<string>());
-const filesEl = ref<HTMLElement | null>(null);
 const stackEl = ref<InstanceType<typeof DiffStack> | null>(null);
 /** The stack's scroll container — the portrait j/k payload target. */
 const diffsEl = computed(() => stackEl.value?.scrollerEl ?? null);
@@ -125,90 +117,9 @@ async function onUncommittedToggle(key: keyof UncommittedParts, event: Event): P
   await repo.refreshCompare({ ...uncommitted });
 }
 
-/**
- * The tag an uncommitted row carries. It names the SIDE, not just the
- * fact of being uncommitted: with the categories controlled separately,
- * "which of these three is this row" is the question the tag has to
- * answer. `both` is staged and unstaged read together as one diff.
- */
-function sideTag(side: UncommittedSide): string {
-  return side === 'both' ? '[uncommitted]' : `[${side}]`;
-}
-
 function relTime(commit: CommitInfo): string {
   return formatRelativeTime(commit.date.getTime());
 }
-
-// --- File tree (left) ---
-
-/** Directory + file rows from core's collapsing tree builder. */
-const treeRows = computed(() => flattenTree(buildFileTree(files.value)));
-
-/**
- * Per-folder collapse: tree-only view state keyed by the dir row's
- * fullPath (for collapsed single-child chains that is the deepest
- * segment, which is exactly what the row carries). A stale path after
- * the file set changes just matches nothing — no reset bookkeeping.
- */
-const collapsedDirs = reactive(new Set<string>());
-
-function setDirCollapsed(fullPath: string, collapsed: boolean): void {
-  if (collapsed) collapsedDirs.add(fullPath);
-  else collapsedDirs.delete(fullPath);
-}
-
-function toggleDir(fullPath: string): void {
-  setDirCollapsed(fullPath, !collapsedDirs.has(fullPath));
-}
-
-/**
- * treeRows minus everything inside a collapsed directory. flattenTree
- * is DFS: a dir is immediately followed by its descendants at greater
- * depth, so a collapsed dir at depth D hides all subsequent rows with
- * depth > D until the next row at depth <= D.
- */
-const visibleRows = computed(() => {
-  const rows: TreeRowItem[] = [];
-  let hideDeeperThan: number | null = null;
-  for (const row of treeRows.value) {
-    if (hideDeeperThan !== null) {
-      if (row.depth > hideDeeperThan) continue;
-      hideDeeperThan = null;
-    }
-    rows.push(row);
-    if (row.type === 'directory' && collapsedDirs.has(row.fullPath)) {
-      hideDeeperThan = row.depth;
-    }
-  }
-  return rows;
-});
-
-/** A visible tree row, with each file row's file resolved once so the
- *  template never indexes files[] (and needs no non-null assertions). */
-type RenderRow =
-  | (TreeRowItem & { type: 'directory' })
-  | (TreeRowItem & { type: 'file'; fileIndex: number; file: CompareFileDiff });
-
-const renderRows = computed<RenderRow[]>(() => {
-  const rows: RenderRow[] = [];
-  for (const row of visibleRows.value) {
-    if (row.type === 'directory') {
-      rows.push({ ...row, type: 'directory' });
-      continue;
-    }
-    if (row.fileIndex === undefined) continue;
-    const file = files.value[row.fileIndex];
-    if (file) rows.push({ ...row, type: 'file', fileIndex: row.fileIndex, file });
-  }
-  return rows;
-});
-
-/** fileIndexes of VISIBLE file rows in tree order, for keyboard
- *  navigation — arrow-nav must never land on a file hidden under a
- *  collapsed directory. */
-const treeFileOrder = computed(() =>
-  renderRows.value.flatMap((row) => (row.type === 'file' ? [row.fileIndex] : []))
-);
 
 const selectedFileIndex = computed(() =>
   compare.value.selection.type === 'file' ? compare.value.selection.index : null
@@ -251,28 +162,6 @@ watch(
   }
 );
 
-/** The file row holding tabindex 0: the selected one, else the first. */
-function isTabStop(fileIndex: number): boolean {
-  const order = treeFileOrder.value;
-  const selected = selectedFileIndex.value;
-  if (selected !== null && order.includes(selected)) return fileIndex === selected;
-  return fileIndex === order[0];
-}
-
-function moveFileSelection(delta: number): void {
-  const order = treeFileOrder.value;
-  const selected = selectedFileIndex.value;
-  const current = selected !== null ? order.indexOf(selected) : -1;
-  const next = nextIndex(current, delta, order.length);
-  if (next === -1) return;
-  selectFile(order[next]);
-  void nextTick(() => {
-    filesEl.value
-      ?.querySelector<HTMLElement>(`.file-row[data-file-index="${order[next]}"]`)
-      ?.focus();
-  });
-}
-
 // --- Scroll-follow: the file band tracks the file the diffs are scrolled
 // onto, using the SAME selection the click path sets — so the focus
 // indicator is identical whether you click a row or scroll onto its diff
@@ -291,28 +180,18 @@ function onActiveFile(key: string): void {
   if (index !== -1) repo.selectCompareFile(index);
 }
 
-/** Keep the selected row visible in the file band (see useActiveRowScroll). */
-const { onPointerEnter, onPointerLeave } = useActiveRowScroll(
-  filesEl,
-  () => selectedFileIndex.value,
-  () => {
-    const scroller = filesEl.value;
-    const index = selectedFileIndex.value;
-    if (!scroller || index === null) return null;
-    return scroller.querySelector<HTMLElement>(`.file-row[data-file-index="${index}"]`);
-  }
-);
-
 /**
  * Start with the first file selected the moment the diff lands (or after a
  * refresh clears the selection) so the focus indicator is present from the
- * start — files[0] is the top of the diff stack, i.e. where the scroll
- * already sits. Plain store setter, no scroll (the stack is already there).
+ * start — the top of the TREE is the top of the diff stack, i.e. where the
+ * scroll already sits (files[0] is not: the daemon sorts flat by path).
+ * Plain store setter, no scroll (the stack is already there).
  */
 watch(
   () => files.value,
   (list) => {
-    if (list.length > 0 && selectedFileIndex.value === null) repo.selectCompareFile(0);
+    const top = inTreeOrder(list)[0];
+    if (top && selectedFileIndex.value === null) repo.selectCompareFile(list.indexOf(top));
   },
   { immediate: true }
 );
@@ -355,25 +234,7 @@ function toggleWholeFile(key: string): void {
  *  — NOT by path: a file that is both committed on the branch and edited
  *  in the working tree is listed twice. Diffs are pre-embedded, so the
  *  stack's placeholder branch never triggers. */
-/**
- * Every file in TREE order — the same order, and the same directory
- * grouping, the tree above shows. The daemon returns files in git's flat
- * path sort, which differs from the tree the moment a directory holds
- * both sub-directories and loose files (the tree puts `src/bootstrap/…`
- * before `src/app.ts`; a flat sort interleaves them), so scrolling the
- * diffs did not read like walking the tree.
- *
- * Built from treeRows, NOT visibleRows: collapsing a directory is a
- * navigation affordance for the tree, and must never reorder the diffs
- * or drop a file's diff out of the stack.
- */
-const treeOrderedFiles = computed<CompareFileDiff[]>(() =>
-  treeRows.value.flatMap((row) => {
-    if (row.type !== 'file' || row.fileIndex === undefined) return [];
-    const file = files.value[row.fileIndex];
-    return file ? [file] : [];
-  })
-);
+const treeOrderedFiles = computed(() => inTreeOrder(files.value));
 
 const stackFiles = computed<StackFile[]>(() =>
   treeOrderedFiles.value.map((file) => ({
@@ -416,7 +277,6 @@ const split = useSplitDrag({
   row: { pref: 'compareTop', defaultRatio: 0.22, min: TOP_MIN, max: TOP_MAX },
 });
 
-const onRowBandKeydown = makeBandKeyHandler(isPortrait, moveFileSelection);
 // The stack's root is the diffs scroller — scroll it, not a nested DiffView.
 const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { self: true });
 </script>
@@ -553,83 +413,14 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
       <!-- PR body: file tree | stacked per-file diffs (portrait: file
            band above as a jump-index, full-width diffs below). -->
       <div ref="prBodyEl" class="pr-body" :aria-busy="compare.loading && !!compareDiff">
-        <aside
-          ref="filesEl"
-          class="files-col"
-          role="listbox"
-          aria-label="Changed files"
+        <ChangedFileTree
           data-testid="compare-files"
-          @pointerenter="onPointerEnter"
-          @pointerleave="onPointerLeave"
-        >
-          <!-- fileIndex is in the key: two rows can carry the same
-               fullPath (a file both committed and uncommitted). -->
-          <template v-for="row in renderRows" :key="`${row.type}:${row.fullPath}:${row.fileIndex}`">
-            <!-- role=presentation: only file rows are listbox options.
-                 The whole row toggles; the button is the a11y surface
-                 (aria-expanded + native Enter/Space activation). -->
-            <div
-              v-if="row.type === 'directory'"
-              class="dir-row mono"
-              role="presentation"
-              :style="{ '--depth': row.depth }"
-              @click="toggleDir(row.fullPath)"
-            >
-              <button
-                class="dir-collapse-btn"
-                :aria-expanded="!collapsedDirs.has(row.fullPath)"
-                :aria-label="`${collapsedDirs.has(row.fullPath) ? 'Expand' : 'Collapse'} ${row.fullPath}`"
-                @click.stop="toggleDir(row.fullPath)"
-                @keydown.enter.prevent="toggleDir(row.fullPath)"
-                @keydown.space.prevent="toggleDir(row.fullPath)"
-                @keydown.left.prevent="setDirCollapsed(row.fullPath, true)"
-                @keydown.right.prevent="setDirCollapsed(row.fullPath, false)"
-              >
-                {{ collapsedDirs.has(row.fullPath) ? '▸' : '▾' }}
-              </button>
-              <span class="dir-name" :title="row.fullPath">{{ row.name }}/</span>
-            </div>
-            <div
-              v-else
-              class="file-row mono list-row"
-              :class="{
-                selected: selectedFileIndex === row.fileIndex,
-                uncommitted: row.file.uncommitted !== undefined,
-              }"
-              :style="{ '--depth': row.depth }"
-              :data-file-index="row.fileIndex"
-              role="option"
-              :aria-selected="selectedFileIndex === row.fileIndex"
-              :tabindex="isTabStop(row.fileIndex) ? 0 : -1"
-              :title="row.file.path"
-              @click="activateFile(row.fileIndex)"
-              @keydown.down.prevent="moveFileSelection(1)"
-              @keydown.up.prevent="moveFileSelection(-1)"
-              @keydown.enter.prevent="activateFile(row.fileIndex)"
-              @keydown.space.prevent="activateFile(row.fileIndex)"
-              @keydown="onRowBandKeydown"
-            >
-              <span class="letter" :data-status="row.file.status">{{
-                statusLetter(row.file.status)
-              }}</span>
-              <span class="name">{{ row.name }}</span>
-              <span
-                v-if="row.file.uncommitted"
-                class="uncommitted-tag"
-                data-testid="uncommitted-tag"
-                >{{ sideTag(row.file.uncommitted) }}</span
-              >
-              <span class="stats">
-                <span v-if="row.file.additions" class="count-add"
-                  >+{{ row.file.additions }}</span
-                >
-                <span v-if="row.file.deletions" class="count-del"
-                  >&minus;{{ row.file.deletions }}</span
-                >
-              </span>
-            </div>
-          </template>
-        </aside>
+          :files="files"
+          :selected-index="selectedFileIndex"
+          :portrait="isPortrait"
+          @activate="activateFile"
+          @select="selectFile"
+        />
 
         <SplitResizer v-if="isPortrait" :split="split" label="Resize file list" />
 
@@ -880,88 +671,6 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
   pointer-events: none;
   transition: opacity 0.12s;
 }
-
-/* --- File tree (left) --- */
-
-/* Shared panel surface lives in style.css; only the block padding is
-   Compare-specific (its list starts with the commits section). */
-.files-col {
-  padding: 0.375rem 0;
-}
-
-.dir-row {
-  display: flex;
-  align-items: baseline;
-  padding: 0.1875rem 0.75rem;
-  padding-left: calc(0.75rem + var(--depth, 0) * 0.875rem);
-  color: var(--text-dim);
-  font-size: var(--fs-base);
-  cursor: pointer;
-}
-
-.dir-row:hover {
-  color: var(--text);
-}
-
-/* Explorer-chevron styling: mono, muted, fixed 1-glyph slot. */
-.dir-collapse-btn {
-  flex: none;
-  width: 1.75ch;
-  font-family: var(--font-mono);
-  font-size: var(--fs-base);
-  color: var(--text-dim);
-  text-align: left;
-  user-select: none;
-}
-
-.dir-row:hover .dir-collapse-btn,
-.dir-collapse-btn:hover {
-  color: var(--text);
-}
-
-.dir-name {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.file-row {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  padding: 0.1875rem 0.75rem;
-  padding-left: calc(0.75rem + var(--depth, 0) * 0.875rem);
-  font-size: var(--fs-base);
-}
-
-
-.file-row .name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 600;
-}
-
-.file-row.selected .name {
-  color: var(--selection);
-}
-
-.file-row.uncommitted .name {
-  color: var(--uncommitted);
-}
-
-.file-row .stats {
-  flex: none;
-  margin-left: auto;
-  display: inline-flex;
-  gap: 0.375rem;
-  font-size: var(--fs-small);
-}
-
-/* --- Status letters (tree rows; DiffStack colors its own) --- */
-
 
 /* --- Stacked per-file diffs (right) --- */
 

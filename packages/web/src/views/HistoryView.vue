@@ -1,19 +1,24 @@
 <script setup lang="ts">
 /**
- * History view: commit list (left) + commit detail (right), read-only.
+ * History view, read-only: commit list | the selected commit's changed
+ * files | their diffs. The right two columns are the same file tree and
+ * diff stack Compare uses — a commit reads like a one-commit Compare.
+ *
+ * Stacked (portrait/narrow) layout: the two lists share the top band side
+ * by side, and the diffs get the full width below. Lists are narrow
+ * content; the diff is the one that needs the width.
  *
  * On first activation the list loads via repo.loadHistory() (skipped
  * when a previous visit already loaded it — the store re-pulls on
  * state-change anyway). Selecting a commit calls selectHistoryCommit
- * with the EXACT CommitInfo object (the store's stale-guard is
- * identity-based); the commit's multi-file diff renders through the
- * shared DiffView with per-file section headers forced on.
+ * with the EXACT CommitInfo object (the row highlight compares by
+ * identity); the store then pulls the commit's per-file rows.
  *
  * "Load more" raises the requested count by a page and re-pulls; it
  * hides once the log comes back short (nothing more to load).
  */
 
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { beginUserNav } from '../composables/useUrlSync';
 import { useRepoStore } from '../stores/repo';
@@ -25,12 +30,9 @@ import { nextIndex } from '../utils/listNav';
 import { usePortrait } from '../composables/useMediaQuery';
 import { useSplitDrag } from '../composables/useSplitDrag';
 import { makeBandKeyHandler, portraitPayloadAttrs } from '../composables/usePortraitKeys';
-import DiffView from '../components/DiffView.vue';
-import { splitDiffByFile } from '@diffstalker/core/view/splitDiffByFile';
-import type { DiffLine, DiffResult } from '@diffstalker/core/git/diffParse';
-import type { RefPair } from '../utils/refPair';
-import WrapToggle from '../components/WrapToggle.vue';
 import SplitResizer from '../components/SplitResizer.vue';
+import DiffStack, { type StackFile } from '../components/DiffStack.vue';
+import ChangedFileTree, { inTreeOrder } from '../components/ChangedFileTree.vue';
 import { errorMessage } from '../api/errors';
 
 const PAGE_SIZE = 100;
@@ -50,49 +52,102 @@ const listEl = ref<HTMLElement | null>(null);
 const commits = computed(() => history.value.commits);
 const selected = computed(() => history.value.selectedCommit);
 
-/**
- * What the shown diff is between: this commit against its parent.
- *
- * No merge-commit case is needed. `git show --format=` returns an EMPTY
- * diff for a merge (we do not render combined diffs), so there are no
- * file sections and therefore no header to label — the situation cannot
- * reach the screen.
- */
-const commitRefPair = computed<RefPair | undefined>(() =>
-  selected.value ? { kind: 'commit', shortHash: selected.value.shortHash } : undefined
-);
+// --- The selected commit's files: tree (middle) + diff stack (right) ---
 
-/**
- * The commit's diff with ONE file's section swapped for its whole-file
- * pull. History renders the whole commit in a single DiffView, so the
- * substitution happens at the DiffResult level: split by file, replace
- * one entry, rejoin in order. splitDiffByFile carries line objects across
- * as-is, so nothing else in the commit is re-parsed or re-ordered.
- */
-const shownCommitDiff = computed<DiffResult | null>(() => {
-  const diff = history.value.commitDiff;
-  const whole = repo.wholeFile;
-  if (!diff || !whole || whole.key !== historyWholeKey(whole.path)) return diff;
-  const byPath = splitDiffByFile(diff);
-  if (!byPath.has(whole.path)) return diff;
-  const lines: DiffLine[] = [];
-  for (const [path, section] of byPath) {
-    lines.push(...(path === whole.path ? whole.diff.lines : section.lines));
-  }
-  return { lines };
-});
+const commitFiles = computed(() => history.value.commitFiles ?? []);
 
-/** History's slot key: the commit plus the file, since a path alone
- *  would collide with the same path in another view. */
-function historyWholeKey(path: string): string {
+/** Stack section key: the commit plus the file. It doubles as the
+ *  whole-file slot key, which must not collide with the same path in
+ *  another view or another commit (App.vue restores it from a link). */
+function historyFileKey(path: string): string {
   return `h:${selected.value?.hash ?? ''}:${path}`;
 }
 
+/** Index into commitFiles; per commit, so a new commit starts at its top. */
+const selectedFileIndex = ref<number | null>(null);
+const collapsedFiles = reactive(new Set<string>());
+const stackEl = ref<InstanceType<typeof DiffStack> | null>(null);
+/** The stack's scroll container — the portrait j/k payload target. */
+const diffsEl = computed(() => stackEl.value?.scrollerEl ?? null);
+
 /**
- * Whole-file mode for one file inside the shown commit. This is the
- * surface where it matters most: "view file" opens TODAY's copy of the
- * path, which is different bytes than a historical diff is about, so it
- * was never an answer here.
+ * Select the top file the moment a commit's files land, so the focus
+ * indicator is there from the start (it is where the stack already sits).
+ * The top of the TREE, not files[0]: the daemon sorts flat by path, the
+ * tree puts folders first.
+ */
+watch(
+  () => history.value.commitFiles,
+  (files) => {
+    const top = files ? inTreeOrder(files)[0] : undefined;
+    selectedFileIndex.value = top && files ? files.indexOf(top) : null;
+  },
+  { immediate: true }
+);
+
+/**
+ * No merge-commit case is needed in the ref pair. The daemon returns no
+ * rows for a merge (we do not render combined diffs), so there is no file
+ * section to label.
+ */
+const stackFiles = computed<StackFile[]>(() => {
+  const commit = selected.value;
+  if (!commit) return [];
+  return inTreeOrder(commitFiles.value).map((file) => {
+    const key = historyFileKey(file.path);
+    return {
+      key,
+      path: file.path,
+      status: file.status,
+      stats: { insertions: file.additions, deletions: file.deletions },
+      diff: repo.wholeFile?.key === key ? repo.wholeFile.diff : file.diff,
+      collapsed: collapsedFiles.has(key),
+      refPair: { kind: 'commit', shortHash: commit.shortHash },
+    };
+  });
+});
+
+const activeStackKey = computed(() => {
+  const file = selectedFileIndex.value === null ? undefined : commitFiles.value[selectedFileIndex.value];
+  return file ? historyFileKey(file.path) : null;
+});
+
+/** A file row clicked or confirmed: jump the stack to its diff. */
+function selectFile(index: number): void {
+  const file = commitFiles.value[index];
+  if (!file) return;
+  selectedFileIndex.value = index;
+  const key = historyFileKey(file.path);
+  collapsedFiles.delete(key); // selecting always reveals
+  void nextTick(() => stackEl.value?.scrollToFile(key));
+}
+
+/** Stack scroll-spy: the diffs scrolled onto a file. Records it only —
+ *  selectFile would scroll the stack back and loop. */
+function onActiveFile(key: string): void {
+  const index = commitFiles.value.findIndex((f) => historyFileKey(f.path) === key);
+  if (index !== -1) selectedFileIndex.value = index;
+}
+
+function toggleFileCollapsed(key: string): void {
+  if (collapsedFiles.has(key)) collapsedFiles.delete(key);
+  else collapsedFiles.add(key);
+}
+
+/** `e`: mount every body the size gate holds back, so Ctrl+F reaches it. */
+watch(
+  () => ui.expandGatedRequest,
+  (seq) => {
+    if (seq === 0) return;
+    stackEl.value?.expandAllGated();
+  }
+);
+
+/**
+ * Whole-file mode for one file in the shown commit. This is the surface
+ * where it matters most: "view file" opens TODAY's copy of the path,
+ * which is different bytes than a historical diff is about, so it was
+ * never an answer here.
  */
 // A different commit invalidates the slot: its key names the commit, and
 // the file may not even appear in the new one.
@@ -102,16 +157,16 @@ watch(selected, (commit, previous) => {
   }
 });
 
-function toggleWholeFile(path: string): void {
+function toggleWholeFile(key: string): void {
   const commit = selected.value;
-  if (!commit) return;
-  const key = historyWholeKey(path);
+  const file = commitFiles.value.find((f) => historyFileKey(f.path) === key);
+  if (!commit || !file) return;
   if (repo.wholeFile?.key === key) {
     void repo.setWholeFile(null);
     return;
   }
   beginUserNav({ view: 'history' });
-  void repo.setWholeFile({ view: 'history', key, path, hash: commit.hash });
+  void repo.setWholeFile({ view: 'history', key, path: file.path, hash: commit.hash });
 }
 
 /** The log filled the requested page — more commits may exist. */
@@ -220,7 +275,7 @@ function moveSelection(delta: number): void {
   });
 }
 
-// --- Portrait: row split (commit band above, detail below) + j/k keys ---
+// --- Portrait: row split (both lists above, diffs below) + j/k keys ---
 
 const isPortrait = usePortrait();
 const containerEl = ref<HTMLElement | null>(null);
@@ -230,15 +285,15 @@ const split = useSplitDrag({
   row: { pref: 'historyTop', defaultRatio: 0.28, min: TOP_MIN, max: TOP_MAX },
 });
 
-const payloadEl = ref<HTMLElement | null>(null);
 const onRowBandKeydown = makeBandKeyHandler(isPortrait, moveSelection);
-const payloadAttrs = portraitPayloadAttrs(isPortrait, payloadEl, 'Commit diff');
+// The stack's root is the diffs scroller — scroll it, not a nested DiffView.
+const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'Commit diff', { self: true });
 
 /** Enter on a row: select; in portrait also hand focus to the payload. */
 function selectAndFocusPayload(commit: CommitInfo): void {
   void select(commit);
   if (!isPortrait.value) return;
-  void nextTick(() => payloadEl.value?.focus());
+  void nextTick(() => diffsEl.value?.focus());
 }
 </script>
 
@@ -315,53 +370,67 @@ function selectAndFocusPayload(commit: CommitInfo): void {
       </template>
     </aside>
 
-    <SplitResizer v-if="isPortrait" :split="split" label="Resize commit list" />
+    <SplitResizer
+      v-if="isPortrait"
+      class="history-resizer"
+      :split="split"
+      label="Resize commit and file lists"
+    />
 
-    <section class="detail-col" data-testid="commit-detail">
-      <template v-if="selected">
-        <header class="detail-header">
-          <div class="detail-top">
-            <span class="full-hash mono" :title="selected.hash">{{ selected.hash }}</span>
-          </div>
-          <p class="detail-message">{{ selected.message }}</p>
-          <p class="detail-meta mono">
-            <span class="author">{{ selected.author }}</span>
-            <span class="abs-date">{{ formatDateAbsolute(selected.date) }}</span>
-          </p>
-        </header>
-        <div
-          ref="payloadEl"
-          class="detail-diff"
-          v-bind="payloadAttrs"
-        >
-          <div class="detail-toolbar">
-            <WrapToggle />
-          </div>
-          <p v-if="detailError" class="panel-note view-error" data-testid="detail-error">
-            {{ detailError }}
-          </p>
-          <p v-else-if="!history.commitDiff" class="panel-note">Loading diff…</p>
-          <DiffView
-            v-else
-            class="detail-diffview"
-            :diff="shownCommitDiff"
-            show-file-headers
-            :ref-pair="commitRefPair"
-            show-whole-toggle
-            :whole-path="repo.wholeFile?.path ?? null"
-            :whole-loading="repo.wholeFileLoading"
-            :whole-refusal="repo.wholeFileRefusal"
-            :syntax="ui.diffSyntaxEnabled"
-            :mode="ui.diffMode"
-            :wrap="ui.wrapEnabled"
-            @toggle-whole="toggleWholeFile"
-          />
+    <ChangedFileTree
+      data-testid="commit-files"
+      :files="commitFiles"
+      :selected-index="selectedFileIndex"
+      :portrait="isPortrait"
+      @activate="selectFile"
+      @select="selectFile"
+    />
+
+    <template v-if="selected">
+      <header class="detail-header" data-testid="commit-detail">
+        <div class="detail-top">
+          <span class="full-hash mono" :title="selected.hash">{{ selected.hash }}</span>
         </div>
-      </template>
-      <p v-else class="panel-note detail-prompt" data-testid="history-prompt">
-        Select a commit to view its changes
+        <p class="detail-message">{{ selected.message }}</p>
+        <p class="detail-meta mono">
+          <span class="author">{{ selected.author }}</span>
+          <span class="abs-date">{{ formatDateAbsolute(selected.date) }}</span>
+        </p>
+      </header>
+      <p v-if="detailError" class="panel-note view-error detail-note" data-testid="detail-error">
+        {{ detailError }}
       </p>
-    </section>
+      <p v-else-if="history.commitFiles === null" class="panel-note detail-note">Loading diff…</p>
+      <p
+        v-else-if="history.commitFiles.length === 0"
+        class="panel-note detail-note"
+        data-testid="history-no-files"
+      >
+        No file changes to show (merge commits are not shown as a diff).
+      </p>
+      <DiffStack
+        v-else
+        ref="stackEl"
+        class="diffs-col"
+        data-testid="commit-diffs"
+        :files="stackFiles"
+        :active-key="activeStackKey"
+        :syntax="ui.diffSyntaxEnabled"
+        :mode="ui.diffMode"
+        :wrap="ui.wrapEnabled"
+        show-whole-toggle
+        :whole-key="repo.wholeFile?.key ?? null"
+        :whole-loading="repo.wholeFileLoading"
+        :whole-refusal="repo.wholeFileRefusal"
+        v-bind="payloadAttrs"
+        @active-file="onActiveFile"
+        @toggle-collapse="toggleFileCollapsed"
+        @toggle-whole="toggleWholeFile"
+      />
+    </template>
+    <p v-else class="panel-note detail-note" data-testid="history-prompt">
+      Select a commit to view its changes
+    </p>
   </div>
 </template>
 
@@ -369,13 +438,18 @@ function selectAndFocusPayload(commit: CommitInfo): void {
 .history {
   height: 100%;
   display: grid;
-  grid-template-columns: clamp(16rem, 34%, 30rem) minmax(0, 1fr);
+  grid-template-columns: clamp(16rem, 26%, 26rem) clamp(12rem, 20%, 22rem) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    'commits files header'
+    'commits files diff';
   background: var(--bg);
 }
 
 /* --- Commit list --- */
 
 .commits-col {
+  grid-area: commits;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -490,18 +564,18 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   border-color: var(--text-dim);
 }
 
-/* --- Commit detail --- */
+/* --- Changed files (middle) --- */
 
-.detail-col {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding-inline: var(--gutter);
+.files-col {
+  grid-area: files;
 }
 
+/* --- Commit detail + diffs (right) --- */
+
 .detail-header {
-  flex: none;
+  grid-area: header;
+  min-width: 0;
+  margin-inline: var(--gutter);
   padding: 0.625rem 0.75rem;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
@@ -538,56 +612,48 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   color: var(--text-dim);
 }
 
-.detail-diff {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  /* A card, like a file in the diff stack and like Explorer's content pane.
-     DiffView paints var(--bg) for its rows, so against the page's own --bg it
-     had no visible edge — which is why this column needed a panel border-right
-     beside it instead. Re-pointing --bg fills the body with the card colour. */
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  overflow: hidden;
-  --bg: var(--file-bg);
+/* Grid placement only — the stack itself (scroller, sticky headers,
+   collapse) lives in DiffStack. */
+.diffs-col {
+  grid-area: diff;
+  min-width: 0;
 }
 
-.detail-toolbar {
-  flex: none;
-  display: flex;
-  justify-content: flex-end;
-  padding: 0.25rem 0.5rem 0;
+.detail-note {
+  grid-area: diff;
+  align-self: start;
+  justify-self: center;
+  margin-top: 2.5rem;
 }
 
-/* Fallthrough class onto DiffView's root (whichever of its two v-if/v-else
-   roots renders) — reaches remaining space in .detail-diff's flex column,
-   below .detail-toolbar, same pattern as .diffs-col on <DiffStack>. */
-.detail-diffview {
-  flex: 1;
-  min-height: 0;
-}
-
-.detail-prompt {
+/* No commit picked: the prompt takes the header's place too. */
+.detail-note[data-testid='history-prompt'] {
+  grid-row: header-start / diff-end;
   align-self: center;
-  margin: auto;
+  margin-top: 0;
 }
 
-/* Portrait: rotate column → row. Full-width detail below a bounded
-   commit band, with a draggable row resizer (portrait-only element). */
+/* Stacked: both lists share the top band side by side, the diffs get the
+   full width below. The commit list keeps the wider share — a commit row
+   carries a message, a file row mostly a name. Draggable row resizer
+   between the band and the diffs (portrait-only element). */
 :root[data-split='stacked'] .history {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(6rem, var(--history-top, 28vh)) 8px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-rows: minmax(6rem, var(--history-top, 28vh)) 8px auto minmax(0, 1fr);
+  grid-template-areas:
+    'commits files'
+    'resizer resizer'
+    'header header'
+    'diff diff';
 }
 
-:root[data-split='stacked'] .commits-col {
-  /* No border-bottom: the resizer directly below paints its own top edge
-     (inset 0 1px 0), so a border here made the boundary three hairlines
-     inside 9px — panel edge, resizer top, resizer bottom. */
-  border-right: none;
+.history-resizer {
+  grid-area: resizer;
 }
 
-/* A visible divider bar (not a bare drag gap) so the two stacked panes
-   read as clearly separate, with a centered grab handle signalling it
-   drags. */
+:root[data-split='stacked'] .files-col {
+  /* The commit list beside it is the same surface; a hairline keeps the
+     two lists apart. */
+  border-left: 1px solid var(--border);
+}
 </style>

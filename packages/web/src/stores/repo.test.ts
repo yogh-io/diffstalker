@@ -971,7 +971,19 @@ describe('history', () => {
     expect(fake.callsTo('/history')).toHaveLength(0);
   });
 
-  test('selectHistoryCommit fetches the commit diff; a stale response is dropped', async () => {
+  test('selectHistoryCommit pulls the commit\'s per-file rows', async () => {
+    const { store } = await openStore();
+    await store.loadHistory();
+    const commit = store.history.commits[0];
+    const rows = [{ path: 'a.ts', status: 'modified', additions: 1, deletions: 0, diff: { lines: [] } }];
+    onRequest = (call) =>
+      call.url === `/repos/r1/commits/${commit.hash}/files` ? { body: rows } : undefined;
+
+    await store.selectHistoryCommit(commit);
+    expect(store.history.commitFiles).toEqual(rows);
+  });
+
+  test('selectHistoryCommit drops a stale response', async () => {
     const { store } = await openStore();
     await store.loadHistory();
     const commit = store.history.commits[0];
@@ -982,10 +994,31 @@ describe('history', () => {
     const selectPromise = store.selectHistoryCommit(commit);
     expect(store.history.selectedCommit).toBe(commit);
 
-    await store.selectHistoryCommit(null); // deselect before the diff lands
-    slow.resolve({ body: diffBody('stale commit diff') });
+    await store.selectHistoryCommit(null); // deselect before the files land
+    slow.resolve({ body: [] });
     await selectPromise;
-    expect(store.history.commitDiff).toBeNull();
+    expect(store.history.commitFiles).toBeNull();
+  });
+
+  test('files still land when a reload re-anchors the same commit mid-pull', async () => {
+    const { store } = await openStore();
+    await store.loadHistory();
+    const commit = store.history.commits[0];
+    const rows = [{ path: 'a.ts', status: 'modified', additions: 1, deletions: 0, diff: { lines: [] } }];
+
+    const slow = new Deferred<FakeResponse>();
+    onRequest = (call) => (call.url.endsWith('/files') ? slow.promise : undefined);
+    const selectPromise = store.selectHistoryCommit(commit);
+
+    // A link restore selects a commit, then the log reload swaps in a new
+    // object for the same hash before the files arrive.
+    await store.loadHistory();
+    expect(store.history.selectedCommit).not.toBe(commit);
+    expect(store.history.selectedCommit?.hash).toBe(commit.hash);
+
+    slow.resolve({ body: rows });
+    await selectPromise;
+    expect(store.history.commitFiles).toEqual(rows);
   });
 });
 

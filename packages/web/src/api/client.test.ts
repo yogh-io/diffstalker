@@ -115,6 +115,12 @@ describe('history / compare decoding', () => {
     expect(fake.calls[0].url).toBe('/repos/r1/commits/abc%2Fdef/diff');
   });
 
+  test('commitFiles encodes the hash', async () => {
+    respond = () => ({ body: [] });
+    await client.commitFiles('r1', 'abc/def');
+    expect(fake.calls[0].url).toBe('/repos/r1/commits/abc%2Fdef/files');
+  });
+
   test('compare revives commit dates and forwards query flags', async () => {
     respond = () => ({
       body: {

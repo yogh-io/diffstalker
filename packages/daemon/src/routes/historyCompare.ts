@@ -9,6 +9,7 @@
 import {
   commitExists,
   getCommitDiff,
+  getCommitFiles,
   getDiffForUntracked,
   getCompareDiff,
   getCommitCountBetweenRefs,
@@ -163,6 +164,23 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
       ? await getFileDiffInRange(handle.path, { kind: 'commit', hash }, filePath, contextOpts(whole))
       : await getCommitDiff(handle.path, hash);
     sendJson(res, 200, diff);
+  });
+
+  /**
+   * One commit's changes split per file, with git's status and +/- counts
+   * per row — the list History's file tree is built from. Same shape as
+   * Compare's `files`. A merge commit is 200 with no rows, as for /diff.
+   */
+  router.get('/repos/:id/commits/:hash/files', async ({ params, res }) => {
+    const handle = requireRepo(registry, params.id);
+    const hash = params.hash;
+    if (!/^[0-9a-f]{4,40}$/i.test(hash)) {
+      throw new HttpError(400, `Invalid commit hash: ${hash}`);
+    }
+    if (!(await commitExists(handle.path, hash))) {
+      throw new HttpError(404, `Unknown commit: ${hash}`);
+    }
+    sendJson(res, 200, await getCommitFiles(handle.path, hash));
   });
 
   /**

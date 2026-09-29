@@ -205,6 +205,7 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | GET    | `/repos/:id/history?count=` | Commit history (`CommitInfo[]`, default 100, ISO dates) |
 | GET    | `/repos/:id/commits/:hash` | One commit by hash or short hash (404 on unknown) — what a link to a commit outside a client's loaded log resolves through |
 | GET    | `/repos/:id/commits/:hash/diff?path=&whole=` | Diff introduced by one commit (404 on unknown hash; merge and `--allow-empty` commits are 200 with an empty diff, matching the CLI). `path` narrows to one file and `whole=true` widens its context to the whole file (400 without `path`). The pathspec carries BOTH sides of a rename, because scoping to the new path alone makes git report a rename as a plain add |
+| GET    | `/repos/:id/commits/:hash/files` | The same commit's changes split per file, each with git's status and `+`/`-` counts (same row shape as `/compare`'s `files`). 404 on unknown hash; a merge commit is 200 with no rows |
 | GET    | `/repos/:id/head-message`  | HEAD commit message for amend prefill: `{message}` (`""` when the repo has no commits) |
 | GET    | `/repos/:id/branches`      | Local branches (`name`, `current`, `tracking`)   |
 | GET    | `/repos/:id/base-branches` | Candidate compare bases (remote branches in recent history) |

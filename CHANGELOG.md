@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **History shows the commit's files as a tree.** History was a commit list
+  beside one long diff, with no way to see which files a commit touched or to
+  jump to one. It now has the same file tree and diff stack as Compare: each
+  file with its status and `+`/`-` counts, folders that collapse, and a click
+  that jumps to the file's diff. On a narrow or vertical screen the commit list
+  and the file tree sit side by side above the diffs, so the diffs keep the
+  full width. The daemon has a new `GET /repos/:id/commits/:hash/files` for it.
+
+### Fixed
+
+- **Opening a commit from a link no longer sticks on "Loading diff…".** The
+  history reload swapped in a new copy of the same commit while its diff was
+  loading, and the diff was thrown away as stale. It is now matched by hash.
+- **Compare starts with the top file of the tree selected**, not the first by
+  flat path sort, which could be the last row in the tree.
+
 ## [0.13.4] - 2026-09-23
 
 ### Fixed

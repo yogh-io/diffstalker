@@ -3,8 +3,8 @@
  * commit rows (hash, message, author, relative date, ref tags),
  * identity-preserving selection (the exact CommitInfo object reaches
  * repo.selectHistoryCommit), keyboard navigation with roving tabindex,
- * the detail pane (metadata + the commit's multi-file DiffView with
- * per-file headers), the load-more paging affordance, the empty-log
+ * the detail pane (metadata, the changed-file tree, and one diff-stack
+ * section per file), the load-more paging affordance, the empty-log
  * and no-selection states, and the viewer stance (no cherry-pick /
  * revert controls — the web UI is read-only).
  *
@@ -21,7 +21,7 @@ import HistoryView from './HistoryView.vue';
 import { useRepoStore } from '../stores/repo';
 import { formatDateAbsolute } from '@diffstalker/core/view/formatDate';
 import type { CommitInfo } from '@diffstalker/core/git/status';
-import type { DiffResult } from '@diffstalker/core/git/diff';
+import type { CompareFileDiff } from '@diffstalker/core/git/diff';
 import { loadPrefs } from '../prefs';
 import { stubMatchMedia } from '../testing/portrait';
 
@@ -38,18 +38,37 @@ function commit(overrides: Partial<CommitInfo> = {}): CommitInfo {
   };
 }
 
-/** A commit diff spanning two files — the multi-file DiffView case. */
-const TWO_FILE_DIFF: DiffResult = {
-  lines: [
-    { type: 'header', content: 'diff --git a/src/foo.ts b/src/foo.ts' },
-    { type: 'hunk', content: '@@ -1 +1 @@' },
-    { type: 'deletion', content: '-old foo', oldLineNum: 1 },
-    { type: 'addition', content: '+new foo', newLineNum: 1 },
-    { type: 'header', content: 'diff --git a/src/bar.ts b/src/bar.ts' },
-    { type: 'hunk', content: '@@ -5 +5 @@' },
-    { type: 'addition', content: '+new bar', newLineNum: 5 },
-  ],
-};
+/** A commit touching two files — the per-file rows the daemon returns. */
+const TWO_FILES: CompareFileDiff[] = [
+  {
+    path: 'src/bar.ts',
+    status: 'added',
+    additions: 1,
+    deletions: 0,
+    diff: {
+      lines: [
+        { type: 'header', content: 'diff --git a/src/bar.ts b/src/bar.ts' },
+        { type: 'header', content: 'new file mode 100644' },
+        { type: 'hunk', content: '@@ -0,0 +1 @@' },
+        { type: 'addition', content: '+new bar', newLineNum: 1 },
+      ],
+    },
+  },
+  {
+    path: 'src/foo.ts',
+    status: 'modified',
+    additions: 1,
+    deletions: 1,
+    diff: {
+      lines: [
+        { type: 'header', content: 'diff --git a/src/foo.ts b/src/foo.ts' },
+        { type: 'hunk', content: '@@ -1 +1 @@' },
+        { type: 'deletion', content: '-old foo', oldLineNum: 1 },
+        { type: 'addition', content: '+new foo', newLineNum: 1 },
+      ],
+    },
+  },
+];
 
 let pinia: Pinia;
 
@@ -58,7 +77,7 @@ function mountView(commits: CommitInfo[]): {
   repo: ReturnType<typeof useRepoStore>;
 } {
   const repo = useRepoStore();
-  repo.history = { commits, selectedCommit: null, commitDiff: null, isLoading: false };
+  repo.history = { commits, selectedCommit: null, commitFiles: null, isLoading: false };
   const wrapper = mount(HistoryView, {
     global: { plugins: [pinia] },
     attachTo: document.body,
@@ -86,7 +105,7 @@ describe('load on activation', () => {
 
   test('an already-loaded list does NOT reload on mount', () => {
     const repo = useRepoStore();
-    repo.history = { commits: [commit()], selectedCommit: null, commitDiff: null, isLoading: false };
+    repo.history = { commits: [commit()], selectedCommit: null, commitFiles: null, isLoading: false };
     const spy = vi.spyOn(repo, 'loadHistory').mockResolvedValue(undefined);
     mount(HistoryView, { global: { plugins: [pinia] } });
     expect(spy).not.toHaveBeenCalled();
@@ -250,13 +269,13 @@ describe('commit detail', () => {
     );
   });
 
-  test('shows metadata and the multi-file diff with per-file headers', async () => {
+  test('shows metadata, the changed-file tree, and one diff section per file', async () => {
     const selected = commit({ message: 'Split the daemon', author: 'Ada' });
     const { wrapper, repo } = mountView([selected]);
     repo.history = {
       ...repo.history,
       selectedCommit: repo.history.commits[0],
-      commitDiff: TWO_FILE_DIFF,
+      commitFiles: TWO_FILES,
     };
     await wrapper.vm.$nextTick();
 
@@ -266,10 +285,61 @@ describe('commit detail', () => {
     expect(detail.find('.detail-meta .author').text()).toBe('Ada');
     expect(detail.find('.abs-date').text()).toBe(formatDateAbsolute(selected.date));
 
-    // The commit diff renders with one sticky header per file section.
-    const headers = detail.findAll('[data-testid="file-section-header"]');
-    expect(headers.map((h) => h.find('.file-path').text())).toEqual(['src/foo.ts', 'src/bar.ts']);
-    expect(detail.find('.row.del .content').text()).toBe('old foo');
+    // The tree lists the commit's files with git's status and counts.
+    const rows = wrapper.find('[data-testid="commit-files"]').findAll('.file-row');
+    expect(rows.map((r) => r.find('.name').text())).toEqual(['bar.ts', 'foo.ts']);
+    expect(rows.map((r) => r.find('.letter').attributes('data-status'))).toEqual([
+      'added',
+      'modified',
+    ]);
+    expect(rows[1].find('.count-del').text()).toBe('−1');
+
+    // The stack holds one section per file, in tree order.
+    const sections = wrapper.findAll('[data-testid="file-diff"]');
+    expect(sections.map((sec) => sec.find('.path').text())).toEqual(['src/bar.ts', 'src/foo.ts']);
+    expect(sections[1].find('.row.del .content').text()).toBe('old foo');
+  });
+
+  test('the first file starts selected; clicking a row selects it', async () => {
+    const { wrapper, repo } = mountView([commit()]);
+    repo.history = {
+      ...repo.history,
+      selectedCommit: repo.history.commits[0],
+      commitFiles: TWO_FILES,
+    };
+    await wrapper.vm.$nextTick();
+
+    const rows = () => wrapper.find('[data-testid="commit-files"]').findAll('.file-row');
+    expect(rows()[0].attributes('aria-selected')).toBe('true');
+
+    await rows()[1].trigger('click');
+    expect(rows()[1].attributes('aria-selected')).toBe('true');
+    expect(rows()[0].attributes('aria-selected')).toBe('false');
+    expect(wrapper.findAll('[data-testid="file-diff"]')[1].classes()).toContain('selected');
+  });
+
+  test('the top of the TREE starts selected, not the flat-sorted first file', async () => {
+    const { wrapper, repo } = mountView([commit()]);
+    // Flat path sort puts README.md first; the tree puts the src/ folder first.
+    const [bar] = TWO_FILES;
+    const readme = { ...bar, path: 'README.md' };
+    repo.history = {
+      ...repo.history,
+      selectedCommit: repo.history.commits[0],
+      commitFiles: [readme, bar],
+    };
+    await wrapper.vm.$nextTick();
+
+    const selected = wrapper.find('[data-testid="commit-files"] .file-row[aria-selected="true"]');
+    expect(selected.find('.name').text()).toBe('bar.ts');
+  });
+
+  test('a commit with no file rows (a merge) says so instead of an empty pane', async () => {
+    const { wrapper, repo } = mountView([commit()]);
+    repo.history = { ...repo.history, selectedCommit: repo.history.commits[0], commitFiles: [] };
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="history-no-files"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="commit-diffs"]').exists()).toBe(false);
   });
 
   test('the wrap toggle switches the commit diff into wrap mode', async () => {
@@ -278,23 +348,24 @@ describe('commit detail', () => {
     repo.history = {
       ...repo.history,
       selectedCommit: repo.history.commits[0],
-      commitDiff: TWO_FILE_DIFF,
+      commitFiles: TWO_FILES,
     };
     await wrapper.vm.$nextTick();
 
-    const detail = wrapper.find('[data-testid="commit-detail"]');
-    expect(detail.find('.diff-scroll').classes()).not.toContain('wrap');
+    // The first real section — the stack's hidden size probe is a DiffView too.
+    const first = wrapper.findAll('[data-testid="file-diff"]')[0];
+    expect(first.find('.diff-scroll').classes()).not.toContain('wrap');
 
-    await detail.find('[data-testid="wrap-toggle"]').trigger('click');
+    await wrapper.find('[data-testid="wrap-toggle"]').trigger('click');
 
-    expect(detail.find('.diff-scroll').classes()).toContain('wrap');
+    expect(first.find('.diff-scroll').classes()).toContain('wrap');
   });
 
   test('a selected commit with no diff yet shows a loading line', async () => {
     const { wrapper, repo } = mountView([commit()]);
-    repo.history = { ...repo.history, selectedCommit: repo.history.commits[0], commitDiff: null };
+    repo.history = { ...repo.history, selectedCommit: repo.history.commits[0], commitFiles: null };
     await wrapper.vm.$nextTick();
-    expect(wrapper.find('[data-testid="commit-detail"]').text()).toContain('Loading diff…');
+    expect(wrapper.text()).toContain('Loading diff…');
   });
 
   test('a rejected diff load shows the calm error, not a stuck "Loading diff…"', async () => {
@@ -302,18 +373,17 @@ describe('commit detail', () => {
     // The real store sets the selection synchronously, THEN rejects the
     // DaemonError from the diff pull — mirror that shape.
     vi.spyOn(repo, 'selectHistoryCommit').mockImplementation(async (c) => {
-      repo.history = { ...repo.history, selectedCommit: c, commitDiff: null };
+      repo.history = { ...repo.history, selectedCommit: c, commitFiles: null };
       throw new Error('git show failed');
     });
 
     await wrapper.findAll('.commit-row')[0].trigger('click');
     await flushPromises();
 
-    const detail = wrapper.find('[data-testid="commit-detail"]');
-    expect(detail.find('[data-testid="detail-error"]').text()).toBe(
+    expect(wrapper.find('[data-testid="detail-error"]').text()).toBe(
       'Failed to load commit diff: git show failed'
     );
-    expect(detail.text()).not.toContain('Loading diff…');
+    expect(wrapper.text()).not.toContain('Loading diff…');
   });
 });
 
@@ -327,7 +397,7 @@ describe('re-anchoring across a state-change re-pull', () => {
 
     // The store's reload mints NEW commit objects and drops the selection.
     const reloaded = commit(); // same hash, different object
-    repo.history = { commits: [reloaded], selectedCommit: null, commitDiff: null, isLoading: false };
+    repo.history = { commits: [reloaded], selectedCommit: null, commitFiles: null, isLoading: false };
     await flushPromises();
 
     expect(spy).toHaveBeenLastCalledWith(reloaded);
@@ -347,7 +417,7 @@ describe('re-anchoring across a state-change re-pull', () => {
     repo.history = {
       commits: [commit({ hash: 'f'.repeat(40) })],
       selectedCommit: null,
-      commitDiff: null,
+      commitFiles: null,
       isLoading: false,
     };
     await flushPromises();
@@ -364,7 +434,7 @@ describe('viewer stance (read-only)', () => {
     repo.history = {
       commits: [selected],
       selectedCommit: selected,
-      commitDiff: TWO_FILE_DIFF,
+      commitFiles: TWO_FILES,
       isLoading: false,
     };
     const wrapper = mount(HistoryView, {
@@ -375,12 +445,12 @@ describe('viewer stance (read-only)', () => {
     // The detail renders (read path intact)…
     const detail = wrapper.find('[data-testid="commit-detail"]');
     expect(detail.find('.detail-message').text()).toBe('Fix the thing');
-    expect(detail.find('[data-testid="diff-view"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="commit-diffs"]').exists()).toBe(true);
     // …with no commit actions and no confirm flow.
     expect(wrapper.find('[data-testid="cherry-pick"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="revert"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="commit-action-confirm"]').exists()).toBe(false);
-    expect(detail.find('.detail-header').findAll('button')).toHaveLength(0);
+    expect(detail.findAll('button')).toHaveLength(0);
   });
 });
 
@@ -424,19 +494,19 @@ describe('portrait layout', () => {
     expect(spy).toHaveBeenCalledWith(commits[0]); // nothing selected: j picks the first
   });
 
-  test('the detail pane is a focusable region in portrait', async () => {
+  test('the diff stack is a focusable region in portrait', async () => {
     stubMatchMedia(true);
     const commits = [commit()];
     const { wrapper, repo } = mountView(commits);
     repo.history = {
       commits,
       selectedCommit: commits[0],
-      commitDiff: TWO_FILE_DIFF,
+      commitFiles: TWO_FILES,
       isLoading: false,
     };
     await wrapper.vm.$nextTick();
 
-    const pane = wrapper.find('.detail-diff');
+    const pane = wrapper.find('[data-testid="commit-diffs"]');
     expect(pane.attributes('tabindex')).toBe('0');
     expect(pane.attributes('role')).toBe('region');
   });

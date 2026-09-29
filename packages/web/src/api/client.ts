@@ -46,6 +46,7 @@ import type {
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import type {
   CompareDiff,
+  CompareFileDiff,
   DiffResult,
   UncommittedParts,
   UncommittedSide,
@@ -281,6 +282,11 @@ export class DiffstalkerClient {
       this.repoPath(id, `/commits/${encodeURIComponent(hash)}/diff`) +
         toQuery({ path: opts.path, whole: opts.whole })
     );
+  }
+
+  /** One commit's changes split per file, with git's status and counts. */
+  commitFiles(id: string, hash: string): Promise<CompareFileDiff[]> {
+    return request('GET', this.repoPath(id, `/commits/${encodeURIComponent(hash)}/files`));
   }
 
   /**

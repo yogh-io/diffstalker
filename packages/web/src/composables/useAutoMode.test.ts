@@ -198,7 +198,7 @@ describe('view switching on file-count transitions', () => {
     repo.history = {
       commits: [commit('newest'), commit('older')],
       selectedCommit: null,
-      commitDiff: null,
+      commitFiles: null,
       isLoading: false,
     };
     await apply([fileEntry('a.ts')], { 'a.ts': 100 });
