@@ -171,11 +171,6 @@ describe('history / compare decoding', () => {
     expect(fake.calls[0].url).toBe('/repos/r1/compare/count?base=origin%2Fdev');
   });
 
-  test('getCompareBase unwraps {base} (read of the effective base)', async () => {
-    respond = () => ({ body: { base: 'origin/main' } });
-    await expect(client.getCompareBase('r1')).resolves.toBe('origin/main');
-    expect(fake.calls[0]).toMatchObject({ method: 'GET', url: '/repos/r1/compare/base' });
-  });
 });
 
 describe('journal', () => {

@@ -37,7 +37,7 @@ export function makeBandKeyHandler<T = void>(
  *  `self: true` scrolls the pane element itself (Compare's diffs column
  *  is its own scroller); otherwise the DiffView/content scroller inside
  *  the pane is the target. */
-export function makePayloadKeyHandler(
+function makePayloadKeyHandler(
   isPortrait: Ref<boolean>,
   payloadEl: Ref<HTMLElement | null>,
   options?: { self?: boolean }

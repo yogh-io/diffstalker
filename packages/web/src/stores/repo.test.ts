@@ -159,8 +159,8 @@ function defaultGetRoutes(url: string): FakeResponse | undefined {
   if (url.startsWith('/repos/r1/compare')) {
     return { body: compareBody() };
   }
-  if (url === '/repos/r1/worktrees') {
-    return { body: [{ path: '/repo', branch: 'main', isMain: true }] };
+  if (url === '/repos/r1/base-branches') {
+    return { body: ['origin/main', 'origin/dev'] };
   }
   return undefined;
 }
@@ -1400,20 +1400,18 @@ describe('releaseOnUnload', () => {
   });
 });
 
-// --- Worktrees ---
+// --- Base branches (the plain read path) ---
 
-describe('listWorktrees', () => {
-  test('returns the daemon worktree list; empty on connection loss', async () => {
+describe('getCandidateBaseBranches', () => {
+  test('returns the daemon list; empty on connection loss', async () => {
     const { store } = await openStore();
-    await expect(store.listWorktrees()).resolves.toEqual([
-      { path: '/repo', branch: 'main', isMain: true },
-    ]);
+    await expect(store.getCandidateBaseBranches()).resolves.toEqual(['origin/main', 'origin/dev']);
 
     onRequest = (call) => {
-      if (call.url === '/repos/r1/worktrees') throw new TypeError('Failed to fetch');
+      if (call.url === '/repos/r1/base-branches') throw new TypeError('Failed to fetch');
       return undefined;
     };
-    await expect(store.listWorktrees()).resolves.toEqual([]);
+    await expect(store.getCandidateBaseBranches()).resolves.toEqual([]);
     expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
   });
 });
@@ -1669,13 +1667,6 @@ describe('compare', () => {
     ]);
   });
 
-  test('selectCompareCommit pulls the commit diff and guards the selection', async () => {
-    const { store } = await openStore();
-    await store.refreshCompare();
-    await store.selectCompareCommit(0);
-    expect(store.compare.selection.type).toBe('commit');
-    expect(rawFromLines(store.compare.selection.diff!.lines)).toContain('commit-diff:');
-  });
 });
 
 // --- Reconnect ---
@@ -1739,10 +1730,10 @@ describe('reconnect', () => {
     // A second loss signal must not rewrite the state (no flicker).
     const before = store.shared;
     onRequest = (call) => {
-      if (call.url === '/repos/r1/worktrees') throw new TypeError('Failed to fetch');
+      if (call.url === '/repos/r1/base-branches') throw new TypeError('Failed to fetch');
       return undefined;
     };
-    await store.listWorktrees();
+    await store.getCandidateBaseBranches();
     expect(store.shared).toBe(before);
 
     // Daemon back: recovery re-POSTs /repos, re-attaches (which reopens
@@ -1887,7 +1878,7 @@ describe('reconnect', () => {
     const slowOpen = new Deferred<FakeResponse>();
     onRequest = (call) => {
       if (call.method === 'POST' && call.url === '/repos') return slowOpen.promise;
-      if (call.url === '/repos/r1/worktrees') throw new TypeError('Failed to fetch');
+      if (call.url === '/repos/r1/base-branches') throw new TypeError('Failed to fetch');
       return undefined;
     };
 
@@ -1895,7 +1886,7 @@ describe('reconnect', () => {
     await advance(1000); // recovery starts, held on the deferred
 
     // More failures while recovery is in flight: no second attempt.
-    await store.listWorktrees();
+    await store.getCandidateBaseBranches();
     await advance(3000);
     const repoPosts = fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos');
     expect(repoPosts).toHaveLength(2); // initial open + ONE recovery
@@ -2388,10 +2379,10 @@ describe('hidden tab', () => {
 
     // A fetch fails on connection while hidden: recovery runs as usual.
     onRequest = (call) => {
-      if (call.url === '/repos/r1/worktrees') throw new TypeError('Failed to fetch');
+      if (call.url === '/repos/r1/base-branches') throw new TypeError('Failed to fetch');
       return undefined;
     };
-    await store.listWorktrees();
+    await store.getCandidateBaseBranches();
     expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
     onRequest = null;
 

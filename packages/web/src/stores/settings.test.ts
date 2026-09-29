@@ -198,13 +198,13 @@ describe('discoveredRepos', () => {
     expect(settings.discoveredRepos.map((r) => r.name)).toEqual(['alpha', 'zeta']);
   });
 
-  test('a failed root contributes no repos but is reported', () => {
+  test('a failed root contributes no repos but stays listed with its error', () => {
     const settings = useSettingsStore();
     settings.applyDiscovery({
       roots: [{ path: '/gone', repos: [], error: 'ENOENT', capped: false }],
     });
 
     expect(settings.discoveredRepos).toEqual([]);
-    expect(settings.failedRoots.map((root) => root.path)).toEqual(['/gone']);
+    expect(settings.roots.map((root) => [root.path, root.error])).toEqual([['/gone', 'ENOENT']]);
   });
 });

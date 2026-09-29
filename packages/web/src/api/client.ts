@@ -241,11 +241,7 @@ export class DiffstalkerClient {
     fetch(this.repoPath(id, ''), { method: 'DELETE', keepalive: true }).catch(() => {});
   }
 
-  worktrees(id: string): Promise<WorktreeInfo[]> {
-    return request('GET', this.repoPath(id, '/worktrees'));
-  }
-
-  /** Same as worktrees(), but for a raw filesystem path that may not be
+  /** The worktrees of the repo at a raw filesystem path, which need not be
    * open on this daemon (e.g. a recently-visited repo). */
   worktreesForPath(path: string): Promise<WorktreeInfo[]> {
     return request('GET', '/worktrees' + toQuery({ path }));
@@ -358,14 +354,6 @@ export class DiffstalkerClient {
 
   baseBranches(id: string): Promise<string[]> {
     return request('GET', this.repoPath(id, '/base-branches'));
-  }
-
-  async getCompareBase(id: string): Promise<string | null> {
-    const { base } = await request<{ base: string | null }>(
-      'GET',
-      this.repoPath(id, '/compare/base')
-    );
-    return base;
   }
 
   /**

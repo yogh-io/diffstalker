@@ -110,7 +110,6 @@ import type {
   DiffResult,
   UncommittedParts,
 } from '@diffstalker/core/git/diff';
-import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type {
   WholeFileRequest,
@@ -305,11 +304,11 @@ export const useRepoStore = defineStore('repo', () => {
   const selection = shallowRef<RepoSelectionState>(initialSelection());
   const history = shallowRef<RepoHistoryState>(initialHistory());
   /**
-   * The journal slice (stores/types.ts JournalStoreSlice): the daemon's
-   * append-only per-hunk edit chronology, entries in seq order deduped
-   * by seq — seq is the only ordering axis, ts a display label. Whole
-   * array replaced on every change (shallowRef); folding into display
-   * rows is a pure projection the view computes (utils/foldEntries).
+   * The journal slice: the daemon's append-only per-hunk edit
+   * chronology, entries in seq order deduped by seq — seq is the only
+   * ordering axis, ts a display label. Whole array replaced on every
+   * change (shallowRef); folding into display rows is a pure projection
+   * the view computes (utils/foldEntries).
    */
   const journalEntries = shallowRef<JournalEntry[]>([]);
   /**
@@ -1982,26 +1981,6 @@ export const useRepoStore = defineStore('repo', () => {
     await refreshCompare(uncommitted);
   }
 
-  async function selectCompareCommit(index: number): Promise<void> {
-    const compareDiff = compare.value.compareDiff;
-    const id = repoId.value;
-    if (!compareDiff || index < 0 || index >= compareDiff.commits.length || id === null) {
-      compare.value = { ...compare.value, selection: { type: null, index: 0, diff: null } };
-      return;
-    }
-
-    const commit = compareDiff.commits[index];
-    compare.value = { ...compare.value, selection: { type: 'commit', index, diff: null } };
-    const gen = generation;
-
-    const diff = await read<DiffResult | null>(() => client.commitDiff(id, commit.hash), null);
-    if (diff === null || gen !== generation) return;
-    const current = compare.value.selection;
-    if (current.type === 'commit' && current.index === index) {
-      compare.value = { ...compare.value, selection: { ...current, diff } };
-    }
-  }
-
   function selectCompareFile(index: number): void {
     const compareDiff = compare.value.compareDiff;
     if (!compareDiff || index < 0 || index >= compareDiff.files.length) {
@@ -2012,14 +1991,6 @@ export const useRepoStore = defineStore('repo', () => {
       ...compare.value,
       selection: { type: 'file', index, diff: compareDiff.files[index].diff },
     };
-  }
-
-  // --- Worktrees / explorer sources ---
-
-  async function listWorktrees(): Promise<WorktreeInfo[]> {
-    const id = repoId.value;
-    if (id === null) return [];
-    return read<WorktreeInfo[]>(() => client.worktrees(id), []);
   }
 
   return {
@@ -2047,7 +2018,6 @@ export const useRepoStore = defineStore('repo', () => {
     dispose,
     releaseOnUnload,
     refresh,
-    setError,
     // working-tree mutations (file-level stage/unstage only)
     stageFile,
     unstageFile,
@@ -2071,9 +2041,6 @@ export const useRepoStore = defineStore('repo', () => {
     getLastUncommitted,
     getCandidateBaseBranches,
     setSelectedCompareBase,
-    selectCompareCommit,
     selectCompareFile,
-    // worktrees
-    listWorktrees,
   };
 });

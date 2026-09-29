@@ -59,9 +59,6 @@ export const useSettingsStore = defineStore('settings', () => {
     );
   });
 
-  /** Roots the daemon could not scan, for the panel's inline warnings. */
-  const failedRoots = computed(() => roots.value.filter((root) => root.error !== null));
-
   function applySettings(settings: DaemonSettings): void {
     watchRoots.value = settings.watchRoots;
     persisted.value = settings.persisted;
@@ -161,11 +158,9 @@ export const useSettingsStore = defineStore('settings', () => {
     saveError,
     loaded,
     discoveredRepos,
-    failedRoots,
     applySettings,
     applyDiscovery,
     load,
-    saveWatchRoots,
     clearSaveError,
     addWatchRoot,
     removeWatchRoot,

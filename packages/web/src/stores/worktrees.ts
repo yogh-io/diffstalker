@@ -255,6 +255,5 @@ export const useWorktreeStore = defineStore('worktrees', () => {
     projectFor,
     ensure,
     refresh,
-    markStale,
   };
 });
