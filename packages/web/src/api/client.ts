@@ -54,6 +54,7 @@ import type {
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
 import type { GrepResult } from '@diffstalker/core/git/grep';
 import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
+import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 
 /**
  * A file read that may carry an outline. `symbols` is absent when it was
@@ -63,7 +64,6 @@ import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
 export interface FileWithSymbols extends FileForDisplay {
   symbols?: SymbolOutcome;
 }
-import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 
 /**
  * The blob URL builder, re-exported so a component gets its `<img src>`

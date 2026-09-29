@@ -426,22 +426,6 @@ export const useExplorerStore = defineStore('explorer', () => {
   }
 
   /**
-   * Reveal a repo-relative path: make sure the root is loaded, walk the
-   * segments expanding each ancestor directory (lazy-loading listings
-   * not yet cached), then act on the target — a FILE is selected and
-   * loaded, a DIRECTORY is just expanded (follow mode can hand us a
-   * subdir). The view scrolls the selection into view.
-   *
-   * Visibility: a dot-segment path is invisible under the default
-   * filters, so showHidden flips on first; a segment missing from its
-   * parent listing retries once with showIgnored on. The reveal never
-   * selects a file its own tree rows cannot show.
-   *
-   * A failed ancestor listing stops the walk: the error stays visible
-   * and the file is NOT opened past a broken level. A repo switch
-   * mid-reveal drops the rest (generation guard).
-   */
-  /**
    * A one-shot "put this line on screen" request for the file viewer.
    *
    * Seq-stamped for the usual reason: asking for the same line twice (two
@@ -457,9 +441,22 @@ export const useExplorerStore = defineStore('explorer', () => {
   }
 
   /**
-   * Reveal `path` in the tree and open it. With `line`, also ask the viewer
-   * to scroll there — that is how a search hit lands on its match rather
-   * than at the top of a 3000-line file.
+   * Reveal a repo-relative path: make sure the root is loaded, walk the
+   * segments expanding each ancestor directory (lazy-loading listings
+   * not yet cached), then act on the target — a FILE is selected and
+   * loaded, a DIRECTORY is just expanded (follow mode can hand us a
+   * subdir). The view scrolls the selection into view. With `line`, also
+   * ask the viewer to scroll there — that is how a search hit lands on
+   * its match rather than at the top of a 3000-line file.
+   *
+   * Visibility: a dot-segment path is invisible under the default
+   * filters, so showHidden flips on first; a segment missing from its
+   * parent listing retries once with showIgnored on. The reveal never
+   * selects a file its own tree rows cannot show.
+   *
+   * A failed ancestor listing stops the walk: the error stays visible
+   * and the file is NOT opened past a broken level. A repo switch
+   * mid-reveal drops the rest (generation guard).
    */
   async function revealFile(path: string, opts: { line?: number } = {}): Promise<void> {
     if (repo.repoId === null) return;

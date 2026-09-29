@@ -1498,17 +1498,13 @@ export const useRepoStore = defineStore('repo', () => {
   }
 
   /**
-   * buildDiffModel through the WeakMap memo: an identity-preserved
-   * DiffResult returns the identical DiffModel — unchanged files
-   * re-run nothing and keep their vnodes. `staged` MUST match the
-   * entry's side (the cache key's `s:`/`u:` prefix): it feeds the
-   * model's section keys, so a wrong flag would collide a partially
-   * staged file's two sections.
-   */
-  /**
-   * The view's entry point to the shared memo in utils/diffRows. Kept as a
-   * store method because repo.test asserts it returns an identical object
-   * across an identity-preserved refetch.
+   * The view's entry point to the shared memo in utils/diffRows: an
+   * identity-preserved DiffResult returns the identical DiffModel, so
+   * unchanged files re-run nothing and keep their vnodes. `staged` MUST
+   * match the entry's side (the cache key's `s:`/`u:` prefix): it feeds
+   * the model's section keys, so a wrong flag would collide a partially
+   * staged file's two sections. Kept as a store method because repo.test
+   * asserts the identity across an identity-preserved refetch.
    */
   function diffModelFor(diff: DiffResult, staged: boolean): DiffModel {
     return diffModel(diff, staged);
