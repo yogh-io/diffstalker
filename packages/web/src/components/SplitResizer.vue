@@ -3,23 +3,25 @@
  * SplitResizer: the draggable divider between a stacked top band and the
  * payload below it, in the portrait layout.
  *
- * Compare, History and Explorer each rendered this identically — the same
- * eleven-attribute separator markup and, verbatim, the same four style rules.
- * Only the aria-label differed.
+ * Every split view renders this in portrait — the same eleven-attribute
+ * separator markup and, verbatim, the same four style rules. Only the
+ * aria-label differs.
  *
  * It paints BOTH of its own edges (inset top and bottom), which is why the
  * panels above and below draw none: with a panel border as well, the boundary
  * was three hairlines inside 9px.
  *
- * Scope, deliberately: this is the PORTRAIT divider only. ChangesView keeps
- * its own `.resizer`, because it is the one view with a landscape column drag
- * as well, and reconciling the two lifecycles is a design decision (should the
- * other three gain a landscape drag?) rather than a consolidation. Adding one
- * here would invent behaviour nobody asked for.
+ * Scope, deliberately: this is the PORTRAIT divider only. ChangesView is the
+ * one view with a landscape column drag as well, and keeps its own thin
+ * `.resizer` for that axis (a different affordance: 5px, transparent until
+ * hovered). Giving the other views a landscape drag would be a design
+ * decision, not a consolidation.
  *
  * The height is --divider, not a spacing token. A drag target must GROW on
  * touch where a gap shrinks — the two are anti-correlated by input device, so
- * this must never be folded into the spacing scale.
+ * this must never be folded into the spacing scale. The views' portrait grids
+ * size the divider row with the same token, so the row and the element can
+ * never disagree.
  */
 
 import type { SplitDrag } from '../composables/useSplitDrag';

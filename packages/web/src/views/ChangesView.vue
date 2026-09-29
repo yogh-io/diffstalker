@@ -62,6 +62,7 @@ import DiffStack, {
   type StackFile,
 } from '../components/DiffStack.vue';
 import ImageDiffView from '../components/ImageDiffView.vue';
+import SplitResizer from '../components/SplitResizer.vue';
 
 const repo = useRepoStore();
 const ui = useUiStore();
@@ -707,8 +708,12 @@ const rootStyle = computed(() => ({
       </div>
     </aside>
 
+    <!-- Portrait: the shared row divider. Landscape: this view's own column
+         handle (the one landscape drag in the app). One split instance
+         drives both. -->
+    <SplitResizer v-if="!isClean && isPortrait" :split="split" label="Resize file list" />
     <div
-      v-if="!isClean"
+      v-else-if="!isClean"
       class="resizer"
       role="separator"
       :aria-orientation="split.ariaOrientation.value"
@@ -947,7 +952,7 @@ const rootStyle = computed(() => ({
   cursor: not-allowed;
 }
 
-/* --- Resizer --- */
+/* --- Landscape column resizer (portrait uses SplitResizer) --- */
 
 .resizer {
   width: 5px;
@@ -973,49 +978,9 @@ const rootStyle = computed(() => ({
 }
 
 /* Portrait: rotate column → row. Full-width diffs below a bounded file
-   band; the same resizer drags the row split. */
+   band; the divider row is SplitResizer (its height is --divider). */
 :root[data-split='stacked'] .changes {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(6rem, var(--changes-top, 30vh)) 8px minmax(0, 1fr);
-}
-
-/* A visible divider bar (not a bare drag gap) so the file band and the
-   diffs read as clearly separate, with a centered grab handle. */
-:root[data-split='stacked'] .resizer {
-  /* Paints BOTH its own edges, which is why the panels above and below draw
-     none: with a panel border-bottom as well the boundary was three hairlines
-     inside 9px. */
-  display: block;
-  width: auto;
-  height: 8px;
-  cursor: row-resize;
-  background: var(--surface-raised);
-  box-shadow:
-    inset 0 1px 0 var(--border),
-    inset 0 -1px 0 var(--border);
-  position: relative;
-}
-
-:root[data-split='stacked'] .resizer::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 2.25rem;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--text-dim);
-  opacity: 0.5;
-}
-
-:root[data-split='stacked'] .resizer:hover,
-:root[data-split='stacked'] .resizer:focus-visible {
-  background: var(--selection);
-}
-
-:root[data-split='stacked'] .resizer:hover::after,
-:root[data-split='stacked'] .resizer:focus-visible::after {
-  background: var(--surface);
-  opacity: 0.9;
+  grid-template-rows: minmax(6rem, var(--changes-top, 30vh)) var(--divider) minmax(0, 1fr);
 }
 </style>

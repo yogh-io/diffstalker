@@ -686,7 +686,7 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
    scope, so the in-band restyles below reach them). */
 :root[data-split='stacked'] .pr-body {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(4rem, var(--compare-top, 22vh)) 8px minmax(0, 1fr);
+  grid-template-rows: minmax(4rem, var(--compare-top, 22vh)) var(--divider) minmax(0, 1fr);
 }
 
 /* In-band restyles for the lifted controls. */

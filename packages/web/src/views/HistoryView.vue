@@ -634,7 +634,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
    between the band and the diffs (portrait-only element). */
 :root[data-split='stacked'] .history {
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  grid-template-rows: minmax(6rem, var(--history-top, 28vh)) 8px auto minmax(0, 1fr);
+  grid-template-rows: minmax(6rem, var(--history-top, 28vh)) var(--divider) auto minmax(0, 1fr);
   grid-template-areas:
     'commits files'
     'resizer resizer'

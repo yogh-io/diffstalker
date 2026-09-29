@@ -627,7 +627,7 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
    restyle below still applies to it. */
 :root[data-split='stacked'] .explorer {
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(6rem, var(--explorer-top, 34vh)) 8px minmax(0, 1fr);
+  grid-template-rows: minmax(6rem, var(--explorer-top, 34vh)) var(--divider) minmax(0, 1fr);
 }
 
 :root[data-split='stacked'] .tree-toolbar {
