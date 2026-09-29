@@ -147,7 +147,7 @@ body {
    the two <h3> sites set 500 to come DOWN from UA bold while the three <p>
    sites correctly inherit 400. Shipping a weight here would silently bold the
    paragraphs. Each site also keeps its own margin and padding — all five
-   differ. */
+   differ. Compare's base-branch label and commits toggle use it too. */
 .eyebrow {
   font-family: var(--font-mono);
   font-size: var(--fs-micro);
@@ -372,6 +372,18 @@ input::placeholder {
 
 .letter[data-status='conflicted'] {
   color: var(--status-conflicted);
+}
+
+/* The +/- count pair at a row's trailing edge — Changes' file rows, the
+   changed-file tree's rows, the stack's file headers. Three byte-identical
+   copies of these five declarations. Journal's trailer and Compare's
+   top-bar stats line differ (gap, numerals, no margin) and keep their own. */
+.row-stats {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  gap: 0.375rem;
+  font-size: var(--fs-small);
 }
 
 /* Compare's "[uncommitted]" marker. One file has two render surfaces — the

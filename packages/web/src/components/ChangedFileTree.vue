@@ -235,7 +235,7 @@ const { onPointerEnter, onPointerLeave } = useActiveRowScroll(
         <span v-if="row.file.uncommitted" class="uncommitted-tag" data-testid="uncommitted-tag">{{
           sideTag(row.file.uncommitted)
         }}</span>
-        <span class="stats">
+        <span class="row-stats">
           <span v-if="row.file.additions" class="count-add">+{{ row.file.additions }}</span>
           <span v-if="row.file.deletions" class="count-del">&minus;{{ row.file.deletions }}</span>
         </span>
@@ -310,13 +310,5 @@ const { onPointerEnter, onPointerLeave } = useActiveRowScroll(
 
 .file-row.uncommitted .name {
   color: var(--uncommitted);
-}
-
-.file-row .stats {
-  flex: none;
-  margin-left: auto;
-  display: inline-flex;
-  gap: 0.375rem;
-  font-size: var(--fs-small);
 }
 </style>

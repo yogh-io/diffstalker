@@ -705,7 +705,7 @@ const rootStyle = computed(() => ({
               ><span class="base">{{ splitPath(file.path).base }}</span></span
             >
             <span v-if="hunkIndicator(file)" class="hunks">{{ hunkIndicator(file) }}</span>
-            <span class="stats">
+            <span class="row-stats">
               <span v-if="file.insertions" class="count-add">+{{ file.insertions }}</span>
               <span v-if="file.deletions" class="count-del">&minus;{{ file.deletions }}</span>
             </span>
@@ -901,18 +901,9 @@ const rootStyle = computed(() => ({
   color: var(--selection);
 }
 
-.stats {
-  flex: none;
-  display: inline-flex;
-  gap: 0.375rem;
-  font-size: var(--fs-small);
-}
-
-.file-row .stats {
-  margin-left: auto;
-}
-
-.file-row .hunks + .stats {
+/* .row-stats is shared (style.css). When a hunk marker is present it is
+   the one pushed to the end, and the stats sit right beside it. */
+.file-row .hunks + .row-stats {
   margin-left: 0;
 }
 

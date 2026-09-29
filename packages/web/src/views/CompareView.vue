@@ -298,7 +298,7 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
             currentBranch
           }}</span>
           <span v-if="currentBranch" class="arrow" aria-hidden="true">→</span>
-          <span class="label">base</span>
+          <span class="eyebrow">base</span>
           <select
             class="mono"
             data-testid="base-select"
@@ -387,7 +387,7 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
       <section v-if="compareDiff.commits.length > 0" class="commits-section">
         <Teleport defer to="#view-toolbar-slot" :disabled="!isPortrait">
           <button
-            class="commits-toggle mono"
+            class="commits-toggle eyebrow"
             data-testid="commits-toggle"
             :aria-expanded="commitsOpen"
             @click="commitsOpen = !commitsOpen"
@@ -470,14 +470,6 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
-}
-
-.base-select .label {
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
 }
 
 .base-select select {
@@ -591,17 +583,14 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
   background: var(--surface);
 }
 
+/* Type comes from .eyebrow (style.css); the weight is per-site by design. */
 .commits-toggle {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
   width: 100%;
   padding: 0.375rem 0.75rem;
-  font-size: var(--fs-micro);
   font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-dim);
   text-align: left;
 }
 

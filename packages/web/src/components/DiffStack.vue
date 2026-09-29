@@ -1382,7 +1382,7 @@ defineExpose({
         <span v-if="item.uncommitted" class="uncommitted-tag mono">{{
           item.uncommitted === 'both' ? '[uncommitted]' : `[${item.uncommitted}]`
         }}</span>
-        <span class="stats mono">
+        <span class="row-stats mono">
           <span v-if="item.stats.insertions" class="count-add">+{{ item.stats.insertions }}</span>
           <span v-if="item.stats.deletions" class="count-del"
             >&minus;{{ item.stats.deletions }}</span
@@ -1684,14 +1684,6 @@ defineExpose({
 
 .file-diff-header.uncommitted .path {
   color: var(--uncommitted);
-}
-
-.file-diff-header .stats {
-  flex: none;
-  margin-left: auto;
-  display: inline-flex;
-  gap: 0.375rem;
-  font-size: var(--fs-small);
 }
 
 .collapse-btn {

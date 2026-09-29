@@ -169,8 +169,8 @@ describe('files column', () => {
     const rows = wrapper.find('[data-testid="section-modified"]').findAll('.file-row');
 
     // main.ts unstaged: 2 of 3 hunks on this side.
-    expect(rows[0].find('.stats .count-add').text()).toBe('+10');
-    expect(rows[0].find('.stats .count-del').text()).toBe('−2');
+    expect(rows[0].find('.row-stats .count-add').text()).toBe('+10');
+    expect(rows[0].find('.row-stats .count-del').text()).toBe('−2');
     expect(rows[0].find('.hunks').text()).toBe('●2/3');
 
     // util.ts: all 1 hunk unstaged → bare total.
