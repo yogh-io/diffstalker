@@ -147,14 +147,24 @@ function repoDeletes(): string[] {
   return fake.calls.filter((c) => c.method === 'DELETE').map((c) => c.url);
 }
 
+/**
+ * Every stream still open. There must be exactly one (it carries `?repo=`
+ * once a repo is attached) — so this filters on open-ness ONLY: a filter on
+ * the URL would let a stray second endpoint slip past the one-stream checks.
+ */
+function liveSources(): FakeEventSource[] {
+  return FakeEventSource.instances.filter((s) => !s.closed);
+}
+
 function daemonSource(): FakeEventSource {
-  const source = FakeEventSource.instances.find((s) => s.url === '/events');
+  const source = liveSources().at(-1);
   if (!source) throw new Error('daemon stream not subscribed');
   return source;
 }
 
+/** The live stream, when it is attached to the given repo. */
 function repoSource(id: string): FakeEventSource | undefined {
-  return FakeEventSource.instances.find((s) => s.url === `/repos/${id}/events` && !s.closed);
+  return liveSources().find((s) => s.url === `/events?repo=${id}`);
 }
 
 function mountApp(): VueWrapper {
@@ -299,6 +309,9 @@ describe('repo selection', () => {
     const repo = useRepoStore();
     expect(repo.repoPath).toBe('/repo');
     expect(repoSource('r1')).toBeDefined();
+    // ONE stream per tab, the repo riding along on it — a second
+    // EventSource per tab is what exhausted the browser's connection pool.
+    expect(liveSources().map((s) => s.url)).toEqual(['/events?repo=r1']);
     expect(repoPosts()).toEqual(['/repo']);
     expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(false);
     wrapper.unmount();
@@ -632,7 +645,7 @@ describe('live readouts', () => {
   test('a repo snapshot fills the file list, branch info, and change count', async () => {
     const wrapper = await mountWithRepos([REPO_ONE]);
 
-    repoSource('r1')!.emit('snapshot', SHARED_STATE);
+    repoSource('r1')!.emit('repo-snapshot', SHARED_STATE);
     await flushPromises();
 
     // Changes view: grouped rows (Modified / Staged) with paths.
@@ -666,6 +679,217 @@ describe('view toolbar slot', () => {
     // row under the rail — NOT in the rail beside the global toggles.
     expect(wrapper.find('.view-toolbar-strip #view-toolbar-slot').exists()).toBe(true);
     expect(wrapper.find('nav[aria-label="Views"] #view-toolbar-slot').exists()).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+// --- Deep link on a cold load against a slow or down daemon ---
+
+describe('deep link on a cold load', () => {
+  const HOME = '/home/u';
+  const DEEP = '/compare/~/gitRepos/calculator/pr-8858-wt?at=source/CommonPage.ts';
+  const DEEP_NO_ANCHOR = '/compare/~/gitRepos/calculator/pr-8858-wt';
+  const ABS = `${HOME}/gitRepos/calculator/pr-8858-wt`;
+
+  let health: Deferred<FakeResponse>;
+  let openRepo: Deferred<FakeResponse>;
+  /** True while POST /repos should die on the network at request time. */
+  let reposUnreachable = false;
+
+  function here(): string {
+    return window.location.pathname + window.location.search;
+  }
+
+  function compareBody(): FakeResponse {
+    return {
+      body: {
+        baseBranch: 'origin/main',
+        stats: { filesChanged: 2, additions: 2, deletions: 0 },
+        // The anchored file is deliberately NOT first: the view selects
+        // file 0 on its own, so a first-row anchor would land by accident.
+        files: [
+          {
+            path: 'source/Other.ts',
+            status: 'modified',
+            additions: 1,
+            deletions: 0,
+            diff: { lines: [] },
+          },
+          {
+            path: 'source/CommonPage.ts',
+            status: 'modified',
+            additions: 1,
+            deletions: 0,
+            diff: { lines: [] },
+          },
+        ],
+        commits: [],
+        uncommittedCount: 0,
+      },
+    };
+  }
+
+  /** The base routes, plus a held /health and POST /repos, a status pull
+   * for recovery, and a compare answer that holds the anchored file. */
+  function slowRoutes(call: FetchCall): FakeResponse | Promise<FakeResponse> {
+    if (call.url === '/health') return health.promise;
+    if (call.method === 'POST' && call.url === '/repos') {
+      if (reposUnreachable) throw new TypeError('Failed to fetch');
+      return openRepo.promise;
+    }
+    if (/^\/repos\/[^/]+\/status$/.test(call.url)) return { body: SHARED_STATE };
+    if (/^\/repos\/[^/]+\/compare\?/.test(call.url)) return compareBody();
+    return routes(call);
+  }
+
+  beforeEach(() => {
+    health = new Deferred();
+    openRepo = new Deferred();
+    reposUnreachable = false;
+    fake = makeFakeFetch(slowRoutes);
+    vi.stubGlobal('fetch', fake.fn);
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, '', '/');
+  });
+
+  test('the link stays in the address bar while /health and POST /repos are pending', async () => {
+    window.history.replaceState(null, '', DEEP);
+    const wrapper = mountApp();
+    await flushPromises();
+    // Nothing has answered: the view is set, the repo is not open, and the
+    // URL must not be rewritten to `/` over the link the user came with.
+    expect(useUiStore().activeView).toBe('compare');
+    expect(here()).toBe(DEEP);
+
+    health.resolve({ body: { ok: true, ready: true, home: HOME } });
+    await flushPromises();
+    // The POST is out and still pending.
+    expect(repoPosts()).toEqual([ABS]);
+    expect(here()).toBe(DEEP);
+    wrapper.unmount();
+  });
+
+  test('a slow but successful open keeps the link throughout', async () => {
+    window.history.replaceState(null, '', DEEP);
+    const wrapper = mountApp();
+    await flushPromises();
+    health.resolve({ body: { ok: true, ready: true, home: HOME } });
+    await flushPromises();
+    expect(here()).toBe(DEEP);
+
+    openRepo.resolve({ body: { id: 'r-calc', path: ABS } });
+    await flushPromises();
+    await flushPromises();
+    expect(useDaemonStore().activeRepoId).toBe('r-calc');
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(false);
+    expect(here()).toBe(DEEP);
+    wrapper.unmount();
+  });
+
+  test('an open that dies on a connection error recovers into the repo, the URL and the anchor', async () => {
+    window.history.replaceState(null, '', DEEP);
+    const wrapper = mountApp();
+    await flushPromises();
+    health.resolve({ body: { ok: true, ready: true, home: HOME } });
+    await flushPromises();
+
+    // The POST dies on the network (not a daemon refusal). The store
+    // commits to the path and schedules recovery; the link must survive.
+    openRepo.reject(new TypeError('Failed to fetch'));
+    await flushPromises();
+    const daemon = useDaemonStore();
+    const repo = useRepoStore();
+    expect(repo.repoId).toBeNull();
+    expect(repo.repoPath).toBe(ABS);
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
+    expect(here()).toBe(DEEP);
+
+    // The daemon comes back: recovery re-POSTs and succeeds.
+    openRepo = new Deferred();
+    openRepo.resolve({ body: { id: 'r-calc', path: ABS } });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await flushPromises();
+    expect(repoPosts()).toEqual([ABS, ABS]);
+    expect(repo.repoId).toBe('r-calc');
+    // The recovered repo is the active one: the view is up, not the empty
+    // state, and the URL names the repo.
+    expect(daemon.activeRepoId).toBe('r-calc');
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(false);
+    expect(here().startsWith(DEEP_NO_ANCHOR)).toBe(true);
+
+    // The parked anchor lands once the compare pull answers, and the
+    // ambient anchor write flushes after its throttle.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await flushPromises();
+    expect(repo.compare.selection.type).toBe('file');
+    expect(here()).toBe(DEEP);
+    wrapper.unmount();
+  });
+
+  test('a ~ link loaded while the daemon is down waits for /health, then opens the home-expanded path', async () => {
+    window.history.replaceState(null, '', DEEP);
+    const wrapper = mountApp();
+    await flushPromises();
+
+    // The daemon is down: /health cannot be reached. Without a home the
+    // `~` link cannot be resolved, so nothing may be opened — expanding
+    // it to an absolute path would POST a path that is not the repo, the
+    // store would commit to it, and recovery would retry that wrong path
+    // every second for good once the daemon is back.
+    health.reject(new TypeError('Failed to fetch'));
+    await flushPromises();
+    expect(repoPosts()).toEqual([]);
+    expect(useRepoStore().repoPath).toBeNull();
+    expect(here()).toBe(DEEP);
+
+    // The daemon is back: the retry answers, and the open names the real path.
+    health = new Deferred();
+    health.resolve({ body: { ok: true, ready: true, home: HOME } });
+    openRepo.resolve({ body: { id: 'r-calc', path: ABS } });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await flushPromises();
+    expect(repoPosts()).toEqual([ABS]);
+    expect(useRepoStore().repoPath).toBe(ABS);
+    expect(useDaemonStore().activeRepoId).toBe('r-calc');
+    expect(here().startsWith(DEEP_NO_ANCHOR)).toBe(true);
+    wrapper.unmount();
+  });
+
+  test('a parked anchor is dropped when the user picks another repo before it lands', async () => {
+    window.history.replaceState(null, '', '/changes/~/gitRepos/calculator/pr-8858-wt?at=u:src/a.ts');
+    const wrapper = mountApp();
+    await flushPromises();
+    health.resolve({ body: { ok: true, ready: true, home: HOME } });
+    await flushPromises();
+
+    // The POST dies on the network: the store commits to the link's repo,
+    // and the anchor parks until that repo's status lands.
+    openRepo.reject(new TypeError('Failed to fetch'));
+    await flushPromises();
+    const repo = useRepoStore();
+    expect(repo.repoPath).toBe(ABS);
+
+    // Still down, the user picks another repo. That open dies the same
+    // way, and the store now commits to the picked one instead.
+    reposUnreachable = true;
+    await typePathAndOpen(wrapper, '/other');
+    expect(repo.repoPath).toBe('/other');
+
+    // The daemon returns: recovery opens the PICKED repo and its status
+    // lands. It happens to have a file by the anchored name, and that file
+    // must not be selected — the anchor named a file in the link's repo.
+    reposUnreachable = false;
+    openRepo = new Deferred();
+    openRepo.resolve({ body: { id: 'r-other', path: '/other' } });
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    await flushPromises();
+    expect(repoPosts()).toEqual([ABS, '/other', '/other']);
+    expect(useDaemonStore().activeRepoId).toBe('r-other');
+    expect(repo.shared.status?.files.map((f) => f.path)).toContain('src/a.ts');
+    expect(repo.selection.file).toBeNull();
+    expect(useUiStore().activeStackKey).toBeNull();
     wrapper.unmount();
   });
 });

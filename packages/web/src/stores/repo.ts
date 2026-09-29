@@ -12,8 +12,9 @@
  * close a web-touched repo.
  *
  * - shared state (status, hunk counts, stash list, in-progress op, error)
- *   is fed by the per-repo SSE stream through the single applyWireState
- *   sink;
+ *   is fed by the repo's events on the tab's ONE SSE stream — owned by
+ *   the daemon store, which this store attaches the repo to (GET
+ *   /events?repo=<id>) — through the single applyWireState sink;
  * - selection tracks the ACTIVE file only (auto mode's anchor and the
  *   list's re-anchoring). It fetches NOTHING — the stacked Changes
  *   surface reads per-file diffs from workingDiffs; the old per-selection
@@ -59,12 +60,22 @@
  * caller — loadHistory and selectHistoryCommit — are the exceptions; a view
  * calling those awaits and catches (connection errors still collapse quietly).
  *
- * Reconnect: when the SSE stream drops, ONE calm status line lands in
- * shared.error and a single-flight recovery loop re-POSTs /repos (the
- * path-hashed id is stable across a daemon restart), resubscribes, and
- * pulls a fresh status — which clears the line. The browser cannot spawn
- * a daemon (unlike the CLI's ensureDaemon); it just retries until the
- * daemon is back.
+ * Reconnect: when the stream drops — or it reconnects on its own and
+ * the daemon answers `repo-missing` (it was restarted, so the repo is
+ * not open there any more) — ONE calm status line lands in shared.error
+ * and a single-flight recovery loop re-POSTs /repos (the path-hashed id
+ * is stable across a daemon restart), re-attaches, and pulls a fresh
+ * status — which clears the line. The shared stream is never closed
+ * from here: the daemon-scope status rides on it and the browser keeps
+ * retrying it. The browser cannot spawn a daemon (unlike the CLI's
+ * ensureDaemon); it just retries until the daemon is back.
+ *
+ * A hidden tab is different: the daemon store closes the stream on
+ * purpose (a hidden tab must not hold a connection), with no loss signal
+ * and no recovery. The repo ref stays held, the daemon resends the
+ * snapshots when the tab is shown, and this store only refetches the
+ * journal tail then (onResume, fired once the resent snapshot is in) —
+ * the same resync recovery runs.
  *
  * Deviations from RepoSession, both singleton-store realities:
  * - a generation counter guards async completions across open() calls
@@ -82,7 +93,7 @@ import { splitDiffByFile } from '@diffstalker/core/view/splitDiffByFile';
 import { isLargeFileDiff } from '@diffstalker/core/git/diffParse';
 import { diffModel } from '../utils/diffRows';
 import type { DiffModel } from '../utils/diffRows';
-import type { SseHandle } from '../api/transport';
+import { useDaemonStore } from './daemon';
 import type {
   JournalAppendEvent,
   JournalResponse,
@@ -266,6 +277,8 @@ function initialCompare(): RepoCompareState {
 
 export const useRepoStore = defineStore('repo', () => {
   const client = new DiffstalkerClient();
+  /** Owns the tab's one event stream; this store attaches its repo to it. */
+  const daemon = useDaemonStore();
 
   // --- Reactive state (shallowRefs, whole-value replacement) ---
 
@@ -377,7 +390,6 @@ export const useRepoStore = defineStore('repo', () => {
    * read it. See errorLineFor for how the two are merged.
    */
   let refusal: Refusal | null = null;
-  let subscription: SseHandle | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let recovering = false;
   let historyPullInFlight = false;
@@ -482,10 +494,13 @@ export const useRepoStore = defineStore('repo', () => {
 
   // --- Lifecycle ---
 
-  /** Drop everything that belongs to the repo being left behind. */
+  /**
+   * Drop everything that belongs to the repo being left behind. The
+   * stream attachment is NOT touched here: the caller either attaches
+   * the next repo right after (which replaces it in one reopen) or
+   * detaches explicitly.
+   */
   function resetForNewRepo(): void {
-    subscription?.close();
-    subscription = null;
     clearTimers();
     recovering = false;
     // A refusal belongs to the repo it was refused in.
@@ -533,7 +548,7 @@ export const useRepoStore = defineStore('repo', () => {
 
   /**
    * Open a repo — the SOLE place a repo ref is taken (POST /repos) — and
-   * subscribe to its SSE stream. After a successful open, the previous
+   * attach it to the event stream. After a successful open, the previous
    * repo's ref is released: net-zero on a switch (release old, hold new)
    * AND on a re-open of the same repo (the POST bumped it to 2, the
    * release brings it back to 1). A superseded open (a newer open()
@@ -583,7 +598,10 @@ export const useRepoStore = defineStore('repo', () => {
       if (isConnectionError(err)) {
         // Daemon unreachable mid-open: commit to the requested path so
         // recovery retries it, then one calm line + background retry.
+        // The previous repo's attachment goes too — nothing here may
+        // apply its events any more, and recovery attaches the new one.
         resetForNewRepo();
+        daemon.detachRepo();
         repoId.value = null;
         repoPath.value = path;
         handleConnectionLoss();
@@ -596,29 +614,50 @@ export const useRepoStore = defineStore('repo', () => {
     }
   }
 
-  /** Subscribe to the repo's SSE stream. No-op in not-a-repo mode. */
+  /**
+   * Attach the repo to the tab's event stream (the daemon store reopens
+   * it with ?repo=<id>, replacing any earlier attachment; in a hidden
+   * tab it records the attachment and opens the stream when the tab is
+   * shown). No-op in not-a-repo mode.
+   */
   function connect(): void {
-    if (repoId.value === null) return;
-    subscription?.close();
-    subscription = client.subscribeRepo(repoId.value, {
+    const id = repoId.value;
+    if (id === null) return;
+    daemon.attachRepo(id, {
       onSnapshot: (state) => applyWireState(state),
       onStateChange: (state) => applyWireState(state),
       onJournalAppend: (event: JournalAppendEvent) => applyJournalAppend(event),
-      // An EventSource error IS the connection-down signal; recovery is
-      // managed here (close + retry loop), not by the browser's auto-retry,
-      // because a restarted daemon needs the repo re-POSTed first.
+      // The stream was paused while the tab was hidden and is back: the
+      // daemon resent the snapshot (applied through onSnapshot just
+      // before this fires), but journal appends sent during the pause
+      // are gone for good: refetch the tail from the watermark, exactly
+      // as recovery does after a drop. The daemon store fires this only
+      // once the resent snapshot is in, so the stream is live by now and
+      // nothing can land in the gap between this fetch and the stream.
+      onResume: () => void resyncJournal(), // catches internally; never rejects
+      // The stream reconnected on its own but the daemon no longer has
+      // the repo open (it was restarted): a restarted daemon needs the
+      // repo re-POSTed before it can stream it, which is what recovery
+      // does. Only for the repo on screen — a report about another id is
+      // stale and must not knock this one into recovery.
+      onMissing: ({ id: missing }) => {
+        if (missing === repoId.value) handleConnectionLoss();
+      },
+      // A stream error IS the connection-down signal. The browser keeps
+      // retrying the stream itself; recovery here re-POSTs the repo and
+      // re-attaches, since the retried stream alone cannot bring back a
+      // repo a restarted daemon does not have.
       onError: () => handleConnectionLoss(),
     });
   }
 
   /**
-   * Unsubscribe and release the daemon-side refcount. The store can be
-   * reused afterwards via open().
+   * Detach from the stream and release the daemon-side refcount. The
+   * store can be reused afterwards via open().
    */
   async function dispose(): Promise<void> {
     const gen = ++generation;
-    subscription?.close();
-    subscription = null;
+    daemon.detachRepo();
     clearTimers();
     recovering = false;
     const id = repoId.value ?? heldRepoId;
@@ -652,9 +691,12 @@ export const useRepoStore = defineStore('repo', () => {
 
   // --- Reconnect (single-flight, no daemon spawn) ---
 
+  /**
+   * The shared stream is deliberately left alone here: it is the daemon
+   * store's, the daemon-scope status depends on it, and the browser is
+   * already retrying it. Recovery re-attaches once the repo is re-opened.
+   */
   function handleConnectionLoss(): void {
-    subscription?.close();
-    subscription = null;
     // A dead daemon supersedes any standing refusal: it is the more
     // urgent condition, and nothing can be resolved until it is back.
     refusal = null;
@@ -678,9 +720,11 @@ export const useRepoStore = defineStore('repo', () => {
 
   /**
    * Single-flight recovery: re-POST /repos (a restarted daemon has an
-   * empty registry; the path-hashed id is stable), resubscribe, and apply
+   * empty registry; the path-hashed id is stable), re-attach, and apply
    * a fresh /status snapshot — which clears the connection error. On any
-   * failure, keep the error and retry. Never throws.
+   * failure, keep the error and retry. Never throws. In a hidden tab the
+   * re-attach opens no stream (the daemon store holds it until the tab
+   * is shown); the /status pull still lands, so the error still clears.
    *
    * The re-POST deliberately does NOT release anything: against a
    * restarted daemon there is nothing to release, and against a
@@ -699,6 +743,13 @@ export const useRepoStore = defineStore('repo', () => {
       // still-unreleased older repo the next successful open releases).
       heldRepoId ??= ref.id;
       repoId.value = ref.id;
+      // Make it the active repo daemon-side too. Recovery is the one
+      // opener that does not run through useRepoOpen: after an open()
+      // that died on a connection error, nothing else ever tracks the
+      // recovered repo, so the empty state would stay up and the URL
+      // gate (repoId === activeRepoId) would never reopen. Same id on a
+      // live-daemon blip: a no-op apart from clearing a stale error.
+      daemon.trackActive(ref);
       connect();
       const state = await client.status(ref.id);
       if (gen !== generation) return;

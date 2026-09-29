@@ -313,41 +313,32 @@ describe('read-only surface', () => {
   });
 });
 
-describe('SSE subscriptions', () => {
-  test('subscribeRepo dispatches snapshot, state-change, and journal-append', () => {
-    const onSnapshot = vi.fn();
-    const onStateChange = vi.fn();
-    const onJournalAppend = vi.fn();
-    client.subscribeRepo('r1', { onSnapshot, onStateChange, onJournalAppend });
+describe('SSE subscription (one stream)', () => {
+  function daemonHandlers() {
+    return {
+      onSnapshot: vi.fn(),
+      onRepoOpened: vi.fn(),
+      onRepoClosed: vi.fn(),
+      onFollowChange: vi.fn(),
+      onSettingsChange: vi.fn(),
+      onDiscoveryChange: vi.fn(),
+      onError: vi.fn(),
+    };
+  }
 
-    const source = FakeEventSource.latest();
-    expect(source.url).toBe('/repos/r1/events');
-    source.emit('snapshot', { status: null, error: null });
-    source.emit('state-change', { status: null, error: 'x' });
-    source.emit('journal-append', { entries: [{ type: 'boundary', seq: 1 }] });
-    expect(onSnapshot).toHaveBeenCalledWith({ status: null, error: null });
-    expect(onStateChange).toHaveBeenCalledWith({ status: null, error: 'x' });
-    // journal-append routes to its own handler, never into state-change.
-    expect(onJournalAppend).toHaveBeenCalledWith({ entries: [{ type: 'boundary', seq: 1 }] });
-    expect(onStateChange).toHaveBeenCalledTimes(1);
-  });
+  function repoHandlers() {
+    return {
+      onSnapshot: vi.fn(),
+      onStateChange: vi.fn(),
+      onJournalAppend: vi.fn(),
+      onMissing: vi.fn(),
+      onError: vi.fn(),
+    };
+  }
 
-  test('subscribeRepo without a journal handler ignores journal-append', () => {
-    const onSnapshot = vi.fn();
-    const onStateChange = vi.fn();
-    client.subscribeRepo('r1', { onSnapshot, onStateChange });
-
-    const source = FakeEventSource.latest();
-    source.emit('journal-append', { entries: [] });
-    expect(onStateChange).not.toHaveBeenCalled();
-  });
-
-  test('subscribeDaemon dispatches all four daemon-scope events', () => {
-    const onSnapshot = vi.fn();
-    const onRepoOpened = vi.fn();
-    const onRepoClosed = vi.fn();
-    const onFollowChange = vi.fn();
-    client.subscribeDaemon({ onSnapshot, onRepoOpened, onRepoClosed, onFollowChange });
+  test('without a repo it opens /events and dispatches the daemon-scope events', () => {
+    const handlers = daemonHandlers();
+    client.subscribeEvents(handlers);
 
     const source = FakeEventSource.latest();
     expect(source.url).toBe('/events');
@@ -355,13 +346,69 @@ describe('SSE subscriptions', () => {
     source.emit('repo-opened', { id: 'r2', path: '/other' });
     source.emit('repo-closed', { id: 'r1' });
     source.emit('follow-change', { repoId: 'r2', path: '/other', rawContent: '/other/f.ts' });
-    expect(onSnapshot).toHaveBeenCalledWith([{ id: 'r1', path: '/repo' }]);
-    expect(onRepoOpened).toHaveBeenCalledWith({ id: 'r2', path: '/other' });
-    expect(onRepoClosed).toHaveBeenCalledWith({ id: 'r1' });
-    expect(onFollowChange).toHaveBeenCalledWith({
+    source.emit('settings-change', { watchRoots: ['/w'], persisted: true });
+    source.emit('discovery-change', { roots: [] });
+    expect(handlers.onSnapshot).toHaveBeenCalledWith([{ id: 'r1', path: '/repo' }]);
+    expect(handlers.onRepoOpened).toHaveBeenCalledWith({ id: 'r2', path: '/other' });
+    expect(handlers.onRepoClosed).toHaveBeenCalledWith({ id: 'r1' });
+    expect(handlers.onFollowChange).toHaveBeenCalledWith({
       repoId: 'r2',
       path: '/other',
       rawContent: '/other/f.ts',
     });
+    expect(handlers.onSettingsChange).toHaveBeenCalledWith({ watchRoots: ['/w'], persisted: true });
+    expect(handlers.onDiscoveryChange).toHaveBeenCalledWith({ roots: [] });
+  });
+
+  test('with a repo it opens /events?repo=<id> (encoded) and routes the repo events', () => {
+    const daemon = daemonHandlers();
+    const repo = repoHandlers();
+    client.subscribeEvents(daemon, { id: 'id with spaces', handlers: repo });
+
+    const source = FakeEventSource.latest();
+    expect(source.url).toBe('/events?repo=id%20with%20spaces');
+    // Both halves on the same EventSource.
+    source.emit('snapshot', [{ id: 'r1', path: '/repo' }]);
+    source.emit('repo-snapshot', { status: null, error: null });
+    source.emit('state-change', { status: null, error: 'x' });
+    source.emit('journal-append', { epoch: 'e1', entries: [{ type: 'boundary', seq: 1 }] });
+    source.emit('repo-missing', { id: 'id with spaces' });
+    expect(daemon.onSnapshot).toHaveBeenCalledWith([{ id: 'r1', path: '/repo' }]);
+    expect(repo.onSnapshot).toHaveBeenCalledWith({ status: null, error: null });
+    expect(repo.onStateChange).toHaveBeenCalledWith({ status: null, error: 'x' });
+    // journal-append routes to its own handler, never into state-change.
+    expect(repo.onJournalAppend).toHaveBeenCalledWith({
+      epoch: 'e1',
+      entries: [{ type: 'boundary', seq: 1 }],
+    });
+    expect(repo.onStateChange).toHaveBeenCalledTimes(1);
+    expect(repo.onMissing).toHaveBeenCalledWith({ id: 'id with spaces' });
+    // The daemon snapshot (the repo list) never lands on the repo side.
+    expect(repo.onSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  test('without a journal handler, journal-append is ignored', () => {
+    const repo = { onSnapshot: vi.fn(), onStateChange: vi.fn(), onMissing: vi.fn() };
+    client.subscribeEvents(daemonHandlers(), { id: 'r1', handlers: repo });
+
+    FakeEventSource.latest().emit('journal-append', { epoch: 'e1', entries: [] });
+    expect(repo.onStateChange).not.toHaveBeenCalled();
+  });
+
+  test('a stream error reaches both handler sets', () => {
+    const daemon = daemonHandlers();
+    const repo = repoHandlers();
+    client.subscribeEvents(daemon, { id: 'r1', handlers: repo });
+
+    FakeEventSource.latest().fail();
+    expect(daemon.onError).toHaveBeenCalledTimes(1);
+    expect(repo.onError).toHaveBeenCalledTimes(1);
+  });
+
+  test('the web client has no caller of the per-repo stream endpoint', () => {
+    // /repos/:id/events still exists for the CLI; the web UI must not open
+    // it, or every tab is back to two connections.
+    expect((client as unknown as Record<string, unknown>).subscribeRepo).toBeUndefined();
+    expect((client as unknown as Record<string, unknown>).subscribeDaemon).toBeUndefined();
   });
 });

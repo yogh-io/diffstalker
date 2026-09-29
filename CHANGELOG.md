@@ -19,6 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Many web tabs no longer hang the UI.** Each tab held two live event
+  streams: one for the daemon and one for the open repo. Browsers allow only
+  six open connections per host, so three tabs used them all, and every
+  request after that waited forever. The page looked frozen while the daemon
+  sat idle. Two changes fix it. A tab now holds one stream:
+  `GET /events?repo=<id>` carries the daemon events and the repo events
+  together. And a tab that stays hidden for ten seconds closes its stream;
+  when you come back it reopens, gets fresh state and fills the journal gap.
+  So only the tabs you can see hold a connection, however many are open.
+  `GET /repos/:id/events` stays for the terminal UI, which has no such limit.
+- **A deep link survives a slow or failed first load.** Opening a link like
+  `/compare/<repo>?at=<file>` wrote `/` into the address bar before the repo
+  had opened. Normally that lasted a few milliseconds; when requests stalled it
+  lasted minutes, and a reload then lost the link. If the open failed and the
+  tab reconnected later, the repo came back in the background but the page
+  stayed on "Open a repository". Now the link stays put until the repo opens,
+  a reconnect shows the repo it reopened, and the `?at=` file is still
+  selected afterwards.
 - **Opening a commit from a link no longer sticks on "Loading diff…".** The
   history reload swapped in a new copy of the same commit while its diff was
   loading, and the diff was thrown away as stale. It is now matched by hash.

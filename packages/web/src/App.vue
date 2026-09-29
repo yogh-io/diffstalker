@@ -3,7 +3,13 @@
  * App shell: header / activity rail / workspace / status bar on a CSS
  * grid. Owns the daemon connection and the warm-daemon auto-activation:
  *
- * - onMounted: daemonStore.connect() (daemon-scope SSE);
+ * - onMounted: daemonStore.connect() — the tab's ONE SSE stream, which
+ *   the active repo's events ride along on (repoStore attaches it). A
+ *   hidden tab holds no stream: the daemon store closes it after a short
+ *   delay and reopens it when the tab is shown. A tab that loads hidden
+ *   (opened in the background) opens nothing until it is first shown —
+ *   the repo list and follow state below arrive then, and so does the
+ *   auto-activation; a URL restore still opens its repo over REST;
  * - activation flows through useRepoOpen (switcher, open-by-path, and
  *   the auto-activation below) — repoStore.open() is the sole opener;
  * - one-shot auto-activation: when the first daemon repo list AND the
@@ -100,10 +106,19 @@ onMounted(() => {
  * tab hidden — the daemon would dispose the repo's watchers and the
  * journal would miss exactly the edits it exists to record (and the
  * store's SSE recovery loop would re-take the ref ~1s later anyway,
- * making it pure dispose/reopen churn). On real unloads pagehide fires
- * after visibilitychange, so nothing is lost by skipping it. If the
- * page returns from bfcache the SSE stream is dead, so the store's
- * recovery loop re-POSTs /repos and re-acquires the ref on its own.
+ * making it pure dispose/reopen churn). The daemon store does react to
+ * hidden, but only by pausing the STREAM (a hidden tab must not hold a
+ * connection); the ref, and with it the watchers, stay. On real unloads
+ * pagehide fires after visibilitychange, so nothing is lost by skipping
+ * it. If the page returns from bfcache the ref released here has to be
+ * re-acquired, and that happens on its own: a tab hidden longer than
+ * the close delay holds no stream, so on `visible` the daemon store
+ * reopens `/events?repo=<id>`; when the release above was the last ref
+ * the daemon has closed the repo and answers `repo-missing`, and the
+ * store's recovery loop re-POSTs /repos. A stream that was still open
+ * when the page was frozen gets the same `repo-missing` (the daemon
+ * sends it to attached streams when it closes a repo), or errors if the
+ * connection died meanwhile — both enter the same recovery.
  */
 const releaseOnPageHide = (): void => {
   repo.releaseOnUnload();
@@ -162,8 +177,19 @@ const urlSync = useUrlSync({ onRestore: applyUrlState });
  * status snapshot or a compare pull that may never come — it records what
  * it is aiming at and returns; the watchers below apply it when the data
  * arrives, and drop it if the user moves first.
+ *
+ * `repoPath` is the repo the anchor names — the one the store had
+ * committed to when it was parked. The watchers only apply it to THAT
+ * repo's data: with recovery in the loop the wait is unbounded, and a
+ * user who picks another repo meanwhile must not get a file from the
+ * link's repo selected in the one they chose.
  */
-const pendingAnchor = ref<{ view: ViewName; at: string; whole?: string | null } | null>(null);
+const pendingAnchor = ref<{
+  view: ViewName;
+  at: string;
+  whole?: string | null;
+  repoPath: string | null;
+} | null>(null);
 
 /**
  * Show the place a URL names — a deep link on cold load and every Back /
@@ -191,11 +217,27 @@ async function applyUrlState(state: UrlState, ctx: RestoreContext): Promise<void
   const coldLoad = daemon.activeRepoId === null;
   if (coldLoad && state.view !== null) ui.setActiveView(state.view);
 
-  if (!(await openUrlRepo(state, ctx))) return;
+  if (!(await openUrlRepo(state, ctx)) && !recoveringUrlRepo(state, ctx)) return;
 
   if (!coldLoad && state.view !== null) ui.setActiveView(state.view);
   if (state.view === null) return;
   await applyAnchor(state, ctx);
+}
+
+/**
+ * The open died on a connection error, and the repo store committed to
+ * the link's path (repoPath set, repoId null) for recovery to retry. The
+ * rest of the place is still worth applying: the view now, and the anchor
+ * parked until the data lands after recovery. Without this, `?at=` on a
+ * cold load against a slow daemon was simply dropped.
+ */
+function recoveringUrlRepo(state: UrlState, ctx: RestoreContext): boolean {
+  return (
+    !ctx.isStale() &&
+    state.repo !== null &&
+    repo.repoId === null &&
+    repo.repoPath === urlSync.toAbsolute(state.repo)
+  );
 }
 
 /**
@@ -263,7 +305,7 @@ function applyChangesAnchor(at: string | null, whole: string | null = null): voi
     // status yet), and replaying without it would drop `whole=1` on the
     // floor — the next truthful write would then rewrite the URL without
     // it, so F5 on a whole-file link would silently give you hunks.
-    pendingAnchor.value = { view: 'changes', at, whole };
+    pendingAnchor.value = { view: 'changes', at, whole, repoPath: repo.repoPath };
     return;
   }
   const path = at.slice(at.indexOf(':') + 1);
@@ -346,7 +388,12 @@ async function applyCompareAnchor(state: UrlState, ctx: RestoreContext): Promise
   }
   const files = repo.compare.compareDiff?.files;
   if (!files) {
-    pendingAnchor.value = { view: 'compare', at: state.at, whole: state.whole };
+    pendingAnchor.value = {
+      view: 'compare',
+      at: state.at,
+      whole: state.whole,
+      repoPath: repo.repoPath,
+    };
     return;
   }
   const index = files.findIndex((f) => f.path === state.at);
@@ -370,12 +417,28 @@ async function applyCompareAnchor(state: UrlState, ctx: RestoreContext): Promise
 
 // The parked anchor lands when its data does. Both watchers check the view
 // is still the one that parked it, so a user who moved on in the meantime
-// is never yanked back.
+// is never yanked back — and that the data is the parked repo's, so a
+// link's anchor is never applied to a repo the user picked while waiting.
+
+/**
+ * True when the data that just landed belongs to the repo the anchor was
+ * parked for. Another repo's data means the user moved on (the store
+ * commits to a repo the moment it is asked for): the parked anchor names
+ * a file that is not here, so it is dropped rather than kept for a repo
+ * that may never land.
+ */
+function parkedRepoLanded(parked: { repoPath: string | null }): boolean {
+  if (parked.repoPath === repo.repoPath) return true;
+  pendingAnchor.value = null;
+  return false;
+}
+
 watch(
   () => repo.shared.status,
   () => {
     const parked = pendingAnchor.value;
     if (parked?.view !== 'changes' || ui.activeView !== 'changes') return;
+    if (!parkedRepoLanded(parked)) return;
     pendingAnchor.value = null;
     applyChangesAnchor(parked.at, parked.whole ?? null);
   }
@@ -386,6 +449,7 @@ watch(
   (compareDiff) => {
     const parked = pendingAnchor.value;
     if (parked?.view !== 'compare' || ui.activeView !== 'compare' || !compareDiff) return;
+    if (!parkedRepoLanded(parked)) return;
     pendingAnchor.value = null;
     const index = compareDiff.files.findIndex((f) => f.path === parked.at);
     if (index === -1) return;

@@ -1,7 +1,10 @@
 /**
  * useDaemonStore tests: daemon-scope SSE handling (snapshot, repo
- * opened/closed, follow-change), connection status, and the repo
- * open/close/active actions. Globals stubbed — no daemon.
+ * opened/closed, follow-change), connection status, the repo
+ * open/close/active actions, the ownership of the tab's ONE stream
+ * (attachRepo / detachRepo reopen it with or without `?repo=`), and the
+ * hidden-tab pause (a hidden tab holds no stream). Globals stubbed — no
+ * daemon.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -10,6 +13,7 @@ import {
   useDaemonStore,
   FOLLOW_LOAD_ATTEMPTS,
   FOLLOW_RETRY_DELAY_MS,
+  HIDDEN_CLOSE_DELAY_MS,
   VERSION_POLL_MS,
 } from './daemon';
 import { makeFakeFetch, FakeEventSource } from '../testing/fakes';
@@ -62,6 +66,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // The store listens on the shared document for visibility changes and
+  // may hold a paused stream; disconnect drops both, or a later test's
+  // visibility change would wake this test's store.
+  useDaemonStore().disconnect();
   vi.unstubAllGlobals();
   // A test that enables fake timers must not leave them on: flush() is a
   // real setTimeout and would hang in whatever runs next.
@@ -183,6 +191,40 @@ describe('useDaemonStore', () => {
 
     expect(store.follow).toMatchObject({ followedRepoId: 'r3', followedPath: '/third' });
     expect(store.lastFollowChange).toEqual({ repoId: 'r3', path: '/third', rawContent: '/third' });
+  });
+
+  test('a reopen does not re-seed a target whose repo did not change, even with a stale root', async () => {
+    let followState: Record<string, unknown> = FOLLOW_STATE;
+    onRequest = (call) => (call.url === '/follow' ? { body: followState } : undefined);
+    const store = useDaemonStore();
+    store.connect();
+    FakeEventSource.latest().emit('snapshot', []);
+    await flush(); // cold load: no target
+
+    // A live follow-change for a repo NOT in the open-repo list (its
+    // repo-opened was missed): the handler records the id but keeps the
+    // previous root, so follow.followedPath is stale (null here).
+    const live = { repoId: 'r2', path: '/other/src/a.ts', rawContent: '/other/src/a.ts' };
+    FakeEventSource.latest().emit('follow-change', live);
+    expect(store.follow).toMatchObject({ followedRepoId: 'r2', followedPath: null });
+    expect(store.lastFollowChange).toEqual(live);
+
+    // The user picks another repo: the stream reopens, the snapshot
+    // re-pulls /follow, which now reports r2 with its real root. Same
+    // repo, so this must NOT count as a changed target — re-seeding here
+    // is what made follow mode pull the user back to r2.
+    followState = { ...FOLLOW_STATE, followedRepoId: 'r2', followedPath: '/other' };
+    store.attachRepo('r1', {
+      onSnapshot: vi.fn(),
+      onStateChange: vi.fn(),
+      onMissing: vi.fn(),
+    });
+    FakeEventSource.latest().emit('snapshot', [{ id: 'r1', path: '/repo' }]);
+    await flush();
+
+    expect(store.follow).toMatchObject({ followedRepoId: 'r2', followedPath: '/other' });
+    // Still the live event (a re-seed would carry the root, '/other').
+    expect(store.lastFollowChange).toEqual(live);
   });
 
   test('a reconnect with an unchanged target leaves a newer live event untouched', async () => {
@@ -379,5 +421,361 @@ describe('useDaemonStore', () => {
     // Events after disconnect are silenced by the transport guard.
     source.emit('snapshot', [{ id: 'r9', path: '/x' }]);
     expect(store.repos).toEqual([]);
+  });
+});
+
+describe('the one stream: attachRepo / detachRepo', () => {
+  function repoHandlers() {
+    return {
+      onSnapshot: vi.fn(),
+      onStateChange: vi.fn(),
+      onJournalAppend: vi.fn(),
+      onMissing: vi.fn(),
+      onError: vi.fn(),
+    };
+  }
+
+  /** The streams still open: there must only ever be one. */
+  function live(): FakeEventSource[] {
+    return FakeEventSource.instances.filter((s) => !s.closed);
+  }
+
+  test('attachRepo reopens the ONE stream with ?repo= and routes the repo events', () => {
+    const store = useDaemonStore();
+    store.connect();
+    const plain = FakeEventSource.latest();
+
+    const handlers = repoHandlers();
+    store.attachRepo('r1', handlers);
+
+    expect(plain.closed).toBe(true);
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r1']);
+    const source = FakeEventSource.latest();
+    source.emit('snapshot', [{ id: 'r1', path: '/repo' }]);
+    source.emit('repo-snapshot', { status: null, error: null });
+    source.emit('state-change', { status: null, error: 'x' });
+    source.emit('repo-missing', { id: 'r1' });
+    expect(store.repos).toEqual([{ id: 'r1', path: '/repo', branch: null }]);
+    expect(handlers.onSnapshot).toHaveBeenCalledWith({ status: null, error: null });
+    expect(handlers.onStateChange).toHaveBeenCalledWith({ status: null, error: 'x' });
+    expect(handlers.onMissing).toHaveBeenCalledWith({ id: 'r1' });
+  });
+
+  test('attachRepo without a prior connect opens the stream; connect then stays idempotent', () => {
+    const store = useDaemonStore();
+    store.attachRepo('r1', repoHandlers());
+    store.connect();
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r1']);
+  });
+
+  test('switching the attached repo reopens with the new id and drops the old stream', () => {
+    const store = useDaemonStore();
+    store.connect();
+    const first = repoHandlers();
+    store.attachRepo('r1', first);
+    const oldSource = FakeEventSource.latest();
+
+    const second = repoHandlers();
+    store.attachRepo('r2', second);
+
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r2']);
+    // A late event on the old stream reaches nobody — not the old
+    // handlers, and certainly not the new repo's.
+    oldSource.emit('state-change', { status: null, error: 'late' });
+    expect(first.onStateChange).not.toHaveBeenCalled();
+    expect(second.onStateChange).not.toHaveBeenCalled();
+    FakeEventSource.latest().emit('state-change', { status: null, error: null });
+    expect(second.onStateChange).toHaveBeenCalledTimes(1);
+    expect(first.onStateChange).not.toHaveBeenCalled();
+  });
+
+  test('an intentional reopen never flips the connection to disconnected', () => {
+    const store = useDaemonStore();
+    store.connect();
+    FakeEventSource.latest().emit('snapshot', []);
+    expect(store.connection).toBe('connected');
+
+    store.attachRepo('r1', repoHandlers());
+    expect(store.connection).toBe('connected');
+    store.detachRepo();
+    expect(store.connection).toBe('connected');
+    // Even an error on a handle that was closed by the reopen is dropped.
+    for (const closed of FakeEventSource.instances.filter((s) => s.closed)) closed.fail();
+    expect(store.connection).toBe('connected');
+  });
+
+  test('a stream error flips to disconnected AND reaches the attached repo handlers', () => {
+    const store = useDaemonStore();
+    store.connect();
+    FakeEventSource.latest().emit('snapshot', []);
+    const handlers = repoHandlers();
+    store.attachRepo('r1', handlers);
+
+    FakeEventSource.latest().fail();
+    expect(store.connection).toBe('disconnected');
+    expect(handlers.onError).toHaveBeenCalledTimes(1);
+  });
+
+  test('detachRepo reopens without a repo; a no-op when nothing is attached', () => {
+    const store = useDaemonStore();
+    store.connect();
+    const before = FakeEventSource.instances.length;
+    store.detachRepo(); // nothing attached: no reopen
+    expect(FakeEventSource.instances).toHaveLength(before);
+
+    const handlers = repoHandlers();
+    store.attachRepo('r1', handlers);
+    const attached = FakeEventSource.latest();
+    store.detachRepo();
+    expect(attached.closed).toBe(true);
+    expect(live().map((s) => s.url)).toEqual(['/events']);
+    // The detached handlers are gone with the stream.
+    attached.emit('repo-snapshot', { status: null, error: null });
+    expect(handlers.onSnapshot).not.toHaveBeenCalled();
+  });
+
+  test('detachRepo while disconnected only drops the attachment; connect reopens plain', () => {
+    const store = useDaemonStore();
+    store.attachRepo('r1', repoHandlers());
+    store.disconnect();
+    const before = FakeEventSource.instances.length;
+    store.detachRepo();
+    expect(FakeEventSource.instances).toHaveLength(before); // no stream to reopen
+
+    store.connect();
+    expect(live().map((s) => s.url)).toEqual(['/events']);
+  });
+
+  test('disconnect keeps the attachment: connect reopens with the repo', () => {
+    const store = useDaemonStore();
+    store.attachRepo('r1', repoHandlers());
+    store.disconnect();
+    expect(live()).toHaveLength(0);
+
+    store.connect();
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r1']);
+  });
+});
+
+describe('a hidden tab holds no stream', () => {
+  function repoHandlers() {
+    return {
+      onSnapshot: vi.fn(),
+      onStateChange: vi.fn(),
+      onJournalAppend: vi.fn(),
+      onMissing: vi.fn(),
+      onError: vi.fn(),
+      onResume: vi.fn(),
+    };
+  }
+
+  function live(): FakeEventSource[] {
+    return FakeEventSource.instances.filter((s) => !s.closed);
+  }
+
+  /** Make the tab hidden or visible and tell the page, the way a browser does. */
+  function setVisibility(state: 'hidden' | 'visible'): void {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    // Drop the instance override so the document is visible again.
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+
+  /** A connected tab with a repo attached; returns the attached stream. */
+  function attachedTab(handlers = repoHandlers()): {
+    store: ReturnType<typeof useDaemonStore>;
+    source: FakeEventSource;
+    handlers: ReturnType<typeof repoHandlers>;
+  } {
+    const store = useDaemonStore();
+    store.connect();
+    FakeEventSource.latest().emit('snapshot', [{ id: 'r1', path: '/repo' }]);
+    store.attachRepo('r1', handlers);
+    const source = FakeEventSource.latest();
+    source.emit('snapshot', [{ id: 'r1', path: '/repo' }]);
+    return { store, source, handlers };
+  }
+
+  test('hidden: the stream closes after the delay, and it is not a connection loss', () => {
+    const { store, source, handlers } = attachedTab();
+    expect(store.connection).toBe('connected');
+
+    setVisibility('hidden');
+    vi.advanceTimersByTime(HIDDEN_CLOSE_DELAY_MS - 1);
+    expect(source.closed).toBe(false);
+
+    vi.advanceTimersByTime(1);
+    expect(source.closed).toBe(true);
+    expect(live()).toHaveLength(0);
+    // Intentional: the status bar keeps saying connected, and the repo
+    // store is not sent into its recovery loop.
+    expect(store.connection).toBe('connected');
+    expect(handlers.onError).not.toHaveBeenCalled();
+  });
+
+  test('shown again within the delay: nothing closes, nothing reopens', () => {
+    const { source } = attachedTab();
+    const count = FakeEventSource.instances.length;
+
+    setVisibility('hidden');
+    vi.advanceTimersByTime(HIDDEN_CLOSE_DELAY_MS / 2);
+    setVisibility('visible');
+    vi.advanceTimersByTime(HIDDEN_CLOSE_DELAY_MS * 2);
+
+    expect(source.closed).toBe(false);
+    expect(FakeEventSource.instances).toHaveLength(count);
+  });
+
+  test('shown after the close: one new stream with the repo, told to resume once its snapshot is in', () => {
+    const { store, handlers } = attachedTab();
+    setVisibility('hidden');
+    vi.advanceTimersByTime(HIDDEN_CLOSE_DELAY_MS);
+    const count = FakeEventSource.instances.length;
+
+    setVisibility('visible');
+
+    expect(FakeEventSource.instances).toHaveLength(count + 1);
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r1']);
+    expect(store.connection).toBe('connected');
+    // Not yet. The daemon subscribes the new stream before it writes
+    // repo-snapshot, so a refetch fired at reopen races that subscribe:
+    // an append landing in between is in neither the fetch nor the
+    // stream, and the journal keeps a hole. The resume waits for the
+    // snapshot, from which point the stream is live.
+    expect(handlers.onResume).not.toHaveBeenCalled();
+    const source = FakeEventSource.latest();
+    source.emit('snapshot', [{ id: 'r1', path: '/repo' }]);
+    expect(handlers.onResume).not.toHaveBeenCalled();
+    source.emit('repo-snapshot', { status: null, error: null });
+    expect(handlers.onSnapshot).toHaveBeenCalledWith({ status: null, error: null });
+    expect(handlers.onResume).toHaveBeenCalledTimes(1);
+    // The snapshot is applied first, then the resume.
+    expect(handlers.onSnapshot.mock.invocationCallOrder[0]).toBeLessThan(
+      handlers.onResume.mock.invocationCallOrder[0]
+    );
+    // Once per reopen: a later snapshot on the same stream, and a second
+    // show without a pause in between, resume nothing more.
+    source.emit('repo-snapshot', { status: null, error: null });
+    setVisibility('visible');
+    expect(FakeEventSource.instances).toHaveLength(count + 1);
+    expect(handlers.onResume).toHaveBeenCalledTimes(1);
+  });
+
+  test('a repo attached after the show but before the snapshot is not told to resume', () => {
+    const { store, handlers: first } = attachedTab();
+    setVisibility('hidden');
+    vi.advanceTimersByTime(HIDDEN_CLOSE_DELAY_MS);
+    setVisibility('visible');
+
+    // The user switches repos before the reopened stream delivered its
+    // snapshot: the new repo was never paused, and the old one's stream
+    // is gone with its handlers.
+    const second = repoHandlers();
+    store.attachRepo('r2', second);
+    FakeEventSource.latest().emit('repo-snapshot', { status: null, error: null });
+    expect(second.onSnapshot).toHaveBeenCalledTimes(1);
+    expect(second.onResume).not.toHaveBeenCalled();
+    expect(first.onResume).not.toHaveBeenCalled();
+  });
+
+  test('attachRepo while paused opens nothing; the reopen on show carries the latest attachment', () => {
+    const { store, handlers: first } = attachedTab();
+    setVisibility('hidden');
+    vi.advanceTimersByTime(HIDDEN_CLOSE_DELAY_MS);
+    const count = FakeEventSource.instances.length;
+
+    // The repo store's recovery path (recover -> connect -> attachRepo)
+    // and a repo switch both land here; neither may open a stream.
+    const second = repoHandlers();
+    store.attachRepo('r2', second);
+    const third = repoHandlers();
+    store.attachRepo('r3', third);
+    expect(FakeEventSource.instances).toHaveLength(count);
+    expect(live()).toHaveLength(0);
+
+    setVisibility('visible');
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r3']);
+    FakeEventSource.latest().emit('repo-snapshot', { status: null, error: null });
+    expect(third.onSnapshot).toHaveBeenCalledTimes(1);
+    expect(second.onSnapshot).not.toHaveBeenCalled();
+    expect(third.onResume).toHaveBeenCalledTimes(1);
+    expect(second.onResume).not.toHaveBeenCalled();
+    expect(first.onResume).not.toHaveBeenCalled();
+  });
+
+  test('attachRepo while hidden but still within the delay closes the stream at once', () => {
+    const { source } = attachedTab();
+    setVisibility('hidden');
+    vi.advanceTimersByTime(HIDDEN_CLOSE_DELAY_MS / 2);
+
+    useDaemonStore().attachRepo('r2', repoHandlers());
+
+    // No stream ever exists in a hidden tab: the replacement is not
+    // opened, and the pending close has nothing left to do.
+    expect(source.closed).toBe(true);
+    expect(live()).toHaveLength(0);
+    vi.advanceTimersByTime(HIDDEN_CLOSE_DELAY_MS);
+    expect(live()).toHaveLength(0);
+
+    setVisibility('visible');
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r2']);
+  });
+
+  test('a tab that loads hidden opens nothing until it is shown', () => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    const store = useDaemonStore();
+
+    store.connect();
+    store.connect();
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(store.connection).toBe('connecting');
+
+    // A URL restore opens its repo over REST and attaches it meanwhile.
+    const handlers = repoHandlers();
+    store.attachRepo('r1', handlers);
+    expect(FakeEventSource.instances).toHaveLength(0);
+
+    setVisibility('visible');
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r1']);
+    // Nothing was ever received, so there is nothing to resume from; the
+    // repo is still told once its snapshot is in, which is harmless.
+    FakeEventSource.latest().emit('repo-snapshot', { status: null, error: null });
+    expect(handlers.onResume).toHaveBeenCalledTimes(1);
+  });
+
+  test('detachRepo while paused only drops the attachment; the reopen on show is plain', () => {
+    const { store } = attachedTab();
+    setVisibility('hidden');
+    vi.advanceTimersByTime(HIDDEN_CLOSE_DELAY_MS);
+    const count = FakeEventSource.instances.length;
+
+    store.detachRepo();
+    expect(FakeEventSource.instances).toHaveLength(count);
+
+    setVisibility('visible');
+    expect(live().map((s) => s.url)).toEqual(['/events']);
+  });
+
+  test('disconnect while paused: showing the tab reopens nothing', () => {
+    const { store } = attachedTab();
+    setVisibility('hidden');
+    vi.advanceTimersByTime(HIDDEN_CLOSE_DELAY_MS);
+    store.disconnect();
+    const count = FakeEventSource.instances.length;
+
+    setVisibility('visible');
+    expect(FakeEventSource.instances).toHaveLength(count);
+
+    // connect() after that is a normal open again, with the attachment.
+    store.connect();
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r1']);
   });
 });

@@ -269,6 +269,26 @@ describe('the settled-repo gate', () => {
     await flushPromises();
     expect(here()).toBe('/history/~/w/two');
   });
+
+  test('a cold load with no repo open yet leaves the deep link in the address bar', async () => {
+    // Both halves of the gate are null — it is open — but the app has no
+    // repo to name, and the link has not been applied yet.
+    setUrl('/compare/~/w/one?at=src/a.ts');
+    mount(Harness);
+    await flushPromises(); // /health answered: the first write ran
+    const push = vi.spyOn(window.history, 'pushState');
+    const replace = vi.spyOn(window.history, 'replaceState');
+    useUiStore().setActiveView('compare');
+    await flushPromises();
+    expect(replace).not.toHaveBeenCalled();
+    expect(here()).toBe('/compare/~/w/one?at=src/a.ts');
+
+    // The repo lands: the first write names it, as a replace.
+    activeRepo(`${HOME}/w/one`);
+    await flushPromises();
+    expect(push).not.toHaveBeenCalled();
+    expect(here()).toBe('/compare/~/w/one');
+  });
 });
 
 describe('history entries', () => {

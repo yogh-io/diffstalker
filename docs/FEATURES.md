@@ -970,7 +970,14 @@ git operations.
   closes the panel.
 - Follow-mode toggle, theme switcher (the same six themes as CSS variables),
   fuzzy file finder (Ctrl+P), a settings panel (`,`), and a hotkeys overlay
-  (`?`). Live over SSE, with a calm reconnect banner.
+  (`?`). Live over SSE, with a calm reconnect banner. Each tab holds ONE
+  event stream (the daemon events and the open repo's events ride
+  together on `GET /events?repo=`), and a tab hidden for more than ten
+  seconds holds none: browsers allow six connections per host, and a row
+  of open tabs each holding a stream would stall every request. The
+  stream comes back when the tab is shown, with fresh snapshots and a
+  journal catch-up; the repo stays open on the daemon the whole time, so
+  the journal keeps recording while you work in the editor.
 - **Keyboard shortcut sheet** (`?`) — nine small groups cut by what you are
   trying to do (open something, switch view, change the display, move in a
   list), none over five rows, flowed into as many columns as the window

@@ -25,9 +25,9 @@ import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type { WireHunkCounts } from '@diffstalker/client';
 
 /**
- * Shared repo state: what the daemon broadcasts on the per-repo SSE
- * stream. isLoading is client-only — true until the first snapshot
- * arrives (and during an explicit refresh).
+ * Shared repo state: what the daemon broadcasts for the attached repo on
+ * the tab's event stream. isLoading is client-only — true until the first
+ * snapshot arrives (and during an explicit refresh).
  */
 export interface RepoSharedState {
   status: GitStatus | null;

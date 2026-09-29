@@ -76,6 +76,23 @@ import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
  */
 export { blobUrl } from '@diffstalker/core/utils/blobRef';
 
+const DAEMON_EVENTS = [
+  'snapshot',
+  'repo-opened',
+  'repo-closed',
+  'follow-change',
+  'settings-change',
+  'discovery-change',
+] as const;
+
+const REPO_EVENTS = ['repo-snapshot', 'state-change', 'journal-append', 'repo-missing'] as const;
+
+type RepoEvent = (typeof REPO_EVENTS)[number];
+
+function isRepoEvent(event: string): event is RepoEvent {
+  return (REPO_EVENTS as readonly string[]).includes(event);
+}
+
 /** Revive a wire commit: the ISO date string becomes a Date. */
 function reviveCommit(commit: WireCommitInfo): CommitInfo {
   return { ...commit, date: new Date(commit.date) };
@@ -91,8 +108,23 @@ function toQuery(params: Record<string, string | number | boolean | undefined>):
   return encoded ? `?${encoded}` : '';
 }
 
-/** Handlers for a per-repo stream (GET /repos/:id/events). */
+/**
+ * The `repo-missing` payload: the repo the stream was opened for is not
+ * open on the daemon. Local to the web client: the wire type lives with
+ * the daemon's SSE hub, and this is the only client that attaches a repo
+ * to the daemon-scope stream.
+ */
+export interface RepoMissingEvent {
+  id: string;
+}
+
+/**
+ * Handlers for the repo half of the event stream — the events that ride
+ * along on GET /events?repo=<id>. They describe the ONE repo the stream
+ * was opened for; the payloads carry no repo id (repo-missing excepted).
+ */
 export interface RepoStreamHandlers {
+  /** The repo's initial state (`repo-snapshot`), once per (re)connect. */
   onSnapshot: (state: WireSharedState) => void;
   onStateChange: (state: WireSharedState) => void;
   /**
@@ -102,11 +134,24 @@ export interface RepoStreamHandlers {
    * reset daemon store instead of splicing two seq spaces together.
    */
   onJournalAppend?: (event: JournalAppendEvent) => void;
-  onOpen?: () => void;
+  /**
+   * The repo is not open on the daemon: it restarted (the browser's
+   * EventSource reconnected before the repo was re-POSTed), or the repo
+   * was closed while attached. The stream itself stays up; the repo
+   * side has to re-open the repo and re-attach.
+   */
+  onMissing: (event: RepoMissingEvent) => void;
+  /** The stream dropped — the same signal the daemon handlers get. */
   onError?: () => void;
 }
 
-/** Handlers for the daemon-scope stream (GET /events). */
+/** A repo riding along on the event stream: its id and its handlers. */
+export interface RepoAttachment {
+  id: string;
+  handlers: RepoStreamHandlers;
+}
+
+/** Handlers for the daemon-scope half of the event stream (GET /events). */
 export interface DaemonStreamHandlers {
   onSnapshot: (repos: RepoRef[]) => void;
   onRepoOpened: (repo: RepoOpenedEvent) => void;
@@ -433,45 +478,57 @@ export class DiffstalkerClient {
   // --- SSE ---
 
   /**
-   * Subscribe to one repo's shared-state stream: `snapshot` on connect,
-   * then `state-change` and `journal-append` — the daemon's own event
-   * names.
+   * Subscribe to THE event stream — one EventSource per tab. Browsers
+   * cap HTTP/1.1 connections per host at six, and a stream holds one
+   * open forever, so a second stream per tab (the old GET
+   * /repos/:id/events) had three tabs exhausting the pool and every later
+   * request queueing behind them.
+   *
+   * Without a repo: GET /events — `snapshot` (open repos) on connect,
+   * then `repo-opened` / `repo-closed` / `follow-change` /
+   * `settings-change` / `discovery-change`.
+   *
+   * With a repo: GET /events?repo=<id> — the same, plus that repo's
+   * events routed to its handlers: `repo-snapshot` after the daemon
+   * snapshot, then `state-change` and `journal-append`; or one
+   * `repo-missing` when the daemon does not have the repo open.
    */
-  subscribeRepo(id: string, handlers: RepoStreamHandlers): SseHandle {
-    return subscribe(this.repoPath(id, '/events'), ['snapshot', 'state-change', 'journal-append'], {
+  subscribeEvents(handlers: DaemonStreamHandlers, repo?: RepoAttachment): SseHandle {
+    const path = repo ? `/events?repo=${encodeURIComponent(repo.id)}` : '/events';
+    const events = repo ? [...DAEMON_EVENTS, ...REPO_EVENTS] : DAEMON_EVENTS;
+    return subscribe(path, events, {
       onEvent: (event, payload) => {
-        if (event === 'snapshot') handlers.onSnapshot(payload as WireSharedState);
-        else if (event === 'journal-append') {
-          handlers.onJournalAppend?.(payload as JournalAppendEvent);
-        } else handlers.onStateChange(payload as WireSharedState);
+        // Repo listeners are only registered when a repo is attached, so
+        // a repo event here always has handlers to go to.
+        if (repo && isRepoEvent(event)) this.dispatchRepoEvent(event, payload, repo.handlers);
+        else this.dispatchDaemonEvent(event, payload, handlers);
       },
       onOpen: handlers.onOpen,
-      onError: handlers.onError,
-    });
-  }
-
-  /**
-   * Subscribe to the daemon-scope stream: `snapshot` (open repos) on
-   * connect, then `repo-opened` / `repo-closed` / `follow-change` /
-   * `settings-change` / `discovery-change`.
-   */
-  subscribeDaemon(handlers: DaemonStreamHandlers): SseHandle {
-    const events = [
-      'snapshot',
-      'repo-opened',
-      'repo-closed',
-      'follow-change',
-      'settings-change',
-      'discovery-change',
-    ];
-    return subscribe('/events', events, {
-      onEvent: (event, payload) => this.dispatchDaemonEvent(event, payload, handlers),
-      onOpen: handlers.onOpen,
-      onError: handlers.onError,
+      onError: () => {
+        handlers.onError?.();
+        repo?.handlers.onError?.();
+      },
     });
   }
 
   // --- Internals ---
+
+  private dispatchRepoEvent(event: RepoEvent, payload: unknown, handlers: RepoStreamHandlers): void {
+    switch (event) {
+      case 'repo-snapshot':
+        handlers.onSnapshot(payload as WireSharedState);
+        break;
+      case 'state-change':
+        handlers.onStateChange(payload as WireSharedState);
+        break;
+      case 'journal-append':
+        handlers.onJournalAppend?.(payload as JournalAppendEvent);
+        break;
+      case 'repo-missing':
+        handlers.onMissing(payload as RepoMissingEvent);
+        break;
+    }
+  }
 
   private dispatchDaemonEvent(
     event: string,

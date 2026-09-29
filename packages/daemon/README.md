@@ -220,7 +220,7 @@ values are rejected with a 400 so they can never be parsed as git flags.
 | GET    | `/repos/:id/files`         | All tracked + untracked (not ignored) paths: the fuzzy-finder source |
 | GET    | `/repos/:id/journal?since=` | Append-only edit journal: `{epoch, prunedBefore, entries}`; `since=<seq>` returns only entries with a higher seq (all when omitted) |
 | GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher and `journal-append {entries}` per journal observation |
-| GET    | `/events`                  | Daemon-scope SSE: `snapshot` (open repos) on connect, then `repo-opened` / `repo-closed` / `follow-change` / `settings-change` / `discovery-change` |
+| GET    | `/events?repo=`            | Daemon-scope SSE: `snapshot` (open repos) on connect, then `repo-opened` / `repo-closed` / `follow-change` / `settings-change` / `discovery-change`. With `repo=<id>` the same stream also carries that repo's events — `repo-snapshot` right after the daemon `snapshot`, then `state-change` / `journal-append` as on `/repos/:id/events`. An id that is not open is still a 200: one `repo-missing {id}` follows the snapshot; an empty `repo=` is the same as none. See [One stream per tab](#one-stream-per-tab) |
 | GET    | `/follow`                  | Follow state: `{targetFile, enabled, followedRepoId, followedPath}` |
 | GET    | `/settings`                | Daemon settings: `{watchRoots, persisted}`. `persisted: false` means this daemon holds them in memory only (no settings file) |
 | GET    | `/discovered`              | Repos found under the watch directories: `{roots: [{path, repos: [{path, name, branch, lastActivity}], error, capped}]}`. See [Watch directories](#watch-directories) |
@@ -280,6 +280,35 @@ included: the response is byte-identical to the plain one.
 Repo ids are stable hashes of the worktree root, so a cached id still
 addresses the same repo after a daemon restart.
 
+### One stream per tab
+
+There are two event streams: `GET /events` for the daemon (open repos,
+follow, settings, discovery) and `GET /repos/:id/events` for one repo
+(status, journal). The CLI opens both. A browser must not: Chrome allows
+six HTTP/1.1 connections per host, so two streams per tab meant three tabs
+used them all up and every later request queued forever — the page looked
+hung. `GET /events?repo=<id>` folds both into ONE stream:
+
+- On connect: the daemon `snapshot` first, then the repo's `repo-snapshot`
+  (renamed only because `snapshot` is already taken on this stream). After
+  that, `state-change` and `journal-append` exactly as on
+  `/repos/:id/events`, with the same payloads and the same dedup.
+- An id that is not open (the daemon restarted and the browser's
+  EventSource reconnected before the page re-POSTed `/repos`) is still a
+  200 with the normal daemon stream, plus one `repo-missing {id}` after the
+  snapshot. It is never a 404: a non-200 makes EventSource give up for
+  good, which would also cut off the daemon events.
+- If the repo is closed while the stream is live (its last ref released),
+  the stream stays up: it gets `repo-missing {id}` (before the daemon's
+  `repo-closed`) and stops carrying repo events. A `/repos/:id/events`
+  stream is ended in that case, as before.
+
+Even one stream per tab fills the pool once six tabs are open, so the
+web UI also closes its stream in a tab that has been hidden for ten
+seconds and reopens it when the tab is shown again (the repo ref is
+kept; the daemon resends both snapshots on the reopen). A browser
+client of your own should do the same.
+
 ### Journal
 
 `GET /repos/:id/journal` serves the repo's append-only edit journal: an
@@ -298,8 +327,9 @@ as `/diff` responses.
   refetch.
 
 New entries stream as `journal-append {entries}` on the per-repo
-`GET /repos/:id/events` channel, one event per observation (possibly
-several hunks), batched so clients apply them atomically.
+`GET /repos/:id/events` channel (and on a combined `GET /events?repo=`
+stream), one event per observation (possibly several hunks), batched so
+clients apply them atomically.
 
 The journal store lives above the repo's manager lifecycle: closing a
 repo's last client (a browser F5) disposes the manager but keeps the

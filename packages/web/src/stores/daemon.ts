@@ -1,13 +1,44 @@
 /**
  * useDaemonStore: daemon-scope Pinia store — the open-repo list, follow
- * state, and connection status, fed by the daemon-scope SSE stream
- * (GET /events: snapshot / repo-opened / repo-closed / follow-change).
+ * state, and connection status, fed by the daemon-scope events on the
+ * tab's ONE SSE stream (GET /events: snapshot / repo-opened /
+ * repo-closed / follow-change / settings-change / discovery-change).
+ *
+ * This store OWNS that stream. Browsers allow six HTTP/1.1 connections
+ * per host and an EventSource holds one open for good, so every other
+ * consumer rides along instead of opening its own: settings/discovery
+ * events are handed to the settings store, and the active repo's events
+ * arrive on the same stream when it is attached (attachRepo reopens it
+ * as GET /events?repo=<id> and routes `repo-snapshot` / `state-change`
+ * / `journal-append` / `repo-missing` to the repo store's handlers).
+ *
+ * One stream per tab is still not enough: six open tabs hold six
+ * streams, the pool is full, and every fetch in every tab stalls. So a
+ * HIDDEN tab holds no stream at all. When the tab is hidden for longer
+ * than HIDDEN_CLOSE_DELAY_MS the stream is closed (the delay keeps a
+ * quick flick between tabs from churning streams and the snapshot
+ * requests); when the tab is visible again it reopens with the current
+ * attachment, and the daemon resends `snapshot` and `repo-snapshot`. A
+ * tab that is hidden when the stream is first wanted opens nothing until
+ * it is shown. This pause is NOT a connection loss: `connection` keeps
+ * its value and no error handler fires. The attached repo is told when
+ * the stream is back (onResume) so it can refetch what the pause
+ * skipped — the journal is append-only, so it would otherwise have a
+ * hole. "Back" means the reopened stream delivered its `repo-snapshot`,
+ * not that the EventSource was created: the daemon subscribes the
+ * stream before it writes that snapshot, so everything after it arrives
+ * live, while a refetch fired at creation races the subscribe and can
+ * miss an append that lands in between. The daemon-side repo ref is
+ * kept the whole time (see App.vue's pagehide note): only the stream
+ * pauses, the watchers keep running.
  *
  * The browser CANNOT spawn a daemon (the page is served by one). On
  * connection loss this store only surfaces `connection: 'disconnected'`
  * and lets the native EventSource retry; when the stream reopens the
  * daemon sends a fresh `snapshot`, which repopulates the repo list and
- * flips the status back to 'connected'.
+ * flips the status back to 'connected'. An intentional reopen (attach /
+ * detach / resume) is not a loss: the old handle is closed first, and a
+ * closed EventSource fires no error.
  *
  * Follow: this store only RECORDS follow state and the latest
  * follow-change event (plus the client-side followEnabled policy
@@ -20,6 +51,7 @@
 import { computed, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
+import type { DaemonStreamHandlers, RepoAttachment, RepoStreamHandlers } from '../api/client';
 import type { SseHandle } from '../api/transport';
 import type {
   FollowChangeEvent,
@@ -56,16 +88,36 @@ function followTarget(state: FollowState): FollowChangeEvent | null {
   };
 }
 
-function sameTarget(a: FollowChangeEvent, b: FollowChangeEvent | null): boolean {
-  return b !== null && a.repoId === b.repoId && a.path === b.path;
-}
-
 /**
  * How often a connected tab re-asks the daemon for version state. The daemon
  * caches npm's answer for six hours, so anything under that only costs a
  * local request; hourly keeps the indicator honest without being chatty.
  */
 export const VERSION_POLL_MS = 60 * 60 * 1000;
+
+/**
+ * How long a tab stays hidden before its stream is closed. Long enough
+ * that flicking between tabs does not close and reopen the stream (and
+ * re-run the snapshot requests) every time; short enough that a row of
+ * background tabs frees the connection pool within seconds.
+ */
+export const HIDDEN_CLOSE_DELAY_MS = 10_000;
+
+/**
+ * The handlers a repo attaches with: the stream events, plus what the
+ * stream owner tells the repo about the stream itself.
+ */
+export interface RepoAttachHandlers extends RepoStreamHandlers {
+  /**
+   * The stream reopened after a hidden-tab pause and its first
+   * `repo-snapshot` has just been applied (onSnapshot ran). Events sent
+   * during the pause were never received: the daemon resends the
+   * snapshots, but an append-only log (the journal) has to be refetched.
+   * Called after the snapshot on purpose: from that event on the stream
+   * is live, so a refetch started now cannot leave a hole.
+   */
+  onResume?: () => void;
+}
 
 export const useDaemonStore = defineStore('daemon', () => {
   const client = new DiffstalkerClient();
@@ -96,6 +148,24 @@ export const useDaemonStore = defineStore('daemon', () => {
   const servedBy = shallowRef<string | null>(null);
 
   let subscription: SseHandle | null = null;
+  /** The repo whose events ride along on the stream, if any. */
+  let attachedRepo: { id: string; handlers: RepoAttachHandlers } | null = null;
+  /**
+   * The stream is wanted but closed because the tab is hidden. Set when
+   * a hidden tab's close delay runs out, or when the stream is asked for
+   * while the tab is hidden; cleared by the reopen when the tab is shown
+   * again, or by disconnect().
+   */
+  let pausedHidden = false;
+  /**
+   * The stream was reopened after the hidden pause and the attached repo
+   * has not been told yet: its onResume fires on the first
+   * `repo-snapshot` of that stream. Cleared by that snapshot, and by a
+   * change of attachment (the new repo was never paused) or disconnect().
+   */
+  let resumePending = false;
+  let hiddenCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchingVisibility = false;
   let versionTimer: ReturnType<typeof setInterval> | null = null;
   // loadFollow guards: `loadingFollow` keeps repeated snapshots from
   // stacking overlapping retry loops; `followLoadedOnce` marks the
@@ -117,70 +187,209 @@ export const useDaemonStore = defineStore('daemon', () => {
   }
 
   /**
-   * Open the daemon-scope subscription. Idempotent; EventSource
-   * auto-reconnects, and each (re)connect yields a fresh snapshot.
+   * The daemon-scope half of the stream. The snapshot handler runs on
+   * EVERY (re)open — a reconnect, but also each attach/detach and each
+   * resume from hidden — so what it kicks off must be safe to repeat:
+   * refreshRepos replaces the list, loadFollow is single-flight and only
+   * re-seeds a target whose repo CHANGED,
+   * the settings load replaces daemon-owned values, loadVersion pins
+   * servedBy once, and the version poll is idempotent.
    */
-  function connect(): void {
-    if (subscription) return;
-    subscription = client.subscribeDaemon({
-      onSnapshot: (refs) => {
-        connection.value = 'connected';
-        error.value = null;
-        mergeSnapshot(refs);
-        // The snapshot has no branches; the REST list does. Fire-and-forget.
-        void refreshRepos();
-        void loadFollow();
-        // Daemon-owned settings + what they discovered. Pulled here (not
-        // when the panel opens) because the repo switcher lists discovered
-        // repos too, so they must be there before anyone asks.
-        void useSettingsStore().load();
-        // Re-pulled on every (re)connect: a reconnect can mean the daemon
-        // was restarted on a different version. The daemon caches the npm
-        // lookup, so this costs one local request.
-        void loadVersion();
-        startVersionPolling();
-      },
-      onRepoOpened: (repo) => upsertRepo(repo),
-      onRepoClosed: ({ id }) => {
-        repos.value = repos.value.filter((repo) => repo.id !== id);
-      },
-      onFollowChange: (event) => {
-        lastFollowChange.value = event;
-        if (follow.value) {
-          // followedPath mirrors GET /follow: the followed repo's WORKTREE
-          // ROOT. event.path is the hook file CONTENT (often a file inside
-          // the repo), so it must NOT be written here — that gave the header
-          // a filename (or an empty basename) instead of the repo name, and
-          // diverged from the repo the diffs actually switched to. Resolve
-          // the root from the open-repo list by id; keep the prior root
-          // until repo-opened for this id lands (the header re-derives the
-          // name reactively from the id, so it self-heals either way).
-          const root =
-            repos.value.find((repo) => repo.id === event.repoId)?.path ??
-            follow.value.followedPath;
-          follow.value = {
-            ...follow.value,
-            followedRepoId: event.repoId,
-            followedPath: root,
-          };
-        }
-      },
-      // Settings and discovery live in their own store; the daemon-scope
-      // stream is the only place their events arrive, so they are handed
-      // over here rather than each store opening a second EventSource.
-      onSettingsChange: (settings) => useSettingsStore().applySettings(settings),
-      onDiscoveryChange: (state) => useSettingsStore().applyDiscovery(state),
-      onError: () => {
-        // No respawn from a browser: surface the status, let EventSource retry.
-        connection.value = 'disconnected';
-      },
-    });
+  const streamHandlers: DaemonStreamHandlers = {
+    onSnapshot: (refs) => {
+      connection.value = 'connected';
+      error.value = null;
+      mergeSnapshot(refs);
+      // The snapshot has no branches; the REST list does. Fire-and-forget.
+      void refreshRepos();
+      void loadFollow();
+      // Daemon-owned settings + what they discovered. Pulled here (not
+      // when the panel opens) because the repo switcher lists discovered
+      // repos too, so they must be there before anyone asks.
+      void useSettingsStore().load();
+      // Re-pulled on every (re)connect: a reconnect can mean the daemon
+      // was restarted on a different version. The daemon caches the npm
+      // lookup, so this costs one local request.
+      void loadVersion();
+      startVersionPolling();
+    },
+    onRepoOpened: (repo) => upsertRepo(repo),
+    onRepoClosed: ({ id }) => {
+      repos.value = repos.value.filter((repo) => repo.id !== id);
+    },
+    onFollowChange: (event) => {
+      lastFollowChange.value = event;
+      if (follow.value) {
+        // followedPath mirrors GET /follow: the followed repo's WORKTREE
+        // ROOT. event.path is the hook file CONTENT (often a file inside
+        // the repo), so it must NOT be written here — that gave the header
+        // a filename (or an empty basename) instead of the repo name, and
+        // diverged from the repo the diffs actually switched to. Resolve
+        // the root from the open-repo list by id; keep the prior root
+        // until repo-opened for this id lands (the header re-derives the
+        // name reactively from the id, so it self-heals either way).
+        const root =
+          repos.value.find((repo) => repo.id === event.repoId)?.path ??
+          follow.value.followedPath;
+        follow.value = {
+          ...follow.value,
+          followedRepoId: event.repoId,
+          followedPath: root,
+        };
+      }
+    },
+    // Settings and discovery live in their own store; this stream is the
+    // only place their events arrive, so they are handed over here rather
+    // than each store opening a second EventSource.
+    onSettingsChange: (settings) => useSettingsStore().applySettings(settings),
+    onDiscoveryChange: (state) => useSettingsStore().applyDiscovery(state),
+    onError: () => {
+      // No respawn from a browser: surface the status, let EventSource
+      // retry. The attached repo's handlers get the same signal from the
+      // client (their onError), so the repo store enters recovery too.
+      connection.value = 'disconnected';
+    },
+  };
+
+  function tabHidden(): boolean {
+    return document.visibilityState === 'hidden';
   }
 
-  /** Close the daemon-scope subscription (teardown/tests). */
+  /**
+   * (Re)open the stream for the current attachment. The old handle is
+   * closed FIRST: the transport's closed flag drops its late events, and
+   * closing fires no error, so a reopen never reads as a lost connection.
+   *
+   * A hidden tab opens nothing: the stream is marked paused instead, and
+   * the visibility handler opens it — with whatever is attached by then —
+   * when the tab is shown. So no stream ever exists in a hidden tab,
+   * whichever path asked for it (connect, attach, detach, or the repo
+   * store's recovery re-attaching).
+   */
+  function openStream(): void {
+    subscription?.close();
+    subscription = null;
+    clearHiddenCloseTimer();
+    watchVisibility();
+    if (tabHidden()) {
+      pausedHidden = true;
+      return;
+    }
+    pausedHidden = false;
+    subscription = client.subscribeEvents(
+      streamHandlers,
+      attachedRepo === null ? undefined : withResume(attachedRepo)
+    );
+  }
+
+  /**
+   * The attachment as the client sees it: the repo's own handlers, plus
+   * the resume signal hung on the first `repo-snapshot` of a stream that
+   * reopened after the hidden pause. The snapshot is applied first, so
+   * the repo refetches from a state that is already live.
+   */
+  function withResume(attached: { id: string; handlers: RepoAttachHandlers }): RepoAttachment {
+    const { handlers } = attached;
+    return {
+      id: attached.id,
+      handlers: {
+        ...handlers,
+        onSnapshot: (state) => {
+          handlers.onSnapshot(state);
+          if (!resumePending) return;
+          resumePending = false;
+          handlers.onResume?.();
+        },
+      },
+    };
+  }
+
+  function watchVisibility(): void {
+    if (watchingVisibility) return;
+    watchingVisibility = true;
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  }
+
+  function clearHiddenCloseTimer(): void {
+    if (hiddenCloseTimer === null) return;
+    clearTimeout(hiddenCloseTimer);
+    hiddenCloseTimer = null;
+  }
+
+  /**
+   * Hidden: close the stream once the delay runs out — an intentional
+   * close, so `connection` and the error handlers are left alone.
+   * Visible: cancel a pending close, or reopen a paused stream. The
+   * attached repo is told the pause is over when the reopened stream
+   * delivers its first `repo-snapshot` (see withResume), not here: a
+   * refetch fired now would race the daemon subscribing the new stream.
+   */
+  function onVisibilityChange(): void {
+    if (tabHidden()) {
+      if (hiddenCloseTimer !== null || subscription === null) return;
+      hiddenCloseTimer = setTimeout(() => {
+        hiddenCloseTimer = null;
+        subscription?.close();
+        subscription = null;
+        pausedHidden = true;
+      }, HIDDEN_CLOSE_DELAY_MS);
+      return;
+    }
+    clearHiddenCloseTimer();
+    if (!pausedHidden) return;
+    resumePending = attachedRepo !== null;
+    openStream();
+  }
+
+  /**
+   * Open the stream. Idempotent; EventSource auto-reconnects, and each
+   * (re)connect yields a fresh snapshot. Carries the attached repo, if
+   * one was attached before this ran. In a hidden tab this only marks
+   * the stream as wanted; it opens when the tab is shown.
+   */
+  function connect(): void {
+    if (subscription || pausedHidden) return;
+    openStream();
+  }
+
+  /**
+   * Ride a repo's events along on the stream: reopens it as
+   * GET /events?repo=<id>, replacing any previous attachment. The repo
+   * store calls this once per open and once per recovery; events from
+   * the previous attachment's stream are dropped with its handle. In a
+   * hidden tab the attachment is only recorded — the reopen on show
+   * carries it.
+   */
+  function attachRepo(id: string, handlers: RepoAttachHandlers): void {
+    attachedRepo = { id, handlers };
+    // A new attachment was never paused: nothing to resume.
+    resumePending = false;
+    openStream();
+  }
+
+  /**
+   * Drop the attachment and, when the stream is open, reopen it without
+   * a repo — the daemon must not keep a subscriber on a repo whose ref
+   * this tab has released. A no-op when nothing is attached.
+   */
+  function detachRepo(): void {
+    if (attachedRepo === null) return;
+    attachedRepo = null;
+    resumePending = false;
+    if (subscription) openStream();
+  }
+
+  /** Close the stream (teardown/tests). The attachment is kept for connect(). */
   function disconnect(): void {
     subscription?.close();
     subscription = null;
+    pausedHidden = false;
+    resumePending = false;
+    clearHiddenCloseTimer();
+    if (watchingVisibility) {
+      watchingVisibility = false;
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    }
     stopVersionPolling();
   }
 
@@ -254,16 +463,24 @@ export const useDaemonStore = defineStore('daemon', () => {
    * target while this GET was in flight; the null-only guard must never
    * overwrite it.
    *
-   * LATER loads (SSE reconnect): the cold-load race is over. A
-   * follow-change broadcast into the dead stream is never re-sent on
-   * reconnect, so if the daemon's target genuinely CHANGED while we were
-   * disconnected the header (follow.value) and navigation
-   * (lastFollowChange) would diverge. Re-seed when the loaded target
-   * differs from the one we last knew; an unchanged target leaves any
-   * newer live event intact.
+   * LATER loads (every stream reopen: a reconnect, an attach/detach, a
+   * resume from hidden): the cold-load race is over. A follow-change
+   * broadcast into a dead or paused stream is never re-sent on reopen,
+   * so if the daemon's target genuinely CHANGED meanwhile the header
+   * (follow.value) and navigation (lastFollowChange) would diverge.
+   * Re-seed when the loaded target's REPO differs from the one we last
+   * knew; an unchanged target leaves any newer live event intact.
+   *
+   * The repo id is the whole comparison, on purpose. The id is a hash of
+   * the worktree root, so a different root means a different id; and the
+   * root we hold may be stale — the follow-change handler keeps the
+   * previous root when the followed repo is not in the open-repo list
+   * yet. Comparing paths too made an ordinary reopen (the user picking
+   * another repo) look like a changed target, and follow mode then
+   * pulled them straight back to the followed repo.
    */
   function applyFollow(state: FollowState): void {
-    const prevTarget = follow.value ? followTarget(follow.value) : null;
+    const prevRepoId = follow.value?.followedRepoId ?? null;
     follow.value = state;
     const target = followTarget(state);
 
@@ -275,7 +492,7 @@ export const useDaemonStore = defineStore('daemon', () => {
       return;
     }
 
-    if (target !== null && !sameTarget(target, prevTarget)) {
+    if (target !== null && target.repoId !== prevRepoId) {
       lastFollowChange.value = target;
     }
   }
@@ -410,6 +627,8 @@ export const useDaemonStore = defineStore('daemon', () => {
     // actions
     connect,
     disconnect,
+    attachRepo,
+    detachRepo,
     refreshRepos,
     loadFollow,
     loadVersion,

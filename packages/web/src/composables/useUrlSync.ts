@@ -45,8 +45,10 @@
  * relative to the daemon's $HOME; otherwise the segments ARE an absolute
  * path. Every segment is encodeURIComponent'd on write and decoded on
  * read, so a directory literally named `~` writes as `%7E` and does not
- * become the sentinel. With no $HOME (GET /health failed) paths stay
- * absolute.
+ * become the sentinel. A `~` link is NEVER resolved without the home:
+ * while the daemon cannot be reached, GET /health is retried and a
+ * restore waits (the link stays in the address bar). Only a daemon that
+ * answers with no $HOME makes paths stay absolute.
  *
  * ANCHOR. `at` is the one thing the view is aimed at, per view: Changes'
  * stack key (`u:`/`s:` + path — a partially staged file is two rows, so
@@ -76,6 +78,9 @@
  *    base going null, the explorer resetting, history clearing — is simply
  *    not writable, and the switch produces exactly one entry when the gate
  *    reopens. This replaces a pile of symptom-matching special cases.
+ *    One more hold: with no repo open and nothing written yet (a cold
+ *    load), the deep link in the address bar is left alone — the derived
+ *    `/` would only wipe the link before it is applied.
  *  - IDENTITY: a write equal to the current URL writes nothing (it is
  *    still recorded, so the next decision compares against the truth).
  *  - ATTRIBUTION: a gesture calls beginUserNav({repo, view}) declaring
@@ -113,6 +118,7 @@ import { useExplorerStore } from '../stores/explorer';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import { DiffstalkerClient } from '../api/client';
+import { isConnectionError } from '../api/errors';
 import {
   EMPTY_URL_STATE,
   HOME_SENTINEL,
@@ -133,6 +139,16 @@ const NAV_INTENT_MS = 3000;
 
 /** Trailing-edge budget for ambient anchor-only writes (scroll-spy). */
 const ANCHOR_THROTTLE_MS = 400;
+
+/**
+ * Delay between GET /health retries while the daemon cannot be reached.
+ * Mirrors the repo store's reconnect delay: same daemon, same wait.
+ */
+export const HOME_RETRY_DELAY_MS = 1000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /** Where a user gesture is going. Omit a field the gesture leaves alone. */
 export interface NavTarget {
@@ -210,14 +226,37 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
   const client = new DiffstalkerClient();
 
   const home = ref<string | null>(null);
-  const whenHomeReady = client
-    .health()
-    .then((h) => {
-      home.value = h.home ?? null;
-    })
-    .catch(() => {
-      // No home from the daemon -> absolute paths.
-    });
+  let disposed = false;
+  /**
+   * Settles once GET /health has ANSWERED. A `~` link names a path under
+   * the daemon's home and must never be resolved without it: expanded
+   * with no home it becomes a different absolute path, the open fails,
+   * the store commits to that wrong path, and recovery then re-POSTs it
+   * every second for good once the daemon is back. So an unreachable
+   * daemon is asked again until it answers — a restore simply waits, and
+   * the link stays in the address bar meanwhile. Nothing else hangs on
+   * it: the first URL write waits too, but the state watcher writes on
+   * every change regardless, and there is no repo to name before the
+   * daemon is back anyway. A daemon that answers is final, home or not:
+   * with no home, paths stay absolute.
+   */
+  const whenHomeReady = loadHome();
+
+  async function loadHome(): Promise<void> {
+    for (;;) {
+      try {
+        const health = await client.health();
+        home.value = health.home ?? null;
+        return;
+      } catch (err) {
+        // Only a daemon that could not be reached is worth asking again;
+        // an answer that is not a health state is not going to change.
+        if (!isConnectionError(err)) return;
+        await delay(HOME_RETRY_DELAY_MS);
+        if (disposed) return;
+      }
+    }
+  }
 
   const initial =
     typeof window === 'undefined'
@@ -415,6 +454,13 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       written = next; // nothing to write, but this IS where we are
       return;
     }
+    // A deep link that is not applied yet. On a cold load both halves of
+    // the gate are null, so it is open, but the app has no repo to name:
+    // the only thing the derived `/` could do is wipe the link the user
+    // came with — and a reload while the daemon is slow (or down) would
+    // then lose it for good. Nothing was written yet, so nothing is left
+    // untruthful by holding back; the title still moved above.
+    if (next.repoPath === null && written === null) return;
 
     const verdict = decide(next);
     if (verdict === 'defer') {
@@ -446,7 +492,10 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
   }
 
   // First write once $HOME is known, so the path is home-relative from the
-  // start (not a transient /home/<user>), then on every state change.
+  // start (not a transient /home/<user>), then on every state change. With
+  // the daemon down this first write waits for it; the watcher below still
+  // writes every change meanwhile, so nothing is held back but the write
+  // that would have named nothing.
   async function writeAfterHome(): Promise<void> {
     await whenHomeReady;
     writeUrl();
@@ -500,6 +549,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
   if (typeof window !== 'undefined') {
     window.addEventListener('popstate', onPopState);
     onScopeDispose(() => {
+      disposed = true; // stops a /health retry loop still waiting
       window.removeEventListener('popstate', onPopState);
       cancelDeferred();
     });

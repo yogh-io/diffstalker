@@ -95,8 +95,10 @@ export interface SseHandle {
  * is registered per named event (EventSource only dispatches events it
  * has listeners for; `: ping` comments are ignored by the browser). The
  * browser auto-reconnects dropped streams — onError fires per drop and
- * onOpen per (re)connect; callers that manage their own retry (the repo
- * store) close() the handle instead.
+ * onOpen per (re)connect. The one caller (the daemon store, which owns
+ * the tab's single stream) never closes a handle to retry; it closes one
+ * to replace it (a new attachment) or to pause it (a hidden tab), and a
+ * closed handle delivers nothing — no late event, no error.
  */
 export function subscribe(
   path: string,

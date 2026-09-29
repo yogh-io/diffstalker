@@ -10,8 +10,10 @@
  * reset, failures collapsing into shared.error), the journal slice (lazy load,
  * SSE append with seq dedupe + epoch guard, reconnect resync floored
  * on the synced watermark, epoch/prunedBefore reset handling,
- * repo-switch reset), and the pagehide unload release (keepalive
- * DELETE). Driven entirely by a stubbed fetch
+ * repo-switch reset), the pagehide unload release (keepalive DELETE),
+ * and the store's use of the tab's ONE event stream (attached through
+ * the daemon store: `?repo=` on open, re-attach on recovery, detach on
+ * dispose, `repo-missing` handling). Driven entirely by a stubbed fetch
  * + FakeEventSource — no daemon, fake timers throughout. The store
  * has no git-mutating actions — the web UI is a viewer.
  */
@@ -19,6 +21,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
 import { useRepoStore, CONNECTION_LOST_MESSAGE } from './repo';
+import { useDaemonStore, HIDDEN_CLOSE_DELAY_MS } from './daemon';
 import { makeFakeFetch, FakeEventSource, Deferred } from '../testing/fakes';
 import type { FakeFetch, FetchCall, FakeResponse } from '../testing/fakes';
 import type { WireSharedState } from '@diffstalker/client';
@@ -194,7 +197,7 @@ async function openStore(files: FileEntry[] = []) {
   const store = useRepoStore();
   await store.open('/repo');
   const source = FakeEventSource.latest();
-  source.emit('snapshot', wireState(files));
+  source.emit('repo-snapshot', wireState(files));
   await flush();
   return { store, source };
 }
@@ -214,6 +217,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // The daemon store listens on the shared document for visibility
+  // changes; drop that (and any paused stream) so a later test's
+  // visibility change cannot wake this test's store.
+  useDaemonStore().disconnect();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -227,7 +234,7 @@ describe('open + applyWireState', () => {
 
     expect(store.repoId).toBe('r1');
     expect(store.isRepo).toBe(true);
-    expect(source.url).toBe('/repos/r1/events');
+    expect(source.url).toBe('/events?repo=r1');
     expect(store.shared.isLoading).toBe(false);
     expect(store.shared.status!.files).toEqual([file]);
     expect(store.shared.error).toBeNull();
@@ -422,6 +429,10 @@ describe('open + applyWireState', () => {
     await advance(1000);
     expect(store.repoId).toBe('r1');
     expect(store.shared.error).toBeNull();
+    // Recovery is the one opener that does not run through useRepoOpen,
+    // so it must track the repo active itself — or the empty state stays
+    // up over an open repo and the URL gate never reopens.
+    expect(useDaemonStore().activeRepoId).toBe('r1');
   });
 });
 
@@ -511,7 +522,7 @@ describe('working-diff cache', () => {
     const store = useRepoStore();
     await store.open('/repo');
     const source = FakeEventSource.latest();
-    source.emit('snapshot', wireState([fileEntry('a.ts')]));
+    source.emit('repo-snapshot', wireState([fileEntry('a.ts')]));
     source.emit('state-change', wireState([fileEntry('a.ts')]));
     await flush();
     expect(diffCalls()).toEqual(['/repos/r1/diff', '/repos/r1/diff?staged=true']);
@@ -532,7 +543,7 @@ describe('working-diff cache', () => {
     const store = useRepoStore();
     await store.open('/repo');
     const source = FakeEventSource.latest();
-    source.emit('snapshot', wireState([fileEntry('a.ts')], { mtimes: { 'a.ts': 1 } }));
+    source.emit('repo-snapshot', wireState([fileEntry('a.ts')], { mtimes: { 'a.ts': 1 } }));
     await flush(); // activation starts, held on the whole-tree pull
 
     // a.ts changes on disk while the pull is in flight; the cache is
@@ -766,7 +777,7 @@ describe('working-diff cache', () => {
     expect(store.workingDiffs.seq).toBe(0);
 
     const source = FakeEventSource.latest();
-    source.emit('snapshot', wireState([fileEntry('a.ts')], { mtimes: { 'a.ts': 9 } }));
+    source.emit('repo-snapshot', wireState([fileEntry('a.ts')], { mtimes: { 'a.ts': 9 } }));
     await flush();
     expect(rawOf(store.workingDiffs.byKey.get('u:a.ts')!)).toBe(rawA9);
     expect(store.workingDiffs.byKey.get('u:a.ts')).not.toBe(firstEntry);
@@ -1685,7 +1696,9 @@ describe('reconnect', () => {
 
     source.fail();
     expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
-    expect(source.closed).toBe(true); // the store owns retry, not EventSource
+    // The shared stream is NOT closed from here: the daemon store owns it,
+    // the daemon-scope status rides on it, and the browser retries it.
+    expect(source.closed).toBe(false);
 
     // A second loss signal must not rewrite the state (no flicker).
     const before = store.shared;
@@ -1696,13 +1709,140 @@ describe('reconnect', () => {
     await store.listWorktrees();
     expect(store.shared).toBe(before);
 
-    // Daemon back: recovery re-POSTs /repos, resubscribes, pulls status.
+    // Daemon back: recovery re-POSTs /repos, re-attaches (which reopens
+    // the one stream, retiring the retrying handle), pulls status.
     onRequest = null;
     await advance(1000);
     expect(fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos')).toHaveLength(2);
     expect(FakeEventSource.instances).toHaveLength(2);
+    expect(source.closed).toBe(true);
     expect(store.shared.error).toBeNull();
-    expect(FakeEventSource.latest().url).toBe('/repos/r1/events');
+    expect(FakeEventSource.latest().url).toBe('/events?repo=r1');
+  });
+
+  test('a stream error flags the daemon store disconnected and puts this store into recovery', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+    const daemon = useDaemonStore();
+
+    source.fail();
+    // One error, both halves: the status bar's connection state and the
+    // repo's calm reconnect line come from the same dropped stream.
+    expect(daemon.connection).toBe('disconnected');
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+
+    await advance(1000);
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos')).toHaveLength(2);
+    expect(store.shared.error).toBeNull();
+  });
+
+  test('repo-missing for the repo on screen runs recovery: re-POST, re-attach, fresh status', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+
+    // The browser reconnected the stream on its own after a daemon
+    // restart; the restarted daemon has no such repo open.
+    source.emit('repo-missing', { id: 'r1' });
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+    expect(source.closed).toBe(false); // the stream itself is fine
+
+    await advance(1000);
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos')).toHaveLength(2);
+    expect(source.closed).toBe(true); // replaced by the re-attach
+    expect(FakeEventSource.latest().url).toBe('/events?repo=r1');
+    expect(store.shared.error).toBeNull();
+  });
+
+  test('repo-missing for another id is stale and ignored', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+    const before = store.shared;
+
+    source.emit('repo-missing', { id: 'someone-else' });
+    expect(store.shared).toBe(before);
+
+    await advance(3000);
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos')).toHaveLength(1);
+    expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  test('switching repos reopens the one stream with the new id; the old stream is dead', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+    onRequest = (call) => {
+      if (call.method === 'POST' && call.url === '/repos') {
+        return { body: { id: 'r2', path: (call.body as { path: string }).path } };
+      }
+      if (call.url.startsWith('/repos/r2/diff')) return { body: diffBody('') };
+      if (call.url.startsWith('/repos/r2/')) return { body: wireState() };
+      return undefined;
+    };
+
+    await store.open('/other');
+    const live = FakeEventSource.instances.filter((s) => !s.closed);
+    expect(live.map((s) => s.url)).toEqual(['/events?repo=r2']);
+    expect(source.closed).toBe(true);
+
+    // A late event from r1's stream must never land on r2.
+    source.emit('state-change', wireState([fileEntry('stale.ts')]));
+    expect(store.shared.status).toBeNull(); // r2 has no snapshot yet
+    FakeEventSource.latest().emit('repo-snapshot', wireState([fileEntry('b.ts')]));
+    expect(store.shared.status?.files.map((f) => f.path)).toEqual(['b.ts']);
+  });
+
+  test('dispose detaches: the stream reopens without a repo', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+
+    await store.dispose();
+    expect(store.repoId).toBeNull();
+    expect(source.closed).toBe(true);
+    const live = FakeEventSource.instances.filter((s) => !s.closed);
+    expect(live.map((s) => s.url)).toEqual(['/events']);
+    expect(fake.calls.filter((c) => c.method === 'DELETE').map((c) => c.url)).toEqual([
+      '/repos/r1',
+    ]);
+  });
+
+  test('a restart seen twice — the drop, then repo-missing on the retried stream — recovers once', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+
+    source.fail(); // the recovery timer is pending
+    // The browser retried the stream on its own before that timer fired:
+    // the restarted daemon greets it with its snapshot and then says the
+    // repo is not open. That is the SAME restart, not a second loss.
+    source.emit('snapshot', []);
+    source.emit('repo-missing', { id: 'r1' });
+
+    await advance(1000);
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos')).toHaveLength(2);
+    const live = FakeEventSource.instances.filter((s) => !s.closed);
+    expect(live.map((s) => s.url)).toEqual(['/events?repo=r1']);
+    expect(store.shared.error).toBeNull();
+
+    await advance(3000);
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos')).toHaveLength(2);
+    expect(FakeEventSource.instances.filter((s) => !s.closed)).toHaveLength(1);
+  });
+
+  test('repo-missing arriving while recover() is in flight does not start a second recovery', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+
+    const slowOpen = new Deferred<FakeResponse>();
+    onRequest = (call) =>
+      call.method === 'POST' && call.url === '/repos' ? slowOpen.promise : undefined;
+
+    source.fail();
+    await advance(1000); // recovery in flight, held on the re-POST
+
+    // The retried stream reports the restart while the re-POST is out.
+    source.emit('snapshot', []);
+    source.emit('repo-missing', { id: 'r1' });
+
+    onRequest = null;
+    slowOpen.resolve({ body: { id: 'r1', path: '/repo' } });
+    await flush();
+    await advance(3000);
+
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos')).toHaveLength(2);
+    const live = FakeEventSource.instances.filter((s) => !s.closed);
+    expect(live.map((s) => s.url)).toEqual(['/events?repo=r1']);
+    expect(store.shared.error).toBeNull();
   });
 
   test('recovery is single-flight: overlapping loss signals cause one re-open', async () => {
@@ -1982,7 +2122,7 @@ describe('a refused stage/unstage survives the next state-change', () => {
       return undefined;
     };
     await store.open('/other');
-    FakeEventSource.latest().emit('snapshot', wireState());
+    FakeEventSource.latest().emit('repo-snapshot', wireState());
     await flush();
     expect(store.shared.error).toBeNull();
   });
@@ -2123,5 +2263,108 @@ describe('whole-file mode (the single slot)', () => {
     expect(store.wholeFile).toBeNull();
     expect(store.wholeFileLoading).toBe(false);
     expect(store.shared.error).toContain('whole file');
+  });
+});
+
+// --- Hidden tab: the stream pauses, the repo store does not recover ---
+
+describe('hidden tab', () => {
+  /** Make the tab hidden or visible and tell the page, the way a browser does. */
+  function setVisibility(state: 'hidden' | 'visible'): void {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+    document.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  function live(): FakeEventSource[] {
+    return FakeEventSource.instances.filter((s) => !s.closed);
+  }
+
+  function repoPosts(): FetchCall[] {
+    return fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos');
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(document, 'visibilityState');
+  });
+
+  test('the hidden close is not a loss: no error line, no recovery, the same repo on show', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+    const connectionBefore = useDaemonStore().connection;
+
+    setVisibility('hidden');
+    await advance(HIDDEN_CLOSE_DELAY_MS);
+    expect(source.closed).toBe(true);
+    expect(live()).toHaveLength(0);
+    expect(store.shared.error).toBeNull();
+    expect(useDaemonStore().connection).toBe(connectionBefore);
+
+    await advance(3000);
+    expect(repoPosts()).toHaveLength(1); // no recovery ran
+    expect(fake.calls.filter((c) => c.method === 'DELETE')).toHaveLength(0); // the ref is kept
+
+    setVisibility('visible');
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r1']);
+    expect(repoPosts()).toHaveLength(1);
+    // The daemon resends the repo's state on the fresh stream.
+    FakeEventSource.latest().emit('repo-snapshot', wireState([fileEntry('b.ts')]));
+    expect(store.shared.status?.files.map((f) => f.path)).toEqual(['b.ts']);
+  });
+
+  test('a resume refetches the journal tail from the watermark, like recovery does', async () => {
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/journal') {
+        return { body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(1), jhunk(2)] } };
+      }
+      if (call.url === '/repos/r1/journal?since=2') {
+        return { body: { epoch: 'e7', prunedBefore: 0, entries: [jhunk(3)] } };
+      }
+      return undefined;
+    };
+    const { store } = await openStore();
+    await store.loadJournal();
+
+    // seq 3 is appended while the tab is hidden: its event is never
+    // received, and the stream that comes back does not replay it.
+    setVisibility('hidden');
+    await advance(HIDDEN_CLOSE_DELAY_MS);
+    setVisibility('visible');
+    await flush();
+    // Not before the reopened stream's snapshot: only from there on is
+    // the stream live, so a fetch started earlier could still miss an
+    // append landing before the daemon subscribed it.
+    expect(fake.callsTo('/journal').map((c) => c.url)).toEqual(['/repos/r1/journal']);
+
+    FakeEventSource.latest().emit('repo-snapshot', wireState());
+    await flush();
+    expect(fake.callsTo('/journal').map((c) => c.url)).toEqual([
+      '/repos/r1/journal',
+      '/repos/r1/journal?since=2',
+    ]);
+    expect(store.journalEntries.map((e) => e.seq)).toEqual([1, 2, 3]);
+    expect(store.journalRestarted).toBe(false);
+  });
+
+  test('recover() while hidden re-POSTs and pulls status but opens no stream', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+    setVisibility('hidden');
+    await advance(HIDDEN_CLOSE_DELAY_MS);
+    expect(source.closed).toBe(true);
+
+    // A fetch fails on connection while hidden: recovery runs as usual.
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/worktrees') throw new TypeError('Failed to fetch');
+      return undefined;
+    };
+    await store.listWorktrees();
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+    onRequest = null;
+
+    await advance(1000);
+    expect(repoPosts()).toHaveLength(2);
+    expect(store.shared.error).toBeNull(); // the /status pull landed
+    expect(live()).toHaveLength(0); // but no stream in a hidden tab
+
+    setVisibility('visible');
+    expect(live().map((s) => s.url)).toEqual(['/events?repo=r1']);
   });
 });

@@ -126,12 +126,12 @@ describe('subscribe', () => {
 
   test('registers a listener per named event and delivers parsed payloads', () => {
     const events: Array<[string, unknown]> = [];
-    subscribe('/repos/r1/events', ['snapshot', 'state-change'], {
+    subscribe('/events?repo=r1', ['snapshot', 'state-change'], {
       onEvent: (event, payload) => events.push([event, payload]),
     });
 
     const source = FakeEventSource.latest();
-    expect(source.url).toBe('/repos/r1/events');
+    expect(source.url).toBe('/events?repo=r1');
     source.emit('snapshot', { status: null });
     source.emit('state-change', { status: { files: [] } });
     expect(events).toEqual([
