@@ -309,7 +309,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
     :class="{ portrait: isPortrait }"
     :style="isPortrait ? { '--history-top': `${(split.rowRatio.value * 100).toFixed(2)}%` } : undefined"
   >
-    <aside class="commits-col" aria-label="Commit history">
+    <aside class="commits-col files-col" aria-label="Commit history">
       <p v-if="history.isLoading && commits.length === 0" class="panel-note">Loading history…</p>
       <!-- Full-pane error only when there is nothing to show; with commits
            loaded a failed re-pull stays a small inline line below the list. -->
@@ -383,6 +383,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
     />
 
     <ChangedFileTree
+      class="commit-files"
       data-testid="commit-files"
       :files="commitFiles"
       :selected-index="selectedFileIndex"
@@ -453,15 +454,13 @@ function selectAndFocusPayload(commit: CommitInfo): void {
 
 /* --- Commit list --- */
 
+/* The panel surface is .files-col (style.css), the same one Changes and
+   the file tree use. This adds the grid slot and the column flow the
+   inline error line and load-more button need. */
 .commits-col {
   grid-area: commits;
-  min-width: 0;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  /* No border-right: the diff beside it is a card now, so page background
-     separates them — the same way Changes, Compare and Explorer do it. */
-  background: var(--surface);
 }
 
 .commit-list {
@@ -566,7 +565,9 @@ function selectAndFocusPayload(commit: CommitInfo): void {
 
 /* --- Changed files (middle) --- */
 
-.files-col {
+/* Grid placement only; the tree's own root class is .files-col, which
+   the commit list beside it also carries, so the slot is named here. */
+.commit-files {
   grid-area: files;
 }
 
@@ -651,7 +652,7 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   grid-area: resizer;
 }
 
-:root[data-split='stacked'] .files-col {
+:root[data-split='stacked'] .commit-files {
   /* The commit list beside it is the same surface; a hairline keeps the
      two lists apart. */
   border-left: 1px solid var(--border);
