@@ -8,27 +8,32 @@ export async function getIgnoredFiles(repoPath: string, files: string[]): Promis
   if (files.length === 0) return new Set();
 
   const git = createGit(repoPath);
-  const ignoredFiles = new Set<string>();
   const batchSize = 100;
 
+  const batches: string[][] = [];
   for (let i = 0; i < files.length; i += batchSize) {
-    const batch = files.slice(i, i + batchSize);
-    try {
-      // '--' keeps a flag-shaped path (a file literally named '-q') from
-      // being read as an option
-      const result = await git.raw(['check-ignore', '--', ...batch]);
-      const ignored = result
-        .trim()
-        .split('\n')
-        .filter((f) => f.length > 0);
-      for (const f of ignored) {
-        ignoredFiles.add(f);
+    batches.push(files.slice(i, i + batchSize));
+  }
+  // The batches are independent, so they run together rather than each
+  // waiting for the last.
+  const results = await Promise.all(
+    batches.map(async (batch) => {
+      try {
+        // '--' keeps a flag-shaped path (a file literally named '-q') from
+        // being read as an option
+        return await git.raw(['check-ignore', '--', ...batch]);
+      } catch {
+        // check-ignore exits with code 1 if no files are ignored, which throws
+        return '';
       }
-    } catch {
-      // check-ignore exits with code 1 if no files are ignored, which throws
-      // Just continue to next batch
+    })
+  );
+
+  const ignoredFiles = new Set<string>();
+  for (const result of results) {
+    for (const f of result.trim().split('\n')) {
+      if (f.length > 0) ignoredFiles.add(f);
     }
   }
-
   return ignoredFiles;
 }

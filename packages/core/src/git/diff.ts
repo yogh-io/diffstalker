@@ -14,7 +14,7 @@ import {
   MAX_FILE_DIFF_BYTES,
 } from './diffParse.js';
 import type { DiffLine, DiffResult } from './diffParse.js';
-import type { StatusResult } from 'simple-git';
+import type { SimpleGit, StatusResult } from 'simple-git';
 
 // Re-export the pure diff/patch parsers so existing importers (the daemon,
 // tests) keep working through `git/diff`. The CLI imports them straight from
@@ -526,7 +526,18 @@ function buildFileDiffs(numstat: string, nameStatus: string, rawDiff: string): C
  */
 export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Promise<CompareDiff> {
   const git = createGit(repoPath);
+  return compareCommitted(git, baseRef, git.status());
+}
 
+/**
+ * The committed compare proper. `status` is passed in so getCompareDiff
+ * can share the one `git status` its uncommitted rows need too.
+ */
+async function compareCommitted(
+  git: SimpleGit,
+  baseRef: string,
+  status: Promise<StatusResult>
+): Promise<CompareDiff> {
   // Get merge-base for three-dot diff. With no common ancestor git exits 1
   // with empty output (simple-git resolves with ''); the diff would then
   // collapse to HEAD...HEAD and silently report an empty compare.
@@ -536,16 +547,16 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
     throw new NoCommonHistoryError(baseRef);
   }
 
-  // Get per-file stats with --numstat
-  const numstat = await git.raw(['diff', '--numstat', `${base}...HEAD`]);
-
-  // Get file statuses with --name-status
-  const nameStatus = await git.raw(['diff', '--name-status', `${base}...HEAD`]);
-
-  // Get full diff
-  const rawDiff = capLargeFileDiffs(
-    await git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, `${base}...HEAD`])
-  );
+  // Everything below depends only on the base, so the five reads run
+  // together: per-file stats, file statuses, the full diff, the status
+  // for the uncommitted count, and the commits between base and HEAD.
+  const [numstat, nameStatus, rawDiff, { files: statusFiles }, log] = await Promise.all([
+    git.raw(['diff', '--numstat', `${base}...HEAD`]),
+    git.raw(['diff', '--name-status', `${base}...HEAD`]),
+    git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, `${base}...HEAD`]).then(capLargeFileDiffs),
+    status,
+    git.log({ from: base, to: 'HEAD' }),
+  ]);
 
   const fileDiffs = buildFileDiffs(numstat, nameStatus, rawDiff);
 
@@ -557,12 +568,8 @@ export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Pro
     totalDeletions += file.deletions;
   }
 
-  // Get uncommitted count from status
-  const status = await git.status();
-  const uncommittedCount = status.files.length;
+  const uncommittedCount = statusFiles.length;
 
-  // Get commits between base and HEAD
-  const log = await git.log({ from: base, to: 'HEAD' });
   const commits: CommitInfo[] = log.all.map((entry) => ({
     hash: entry.hash,
     shortHash: entry.hash.slice(0, 7),
@@ -733,9 +740,11 @@ export async function getCommitFiles(repoPath: string, hash: string): Promise<Co
   // option, so every real option goes before it.
   const show = (options: string[]): Promise<string> =>
     git.raw(['show', '--format=', ...options, '--end-of-options', hash]);
-  const numstat = await show(['--numstat']);
-  const nameStatus = await show(['--name-status']);
-  const rawDiff = capLargeFileDiffs(await show([`-U${DIFF_CONTEXT_LINES}`]));
+  const [numstat, nameStatus, rawDiff] = await Promise.all([
+    show(['--numstat']),
+    show(['--name-status']),
+    show([`-U${DIFF_CONTEXT_LINES}`]).then(capLargeFileDiffs),
+  ]);
   return buildFileDiffs(numstat, nameStatus, rawDiff);
 }
 
@@ -812,10 +821,10 @@ async function readTrackedRows(
 ): Promise<CompareFileDiff[]> {
   const git = createGit(repoPath);
   const range = trackedRange(side);
-  const stats = parseNumstat(await git.raw(rangeArgs(range, ['--numstat'])));
-  const raw = capLargeFileDiffs(
-    await git.raw(rangeArgs(range, [`-U${DIFF_CONTEXT_LINES}`]))
-  );
+  const [stats, raw] = await Promise.all([
+    git.raw(rangeArgs(range, ['--numstat'])).then(parseNumstat),
+    git.raw(rangeArgs(range, [`-U${DIFF_CONTEXT_LINES}`])).then(capLargeFileDiffs),
+  ]);
 
   const statusPairs = new Map(status.files.map((f) => [f.path, f]));
   const rows: CompareFileDiff[] = [];
@@ -887,26 +896,35 @@ export async function getCompareDiff(
   baseRef: string,
   parts: UncommittedParts = NO_UNCOMMITTED
 ): Promise<CompareDiff> {
-  const committedDiff = await getDiffBetweenRefs(repoPath, baseRef);
   const side = trackedSide(parts);
-  if (side === null && !parts.untracked) return committedDiff;
+  if (side === null && !parts.untracked) return getDiffBetweenRefs(repoPath, baseRef);
 
-  const status = await createGit(repoPath).status();
-  const uncommittedRows: CompareFileDiff[] = [
-    ...(side === null ? [] : await readTrackedRows(repoPath, side, status)),
-    ...(parts.untracked ? await readUntrackedRows(repoPath, status) : []),
-  ];
+  // One `git status` serves both the committed compare (its uncommitted
+  // count) and the uncommitted rows, and the two sides read together.
+  const git = createGit(repoPath);
+  const status = git.status();
+  const [committedDiff, trackedRows, untrackedRows] = await Promise.all([
+    compareCommitted(git, baseRef, status),
+    side === null ? [] : status.then((s) => readTrackedRows(repoPath, side, s)),
+    parts.untracked ? status.then((s) => readUntrackedRows(repoPath, s)) : [],
+  ]);
+  const uncommittedRows: CompareFileDiff[] = [...trackedRows, ...untrackedRows];
 
   // Committed rows keep their place; an uncommitted row for the same path
   // is listed right after it, and one for a path the branch never
   // committed is appended.
-  const committedPaths = new Set(committedDiff.files.map((f) => f.path));
+  const uncommittedByPath = new Map<string, CompareFileDiff[]>();
+  for (const row of uncommittedRows) {
+    const rows = uncommittedByPath.get(row.path);
+    if (rows) rows.push(row);
+    else uncommittedByPath.set(row.path, [row]);
+  }
   const mergedFiles: CompareFileDiff[] = [];
   for (const file of committedDiff.files) {
-    mergedFiles.push(file);
-    mergedFiles.push(...uncommittedRows.filter((f) => f.path === file.path));
+    mergedFiles.push(file, ...(uncommittedByPath.get(file.path) ?? []));
+    uncommittedByPath.delete(file.path);
   }
-  mergedFiles.push(...uncommittedRows.filter((f) => !committedPaths.has(f.path)));
+  for (const rows of uncommittedByPath.values()) mergedFiles.push(...rows);
 
   mergedFiles.sort((a, b) => a.path.localeCompare(b.path));
 
