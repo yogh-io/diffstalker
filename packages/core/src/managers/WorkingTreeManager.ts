@@ -86,7 +86,7 @@ const MAX_UNTRACKED_JOURNAL_BYTES = 256 * 1024;
  */
 interface JournalGuardSnapshot {
   operation: InProgressOperation | null;
-  stashCount: number;
+  stashList: StashEntry[];
   /** Working mtimes of the status snapshot's changed files. */
   mtimes: Map<string, number>;
 }
@@ -421,17 +421,20 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
       // Stash list and in-progress operation are shared repo state (they
       // cross the daemon wire), so a full refresh recomputes them too.
-      // Plain git functions, not loadStashList: this already runs inside
-      // the queue, so re-enqueueing would deadlock.
+      // They are read once, as the journal guard's "before" snapshot,
+      // which is taken at this same instant; the state and the guard
+      // used to spawn the same two git processes twice. Plain git
+      // functions, not loadStashList: this already runs inside the
+      // queue, so re-enqueueing would deadlock.
       // The journal inputs ride along in the same queue slot; their
       // gather never throws (null = skip this tick's observation).
-      const [allUnstagedDiff, allStagedDiff, stashList, operationInProgress, journalInputs] =
+      const guardBefore = this.snapshotJournalGuard(newStatus);
+      const [allUnstagedDiff, allStagedDiff, { stashList, operation }, journalInputs] =
         await Promise.all([
           getDiff(this.repoPath, undefined, false),
           getDiff(this.repoPath, undefined, true),
-          gitGetStashList(this.repoPath),
-          getInProgressOperation(this.repoPath),
-          this.gatherJournalInputs(newStatus, oidBefore, gatherStart),
+          guardBefore,
+          this.gatherJournalInputs(newStatus, oidBefore, gatherStart, guardBefore),
         ]);
 
       const hunkCounts: FileHunkCounts = {
@@ -451,15 +454,15 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         status: newStatus,
         hunkCounts,
         stashList,
-        operationInProgress,
+        operationInProgress: operation,
         mtimes,
         isLoading: false,
       });
 
       if (journalInputs !== null) {
-        // stashCount/operationInProgress/mtimes come from the gather's
-        // own guarded window (not the parallel state reads above), so
-        // the observation is internally consistent.
+        // stashCount/operationInProgress/mtimes come from the guard's
+        // AFTER snapshot, the end of the observation window, so the
+        // observation is internally consistent.
         this.emit('journal-observation', {
           status: newStatus,
           headDiff: journalInputs.headDiff,
@@ -479,20 +482,22 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   }
 
   /**
-   * Snapshot the tear-guard facts: in-progress operation, stash count,
+   * Snapshot the tear-guard facts: in-progress operation, stash list,
    * and the working mtimes of the status snapshot's changed files. Taken
-   * once BEFORE the diff reads and once AFTER by gatherJournalInputs.
+   * once BEFORE the diff reads (by doRefresh, which also feeds the
+   * operation and stash list into the state) and once AFTER by
+   * gatherJournalInputs.
    */
   private async snapshotJournalGuard(status: GitStatus): Promise<JournalGuardSnapshot> {
-    const [operation, stashes] = await Promise.all([
+    const [operation, stashList] = await Promise.all([
       getInProgressOperation(this.repoPath),
       gitGetStashList(this.repoPath),
     ]);
-    return { operation, stashCount: stashes.length, mtimes: this.statMtimes(status) };
+    return { operation, stashList, mtimes: this.statMtimes(status) };
   }
 
   private static journalGuardMoved(a: JournalGuardSnapshot, b: JournalGuardSnapshot): boolean {
-    if (a.operation !== b.operation || a.stashCount !== b.stashCount) return true;
+    if (a.operation !== b.operation || a.stashList.length !== b.stashList.length) return true;
     if (a.mtimes.size !== b.mtimes.size) return true;
     for (const [p, t] of a.mtimes) {
       if (b.mtimes.get(p) !== t) return true;
@@ -558,7 +563,9 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
    * the status read, so the status snapshot itself sits inside the guarded
    * window; null means that capture failed and this tick is skipped.
    * gatherStart is captured there too — the write-during-window guard's
-   * floor (see sectionWrittenDuringGather).
+   * floor (see sectionWrittenDuringGather). guardBefore is the "before"
+   * snapshot doRefresh started alongside the diff reads; it is awaited
+   * here first, so the window still opens before the HEAD diff is read.
    *
    * Untracked files are invisible to `git diff HEAD`, so their synthetic
    * sections (getDiffForUntracked) are appended here. That read catches to
@@ -568,13 +575,14 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   private async gatherJournalInputs(
     status: GitStatus,
     oidBefore: string | null,
-    gatherStart: number
+    gatherStart: number,
+    guardBeforePromise: Promise<JournalGuardSnapshot>
   ): Promise<JournalInputs | null> {
     if (oidBefore === null) return null;
     try {
-      const guardBefore = await this.snapshotJournalGuard(status);
+      const guardBefore = await guardBeforePromise;
 
-      const headDiff = await getDiffAgainstHead(this.repoPath);
+      const headDiff = await getDiffAgainstHead(this.repoPath, oidBefore);
       const present = new Set(splitDiffByFile(headDiff).keys());
       const lines = [...headDiff.lines];
       await this.appendUntrackedSections(status, present, lines);
@@ -588,7 +596,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       return {
         headDiff: { lines },
         headOid: oidAfter,
-        stashCount: guardAfter.stashCount,
+        stashCount: guardAfter.stashList.length,
         operationInProgress: guardAfter.operation,
         mtimes: guardAfter.mtimes,
       };

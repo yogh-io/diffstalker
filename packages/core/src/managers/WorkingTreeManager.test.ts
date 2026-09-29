@@ -141,10 +141,17 @@ describe('WorkingTreeManager', () => {
       mtimes: Map<string, number>;
     }
 
+    interface GuardSnap {
+      operation: InProgressOperation | null;
+      stashList: { index: number; message: string }[];
+      mtimes: Map<string, number>;
+    }
+
     /**
      * Reach the private journal gather with the oidBefore and gatherStart
      * doRefresh now captures BEFORE the status read — the torn-window
-     * contract under test.
+     * contract under test — and the "before" guard snapshot doRefresh
+     * starts alongside the diff reads.
      */
     function gatherWith(
       m: WorkingTreeManager,
@@ -152,21 +159,21 @@ describe('WorkingTreeManager', () => {
       oidBefore: string | null,
       gatherStart: number = Date.now()
     ): Promise<GatheredInputs | null> {
-      return (
-        m as unknown as {
-          gatherJournalInputs(
-            status: GitStatus,
-            oidBefore: string | null,
-            gatherStart: number
-          ): Promise<GatheredInputs | null>;
-        }
-      ).gatherJournalInputs(status, oidBefore, gatherStart);
-    }
-
-    interface GuardSnap {
-      operation: InProgressOperation | null;
-      stashCount: number;
-      mtimes: Map<string, number>;
+      const target = m as unknown as {
+        snapshotJournalGuard(status: GitStatus): Promise<GuardSnap>;
+        gatherJournalInputs(
+          status: GitStatus,
+          oidBefore: string | null,
+          gatherStart: number,
+          guardBefore: Promise<GuardSnap>
+        ): Promise<GatheredInputs | null>;
+      };
+      return target.gatherJournalInputs(
+        status,
+        oidBefore,
+        gatherStart,
+        target.snapshotJournalGuard(status)
+      );
     }
 
     /**
@@ -231,7 +238,8 @@ describe('WorkingTreeManager', () => {
           snap.operation = 'merge'; // an operation started/ended mid-window
         },
         (snap) => {
-          snap.stashCount += 1; // an external stash landed mid-window
+          // an external stash landed mid-window
+          snap.stashList.push({ index: snap.stashList.length, message: 'external' });
         },
         (snap) => {
           // a tracked file was rewritten mid-window (slow external checkout)

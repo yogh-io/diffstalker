@@ -202,10 +202,14 @@ export async function getHeadOid(repoPath: string): Promise<string> {
  * a phantom mass-revert into an append-only log the first time an
  * index.lock race hit. Do NOT "normalize" this to catch-to-empty; the
  * requirement is enforced by test (diff.test.ts).
+ *
+ * `headOid` is HEAD's oid when the caller already read it (the journal's
+ * tear guard reads it an instant earlier); it saves the re-read that only
+ * decides between HEAD and the empty tree.
  */
-export async function getDiffAgainstHead(repoPath: string): Promise<DiffResult> {
+export async function getDiffAgainstHead(repoPath: string, headOid?: string): Promise<DiffResult> {
   const git = createGit(repoPath);
-  const head = await getHeadOid(repoPath);
+  const head = headOid ?? (await getHeadOid(repoPath));
   const base = head === UNBORN_HEAD_OID ? EMPTY_TREE_OID : 'HEAD';
   const raw = capLargeFileDiffs(
     await git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, base, '--'])
