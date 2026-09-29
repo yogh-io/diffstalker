@@ -115,6 +115,24 @@ function isActive(file: FileEntry): boolean {
   return ui.activeStackKey === rowKey(file);
 }
 
+/**
+ * Index of the active row: ui.activeStackKey first, selection fallback.
+ * A computed, not a function: the scan is O(n), and the template used to
+ * run it once PER ROW for the roving tabindex — O(n²) per render, on
+ * every scroll-spy tick and status change. Cached, the rows read it for
+ * free. Declared here, above the media window that reads it at setup.
+ */
+const activeIndex = computed<number>(() => {
+  const ordered = categories.value.ordered;
+  const key = ui.activeStackKey;
+  if (key !== null) {
+    const idx = ordered.findIndex((file) => rowKey(file) === key);
+    if (idx !== -1) return idx;
+  }
+  const selected = repo.selection.file;
+  return selected ? ordered.indexOf(selected) : -1;
+});
+
 /** Shortened path split into a dimmed dir prefix and emphasized basename. */
 function splitPath(path: string): { dir: string; base: string } {
   const shortened = shortenPath(path, 56);
@@ -280,7 +298,7 @@ function mediaFailToken(key: string, pair: MediaPair): string {
  */
 const mediaCandidates = computed<FileEntry[]>(() => {
   const ordered = categories.value.ordered;
-  const center = Math.max(0, activeIndex());
+  const center = Math.max(0, activeIndex.value);
   const last = Math.min(ordered.length, center + MEDIA_WINDOW + 1);
   const out: FileEntry[] = [];
   for (let i = Math.max(0, center - MEDIA_WINDOW); i < last; i++) {
@@ -395,28 +413,16 @@ function jumpAndFocusSection(file: FileEntry): void {
 
 const listEl = ref<HTMLElement | null>(null);
 
-/** Index of the active row: ui.activeStackKey first, selection fallback. */
-function activeIndex(): number {
-  const ordered = categories.value.ordered;
-  const key = ui.activeStackKey;
-  if (key !== null) {
-    const idx = ordered.findIndex((file) => rowKey(file) === key);
-    if (idx !== -1) return idx;
-  }
-  const selected = repo.selection.file;
-  return selected ? ordered.indexOf(selected) : -1;
-}
-
 /** The row that holds tabindex 0: the active one, else the first. */
-function isTabStop(file: FileEntry): boolean {
+const tabStopFile = computed<FileEntry | null>(() => {
   const ordered = categories.value.ordered;
-  const idx = activeIndex();
-  return file === (idx >= 0 ? ordered[idx] : ordered[0]);
-}
+  const idx = activeIndex.value;
+  return (idx >= 0 ? ordered[idx] : ordered[0]) ?? null;
+});
 
 function moveSelection(delta: number): void {
   const ordered = categories.value.ordered;
-  const next = nextIndex(activeIndex(), delta, ordered.length);
+  const next = nextIndex(activeIndex.value, delta, ordered.length);
   if (next === -1) return;
   jumpToFile(ordered[next]);
   void nextTick(() => {
@@ -428,7 +434,7 @@ function moveSelection(delta: number): void {
 function focusActiveRow(): void {
   const list = listEl.value;
   if (!list) return;
-  const idx = activeIndex();
+  const idx = activeIndex.value;
   const rows = list.querySelectorAll<HTMLElement>('.file-row');
   (idx >= 0 ? rows[idx] : rows[0])?.focus();
 }
@@ -476,7 +482,7 @@ const { onPointerEnter, onPointerLeave } = useActiveRowScroll(
   () => ui.activeStackKey,
   () => {
     const list = listEl.value;
-    const idx = activeIndex();
+    const idx = activeIndex.value;
     if (!list || idx < 0) return null;
     return list.querySelectorAll<HTMLElement>('.file-row')[idx] ?? null;
   }
@@ -667,7 +673,7 @@ const rootStyle = computed(() => ({
             :class="{ selected: isActive(file), flash: isFlashed(file) }"
             role="option"
             :aria-selected="isActive(file)"
-            :tabindex="isTabStop(file) ? 0 : -1"
+            :tabindex="file === tabStopFile ? 0 : -1"
             :title="file.path"
             @click="activateFile(file)"
             @keydown.down.prevent="moveSelection(1)"

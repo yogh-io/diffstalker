@@ -257,12 +257,17 @@ function relTime(commit: CommitInfo): string {
 
 // --- Keyboard selection (roving tabindex, same pattern as Changes) ---
 
-/** The row that holds tabindex 0: the selected one, else the first. */
-function isTabStop(commit: CommitInfo, index: number): boolean {
+/**
+ * The row that holds tabindex 0: the selected one, else the first. One
+ * membership scan per change, not one per row — the template compares
+ * identities, so a long loaded log renders in O(n), not O(n²).
+ */
+const tabStopCommit = computed<CommitInfo | null>(() => {
+  const list = commits.value;
   const current = selected.value;
-  if (current && commits.value.includes(current)) return commit === current;
-  return index === 0;
-}
+  if (current && list.includes(current)) return current;
+  return list[0] ?? null;
+});
 
 function moveSelection(delta: number): void {
   const list = commits.value;
@@ -324,13 +329,13 @@ function selectAndFocusPayload(commit: CommitInfo): void {
           aria-label="Commits"
         >
           <div
-            v-for="(commit, index) in commits"
+            v-for="commit in commits"
             :key="commit.hash"
             class="commit-row list-row"
             :class="{ selected: commit === selected }"
             role="option"
             :aria-selected="commit === selected"
-            :tabindex="isTabStop(commit, index) ? 0 : -1"
+            :tabindex="commit === tabStopCommit ? 0 : -1"
             :title="commit.hash"
             @click="activateCommit(commit)"
             @keydown.down.prevent="moveSelection(1)"

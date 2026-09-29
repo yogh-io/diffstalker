@@ -136,13 +136,17 @@ function sideTag(side: UncommittedSide): string {
   return side === 'both' ? '[uncommitted]' : `[${side}]`;
 }
 
-/** The file row holding tabindex 0: the selected one, else the first. */
-function isTabStop(fileIndex: number): boolean {
+/**
+ * The file row holding tabindex 0: the selected one, else the first. One
+ * membership scan per change, not one per row — the template compares
+ * indices, so the tree renders in O(n), not O(n²).
+ */
+const tabStopIndex = computed<number | null>(() => {
   const order = visibleOrder.value;
   const selected = props.selectedIndex;
-  if (selected !== null && order.includes(selected)) return fileIndex === selected;
-  return fileIndex === order[0];
-}
+  if (selected !== null && order.includes(selected)) return selected;
+  return order[0] ?? null;
+});
 
 function fileRowEl(index: number): HTMLElement | null {
   return rootEl.value?.querySelector<HTMLElement>(`.file-row[data-file-index="${index}"]`) ?? null;
@@ -215,7 +219,7 @@ const { onPointerEnter, onPointerLeave } = useActiveRowScroll(
         :data-file-index="row.fileIndex"
         role="option"
         :aria-selected="selectedIndex === row.fileIndex"
-        :tabindex="isTabStop(row.fileIndex) ? 0 : -1"
+        :tabindex="row.fileIndex === tabStopIndex ? 0 : -1"
         :title="row.file.path"
         @click="emit('activate', row.fileIndex)"
         @keydown.down.prevent="move(1)"
