@@ -35,14 +35,8 @@ import { useDaemonStore } from '../stores/daemon';
 import { useExplorerStore } from '../stores/explorer';
 import { useUiStore } from '../stores/ui';
 import { useRepoOpen } from './useRepoOpen';
+import { stripTrailingSlashes } from '../utils/format';
 import type { FollowChangeEvent, RepoSummary } from '@diffstalker/client';
-
-/** Strip trailing slashes ("/repo/" and "/repo" are the same target). */
-function normalizePath(path: string): string {
-  let out = path;
-  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
-  return out;
-}
 
 export function useFollowMode(): void {
   const daemon = useDaemonStore();
@@ -67,7 +61,7 @@ export function useFollowMode(): void {
       // path through the one-POST flow; the daemon normalizes the path
       // to the worktree root and openByPath tracks the result active.
       if (!(await openByPath(event.path))) return;
-      target = daemon.repos.find((repo) => repo.id === daemon.activeRepoId);
+      target = daemon.activeRepo ?? undefined;
       if (!target) return;
     }
 
@@ -80,8 +74,8 @@ export function useFollowMode(): void {
     // The resolved hook path: the worktree root (or anything not under
     // it) only switches the repo; a path strictly under the root is
     // revealed — revealFile expands a directory and opens a file.
-    const root = normalizePath(target.path);
-    const path = normalizePath(event.path);
+    const root = stripTrailingSlashes(target.path);
+    const path = stripTrailingSlashes(event.path);
     if (path !== root && path.startsWith(root + '/')) {
       ui.setActiveView('explorer');
       await explorer.revealFile(path.slice(root.length + 1));

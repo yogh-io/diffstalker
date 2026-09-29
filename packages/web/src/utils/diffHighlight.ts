@@ -33,8 +33,7 @@
  */
 
 import hljs from './hljs';
-import { splitHighlightedHtml } from './highlight';
-import { getLanguageFromPath } from '@diffstalker/core/view/languageDetection';
+import { MAX_HIGHLIGHT_LINE_LENGTH, hljsLanguage, splitHighlightedHtml } from './highlight';
 import type { WordDiffSegment } from '@diffstalker/core/view/wordDiff';
 import type { DiffContentRow } from './diffRows';
 
@@ -48,23 +47,13 @@ export interface DiffPiece {
 }
 
 /**
- * The hljs language for a path, or null when unsupported / plaintext
- * (caller renders the plain path). Mirrors utils/highlight's gate so the
- * diff and the explorer file view agree on what is highlightable.
+ * The hljs language for a section's path, or null when unsupported /
+ * plaintext / no path (caller renders plain). The same gate as the
+ * explorer file view (utils/highlight), so the two agree.
  */
 export function diffLanguage(filePath: string | null | undefined): string | null {
-  if (!filePath) return null;
-  const detected = getLanguageFromPath(filePath);
-  return detected !== null && detected !== 'plaintext' && hljs.getLanguage(detected) !== undefined
-    ? detected
-    : null;
+  return filePath ? hljsLanguage(filePath) : null;
 }
-
-/**
- * Above this per-line length, skip hljs (its regex work is ~quadratic on
- * one huge token). Matches utils/highlight's MAX_HIGHLIGHT_LINE_LENGTH.
- */
-export const MAX_HIGHLIGHT_LINE_LENGTH = 2000;
 
 interface Run {
   text: string;

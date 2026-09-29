@@ -14,6 +14,7 @@ import {
   basename,
   parentDir,
   splitBasename,
+  stripTrailingSlashes,
   formatBytes,
   statusLetter,
   formatClock,
@@ -25,6 +26,13 @@ describe('path helpers', () => {
     expect(basename('/home/u/repo')).toBe('repo');
     expect(basename('/home/u/repo/')).toBe('repo');
     expect(basename('repo')).toBe('repo');
+  });
+
+  test('stripTrailingSlashes makes /repo/ and /repo the same; root stays root', () => {
+    expect(stripTrailingSlashes('/home/u/repo/')).toBe('/home/u/repo');
+    expect(stripTrailingSlashes('/home/u/repo//')).toBe('/home/u/repo');
+    expect(stripTrailingSlashes('/home/u/repo')).toBe('/home/u/repo');
+    expect(stripTrailingSlashes('/')).toBe('/');
   });
 
   test('parentDir drops the last segment; root stays root', () => {

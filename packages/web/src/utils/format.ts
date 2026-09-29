@@ -8,8 +8,11 @@ export function basename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-/** Drop trailing slashes without a regex (avoids a ReDoS lint flag). */
-function stripTrailingSlashes(path: string): string {
+/**
+ * Drop trailing slashes without a regex (avoids a ReDoS lint flag), so
+ * '/repo/' and '/repo' name the same directory. A bare '/' stays '/'.
+ */
+export function stripTrailingSlashes(path: string): string {
   let end = path.length;
   while (end > 1 && path[end - 1] === '/') end--;
   return path.slice(0, end);

@@ -119,6 +119,8 @@ import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
 import { DiffstalkerClient } from '../api/client';
 import { isConnectionError } from '../api/errors';
+import { delay } from '../utils/delay';
+import { basename } from '../utils/format';
 import {
   EMPTY_URL_STATE,
   HOME_SENTINEL,
@@ -145,10 +147,6 @@ const ANCHOR_THROTTLE_MS = 400;
  * Mirrors the repo store's reconnect delay: same daemon, same wait.
  */
 export const HOME_RETRY_DELAY_MS = 1000;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /** Where a user gesture is going. Omit a field the gesture leaves alone. */
 export interface NavTarget {
@@ -361,7 +359,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     // one whole and one in hunks, must not read identically in the menu.
     if (place.at !== null) parts.push(place.whole !== null ? `${place.at} (whole)` : place.at);
     parts.push(place.view);
-    if (place.repoPath !== null) parts.push(place.repoPath.split('/').filter(Boolean).pop() ?? '');
+    if (place.repoPath !== null) parts.push(basename(place.repoPath));
     return parts.filter(Boolean).join(' — ') || 'diffstalker';
   }
 

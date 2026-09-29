@@ -43,7 +43,7 @@ export function useActiveWorktrees(): ActiveWorktrees {
     if (project) return project.name;
     // Unresolved (or a repo the daemon has not listed yet): the repo's own
     // name is the only honest answer.
-    const active = daemon.repos.find((repo) => repo.id === daemon.activeRepoId);
+    const active = daemon.activeRepo;
     return active ? basename(active.path) : '';
   });
 

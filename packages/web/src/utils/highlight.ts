@@ -82,9 +82,23 @@ export function splitHighlightedHtml(html: string): string[] {
  * Above this per-line length, skip hljs for the whole file. hljs's
  * regex work is ~quadratic on a single huge token; one long minified
  * line can freeze the main thread for minutes. Editors draw the same
- * line: past a threshold, no syntax highlighting.
+ * line: past a threshold, no syntax highlighting. The diff path
+ * (utils/diffHighlight) applies the same cap per row.
  */
 export const MAX_HIGHLIGHT_LINE_LENGTH = 2000;
+
+/**
+ * The hljs language for a path, or null when the map has none, says
+ * plaintext, or names a grammar this build does not carry. The one gate
+ * for both the file viewer and the diff, so they agree on what is
+ * highlightable.
+ */
+export function hljsLanguage(filePath: string): string | null {
+  const detected = getLanguageFromPath(filePath);
+  return detected !== null && detected !== 'plaintext' && hljs.getLanguage(detected) !== undefined
+    ? detected
+    : null;
+}
 
 /**
  * Highlight file content into per-line HTML. Unknown/unsupported
@@ -101,12 +115,7 @@ export function highlightContent(content: string, filePath: string): Highlighted
   const trimmed = normalized.endsWith('\n') ? normalized.slice(0, -1) : normalized;
   const rawLines = trimmed.split('\n');
 
-  const detected = getLanguageFromPath(filePath);
-  const language =
-    detected !== null && detected !== 'plaintext' && hljs.getLanguage(detected) !== undefined
-      ? detected
-      : null;
-
+  const language = hljsLanguage(filePath);
   if (language === null || rawLines.some((line) => line.length > MAX_HIGHLIGHT_LINE_LENGTH)) {
     return { lines: rawLines.map(escapeHtml), language: null };
   }
