@@ -28,7 +28,12 @@ import * as fs from 'node:fs';
  *    tree being watched, so symlinks get resolved here instead. statSync
  *    follows the link and is safe on a pipe: stat never blocks, only open does.
  *
- * Worth re-testing when bun updates — if the runtime stops blocking, this can go.
+ * What this guard cannot reach: on bun 1.3, fs.watch(dir) lists the directory
+ * on a pool thread AFTER it returns and opens every entry with a plain
+ * blocking open while holding bun's watcher mutex. `ignored` never sees those
+ * entries. A FIFO already in a directory at that moment parks the pool thread,
+ * and the next fs.watch() call deadlocks the main thread. Bun 1.4 opens with
+ * O_PATH, which never blocks, so once the pin moves past 1.3 this guard can go.
  */
 export function isUnwatchable(filePath: string, stats?: fs.Stats): boolean {
   let st = stats;

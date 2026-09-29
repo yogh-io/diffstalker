@@ -13,16 +13,31 @@
  * predicate because that is the only hook chokidar runs before it opens
  * anything.
  *
- * Note the ordering: the pipe is created AFTER the watcher is up. A FIFO that
- * already exists when startWatching() runs is harmless, because ignoreInitial
- * means chokidar never looks at it — so a test that creates the pipe first
- * passes whether or not the guard is there, and proves nothing.
+ * Note the ordering: the pipe is created AFTER the watcher is up. That is
+ * the case the guard covers: chokidar sees the new path, asks `ignored`,
+ * and never hands it to fs.watch. A pipe that already exists when a
+ * directory is handed to fs.watch is a different story on bun 1.3: bun
+ * lists that directory on a pool thread, after fs.watch() has returned,
+ * and opens every entry with a plain blocking open while holding its
+ * watcher mutex. `ignored` never sees those entries. A FIFO there parks
+ * the pool thread, and the next fs.watch() call deadlocks the main
+ * thread. Bun 1.4 opens with O_PATH and no longer blocks. Node never did.
+ *
+ * That is also why the scenarios run in a CHILD process. When the main
+ * thread is stuck in open(2) or on that mutex, no timer fires, so neither
+ * bun's per-test timeout nor a Promise.race can fail the test: the whole
+ * suite hangs until CI kills the job. The parent runs `bun test` on this
+ * same file with DIFFSTALKER_WATCH_SCENARIO set, waits with a hard
+ * timeout, and SIGKILLs a child that does not come back. A regression is
+ * then a failed test, not a hung run. The listing race above can still
+ * lose on a slow runner while the pin is bun 1.3; it fails instead of
+ * hanging.
  */
 
 import { describe, test, expect, beforeAll, afterAll, afterEach } from 'bun:test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { WorkingTreeManager } from './WorkingTreeManager.js';
 import { GitOperationQueue } from './GitOperationQueue.js';
 import {
@@ -31,6 +46,16 @@ import {
   writeFixtureFile,
   gitExec,
 } from '../git/test-helpers.js';
+
+const REPO_NAME = 'working-tree-manager-watch-test';
+const SCENARIO_ENV = 'DIFFSTALKER_WATCH_SCENARIO';
+/** How long the parent gives the child before it is assumed frozen. */
+const CHILD_TIMEOUT_MS = 20_000;
+
+const SCENARIOS = [
+  'a FIFO created in the working tree does not freeze the process',
+  'a socket or FIFO is skipped while ordinary files and symlinks are still watched',
+] as const;
 
 /** Resolves once the event loop has turned `ms` later. A frozen loop never settles it. */
 function tick(ms: number): Promise<void> {
@@ -52,82 +77,114 @@ async function expectEventLoopAlive(ms: number): Promise<void> {
   expect(await Promise.race([alive, timeout])).toBe('alive');
 }
 
-describe('WorkingTreeManager watcher', () => {
-  const REPO_NAME = 'working-tree-manager-watch-test';
-  let repoPath: string;
-  let queue: GitOperationQueue;
-  let manager: WorkingTreeManager | null = null;
-
-  beforeAll(() => {
-    // Start from nothing. When this test regresses it does not fail, it hangs
-    // and gets killed, so afterAll never runs and the fixture survives to
-    // break the NEXT run with a confusing git error instead of the real one.
-    removeFixtureRepo(REPO_NAME);
-    repoPath = createFixtureRepo(REPO_NAME);
-    writeFixtureFile(repoPath, 'tracked.txt', 'tracked content\n');
-    gitExec(repoPath, 'add tracked.txt');
-    gitExec(repoPath, 'commit -m "initial"');
+/**
+ * Run one scenario in a fresh `bun test` on this file, selected by name.
+ * The child owns the fixture; a killed child never reaches afterAll, so
+ * the fixture is removed here as well.
+ */
+function runScenarioInChild(name: string): void {
+  const result = spawnSync(process.execPath, ['test', import.meta.filename, '-t', name], {
+    cwd: path.resolve(import.meta.dirname, '../..'),
+    env: { ...process.env, [SCENARIO_ENV]: '1' },
+    encoding: 'utf-8',
+    timeout: CHILD_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
   });
+  removeFixtureRepo(REPO_NAME);
 
-  afterAll(() => {
-    removeFixtureRepo(REPO_NAME);
-  });
-
-  afterEach(() => {
-    manager?.dispose();
-    manager = null;
-  });
-
-  function startManager(): WorkingTreeManager {
-    queue = new GitOperationQueue(repoPath);
-    const m = new WorkingTreeManager(repoPath, queue);
-    m.startWatching();
-    manager = m;
-    return m;
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (result.signal !== null) {
+    throw new Error(
+      `watch scenario "${name}" did not finish within ${CHILD_TIMEOUT_MS}ms and was killed ` +
+        `(${result.signal}): the process froze.\n${output}`
+    );
   }
+  expect(result.status, output).toBe(0);
+  // Guard against the name filter matching nothing: a run that skipped
+  // everything also exits 0.
+  expect(output).toMatch(/\b1 pass\b/);
+}
 
-  test('a FIFO created in the working tree does not freeze the process', async () => {
-    startManager();
-    // Let the watcher finish its initial scan before the pipe appears.
-    await tick(300);
+if (process.env[SCENARIO_ENV] === '1') {
+  describe('WorkingTreeManager watcher scenario', () => {
+    let repoPath: string;
+    let manager: WorkingTreeManager | null = null;
 
-    const fifoPath = path.join(repoPath, 'pipe.png');
-    execFileSync('mkfifo', [fifoPath]);
+    beforeAll(() => {
+      // Start from nothing: a fixture left behind by a killed run would
+      // break this run with a confusing git error instead of the real one.
+      removeFixtureRepo(REPO_NAME);
+      repoPath = createFixtureRepo(REPO_NAME);
+      writeFixtureFile(repoPath, 'tracked.txt', 'tracked content\n');
+      gitExec(repoPath, 'add tracked.txt');
+      gitExec(repoPath, 'commit -m "initial"');
+    });
 
-    try {
-      // Without the guard the main thread blocks in open(2) here and this
-      // never resolves.
-      await expectEventLoopAlive(500);
-    } finally {
-      fs.unlinkSync(fifoPath);
+    afterAll(() => {
+      removeFixtureRepo(REPO_NAME);
+    });
+
+    afterEach(() => {
+      manager?.dispose();
+      manager = null;
+    });
+
+    function startManager(): WorkingTreeManager {
+      const m = new WorkingTreeManager(repoPath, new GitOperationQueue());
+      m.startWatching();
+      manager = m;
+      return m;
+    }
+
+    test(SCENARIOS[0], async () => {
+      startManager();
+      // Let the watcher finish its initial scan before the pipe appears.
+      await tick(300);
+
+      const fifoPath = path.join(repoPath, 'pipe.png');
+      execFileSync('mkfifo', [fifoPath]);
+
+      try {
+        // Without the guard the main thread blocks in open(2) here and this
+        // never resolves.
+        await expectEventLoopAlive(500);
+      } finally {
+        fs.unlinkSync(fifoPath);
+      }
+    });
+
+    test(SCENARIOS[1], async () => {
+      const manager = startManager();
+      await tick(300);
+
+      const added: string[] = [];
+      manager.on('state-change', () => added.push('change'));
+
+      const fifoPath = path.join(repoPath, 'skipped.pipe');
+      const realPath = path.join(repoPath, 'real.txt');
+      const linkPath = path.join(repoPath, 'link.txt');
+
+      execFileSync('mkfifo', [fifoPath]);
+      fs.writeFileSync(realPath, 'hello\n');
+      fs.symlinkSync('real.txt', linkPath);
+
+      try {
+        await expectEventLoopAlive(500);
+        // The regular file landed, so the watcher is genuinely still working
+        // rather than merely un-frozen.
+        await tick(700);
+        expect(added.length).toBeGreaterThan(0);
+      } finally {
+        fs.unlinkSync(fifoPath);
+        fs.unlinkSync(linkPath);
+        fs.unlinkSync(realPath);
+      }
+    });
+  });
+} else {
+  describe('WorkingTreeManager watcher', () => {
+    for (const name of SCENARIOS) {
+      test(name, () => runScenarioInChild(name), CHILD_TIMEOUT_MS + 5_000);
     }
   });
-
-  test('a socket or FIFO is skipped while ordinary files and symlinks are still watched', async () => {
-    const manager = startManager();
-    await tick(300);
-
-    const added: string[] = [];
-    manager.on('state-change', () => added.push('change'));
-
-    const fifoPath = path.join(repoPath, 'skipped.pipe');
-    const realPath = path.join(repoPath, 'real.txt');
-    const linkPath = path.join(repoPath, 'link.txt');
-
-    execFileSync('mkfifo', [fifoPath]);
-    fs.writeFileSync(realPath, 'hello\n');
-    fs.symlinkSync('real.txt', linkPath);
-
-    try {
-      await expectEventLoopAlive(500);
-      // The regular file landed, so the watcher is genuinely still working
-      // rather than merely un-frozen.
-      await tick(700);
-      expect(added.length).toBeGreaterThan(0);
-    } finally {
-      fs.unlinkSync(fifoPath);
-      fs.unlinkSync(linkPath);
-      fs.unlinkSync(realPath);
-    }
-  });
-});
+}
