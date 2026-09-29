@@ -810,9 +810,12 @@ export const useRepoStore = defineStore('repo', () => {
       isLoading: false,
     };
     refreshSelectionAfterStatus();
-    invalidateMediaAfterState(prevSnapshot);
+    // One pass over the files; the media gate and the diff cache both
+    // read the same changed set.
+    const changed = computeChangedFiles(prevSnapshot, workingSnapshot);
+    invalidateMediaAfterState(changed);
     if (workingDiffsActive) {
-      updateWorkingDiffsAfterState(prevSnapshot);
+      updateWorkingDiffsAfterState(changed);
     } else {
       // First snapshot (or an earlier activation failed): pull the whole
       // tree so the stacked Changes surface has diffs from the start.
@@ -1110,9 +1113,9 @@ export const useRepoStore = defineStore('repo', () => {
     // re-run it across that window so the fresh edit isn't served from
     // the stale tree. Quiet like the pull; skipped when the activation
     // failed (the next state retries the whole pull anyway).
-    if (gen !== generation || !workingDiffsActive) return;
+    if (gen !== generation || !workingDiffsActive || workingSnapshot === null) return;
     if (appliedStateCount !== countBefore) {
-      updateWorkingDiffsAfterState(snapshotBefore);
+      updateWorkingDiffsAfterState(computeChangedFiles(snapshotBefore, workingSnapshot));
     }
   }
 
@@ -1309,10 +1312,11 @@ export const useRepoStore = defineStore('repo', () => {
   /**
    * The state-change cascade: evict entries whose file left the status
    * set, then refetch ONLY the files the new wire state marks as
-   * changed (vs the previous snapshot). Past the threshold, one
-   * whole-tree re-pull replaces N per-file fetches (branch switch).
+   * changed (vs the previous snapshot — `changed` is that set, computed
+   * once by the caller). Past the threshold, one whole-tree re-pull
+   * replaces N per-file fetches (branch switch).
    */
-  function updateWorkingDiffsAfterState(prev: WorkingSnapshot | null): void {
+  function updateWorkingDiffsAfterState(changed: FileEntry[]): void {
     const next = workingSnapshot;
     if (next === null) return;
 
@@ -1330,7 +1334,6 @@ export const useRepoStore = defineStore('repo', () => {
       if (!next.files.has(key)) pendingChangedFiles.delete(key);
     }
 
-    const changed = computeChangedFiles(prev, next);
     // Before the early return: the whole-file body must be dropped when
     // its file leaves the status set even if nothing else changed.
     refreshWholeFileAfterState(changed);
@@ -1346,7 +1349,8 @@ export const useRepoStore = defineStore('repo', () => {
   /**
    * The changed set: files entering the status set, plus files whose
    * mtime, hunk count (their own side), or status letter moved since
-   * the previous snapshot.
+   * the previous snapshot. Pure — computed once per applied state and
+   * handed to every cascade that needs it.
    */
   function computeChangedFiles(prev: WorkingSnapshot | null, next: WorkingSnapshot): FileEntry[] {
     const changed: FileEntry[] = [];
@@ -1479,7 +1483,7 @@ export const useRepoStore = defineStore('repo', () => {
    *   — blanking the card and re-inflating it would move every section
    *   below it twice for one edit.
    */
-  function invalidateMediaAfterState(prev: WorkingSnapshot | null): void {
+  function invalidateMediaAfterState(changed: FileEntry[]): void {
     const next = workingSnapshot;
     if (next === null) return;
     const leaving = [...mediaMeta.value.keys()].filter((key) => !next.files.has(key));
@@ -1489,7 +1493,7 @@ export const useRepoStore = defineStore('repo', () => {
       for (const key of leaving) byKey.delete(key);
       mediaMeta.value = byKey;
     }
-    for (const file of computeChangedFiles(prev, next)) {
+    for (const file of changed) {
       mediaRequested.delete(workingDiffKey(file));
     }
   }
