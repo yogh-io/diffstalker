@@ -702,9 +702,8 @@ export const useRepoStore = defineStore('repo', () => {
     // Set the message exactly once so the header doesn't flicker on every
     // failed call; recovery clears it when a fresh snapshot lands. Also
     // drop isLoading so a pre-first-snapshot drop doesn't leave a view
-    // stuck on a loading state beside the error line — and a refresh()
-    // that raised it again while the line was already up.
-    if (shared.value.error !== CONNECTION_LOST_MESSAGE || shared.value.isLoading) {
+    // stuck on a loading state beside the error line.
+    if (shared.value.error !== CONNECTION_LOST_MESSAGE) {
       shared.value = { ...shared.value, error: CONNECTION_LOST_MESSAGE, isLoading: false };
     }
     scheduleRecovery();
@@ -947,27 +946,6 @@ export const useRepoStore = defineStore('repo', () => {
     } catch (err) {
       if (absorbFailure(err, gen)) return fallback;
       throw err;
-    }
-  }
-
-  /** Pull fresh shared state from the daemon. */
-  async function refresh(): Promise<void> {
-    const id = repoId.value;
-    if (id === null) return;
-    const gen = generation;
-    shared.value = { ...shared.value, isLoading: true };
-    try {
-      const state = await client.status(id);
-      if (gen !== generation) return;
-      applyWireState(state);
-    } catch (err) {
-      // A connection loss drops isLoading on its own (handleConnectionLoss).
-      if (absorbFailure(err, gen)) return;
-      shared.value = {
-        ...shared.value,
-        error: `Failed to refresh: ${errorMessage(err)}`,
-        isLoading: false,
-      };
     }
   }
 
@@ -1581,7 +1559,13 @@ export const useRepoStore = defineStore('repo', () => {
     }
   }
 
-  async function selectHistoryCommit(commit: CommitInfo | null): Promise<void> {
+  async function selectHistoryCommit(requested: CommitInfo | null): Promise<void> {
+    // Select the list's own object when the hash is loaded: the list marks
+    // its selected row by identity. A link restore resolves its commit with
+    // a separate GET, and when the log lands during that request the two
+    // are different objects for the same commit.
+    const commit =
+      requested && (history.value.commits.find((c) => c.hash === requested.hash) ?? requested);
     history.value = { ...history.value, selectedCommit: commit, commitFiles: null };
     const id = repoId.value;
     if (!commit || id === null) return;
@@ -2013,7 +1997,6 @@ export const useRepoStore = defineStore('repo', () => {
     open,
     dispose,
     releaseOnUnload,
-    refresh,
     // working-tree mutations (file-level stage/unstage only)
     stageFile,
     unstageFile,

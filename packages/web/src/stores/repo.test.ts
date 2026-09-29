@@ -1011,6 +1011,16 @@ describe('history', () => {
     expect(store.history.commitFiles).toBeNull();
   });
 
+  test('selecting a copy of a loaded commit selects the list\'s own object', async () => {
+    const { store } = await openStore();
+    await store.loadHistory();
+    const listed = store.history.commits[0];
+
+    // What a link restore hands over: the same commit, fetched separately.
+    await store.selectHistoryCommit({ ...listed });
+    expect(store.history.selectedCommit).toBe(listed);
+  });
+
   test('files still land when a reload re-anchors the same commit mid-pull', async () => {
     const { store } = await openStore();
     await store.loadHistory();
@@ -1680,20 +1690,6 @@ describe('reconnect', () => {
     FakeEventSource.latest().fail();
     expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
     expect(store.shared.isLoading).toBe(false); // no stuck "Loading…" beside the error
-  });
-
-  test('a refresh() that fails while the line is already up drops isLoading too', async () => {
-    const { store, source } = await openStore([fileEntry('a.ts')]);
-    source.fail();
-    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
-
-    onRequest = (call) => {
-      if (call.url === '/repos/r1/status') throw new TypeError('Failed to fetch');
-      return undefined;
-    };
-    await store.refresh();
-    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
-    expect(store.shared.isLoading).toBe(false);
   });
 
   test('a connection failure from before a repo switch never touches the new repo', async () => {
