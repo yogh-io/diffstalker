@@ -703,11 +703,29 @@ export const useRepoStore = defineStore('repo', () => {
     // Set the message exactly once so the header doesn't flicker on every
     // failed call; recovery clears it when a fresh snapshot lands. Also
     // drop isLoading so a pre-first-snapshot drop doesn't leave a view
-    // stuck on a loading state beside the error line.
-    if (shared.value.error !== CONNECTION_LOST_MESSAGE) {
+    // stuck on a loading state beside the error line — and a refresh()
+    // that raised it again while the line was already up.
+    if (shared.value.error !== CONNECTION_LOST_MESSAGE || shared.value.isLoading) {
       shared.value = { ...shared.value, error: CONNECTION_LOST_MESSAGE, isLoading: false };
     }
     scheduleRecovery();
+  }
+
+  /**
+   * The shared tail of a failed daemon call. A failure from before a repo
+   * switch (`gen` is stale) is dropped so it cannot touch the new repo's
+   * state; a connection loss enters the reconnect loop. Both are absorbed
+   * here (true). A daemon error — the daemon answered, and said no — is
+   * the caller's to report (false). Safe after an explicit stale check:
+   * the check is repeated, not undone.
+   */
+  function absorbFailure(err: unknown, gen: number): boolean {
+    if (gen !== generation) return true;
+    if (isConnectionError(err)) {
+      handleConnectionLoss();
+      return true;
+    }
+    return false;
   }
 
   function scheduleRecovery(): void {
@@ -902,11 +920,7 @@ export const useRepoStore = defineStore('repo', () => {
       if (staged) await client.stage(id, path);
       else await client.unstage(id, path);
     } catch (err) {
-      if (gen !== generation) return;
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return;
-      }
+      if (absorbFailure(err, gen)) return;
       setRefusal(path, staged, errorMessage(err));
     }
   }
@@ -929,13 +943,7 @@ export const useRepoStore = defineStore('repo', () => {
     try {
       return await op();
     } catch (err) {
-      // Repo switched (open()) while this read was in flight: drop it silently
-      // so a stale failure can't touch the new repo's state.
-      if (gen !== generation) return fallback;
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return fallback;
-      }
+      if (absorbFailure(err, gen)) return fallback;
       throw err;
     }
   }
@@ -951,13 +959,13 @@ export const useRepoStore = defineStore('repo', () => {
       if (gen !== generation) return;
       applyWireState(state);
     } catch (err) {
-      if (gen !== generation) return;
-      shared.value = { ...shared.value, isLoading: false };
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return;
-      }
-      setError(`Failed to refresh: ${errorMessage(err)}`);
+      // A connection loss drops isLoading on its own (handleConnectionLoss).
+      if (absorbFailure(err, gen)) return;
+      shared.value = {
+        ...shared.value,
+        error: `Failed to refresh: ${errorMessage(err)}`,
+        isLoading: false,
+      };
     }
   }
 
@@ -1040,14 +1048,15 @@ export const useRepoStore = defineStore('repo', () => {
     if (id === null || files.length === 0) return;
     const gen = generation;
     const queue = [...files];
-    let lost = false;
+    /** The batch is over: the connection dropped or the repo switched. */
+    let abandoned = false;
     // ONE setError per batch (like the whole-tree pull), not one per
     // failed file — N failures would rewrite shared.error N times.
     let firstFailure: string | null = null;
     const worker = async (): Promise<void> => {
       for (;;) {
         const file = queue.shift();
-        if (!file || lost || gen !== generation) return;
+        if (!file || abandoned || gen !== generation) return;
         const key = workingDiffKey(file);
         const token = ++workingDiffFetchSeq;
         try {
@@ -1058,10 +1067,8 @@ export const useRepoStore = defineStore('repo', () => {
           if (gen !== generation) return;
           applyWorkingDiff(key, token, diff);
         } catch (err) {
-          if (gen !== generation) return;
-          if (isConnectionError(err)) {
-            lost = true;
-            handleConnectionLoss();
+          if (absorbFailure(err, gen)) {
+            abandoned = true;
             return;
           }
           firstFailure ??= errorMessage(err);
@@ -1073,7 +1080,7 @@ export const useRepoStore = defineStore('repo', () => {
       () => worker() // catches internally; never rejects
     );
     await Promise.all(workers);
-    if (firstFailure !== null && !lost && gen === generation) {
+    if (firstFailure !== null && !abandoned && gen === generation) {
       setError(`Failed to load diffs: ${firstFailure}`);
     }
   }
@@ -1135,11 +1142,7 @@ export const useRepoStore = defineStore('repo', () => {
       // Activation stays off on failure: an active-but-empty cache would
       // only refetch CHANGED files on later state-changes, silently
       // staying partial. Inactive, the next refreshAllDiffs re-pulls all.
-      if (gen !== generation) return;
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return;
-      }
+      if (absorbFailure(err, gen)) return;
       if (!opts.quiet) setError(`Failed to load diffs: ${errorMessage(err)}`);
       return;
     }
@@ -1274,11 +1277,7 @@ export const useRepoStore = defineStore('repo', () => {
       }
       wholeFile.value = { key, path: request.path, diff: markRaw(diff) };
     } catch (err) {
-      if (gen !== generation || token !== wholeFileFetchSeq) return;
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return;
-      }
+      if (token !== wholeFileFetchSeq || absorbFailure(err, gen)) return;
       setError(`Failed to load whole file: ${errorMessage(err)}`);
     } finally {
       if (gen === generation && token === wholeFileFetchSeq) {
@@ -1461,11 +1460,8 @@ export const useRepoStore = defineStore('repo', () => {
       if (gen !== generation) return;
       // Drop the gate so a later look at the same section retries.
       mediaRequested.delete(request.key);
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return;
-      }
-      setError(`Failed to load image metadata: ${displayError(err)}`);
+      if (absorbFailure(err, gen)) return;
+      setError(`Failed to load image metadata: ${errorMessage(err)}`);
     }
   }
 
@@ -1545,10 +1541,7 @@ export const useRepoStore = defineStore('repo', () => {
     } catch (err) {
       if (gen !== generation) return;
       history.value = { ...history.value, isLoading: false };
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return;
-      }
+      if (absorbFailure(err, gen)) return;
       throw err;
     }
   }
@@ -1583,7 +1576,8 @@ export const useRepoStore = defineStore('repo', () => {
       const commit = await client.getCommit(id, hash);
       return gen === generation ? commit : null;
     } catch (err) {
-      if (isConnectionError(err)) handleConnectionLoss();
+      // A daemon error just means the hash does not resolve.
+      absorbFailure(err, gen);
       return null;
     }
   }
@@ -1722,9 +1716,9 @@ export const useRepoStore = defineStore('repo', () => {
       replaceJournalWholesale(full);
       drainEpochResetBuffer();
     } catch (err) {
-      if (gen === generation && isConnectionError(err)) handleConnectionLoss();
-      // Other failures: the next mismatched append (or reconnect
-      // resync) retries; the parked batches stay parked.
+      // Daemon errors are not reported: the next mismatched append (or
+      // reconnect resync) retries, and the parked batches stay parked.
+      absorbFailure(err, gen);
     } finally {
       journalPullInFlight = false;
     }
@@ -1763,11 +1757,7 @@ export const useRepoStore = defineStore('repo', () => {
       journalSyncedTo = snap.entries.at(-1)?.seq ?? snap.prunedBefore;
       journalLoaded.value = true;
     } catch (err) {
-      if (gen !== generation) return;
-      if (isConnectionError(err)) {
-        handleConnectionLoss();
-        return;
-      }
+      if (absorbFailure(err, gen)) return;
       throw err;
     } finally {
       journalLoadInFlight = false;
@@ -1828,9 +1818,9 @@ export const useRepoStore = defineStore('repo', () => {
         journalSyncedTo = fetchedTail;
       }
     } catch (err) {
-      if (gen === generation && isConnectionError(err)) handleConnectionLoss();
-      // Other failures: keep the current entries visible; the next
-      // reconnect re-syncs from the SAME watermark.
+      // Daemon errors are not reported: the current entries stay visible
+      // and the next reconnect re-syncs from the SAME watermark.
+      absorbFailure(err, gen);
     } finally {
       journalPullInFlight = false;
     }

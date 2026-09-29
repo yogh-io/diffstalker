@@ -1691,6 +1691,42 @@ describe('reconnect', () => {
     expect(store.shared.isLoading).toBe(false); // no stuck "Loading…" beside the error
   });
 
+  test('a refresh() that fails while the line is already up drops isLoading too', async () => {
+    const { store, source } = await openStore([fileEntry('a.ts')]);
+    source.fail();
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/status') throw new TypeError('Failed to fetch');
+      return undefined;
+    };
+    await store.refresh();
+    expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+    expect(store.shared.isLoading).toBe(false);
+  });
+
+  test('a connection failure from before a repo switch never touches the new repo', async () => {
+    const { store } = await openStore();
+    const slow = new Deferred<FakeResponse>();
+    onRequest = (call) => {
+      if (call.url === '/repos/r1/commits/h1') return slow.promise;
+      return undefined;
+    };
+    const resolving = store.resolveCommit('h1');
+
+    // The user moved on: the switch bumps the generation.
+    onRequest = null;
+    await store.open('/other');
+    FakeEventSource.latest().emit('repo-snapshot', wireState());
+    await flush();
+
+    slow.reject(new TypeError('Failed to fetch'));
+    await expect(resolving).resolves.toBeNull();
+    expect(store.shared.error).toBeNull();
+    await advance(1000);
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.url === '/repos')).toHaveLength(2);
+  });
+
   test('an SSE drop sets ONE calm line and recovery clears it', async () => {
     const { store, source } = await openStore([fileEntry('a.ts')]);
 
