@@ -1256,7 +1256,7 @@ a test.
 | `GREP_MAX_PER_FILE` | 20 (`-m`) | one generated file dominating the result set |
 | `GREP_MAX_RESULTS` | 500 | an unbounded response body |
 | `GREP_MAX_BYTES` | 4 MiB | an unbounded buffer; the child is killed at the cap |
-| `GREP_TIMEOUT_MS` | 5000 | a wedged git holding a request open |
+| `GIT_EXEC_TIMEOUT_MS` | 5000 | a wedged git holding a request open |
 | `GREP_MAX_LINE_CHARS` | 400 | a minified bundle line reaching the DOM |
 | `GREP_CONCURRENCY` | 2 | git process pile-up |
 | `GREP_QUEUE_LIMIT` | 16 | an unbounded waiter list |
@@ -1802,7 +1802,7 @@ These are real and verified, but none of them invalidates a design decision.
     release the slot and return without spawning — never as a dropped promise. Add
     the leak test the blob routes already have.
 
-17. **`GREP_TIMEOUT_MS` bounds the child, not the request, and nothing can
+17. **`GIT_EXEC_TIMEOUT_MS` bounds the child, not the request, and nothing can
     withdraw a backlog.** The 5 s timeout starts when the child spawns. With 16
     queued behind 2 running, the last waiter starts after up to 8 × 5 s. The blob
     gate carries a 64-deep queue because its entries drain in milliseconds; grep
