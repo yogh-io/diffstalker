@@ -167,8 +167,6 @@ watch(
 // indicator is identical whether you click a row or scroll onto its diff
 // (mirrors ChangesView, which already does this). ---
 
-
-
 /**
  * DiffStack scroll-spy: the diffs scrolled onto a new file. Select it via
  * the store's plain setter — NOT selectFile (which would scroll the diffs
@@ -690,10 +688,6 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(4rem, var(--compare-top, 22vh)) 8px minmax(0, 1fr);
 }
-
-/* A visible divider bar (not a bare drag gap) so the two stacked panes
-   read as clearly separate, with a centered grab handle signalling it
-   drags. */
 
 /* In-band restyles for the lifted controls. */
 :root[data-split='stacked'] .commits-toggle {

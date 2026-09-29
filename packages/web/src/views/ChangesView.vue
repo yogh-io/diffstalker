@@ -836,7 +836,6 @@ const rootStyle = computed(() => ({
   text-align: left;
 }
 
-
 .file-row.selected .base {
   color: var(--selection);
 }

@@ -1706,7 +1706,6 @@ defineExpose({
   color: var(--text);
 }
 
-
 /* Skip layout+paint for whole off-screen files; a skipped body is
    sized by the inline computed contain-intrinsic-size. NEVER move
    this onto .file-diff — c-v on the section breaks its sticky header. */

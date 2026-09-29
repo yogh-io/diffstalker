@@ -494,11 +494,6 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
   color: var(--text);
 }
 
-
-
-/* Keyboard focus ring, distinct from selection. Inset so it is not clipped
-   by the scroll container's overflow. */
-
 .tree-row.selected .name {
   color: var(--selection);
 }
@@ -635,13 +630,6 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
   grid-template-rows: minmax(6rem, var(--explorer-top, 34vh)) 8px minmax(0, 1fr);
 }
 
-:root[data-split='stacked'] .tree-col {
-  /* No border-bottom: the resizer directly below paints its own top edge
-     (inset 0 1px 0), so a border here made the boundary three hairlines
-     inside 9px — panel edge, resizer top, resizer bottom. */
-  border-right: none;
-}
-
 :root[data-split='stacked'] .tree-toolbar {
   padding: 0;
   border-bottom: none;
@@ -650,8 +638,4 @@ const onTreeRowKeydown = makeBandKeyHandler<ExplorerRow>(isPortrait, (delta, row
 :root[data-split='stacked'] .tool-refresh {
   margin-left: 0;
 }
-
-/* A visible divider bar (not a bare drag gap) so the two stacked panes
-   read as clearly separate, with a centered grab handle signalling it
-   drags. */
 </style>

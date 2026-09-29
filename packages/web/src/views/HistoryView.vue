@@ -471,11 +471,6 @@ function selectAndFocusPayload(commit: CommitInfo): void {
   font-size: var(--fs-base);
 }
 
-
-
-/* Keyboard focus ring, distinct from selection. Inset so it is not clipped
-   by the scroll container's overflow. */
-
 .row-top {
   display: flex;
   align-items: baseline;
