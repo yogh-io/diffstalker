@@ -606,6 +606,18 @@ The app uses a **focus zone** system for full keyboard-only navigation with `Tab
 An unrecognized option (anything else starting with `-`) exits 2 with
 `unknown option`; it is never taken for a repository path.
 
+### Logs
+
+- The daemon (`diffstalkerd`) has its own `--debug` flag: on top of the
+  warn and error lines it always writes, it logs every refused request,
+  every ignored follow target and other routine detail. The TUI's
+  `--debug` does not reach the daemon it attaches to.
+- A daemon the TUI spawns logs to `$XDG_STATE_HOME/diffstalker/diffstalkerd.log`
+  (`~/.local/state/diffstalker/diffstalkerd.log`); at spawn, a file over
+  about 1 MB is moved to `.log.1` first. A daemon under systemd logs to
+  the journal (`journalctl --user -u diffstalkerd`). See `docs/logging.md`
+  for the line shape and what each level means.
+
 ---
 
 ## Terminal Requirements

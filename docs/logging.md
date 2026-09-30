@@ -23,10 +23,13 @@ goes depends on how the daemon was started:
   $XDG_STATE_HOME/diffstalker/diffstalkerd.log     # ~/.local/state/diffstalker/diffstalkerd.log
   ```
 
-  When the file is over about 1 MB at the next spawn, it is renamed to
-  `diffstalkerd.log.1` (replacing the previous one) and a fresh file is
-  started, so there is never more than one old file. If the daemon did
-  not come up, the CLI's error names the file.
+  The size is checked only when the TUI spawns a daemon: if the file is
+  over about 1 MB then, it is renamed to `diffstalkerd.log.1` (replacing
+  the previous one) and a fresh file is started, so a spawn never finds
+  more than one old file. A daemon that runs for weeks keeps appending to
+  the same file; nothing trims it while it runs. If the log cannot be
+  opened, the CLI refuses to spawn and its error names the file; if the
+  daemon did not come up, the error names the file too.
 
 - **Started by hand** (`diffstalkerd --socket ...`, `bun packages/daemon/src/index.ts`):
   the terminal it was started in.
@@ -63,15 +66,19 @@ status, not events.
   full stack is printed, and the stack of every `cause` under it.
 - **warn** — an operation failed and was handled, and this is the trace of
   it: a git command that git refused (a rejected push, a stage of a file
-  git does not know, a refresh that hit `index.lock`), a request answered
-  with an error the route made from a real failure (its `cause` is
-  printed), a watcher error, a watch directory that could not be scanned,
-  an invalid settings file, a symbol worker that died. The error and its
-  cause chain are printed as one summary line each, no stack.
+  git does not know, a refresh that hit `index.lock`), a repo whose
+  directory went away while it was open, a watcher error other than a
+  path that cannot be watched, a watch directory that could not be
+  scanned, an invalid settings file, a symbol worker that died. The
+  router logs an `HttpError` at warn when it carries a `cause` (the
+  underlying error a route made it from) or has a 5xx status; the cause
+  is printed under the line. The error and its cause chain are printed as
+  one summary line each, no stack.
 - **debug** — only with `--debug`: every request refused with a plain 4xx
   (unknown repo, bad parameter), every follow target that was not a repo,
-  a HEAD that could not be read (an unborn branch), a version lookup that
-  failed offline.
+  a HEAD that could not be read (an unborn branch), a path the watcher
+  could not watch (EACCES, EPERM, ENOENT), the journal read behind a
+  refresh that already failed, a version lookup that failed offline.
 
 Anything quiet is meant to be: a probe that expects to miss (a stat on a
 file that may not exist, `git check-ignore` exiting 1 for "not ignored",
