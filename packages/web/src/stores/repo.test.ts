@@ -1893,6 +1893,46 @@ describe('reconnect', () => {
     expect(store.shared.error).toBeNull();
   });
 
+  test('a daemon that keeps refusing the repo is logged once per refusal, not once per retry', async () => {
+    const { store, source } = await openStore();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      let refusal: FakeResponse | null = { status: 400, body: { error: 'Not a git repository: /r' } };
+      onRequest = (call) =>
+        refusal !== null && call.method === 'POST' && call.url === '/repos' ? refusal : undefined;
+
+      source.fail();
+      await advance(1000); // attempt 1: refused, logged
+      await advance(1000); // attempt 2: same refusal, silent
+      await advance(1000); // attempt 3: same refusal, silent
+      expect(store.shared.error).toBe(CONNECTION_LOST_MESSAGE);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError.mock.calls[0][0]).toBe('diffstalker: recover repo failed');
+      expect(consoleError.mock.calls[0][1]).toMatchObject({
+        status: 400,
+        message: 'Not a git repository: /r',
+        path: '/repo',
+      });
+
+      refusal = { status: 403, body: { error: 'Repo path must be absolute: r' } };
+      await advance(1000); // a different refusal: logged again
+      expect(consoleError).toHaveBeenCalledTimes(2);
+      await advance(1000);
+      expect(consoleError).toHaveBeenCalledTimes(2);
+
+      refusal = null;
+      await advance(1000); // recovered: the episode is over
+      expect(store.shared.error).toBeNull();
+
+      refusal = { status: 403, body: { error: 'Repo path must be absolute: r' } };
+      FakeEventSource.latest().fail(); // recovery reopened the stream
+      await advance(1000); // a new episode logs even the same refusal again
+      expect(consoleError).toHaveBeenCalledTimes(3);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   test('a failed recovery keeps the line and retries until the daemon returns', async () => {
     const { store, source } = await openStore();
 

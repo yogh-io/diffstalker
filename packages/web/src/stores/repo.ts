@@ -392,6 +392,13 @@ export const useRepoStore = defineStore('repo', () => {
   let refusal: Refusal | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let recovering = false;
+  /**
+   * The refusal recovery last logged, as `status message`. Recovery
+   * retries every second and a daemon that refuses the repo refuses it
+   * the same way every time; the console gets the first one, then the
+   * next DIFFERENT one, then nothing until a recovery succeeds.
+   */
+  let loggedRecoveryRefusal: string | null = null;
   let historyPullInFlight = false;
   /** Single-flight guard for the lazy loadJournal pull. */
   let journalLoadInFlight = false;
@@ -799,13 +806,23 @@ export const useRepoStore = defineStore('repo', () => {
       // Still down (or down again mid-recovery): keep the error, retry.
       // A daemon that is back and REFUSES the repo (the path is gone)
       // lands here too, and would retry forever behind the same calm
-      // line: that reason must at least be in the console.
-      logDaemonRefusal('recover repo', err, { path: repoPath.value });
+      // line: that reason must at least be in the console — once per
+      // refusal, not once per retry.
+      logRecoveryRefusal(err, path);
       recovering = false;
       if (gen === generation) scheduleRecovery();
       return;
     }
     recovering = false;
+    loggedRecoveryRefusal = null;
+  }
+
+  function logRecoveryRefusal(err: unknown, path: string): void {
+    if (isConnectionError(err)) return;
+    const key = `${err instanceof DaemonError ? err.status : ''} ${errorMessage(err)}`;
+    if (key === loggedRecoveryRefusal) return;
+    loggedRecoveryRefusal = key;
+    logFailure('recover repo', err, { path });
   }
 
   // --- Shared state ---
