@@ -40,27 +40,49 @@ export function daemonLogPath(): string {
 /**
  * Open the spawned daemon's log for appending, and return the fd to hand
  * to spawn(). When the file is already over `rotateBytes`, it is first
- * renamed to `<log>.1` (replacing the previous `.1`), so the disk never
- * holds more than one full file plus the one being written. A log dir
- * that cannot be created or written throws: the caller reports it, since
- * a daemon whose failures go nowhere is what this file exists to prevent.
+ * renamed to `<log>.1` (replacing the previous `.1`), so a spawn never
+ * finds more than one old file. The size is checked only here, at spawn:
+ * a daemon that runs for weeks keeps appending to the same file. A log
+ * dir that cannot be created or written throws an error naming the file,
+ * with the fs error as its cause: the caller reports it, since a daemon
+ * whose failures go nowhere is what this file exists to prevent.
  */
 export function openDaemonLog(
   logPath: string = daemonLogPath(),
   rotateBytes: number = DAEMON_LOG_ROTATE_BYTES
 ): number {
-  fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
-  let size = 0;
   try {
-    size = fs.statSync(logPath).size;
+    fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
+    if (logSize(logPath) > rotateBytes) rotate(logPath);
+    return fs.openSync(logPath, 'a', 0o600);
   } catch (err) {
-    // No log yet is the first-run case; anything else is a real failure.
+    throw new Error(
+      `Cannot open the daemon log ${logPath}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
+    );
+  }
+}
+
+/** The log's size, or 0 when there is no log yet (the first-run case). */
+function logSize(logPath: string): number {
+  try {
+    return fs.statSync(logPath).size;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    throw err;
+  }
+}
+
+/**
+ * Move the log aside. Two TUIs starting at once both see the file over
+ * the limit; the second rename finds it gone, which is the same outcome.
+ */
+function rotate(logPath: string): void {
+  try {
+    fs.renameSync(logPath, `${logPath}.1`);
+  } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
-  if (size > rotateBytes) {
-    fs.renameSync(logPath, `${logPath}.1`);
-  }
-  return fs.openSync(logPath, 'a', 0o600);
 }
 
 /** How long one /health probe may take before it counts as down. */

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -214,9 +214,46 @@ describe('spawned daemon log', () => {
     expect(fs.readFileSync(logPath, 'utf-8')).toBe('x'.repeat(100));
   });
 
-  test('an unwritable log dir is an error, not a silent spawn without logs', () => {
+  test('an unwritable log dir is an error naming the log, not a silent spawn without logs', () => {
     fs.writeFileSync(path.join(dir, 'nested'), 'a file where the dir should be');
-    expect(() => openDaemonLog(logPath, 100)).toThrow();
+    let thrown: unknown;
+    try {
+      openDaemonLog(logPath, 100);
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toStartWith(`Cannot open the daemon log ${logPath}: `);
+    // The fs error rides along as the cause, errno and all.
+    const cause = (thrown as Error).cause as NodeJS.ErrnoException;
+    expect(cause).toBeInstanceOf(Error);
+    expect(typeof cause.code).toBe('string');
+    expect((thrown as Error).message).toContain(cause.code as string);
+  });
+
+  test('a rotation that finds the file already moved (another TUI rotated first) is not an error', () => {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(logPath, 'x'.repeat(101));
+    // The other TUI's rename lands between this one's stat and rename: the
+    // file is moved for real, and then this one's rename finds it gone.
+    const realRename = fs.renameSync;
+    const rename = spyOn(fs, 'renameSync').mockImplementation(((
+      from: fs.PathLike,
+      to: fs.PathLike
+    ) => {
+      rename.mockRestore();
+      realRename(from, to);
+      const gone = new Error('ENOENT: no such file or directory, rename') as NodeJS.ErrnoException;
+      gone.code = 'ENOENT';
+      throw gone;
+    }) as typeof fs.renameSync);
+
+    const fd = openDaemonLog(logPath, 100);
+    fs.writeSync(fd, 'new\n');
+    fs.closeSync(fd);
+
+    expect(fs.readFileSync(logPath, 'utf-8')).toBe('new\n');
+    expect(fs.readFileSync(`${logPath}.1`, 'utf-8')).toBe('x'.repeat(101));
   });
 });
 
