@@ -91,6 +91,27 @@ describe('logger lines', () => {
     expect(lines[0]).toEndWith(' error rejected with a string\n  plain string\n');
   });
 
+  test('control characters in the message and context cannot forge a second line', () => {
+    warn('Failed to stage evil\n2026-01-01T00:00:00.000Z error forged', undefined, {
+      file: 'a\r\nb\tc\x1b[31m',
+    });
+    expect(lines).toHaveLength(1);
+    expect(lines[0].split('\n')).toHaveLength(2); // the line and its trailing newline
+    expect(lines[0]).toContain('Failed to stage evil\\n2026-01-01T00:00:00.000Z error forged');
+    // Escaped before the quoting decision: nothing left to quote.
+    expect(lines[0]).toEndWith(' file=a\\r\\nb\\tc\\x1b[31m\n');
+  });
+
+  test('credentials in URLs are scrubbed from the line and the error detail', () => {
+    error('git push failed', new Error('fatal: unable to access https://user:s3cret@example.com/r.git'), {
+      remote: 'ssh://deploy:pw@host/repo',
+    });
+    expect(lines[0]).toContain('remote=ssh://***@host/repo');
+    expect(lines[0]).toContain('https://***@example.com/r.git');
+    expect(lines[0]).not.toContain('s3cret');
+    expect(lines[0]).not.toContain('deploy:pw');
+  });
+
   test('describeError stops on a cause cycle', () => {
     const a = new Error('a');
     const b = new Error('b', { cause: a });

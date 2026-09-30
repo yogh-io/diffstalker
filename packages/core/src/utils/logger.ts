@@ -32,12 +32,43 @@ export type LogContext = Record<string, string | number | boolean | null | undef
 
 type Level = 'debug' | 'warn' | 'error';
 
+/**
+ * Escape control characters, so a file name with a newline in it cannot
+ * write a second line that looks like the logger wrote it. Written as a
+ * loop rather than a control-character regex, which lint forbids.
+ */
+function escapeControl(text: string): string {
+  let out = '';
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code >= 0x20 && code !== 0x7f) {
+      out += ch;
+    } else if (ch === '\n') {
+      out += '\\n';
+    } else if (ch === '\r') {
+      out += '\\r';
+    } else if (ch === '\t') {
+      out += '\\t';
+    } else {
+      out += `\\x${code.toString(16).padStart(2, '0')}`;
+    }
+  }
+  return out;
+}
+
+/** `https://user:token@host/...` becomes `https://***@host/...` (a remote URL with a token in it). */
+const CREDENTIAL_IN_URL = /(\w+:\/\/)[^/\s@]+@/g;
+
+function scrubCredentials(text: string): string {
+  return text.replace(CREDENTIAL_IN_URL, '$1***@');
+}
+
 function formatContext(context: LogContext | undefined): string {
   if (!context) return '';
   const pairs: string[] = [];
   for (const [key, value] of Object.entries(context)) {
     if (value === undefined) continue;
-    const text = String(value);
+    const text = escapeControl(String(value));
     // Quote a value that would otherwise split into two pairs.
     pairs.push(`${key}=${/\s/.test(text) || text === '' ? JSON.stringify(text) : text}`);
   }
@@ -68,10 +99,13 @@ export function describeError(err: unknown, opts: { stacks: boolean } = { stacks
 }
 
 function write(level: Level, message: string, context?: LogContext, detail?: string): void {
-  // Padded so the messages line up across levels.
-  const head = `${new Date().toISOString()} ${level.padEnd(5)} ${message}${formatContext(context)}`;
+  // Padded so the messages line up across levels. The message and the
+  // context are one line by construction; the detail (a stack, git's
+  // stderr) keeps its own lines, indented. Credentials are scrubbed from
+  // all of it: git prints the remote URL it was given.
+  const head = `${new Date().toISOString()} ${level.padEnd(5)} ${escapeControl(message)}${formatContext(context)}`;
   const body = detail ? `\n${detail.replace(/^/gm, '  ')}` : '';
-  process.stderr.write(`${head}${body}\n`);
+  process.stderr.write(scrubCredentials(`${head}${body}\n`));
 }
 
 export function debug(message: string, err?: unknown, context?: LogContext): void {
