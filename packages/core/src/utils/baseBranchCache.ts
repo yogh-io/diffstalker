@@ -14,13 +14,15 @@ interface BaseBranchCache {
 
 function loadCache(): BaseBranchCache {
   const file = cachePath();
-  if (!fs.existsSync(file)) return {};
   try {
     return JSON.parse(fs.readFileSync(file, 'utf-8'));
   } catch (err) {
-    // The file is there but cannot be used: every stored base-branch
-    // choice is gone, and the next save overwrites the file. Worth a line.
-    logger.warn('Ignoring the base-branch cache', err, { file });
+    // No file yet is the normal first-run state. Anything else (unreadable,
+    // not JSON) means every stored base-branch choice is gone and the next
+    // save overwrites the file: still an empty cache, but worth a line.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logger.warn('Ignoring the base-branch cache', err, { file });
+    }
     return {};
   }
 }
