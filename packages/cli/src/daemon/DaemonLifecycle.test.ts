@@ -1,10 +1,14 @@
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import type { DiffstalkerClient } from '@diffstalker/client';
 import {
   resolveSocketPath,
   assertFollowFileMatches,
   resolveDaemonBin,
+  openDaemonLog,
+  daemonLogPath,
   type DaemonBinDeps,
 } from './DaemonLifecycle.js';
 
@@ -149,6 +153,70 @@ describe('resolveSocketPath', () => {
     expect(resolveSocketPath(undefined, env, '')).toBe(
       '/run/user/1000/diffstalker/diffstalkerd.sock'
     );
+  });
+});
+
+describe('spawned daemon log', () => {
+  let dir: string;
+  let logPath: string;
+  const savedStateHome = process.env.XDG_STATE_HOME;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-log-'));
+    logPath = path.join(dir, 'nested', 'diffstalkerd.log');
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (savedStateHome === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = savedStateHome;
+  });
+
+  test('the log lives under the XDG state dir', () => {
+    process.env.XDG_STATE_HOME = '/custom/state';
+    expect(daemonLogPath()).toBe('/custom/state/diffstalker/diffstalkerd.log');
+  });
+
+  test('creates the directory and the file, and appends', () => {
+    const fd = openDaemonLog(logPath, 100);
+    fs.writeSync(fd, 'first\n');
+    fs.closeSync(fd);
+    const again = openDaemonLog(logPath, 100);
+    fs.writeSync(again, 'second\n');
+    fs.closeSync(again);
+
+    expect(fs.readFileSync(logPath, 'utf-8')).toBe('first\nsecond\n');
+    expect(fs.existsSync(`${logPath}.1`)).toBe(false);
+  });
+
+  test('rotates a file over the limit to .log.1 and starts a fresh one', () => {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(logPath, 'x'.repeat(101));
+    fs.writeFileSync(`${logPath}.1`, 'older');
+
+    const fd = openDaemonLog(logPath, 100);
+    fs.writeSync(fd, 'new\n');
+    fs.closeSync(fd);
+
+    expect(fs.readFileSync(logPath, 'utf-8')).toBe('new\n');
+    // One old file only: the previous .1 is gone.
+    expect(fs.readFileSync(`${logPath}.1`, 'utf-8')).toBe('x'.repeat(101));
+    expect(fs.existsSync(`${logPath}.2`)).toBe(false);
+  });
+
+  test('a file exactly at the limit is not rotated', () => {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(logPath, 'x'.repeat(100));
+
+    fs.closeSync(openDaemonLog(logPath, 100));
+
+    expect(fs.existsSync(`${logPath}.1`)).toBe(false);
+    expect(fs.readFileSync(logPath, 'utf-8')).toBe('x'.repeat(100));
+  });
+
+  test('an unwritable log dir is an error, not a silent spawn without logs', () => {
+    fs.writeFileSync(path.join(dir, 'nested'), 'a file where the dir should be');
+    expect(() => openDaemonLog(logPath, 100)).toThrow();
   });
 });
 

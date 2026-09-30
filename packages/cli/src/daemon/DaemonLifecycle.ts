@@ -9,6 +9,9 @@
  * The CLI NEVER stops the daemon — spawned or attached, it outlives the
  * TUI; sessions release their repos (DELETE /repos refcount) on exit and
  * that is the whole cleanup.
+ *
+ * A spawned daemon logs to $XDG_STATE_HOME/diffstalker/diffstalkerd.log
+ * (see openDaemonLog); one under systemd logs to the journal instead.
  */
 
 import * as fs from 'node:fs';
@@ -17,8 +20,48 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { DiffstalkerClient } from '@diffstalker/client';
+import { stateDir } from '@diffstalker/core/utils/xdg';
 
 const SOCKET_NAME = 'diffstalkerd.sock';
+
+/** The spawned daemon's log is rotated once it is bigger than this. */
+export const DAEMON_LOG_ROTATE_BYTES = 1024 * 1024;
+
+/**
+ * Where a daemon spawned by this CLI writes its stderr and stdout. A daemon
+ * under systemd logs to the journal; one spawned from the TUI has no
+ * terminal of its own (the TUI owns the screen), so without this file its
+ * every line would be discarded.
+ */
+export function daemonLogPath(): string {
+  return path.join(stateDir(), 'diffstalkerd.log');
+}
+
+/**
+ * Open the spawned daemon's log for appending, and return the fd to hand
+ * to spawn(). When the file is already over `rotateBytes`, it is first
+ * renamed to `<log>.1` (replacing the previous `.1`), so the disk never
+ * holds more than one full file plus the one being written. A log dir
+ * that cannot be created or written throws: the caller reports it, since
+ * a daemon whose failures go nowhere is what this file exists to prevent.
+ */
+export function openDaemonLog(
+  logPath: string = daemonLogPath(),
+  rotateBytes: number = DAEMON_LOG_ROTATE_BYTES
+): number {
+  fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
+  let size = 0;
+  try {
+    size = fs.statSync(logPath).size;
+  } catch (err) {
+    // No log yet is the first-run case; anything else is a real failure.
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+  if (size > rotateBytes) {
+    fs.renameSync(logPath, `${logPath}.1`);
+  }
+  return fs.openSync(logPath, 'a', 0o600);
+}
 
 /** How long one /health probe may take before it counts as down. */
 const HEALTH_TIMEOUT_MS = 250;
@@ -230,11 +273,21 @@ export async function ensureDaemon(options: {
     spawnArgs.push('--follow-file', options.followFile);
   }
 
+  // The daemon's stdout and stderr go to a log file: it outlives this
+  // process and has no terminal of its own. The parent's copy of the fd is
+  // closed right after the spawn; the child holds its own.
+  const logPath = daemonLogPath();
+  const logFd = openDaemonLog(logPath);
   let spawnError: Error | null = null;
-  const child = spawn(bin, spawnArgs, {
-    detached: true,
-    stdio: 'ignore',
-  });
+  let child;
+  try {
+    child = spawn(bin, spawnArgs, {
+      detached: true,
+      stdio: ['ignore', logFd, logFd],
+    });
+  } finally {
+    fs.closeSync(logFd);
+  }
   child.on('error', (err) => {
     spawnError = err;
   });
@@ -250,5 +303,5 @@ export async function ensureDaemon(options: {
     }
     await new Promise((resolve) => setTimeout(resolve, READY_POLL_MS));
   }
-  throw new Error(`diffstalkerd did not become ready at ${socketPath}`);
+  throw new Error(`diffstalkerd did not become ready at ${socketPath}; its log is ${logPath}`);
 }

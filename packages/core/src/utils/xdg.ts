@@ -27,6 +27,17 @@ export function cacheDir(): string {
   return path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), APP);
 }
 
+/**
+ * State directory: $XDG_STATE_HOME/diffstalker or ~/.local/state/diffstalker.
+ * For data that should survive a restart but is not config: logs.
+ */
+export function stateDir(): string {
+  return path.join(
+    process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state'),
+    APP
+  );
+}
+
 /** Runtime directory: $XDG_RUNTIME_DIR/diffstalker, or null when unset. */
 export function runtimeDir(): string | null {
   return process.env.XDG_RUNTIME_DIR ? path.join(process.env.XDG_RUNTIME_DIR, APP) : null;
