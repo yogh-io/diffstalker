@@ -447,17 +447,9 @@ export class DiffstalkerClient {
    * an image, and the browser reaches those bytes through `<img src>` and
    * nothing else. This method exists so the daemon's surface stays fully
    * typed in one place.
-   *
-   * `staged` is spelled 0/1 because that is what the route accepts (it
-   * 400s on `true`/`false`), matching core's mediaUrl. The client cannot
-   * runtime-import core, so the spelling is repeated here rather than
-   * shared; blobRef.ts is the copy the browser and the daemon tests use.
    */
   media(id: string, path: string, staged: boolean): Promise<MediaPair> {
-    return this.transport.request(
-      'GET',
-      this.repoPath(id, '/media') + toQuery({ path, staged: staged ? '1' : '0' })
-    );
+    return this.transport.request('GET', this.repoPath(id, '/media') + toQuery({ path, staged }));
   }
 
   // --- Remote / branch / undo ---

@@ -241,13 +241,13 @@ describe('explorer', () => {
 describe('media', () => {
   const emptyPair = { old: null, new: null };
 
-  test('media asks /media with staged spelled 0/1 — the only spelling the route takes', async () => {
+  test('media asks /media with staged spelled true/false, like every boolean param', async () => {
     respond = () => ({ body: emptyPair });
     await client.media('r1', 'logo.png', false);
     await client.media('r1', 'logo.png', true);
     expect(fake.calls.map((c) => c.url)).toEqual([
-      '/repos/r1/media?path=logo.png&staged=0',
-      '/repos/r1/media?path=logo.png&staged=1',
+      '/repos/r1/media?path=logo.png&staged=false',
+      '/repos/r1/media?path=logo.png&staged=true',
     ]);
     expect(fake.calls.every((c) => c.method === 'GET')).toBe(true);
   });
@@ -256,7 +256,7 @@ describe('media', () => {
     respond = () => ({ body: emptyPair });
     await client.media('id with spaces', 'img/a b&c.png', false);
     expect(fake.calls[0].url).toBe(
-      '/repos/id%20with%20spaces/media?path=img%2Fa%20b%26c.png&staged=0'
+      '/repos/id%20with%20spaces/media?path=img%2Fa%20b%26c.png&staged=false'
     );
   });
 

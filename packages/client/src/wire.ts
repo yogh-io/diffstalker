@@ -306,7 +306,7 @@ export interface JournalAppendEvent {
 }
 
 /**
- * GET /repos/:id/media?path=&staged=0|1: one side of a changed file — where
+ * GET /repos/:id/media?path=&staged=: one side of a changed file — where
  * its bytes are, and what the magic-byte sniffer made of them.
  *
  * `path` is already rename-resolved: the daemon reads the status entry and

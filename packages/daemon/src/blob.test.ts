@@ -778,13 +778,15 @@ describe('GET /media — sides', () => {
     expect(await errorOf(res)).toContain('not in status');
   });
 
-  test('staged must be spelled 0 or 1', async () => {
-    for (const raw of ['true', '', 'yes', '2']) {
+  test('staged must be spelled true or false, and is required', async () => {
+    for (const raw of ['1', '0', '', 'yes', '2']) {
       const res = await request(`/repos/${repoId}/media?path=logo.png&staged=${raw}`);
       expect(res.status).toBe(400);
       expect(await errorOf(res)).toContain('staged');
     }
-    expect((await request(`/repos/${repoId}/media?path=logo.png`)).status).toBe(400);
+    const missing = await request(`/repos/${repoId}/media?path=logo.png`);
+    expect(missing.status).toBe(400);
+    expect(await errorOf(missing)).toContain('Missing "staged"');
   });
 
   test('/media applies the same path guards as /blob', async () => {

@@ -38,8 +38,12 @@ export function blobUrl(repoId: string, ref: BlobRef): string {
   return `/repos/${encodeURIComponent(repoId)}/blob?${query}${version}`;
 }
 
-/** JSON metadata for both sides of a changed file, renames resolved server-side. */
+/**
+ * JSON metadata for both sides of a changed file, renames resolved
+ * server-side. `staged` is spelled true/false, like every boolean query
+ * param the daemon takes.
+ */
 export function mediaUrl(repoId: string, path: string, staged: boolean): string {
-  const query = `path=${encodeURIComponent(path)}&staged=${staged ? '1' : '0'}`;
+  const query = `path=${encodeURIComponent(path)}&staged=${staged ? 'true' : 'false'}`;
   return `/repos/${encodeURIComponent(repoId)}/media?${query}`;
 }

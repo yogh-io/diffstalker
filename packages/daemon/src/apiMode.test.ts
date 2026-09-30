@@ -110,7 +110,7 @@ describe('web-mode API surface', () => {
     // file.txt is modified but unstaged (the stage test above put it back), so
     // this reaches the handler and answers with a real pair. A status, not a
     // missing error string: a route that 500'd would pass "not Unknown route".
-    const res = await req(WEB_SOCKET, 'GET', `/repos/${repoId}/media?path=file.txt&staged=0`);
+    const res = await req(WEB_SOCKET, 'GET', `/repos/${repoId}/media?path=file.txt&staged=false`);
     expect(res.status).toBe(200);
     const pair = (await res.json()) as { new?: { refusal?: string } };
     // Text is not an image, so the verdict is a refusal rather than an error.
@@ -153,7 +153,11 @@ describe('full-mode API surface', () => {
   test('the blob and media routes ARE registered in full mode too', async () => {
     const blob = await req(FULL_SOCKET, 'GET', `/repos/${repoId}/blob?path=file.txt&side=head`);
     expect(blob.status).toBe(415);
-    const media = await req(FULL_SOCKET, 'GET', `/repos/${repoId}/media?path=file.txt&staged=0`);
+    const media = await req(
+      FULL_SOCKET,
+      'GET',
+      `/repos/${repoId}/media?path=file.txt&staged=false`
+    );
     expect(media.status).toBe(200);
     const pair = (await media.json()) as { new?: { refusal?: string } };
     expect(pair.new?.refusal).toBe('not-an-image');

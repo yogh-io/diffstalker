@@ -797,7 +797,7 @@ describe('image metadata (mediaMeta)', () => {
     const { store } = await openStore([png]);
 
     await store.ensureMedia(png, false);
-    expect(mediaCalls()).toEqual(['/repos/r1/media?path=img.png&staged=0']);
+    expect(mediaCalls()).toEqual(['/repos/r1/media?path=img.png&staged=false']);
     // Keyed exactly like workingDiffs: the side prefix is part of it.
     expect(store.mediaMeta.get('u:img.png')!.new!.path).toBe('img.png');
 
@@ -814,8 +814,8 @@ describe('image metadata (mediaMeta)', () => {
     await store.ensureMedia(staged, true);
 
     expect(mediaCalls()).toEqual([
-      '/repos/r1/media?path=img.png&staged=0',
-      '/repos/r1/media?path=img.png&staged=1',
+      '/repos/r1/media?path=img.png&staged=false',
+      '/repos/r1/media?path=img.png&staged=true',
     ]);
     expect([...store.mediaMeta.keys()]).toEqual(['u:img.png', 's:img.png']);
   });

@@ -166,11 +166,18 @@ export function optionalBooleanField(body: unknown, field: string): boolean {
 
 /**
  * Parse a boolean query param: only "true"/"false" are accepted, anything
- * else is a 400; an absent param yields the default.
+ * else is a 400. An absent param yields `fallback`; with no fallback the
+ * param is required and its absence is a 400 too. The one spelling of a
+ * boolean on this API — no route takes 0/1 or yes/no.
  */
-export function parseBoolParam(query: URLSearchParams, name: string, fallback: boolean): boolean {
+export function parseBoolParam(query: URLSearchParams, name: string, fallback?: boolean): boolean {
   const raw = query.get(name);
-  if (raw === null) return fallback;
+  if (raw === null) {
+    if (fallback === undefined) {
+      throw new HttpError(400, `Missing "${name}" query parameter (expected true or false)`);
+    }
+    return fallback;
+  }
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   throw new HttpError(400, `Invalid "${name}" (expected true or false): ${raw}`);

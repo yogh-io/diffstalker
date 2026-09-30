@@ -456,8 +456,7 @@ export class DiffstalkerClient {
    * from blobUrl(), never by this client.
    *
    * The URL comes from core's mediaUrl so the daemon, its tests and this
-   * client share one spelling — `staged` in particular is 0/1, which is
-   * the only thing the route accepts.
+   * client share one spelling.
    */
   media(id: string, path: string, staged: boolean): Promise<MediaPair> {
     return request('GET', mediaUrl(id, path, staged));

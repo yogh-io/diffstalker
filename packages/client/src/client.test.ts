@@ -364,9 +364,9 @@ describe('media', () => {
     expect(pair.new!.version.length).toBeGreaterThan(0);
   });
 
-  test('staged is spelled 0/1, so staged=true reaches the route and reads the index', async () => {
+  test('staged=true reaches the route and reads the index', async () => {
     gitExec(mediaDir, 'add logo.png');
-    // A `staged=true` spelling would be a 400 here, not a slow poll.
+    // A spelling the route refuses would be a 400 here, not a slow poll.
     const pair = await until<MediaPair>(
       () => client.media(mediaRepoId, 'logo.png', true),
       (p) => p.new?.side === 'index'

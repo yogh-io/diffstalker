@@ -76,20 +76,20 @@ describe('blobUrl', () => {
 });
 
 describe('mediaUrl', () => {
-  it('spells staged as 0 or 1', () => {
-    expect(mediaUrl('r', 'a.png', false)).toBe('/repos/r/media?path=a.png&staged=0');
-    expect(mediaUrl('r', 'a.png', true)).toBe('/repos/r/media?path=a.png&staged=1');
+  it('spells staged as true or false, like every other boolean param', () => {
+    expect(mediaUrl('r', 'a.png', false)).toBe('/repos/r/media?path=a.png&staged=false');
+    expect(mediaUrl('r', 'a.png', true)).toBe('/repos/r/media?path=a.png&staged=true');
   });
 
   it('encodes the id and the path', () => {
     expect(mediaUrl('a b', 'my images/a&b?c#d+e/日本.png', false)).toBe(
-      '/repos/a%20b/media?path=my%20images%2Fa%26b%3Fc%23d%2Be%2F%E6%97%A5%E6%9C%AC.png&staged=0'
+      '/repos/a%20b/media?path=my%20images%2Fa%26b%3Fc%23d%2Be%2F%E6%97%A5%E6%9C%AC.png&staged=false'
     );
   });
 
   it('passes .. through unchanged', () => {
     expect(mediaUrl('r', '../../etc/passwd', true)).toBe(
-      '/repos/r/media?path=..%2F..%2Fetc%2Fpasswd&staged=1'
+      '/repos/r/media?path=..%2F..%2Fetc%2Fpasswd&staged=true'
     );
   });
 
@@ -97,6 +97,6 @@ describe('mediaUrl', () => {
     const path = 'a b/c&d#e+f/日本.png';
     const url = new URL(mediaUrl('id', path, true), 'https://x');
     expect(url.searchParams.get('path')).toBe(path);
-    expect(url.searchParams.get('staged')).toBe('1');
+    expect(url.searchParams.get('staged')).toBe('true');
   });
 });

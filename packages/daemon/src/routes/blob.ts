@@ -2,7 +2,7 @@
  * Image bytes for the web UI, plus the metadata that tells it which bytes to
  * ask for.
  *
- *   GET /repos/:id/media?path=<rel>&staged=<0|1>                  -> MediaPair
+ *   GET /repos/:id/media?path=<rel>&staged=<true|false>           -> MediaPair
  *   GET /repos/:id/blob?path=<rel>&side=<worktree|index|head>[&v=] -> bytes
  *
  * This is the only place the daemon hands raw repository bytes to a browser,
@@ -70,6 +70,7 @@ import { guardImageSubresource } from '../security.js';
 import type { BlobSemaphore } from '../blobSemaphore.js';
 import type { RepoHandle } from '../repoRegistry.js';
 import {
+  parseBoolParam,
   requirePathParam,
   requireRepo,
   requireRealRepoPath,
@@ -153,14 +154,6 @@ function requireSideParam(query: URLSearchParams): BlobSide {
     throw new HttpError(400, 'Invalid "side" (expected worktree, index or head)');
   }
   return raw as BlobSide;
-}
-
-/** `staged` is spelled 0/1 by blobRef's mediaUrl, and is required. */
-function requireStagedParam(query: URLSearchParams): boolean {
-  const raw = query.get('staged');
-  if (raw === '1') return true;
-  if (raw === '0') return false;
-  throw new HttpError(400, 'Invalid "staged" (expected 0 or 1)');
 }
 
 /**
@@ -416,7 +409,8 @@ export function registerBlobRoutes(router: Router, deps: RouteDeps, gate: BlobSe
 
   router.get('/repos/:id/media', async ({ params, query, req, res }) => {
     const handle = requireRepo(registry, params.id);
-    const staged = requireStagedParam(query);
+    // Required: a pair has no default side to describe.
+    const staged = parseBoolParam(query, 'staged');
     const rel = requireRepoRelPath(handle.path, requirePathParam(query));
     await requireRealRepoPath(handle, rel);
 
