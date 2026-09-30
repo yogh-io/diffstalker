@@ -8,14 +8,15 @@
  * dependence on other test files' ordering.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
-import type { ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { sendBytes } from './router.js';
+import { setDebug } from '@diffstalker/core/utils/logger';
+import { HttpError, Router, sendBytes, sendJson } from './router.js';
 import { createDaemon, Daemon } from './server.js';
 
 const SOCKET = path.join(os.tmpdir(), `diffstalkerd-router-${process.pid}.sock`);
@@ -233,5 +234,135 @@ describe('sendBytes', () => {
     sendBytes(res, 200, new Uint8Array(1), { 'cache-control': 'no-store' });
 
     expect(sent.headers).toEqual({ 'cache-control': 'no-store', 'content-length': '1' });
+  });
+});
+
+/**
+ * What a failure leaves in the log, per class. The router is driven
+ * directly with stub request/response objects: no socket, no daemon.
+ */
+describe('router failure logging', () => {
+  let lines: string[];
+  let stderrSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    lines = [];
+    stderrSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+      lines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    setDebug(false);
+  });
+
+  afterEach(() => {
+    stderrSpy.mockRestore();
+    setDebug(false);
+  });
+
+  function fakeRequest(method: string, url: string): IncomingMessage {
+    return {
+      method,
+      url,
+      async *[Symbol.asyncIterator]() {},
+    } as unknown as IncomingMessage;
+  }
+
+  function fakeResponse(): {
+    res: ServerResponse;
+    sent: { status: number | null; ended: boolean };
+  } {
+    const sent = { status: null as number | null, ended: false };
+    const res = {
+      headersSent: false,
+      writeHead(status: number) {
+        sent.status = status;
+        this.headersSent = true;
+        return this;
+      },
+      end() {
+        sent.ended = true;
+        return this;
+      },
+    };
+    return { res: res as unknown as ServerResponse, sent };
+  }
+
+  test('an unexpected error is a 500 logged at error with method, path and stack', async () => {
+    const router = new Router();
+    router.get('/boom', () => {
+      throw new Error('spawn git ENOENT');
+    });
+    const { res, sent } = fakeResponse();
+
+    await router.handle(fakeRequest('GET', '/boom?x=1'), res);
+
+    expect(sent.status).toBe(500);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(' error GET /boom?x=1 -> 500\n');
+    expect(lines[0]).toContain('  Error: spawn git ENOENT\n');
+    expect(lines[0]).toMatch(/\n\s+at /);
+  });
+
+  test('an HttpError with a cause is logged at warn with status, message and the cause', async () => {
+    const router = new Router();
+    router.post('/repos/:id/push', () => {
+      throw new HttpError(409, 'Push rejected', {
+        cause: new Error('! [rejected] main -> main (non-fast-forward)'),
+      });
+    });
+    const { res, sent } = fakeResponse();
+
+    await router.handle(fakeRequest('POST', '/repos/abc/push'), res);
+
+    expect(sent.status).toBe(409);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(' warn  POST /repos/abc/push -> 409 Push rejected\n');
+    expect(lines[0]).toContain('  Error: ! [rejected] main -> main (non-fast-forward)\n');
+    // The cause is summarized, not stack-traced: a git refusal needs no stack.
+    expect(lines[0]).not.toMatch(/\n\s+at /);
+  });
+
+  test('a plain 4xx is silent by default and a debug line with --debug', async () => {
+    const router = new Router();
+    router.get('/repos/:id', () => {
+      throw new HttpError(404, 'Unknown repo id: abc');
+    });
+
+    await router.handle(fakeRequest('GET', '/repos/abc'), fakeResponse().res);
+    expect(lines).toHaveLength(0);
+
+    setDebug(true);
+    await router.handle(fakeRequest('GET', '/repos/abc'), fakeResponse().res);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(' debug GET /repos/abc -> 404 Unknown repo id: abc\n');
+  });
+
+  test('a 5xx HttpError without a cause is still logged at warn', async () => {
+    const router = new Router();
+    router.get('/busy', () => {
+      throw new HttpError(503, 'Too many blob reads in flight');
+    });
+
+    await router.handle(fakeRequest('GET', '/busy'), fakeResponse().res);
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(' warn  GET /busy -> 503 Too many blob reads in flight\n');
+  });
+
+  test('a failure after the headers went out ends the stream and logs the reason', async () => {
+    const router = new Router();
+    router.get('/events', ({ res }) => {
+      sendJson(res, 200, { started: true });
+      throw new Error('stream write failed');
+    });
+    const { res, sent } = fakeResponse();
+
+    await router.handle(fakeRequest('GET', '/events'), res);
+
+    expect(sent.status).toBe(200);
+    expect(sent.ended).toBe(true);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(' error GET /events failed after the response headers were sent\n');
+    expect(lines[0]).toContain('  Error: stream write failed\n');
   });
 });

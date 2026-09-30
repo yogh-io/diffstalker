@@ -19,6 +19,7 @@ import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { runtimeDir, cacheDir, configDir } from '@diffstalker/core/utils/xdg';
 import { expandPath } from '@diffstalker/core/utils/pathUtils';
+import { setDebug, error as logError } from '@diffstalker/core/utils/logger';
 import { createDaemon, type Daemon, ListenOptions } from './server.js';
 import { readCurrentVersion } from './version.js';
 import { resolveSymbolArtifacts } from './symbols/resolveArtifacts.js';
@@ -66,6 +67,8 @@ Options:
                        when missing, the daemon serves the API only)
   --no-update-check    Never ask npm which version is latest; GET /version
                        then reports the running version only
+  --debug              Also log debug lines (every refused request, every
+                       ignored follow target) to stderr
   --version, -v        Print the running version and exit
   --help, -h           Show this help
 `;
@@ -101,6 +104,8 @@ export interface CliOptions extends ListenOptions {
   webRoot?: string;
   /** --no-update-check: never reach out to the npm registry. */
   noUpdateCheck?: boolean;
+  /** --debug: log debug lines too (see @diffstalker/core/utils/logger). */
+  debug?: boolean;
   /**
    * Positional arguments: repositories to open on startup. Only ever
    * explicit paths — the daemon never opens its own working directory,
@@ -167,6 +172,9 @@ export function parseArgs(argv: string[]): CliOptions | 'help' | 'version' {
         break;
       case '--no-update-check':
         options.noUpdateCheck = true;
+        break;
+      case '--debug':
+        options.debug = true;
         break;
       default:
         addRepoPath(options, arg);
@@ -306,6 +314,8 @@ async function main(): Promise<void> {
     return;
   }
 
+  setDebug(options.debug ?? false);
+
   applyListenDefaults(options);
 
   // Follow is on by default: the daemon owns the hook file the TUI's follow
@@ -393,7 +403,9 @@ async function main(): Promise<void> {
   process.on('SIGHUP', () => shutdown('SIGHUP'));
 
   const crash = (kind: string, err: unknown): void => {
-    console.error(`diffstalkerd ${kind}:`, err instanceof Error ? (err.stack ?? err.message) : err);
+    // The full stack and cause chain, through the logger so the line is
+    // timestamped like every other one.
+    logError(`${kind}; shutting down`, err);
     // Best-effort cleanup (unlinks the socket file); then get out.
     daemon
       .close()

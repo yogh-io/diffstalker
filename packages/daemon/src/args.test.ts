@@ -132,6 +132,7 @@ describe('parseArgs error branches (exit 2 + message + usage)', () => {
     expect(result.stdout).toContain('--no-follow');
     expect(result.stdout).toContain('--web-root PATH');
     expect(result.stdout).toContain('--no-update-check');
+    expect(result.stdout).toContain('--debug');
     // Positional repo paths and --version are part of the documented surface.
     expect(result.stdout).toContain('REPO_PATH');
     expect(result.stdout).toContain('--version, -v');

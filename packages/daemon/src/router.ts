@@ -20,10 +20,18 @@
  * — a git command line, an absolute path, an errno — and the daemon is
  * reachable from a browser. That detail goes to stderr, where it is what a
  * developer needs, and the client gets a status and nothing else.
+ *
+ * Every failure leaves a trace in the log (see logHttpError for the
+ * levels): a 500 with its stack, an HttpError with the error it was made
+ * from, a plain 4xx at debug.
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { error as logError } from '@diffstalker/core/utils/logger';
+import {
+  debug as logDebug,
+  warn as logWarn,
+  error as logError,
+} from '@diffstalker/core/utils/logger';
 import { toWire } from './serialize.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -210,19 +218,39 @@ export class Router {
         body,
       });
     } catch (err) {
+      const request = `${req.method ?? 'GET'} ${req.url ?? '/'}`;
       if (res.headersSent) {
-        // Streaming responses (SSE) can't switch to a JSON error; just end.
+        // Streaming responses (SSE) can't switch to a JSON error; end the
+        // stream. The client only sees a dropped connection, so the log is
+        // the one place the reason survives.
+        logError(`${request} failed after the response headers were sent`, err);
         res.end();
         return;
       }
       if (err instanceof HttpError) {
+        logHttpError(request, err);
         sendJson(res, err.status, { error: err.message });
         return;
       }
       // Not a failure any route described, so the message is the raw one from
       // whatever broke. It stays server-side (see the module comment).
-      logError(`${req.method ?? 'GET'} ${req.url ?? '/'}`, err);
+      logError(`${request} -> 500`, err);
       sendJson(res, 500, { error: 'Internal server error' });
     }
+  }
+}
+
+/**
+ * An HttpError made from a real failure (it has a cause: a git command that
+ * failed, an errno) is the trace of that failure, so it is logged with the
+ * cause. So is a 5xx, which is never the client's fault. A plain 4xx is
+ * the client being told no — routine, so it only shows with --debug.
+ */
+function logHttpError(request: string, err: HttpError): void {
+  const line = `${request} -> ${err.status} ${err.message}`;
+  if (err.cause !== undefined || err.status >= 500) {
+    logWarn(line, err.cause);
+  } else {
+    logDebug(line);
   }
 }

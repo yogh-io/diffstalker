@@ -22,6 +22,7 @@ import * as http from 'node:http';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
 import type { AddressInfo, Socket } from 'node:net';
+import { error as logError } from '@diffstalker/core/utils/logger';
 import { Router, sendJson } from './router.js';
 import { createStaticHandler } from './staticFiles.js';
 import { shouldGuard, guardRequest, SECURITY_HEADERS } from './security.js';
@@ -348,7 +349,10 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
 
       // handle() never rejects (it converts errors to JSON responses), but
       // a floating rejection here would crash the daemon — belt and braces.
-      router.handle(req, res, staticHandler).catch(() => res.end());
+      router.handle(req, res, staticHandler).catch((err: unknown) => {
+        logError(`${req.method ?? 'GET'} ${req.url ?? '/'} escaped the router`, err);
+        res.end();
+      });
     });
     server.on('connection', (socket) => {
       sockets.add(socket);
