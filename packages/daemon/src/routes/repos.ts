@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import { listWorktrees, resolveRepoRoot } from '@diffstalker/core/git/worktree';
 import { Router, HttpError, sendJson } from '../router.js';
 import { openAndWarm, RepoOpenRefused } from '../repoRegistry.js';
-import { requirePathParam, requireRepo, requireStringField, type RouteDeps } from './shared.js';
+import { requirePathParam, requireRepo, requireRepoHandle, requireStringField, type RouteDeps } from './shared.js';
 
 /**
  * A refused open as the client's error. A relative path and a directory
@@ -100,7 +100,7 @@ export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
   });
 
   router.delete('/repos/:id', ({ params, res }) => {
-    requireRepo(registry, params.id);
+    requireRepoHandle(registry, params.id);
     // On actual dispose the registry's onClosed callback tears down the
     // repo's SSE channel and broadcasts repo-closed on the daemon channel.
     registry.closeRepo(params.id);

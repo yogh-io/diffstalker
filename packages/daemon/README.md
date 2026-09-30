@@ -55,6 +55,8 @@ Options:
                      package ships it there. Missing dir → API-only, non-fatal)
 --no-update-check    Never ask npm which version is latest; GET /version
                      then reports the running version only
+--debug              Also log debug lines (every refused request, every
+                     ignored follow target) to stderr. See docs/logging.md
 --version, -v        Print the running version and exit
 --help, -h           Show this help
 ```
@@ -185,7 +187,10 @@ Every mutation responds with the unified envelope `{state, result?}`:
 operations. Status codes: 400 for invalid input (missing fields,
 flag-shaped refs, resets past the root), 404 for unknown repo ids / files
 not in status, 409 when the repo state refuses the operation (conflicts,
-rejected pushes, an operation already in progress, nothing to abort), 500
+rejected pushes, an operation already in progress, nothing to abort), 410
+when the repo is open but its directory is gone or is no longer a git repo
+(`{error}` says which; `GET /status`, `GET /repos/:id/events` and
+`DELETE /repos/:id` still answer, so a client can see why and let go), 500
 for real failures.
 
 Ref-like values (the body fields `name`, `hash`, `branch` and the `base`

@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The daemon's errors can be traced now.** Before, a failed stage or push,
+  a watcher error or a broken refresh left no line anywhere, and a daemon the
+  terminal UI started threw all its output away. Now every log line has a
+  timestamp and a level, errors print their stack and cause, and each failure
+  names its repo and file. A daemon the terminal UI starts writes to
+  `~/.local/state/diffstalker/diffstalkerd.log` (moved to `.log.1` past 1 MB
+  when the next one starts); under systemd it is the journal. `--debug` also
+  logs every refused request. File names and remote URLs are made safe in the
+  log: newlines are escaped and credentials are removed. In the web UI, every
+  error the page shows also lands in the browser console with its detail. See
+  `docs/logging.md`.
+
+### Changed
+
+- **Wire changes in the daemon API.** `GET /media` takes `staged=true|false`
+  (was `0|1`). `GET /compare/file` names its row with `uncommitted=` (was
+  `side=`); `side` now only means the tree on `/blob`. `POST /repos` answers
+  404 for a path that does not exist (was 400). A repo whose directory is
+  deleted while open answers 410 with the reason, instead of a 500 on every
+  request. Unknown API paths get a JSON 404 instead of the web page.
+  `?base=` is checked like every other ref. A pull or push with no upstream
+  is a 409 with git's message (was a 500).
+- **bun 1.4.2** for development and CI. bun 1.3 could deadlock on a named
+  pipe in a watched folder, which is what hung the 0.13.5 release run.
+- **Faster:** the lists compute their keyboard tab stop once per render
+  instead of once per row (2000 rows: from 108 ms to under 0.1 ms per
+  render); a refresh runs three fewer git processes; Compare runs its git
+  reads in parallel (about 20% faster).
+
+### Fixed
+
+- **Files with a tab, a quote, a backslash or a non-ASCII letter in their
+  name** disappeared from Compare and History, and could lose their counts in
+  Changes: git quotes such names and nothing unquoted them.
+- **Compare no longer offers `refs/stash` or local branches as a base.** Only
+  remote-tracking branches qualify.
+- **Opening a History link highlights its commit.** When the log loaded while
+  the link's commit was being looked up, the files showed but no row was
+  selected.
+- **A connection error from the repo you just left** could no longer push the
+  repo you switched to into reconnecting.
+
 ## [0.13.5] - 2026-09-29
 
 ### Added

@@ -65,11 +65,30 @@ export interface SymbolSupport {
   extensions: string[];
 }
 
-/** Resolve a repo id to its handle or 404. */
-export function requireRepo(registry: RepoRegistry, id: string): RepoHandle {
+/**
+ * Resolve a repo id to its handle or 404. Only for the routes that must work
+ * even when git cannot run in the repo: releasing it, and reading its cached
+ * state or event stream (that is how a client learns why it is unusable).
+ */
+export function requireRepoHandle(registry: RepoRegistry, id: string): RepoHandle {
   const handle = registry.getRepo(id);
   if (!handle) {
     throw new HttpError(404, `Unknown repo id: ${id}`);
+  }
+  return handle;
+}
+
+/**
+ * Resolve a repo id to a handle git can run in: 404 for an unknown id, 410
+ * when the repo is open but its directory is gone or is no longer a git
+ * repo. The manager logged that once when it happened; a 410 with its reason
+ * is the answer, not a 500 with simple-git's stack on every request.
+ */
+export function requireRepo(registry: RepoRegistry, id: string): RepoHandle {
+  const handle = requireRepoHandle(registry, id);
+  const reason = handle.manager.workingTree.unavailable;
+  if (reason !== null) {
+    throw new HttpError(410, reason);
   }
   return handle;
 }
@@ -481,12 +500,12 @@ function gitErrorStatus(message: string): number {
  *
  * The manager keeps only git's message (it never rethrows), and that
  * message IS what the user needs — "push rejected", "patch does not
- * apply" — so it becomes the HttpError's message and also its cause, the
- * one thing the router logs. Every failure a route sends leaves through
- * HttpError this way; a mutation is not a second path around that rule.
+ * apply" — so it becomes the HttpError's message. No cause: the manager
+ * already logged the full error with its repo when the operation failed,
+ * so a cause here would log the same failure a second time.
  */
 function gitFailure(status: number, message: string): HttpError {
-  return new HttpError(status, message, { cause: message });
+  return new HttpError(status, message);
 }
 
 /**

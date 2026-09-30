@@ -324,6 +324,10 @@ function applyToIndex(repoPath: string, patch: string, reverse: boolean): void {
     input: patch,
     encoding: 'utf-8',
     env: gitEnv(),
+    // Capture stderr: inherited, git's complaint went straight to the
+    // daemon's log as a raw line with no timestamp. Captured, it is part of
+    // the thrown error, which the manager logs and the client is shown.
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 }
 

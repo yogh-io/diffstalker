@@ -151,10 +151,16 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
    * is gone, or git stopped recognizing it. The daemon reads this before
    * running a git command for a request, so the answer is one status and
    * this reason rather than a 500 with simple-git's stack.
+   *
+   * Kept apart from state.error: a mutation that fails after the refresh
+   * that found the repo gone writes its own message there, and the reason
+   * must survive that.
    */
   get unavailable(): string | null {
-    return this._state.status?.isRepo === false ? this._state.error : null;
+    return this._state.status?.isRepo === false ? this.unavailableReason : null;
   }
+
+  private unavailableReason: string | null = null;
 
   private updateState(partial: Partial<GitState>): void {
     this._state = { ...this._state, ...partial };
@@ -414,6 +420,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     if (this._state.status?.isRepo !== false) {
       logger.warn(`${reason} (was open as one)`, undefined, { repo: this.repoPath });
     }
+    this.unavailableReason = reason;
     this.updateState({ status, isLoading: false, error: reason });
   }
 

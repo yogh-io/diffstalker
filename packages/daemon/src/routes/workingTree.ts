@@ -17,6 +17,7 @@ import {
   parseBoolParam,
   parseWholeParam,
   requireRepo,
+  requireRepoHandle,
   requireStringField,
   resolveFileEntry,
   runStagingMutation,
@@ -42,7 +43,7 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
   const { registry, sse } = deps;
 
   router.get('/repos/:id/status', async ({ params, res }) => {
-    const handle = requireRepo(registry, params.id);
+    const handle = requireRepoHandle(registry, params.id);
     await ensureStatus(handle.manager.workingTree);
     // The manager's state as-is, the same object the SSE stream and the
     // mutation envelopes send — one source, so no two clients can disagree
@@ -115,7 +116,7 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
   });
 
   router.get('/repos/:id/events', ({ params, req, res }) => {
-    const handle = requireRepo(registry, params.id);
+    const handle = requireRepoHandle(registry, params.id);
     sse.subscribe(params.id, handle.manager, req, res);
   });
 
