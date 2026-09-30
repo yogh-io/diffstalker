@@ -181,11 +181,11 @@ describe('daemon over unix socket', () => {
     expect(repos).toHaveLength(1);
   });
 
-  test('POST /repos rejects a non-repo path', async () => {
+  test('POST /repos rejects a path that does not exist with a 404', async () => {
     const res = await postJson('/repos', { path: '/definitely/not/a/repo' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toBeTruthy();
+    expect(body.error).toBe('No such directory: /definitely/not/a/repo');
   });
 
   test('GET /repos/:id/status reflects modified and untracked files', async () => {

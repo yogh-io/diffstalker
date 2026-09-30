@@ -1,9 +1,27 @@
 /** Repo lifecycle: list, open (refcounted), close, resolve, worktrees. */
 
+import * as fs from 'node:fs';
 import { listWorktrees, resolveRepoRoot } from '@diffstalker/core/git/worktree';
 import { Router, HttpError, sendJson } from '../router.js';
-import { openAndWarm } from '../repoRegistry.js';
+import { openAndWarm, RepoOpenRefused } from '../repoRegistry.js';
 import { requirePathParam, requireRepo, requireStringField, type RouteDeps } from './shared.js';
+
+/**
+ * A refused open as the client's error. A relative path and a directory
+ * that is not a repository are the client's mistake (400); a path that is
+ * not on disk at all is a 404. Only the two refusal reasons are mapped —
+ * any other failure is unexpected and stays a logged 500.
+ *
+ * A missing path INSIDE a repo never lands here: the registry opens the
+ * worktree above it (see RepoRegistry.openRepo), so the stat below only
+ * ever decides between "not there" and "there, but not a repo".
+ */
+function refusedOpenError(err: RepoOpenRefused): HttpError {
+  if (err.reason === 'not-a-repo' && !fs.existsSync(err.requested)) {
+    return new HttpError(404, `No such directory: ${err.requested}`, { cause: err });
+  }
+  return new HttpError(400, err.message, { cause: err });
+}
 
 export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
   const { registry } = deps;
@@ -23,7 +41,8 @@ export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
     try {
       opened = await openAndWarm(registry, inputPath);
     } catch (err) {
-      throw new HttpError(400, err instanceof Error ? err.message : String(err));
+      if (err instanceof RepoOpenRefused) throw refusedOpenError(err);
+      throw err;
     }
     sendJson(res, opened.created ? 201 : 200, {
       id: opened.handle.id,

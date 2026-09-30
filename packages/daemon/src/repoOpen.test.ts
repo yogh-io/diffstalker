@@ -92,15 +92,22 @@ afterAll(async () => {
 });
 
 describe('POST /repos path handling', () => {
-  test('a ~ path that is not a repo names the expanded path in the error', async () => {
+  test('a ~ path that does not exist is a 404 naming the expanded path', async () => {
     const res = await openRepo('~/no-such-diffstalker-repo');
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe(
-      `Not a git repository: ${path.join(os.homedir(), 'no-such-diffstalker-repo')}`
+      `No such directory: ${path.join(os.homedir(), 'no-such-diffstalker-repo')}`
     );
     // The literal tilde never reaches git.
     expect(body.error).not.toContain('~');
+  });
+
+  test('a directory that exists but is not a repo is a 400', async () => {
+    const res = await openRepo(plainDir);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe(`Not a git repository: ${plainDir}`);
   });
 
   test('a relative path is refused for being relative, not for not being a repo', async () => {

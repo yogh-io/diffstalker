@@ -78,6 +78,25 @@ export class JournalStoreCache {
   }
 }
 
+/**
+ * A path openRepo refused, and why. `requested` is the expanded path (the
+ * one that was actually looked for). Anything else openRepo throws is an
+ * unexpected failure, not a refusal.
+ */
+export class RepoOpenRefused extends Error {
+  constructor(
+    readonly reason: 'not-absolute' | 'not-a-repo',
+    readonly requested: string
+  ) {
+    super(
+      reason === 'not-absolute'
+        ? `Repo path must be absolute: ${requested}`
+        : `Not a git repository: ${requested}`
+    );
+    this.name = 'RepoOpenRefused';
+  }
+}
+
 export interface RepoHandle {
   /** Short opaque id used in URLs: a stable hash of the worktree root. */
   id: string;
@@ -126,11 +145,7 @@ export class RepoRegistry {
   async openRepo(inputPath: string): Promise<OpenResult> {
     const resolved = await resolveRepoRoot(inputPath, { mustExist: false });
     if (!resolved.ok) {
-      throw new Error(
-        resolved.reason === 'not-absolute'
-          ? `Repo path must be absolute: ${resolved.requested}`
-          : `Not a git repository: ${resolved.requested}`
-      );
+      throw new RepoOpenRefused(resolved.reason, resolved.requested);
     }
     const root = resolved.root;
 
