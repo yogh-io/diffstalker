@@ -43,6 +43,7 @@
 import { computed, shallowRef, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
+import { logDaemonRefusal } from './failureLog';
 import { useRepoStore, displayError } from './repo';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
 import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
@@ -153,6 +154,7 @@ export const useExplorerStore = defineStore('explorer', () => {
 
   /** Collapse an error into the tree-level line (calm on connection loss). */
   function setTreeError(err: unknown): void {
+    logDaemonRefusal('load explorer tree', err);
     error.value = displayError(err);
   }
 
@@ -372,6 +374,7 @@ export const useExplorerStore = defineStore('explorer', () => {
       fileSymbols.value = null;
     } catch (err) {
       if (gen !== generation || selectedPath.value !== path) return;
+      logDaemonRefusal('load file', err, { path });
       file.value = null;
       fileSymbols.value = null;
       fileError.value = displayError(err);
@@ -403,6 +406,7 @@ export const useExplorerStore = defineStore('explorer', () => {
       fileSymbols.value = result.symbols ?? null;
     } catch (err) {
       if (gen !== generation || selectedPath.value !== path) return;
+      logDaemonRefusal('load file outline', err, { path });
       fileError.value = displayError(err);
       // Land on a terminal state, not on null: null now reads as "loading",
       // so a request that already died would spin forever.

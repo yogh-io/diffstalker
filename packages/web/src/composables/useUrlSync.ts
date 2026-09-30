@@ -117,6 +117,7 @@ import { useDaemonStore } from '../stores/daemon';
 import { useExplorerStore } from '../stores/explorer';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
+import { logFailure } from '../stores/failureLog';
 import { DiffstalkerClient } from '../api/client';
 import { isConnectionError } from '../api/errors';
 import { delay } from '../utils/delay';
@@ -249,7 +250,11 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       } catch (err) {
         // Only a daemon that could not be reached is worth asking again;
         // an answer that is not a health state is not going to change.
-        if (!isConnectionError(err)) return;
+        if (!isConnectionError(err)) {
+          // Paths stay absolute from here on; say why.
+          logFailure('load daemon home', err);
+          return;
+        }
         await delay(HOME_RETRY_DELAY_MS);
         if (disposed) return;
       }

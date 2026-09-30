@@ -34,6 +34,7 @@ import { nextTick, watch } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
 import { useExplorerStore } from '../stores/explorer';
 import { useUiStore } from '../stores/ui';
+import { logFailure } from '../stores/failureLog';
 import { useRepoOpen } from './useRepoOpen';
 import { stripTrailingSlashes } from '../utils/format';
 import type { FollowChangeEvent, RepoSummary } from '@diffstalker/client';
@@ -102,9 +103,11 @@ export function useFollowMode(): void {
       if (daemon.followNavigationSuspended()) return;
       try {
         await onFollowChange(next);
-      } catch {
-        // Store actions collapse errors into their own state; never
-        // let a rejection break the chain for later events.
+      } catch (err) {
+        // Store actions collapse errors into their own state, so a
+        // rejection here is a bug in the switch. It must not break the
+        // chain for later events, and it must not vanish either.
+        logFailure('follow change', err, { path: next.path, repoId: next.repoId });
       }
     });
   }

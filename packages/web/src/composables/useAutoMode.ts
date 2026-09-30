@@ -35,6 +35,7 @@
 import { onBeforeUnmount, watch } from 'vue';
 import { useRepoStore } from '../stores/repo';
 import { useUiStore } from '../stores/ui';
+import { logDaemonRefusal } from '../stores/failureLog';
 import type { FileEntry } from '@diffstalker/core/git/status';
 import type { RepoSharedState } from '../stores/types';
 
@@ -176,9 +177,10 @@ export function useAutoMode(): void {
   function switchToHistory(): void {
     const newestCommit = repo.history.commits[0];
     if (newestCommit) {
-      repo.selectHistoryCommit(newestCommit).catch(() => {
+      repo.selectHistoryCommit(newestCommit).catch((err: unknown) => {
         // Transient (e.g. rebased away mid-switch): the list view still
         // shows the fresh log.
+        logDaemonRefusal('select newest commit', err, { hash: newestCommit.hash });
       });
     }
     ui.setActiveView('history');

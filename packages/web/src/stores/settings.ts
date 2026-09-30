@@ -18,6 +18,7 @@ import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import type { DaemonSettings, DiscoveredRepo, DiscoveryState } from '@diffstalker/client';
 import { errorMessage } from '../api/errors';
+import { logFailure, logDaemonRefusal } from './failureLog';
 
 export const useSettingsStore = defineStore('settings', () => {
   const client = new DiffstalkerClient();
@@ -79,8 +80,10 @@ export const useSettingsStore = defineStore('settings', () => {
       applySettings(settings);
       applyDiscovery(discovery);
       loaded.value = true;
-    } catch {
-      // Nothing to say here; the status bar already shows a dead daemon.
+    } catch (err) {
+      // Nothing to show: the status bar already reports a dead daemon. A
+      // daemon that answered and refused is a different matter.
+      logDaemonRefusal('load settings', err);
     }
   }
 
@@ -100,6 +103,7 @@ export const useSettingsStore = defineStore('settings', () => {
       applyDiscovery(await client.discovered());
       return true;
     } catch (err) {
+      logFailure('save watch directories', err, { watchRoots: next });
       saveError.value = errorMessage(err);
       return false;
     } finally {
@@ -145,8 +149,9 @@ export const useSettingsStore = defineStore('settings', () => {
   async function rescan(): Promise<void> {
     try {
       applyDiscovery(await client.rescanDiscovered());
-    } catch {
+    } catch (err) {
       // Keep what we had; the panel is not worth an error line for this.
+      logDaemonRefusal('rescan watch directories', err);
     }
   }
 

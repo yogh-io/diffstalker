@@ -40,6 +40,7 @@
 import { computed, shallowRef, watch } from 'vue';
 import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
+import { logDaemonRefusal } from './failureLog';
 import { useDaemonStore } from './daemon';
 import { basename, parentDir } from '../utils/format';
 import type { WorktreeInfo } from '@diffstalker/client';
@@ -176,7 +177,9 @@ export const useWorktreeStore = defineStore('worktrees', () => {
             : { status: 'ready', project: toProject(path, list) }
         );
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        // 'failed' is all the picker can say; the reason goes to the console.
+        logDaemonRefusal('list worktrees', err, { path });
         setEntry(path, { status: 'failed' });
       })
       .finally(() => {

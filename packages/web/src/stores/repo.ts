@@ -89,6 +89,7 @@ import { computed, markRaw, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import { DiffstalkerClient } from '../api/client';
 import { DaemonError, errorMessage, isConnectionError } from '../api/errors';
+import { logFailure, logDaemonRefusal } from './failureLog';
 import { splitDiffByFile } from '@diffstalker/core/view/splitDiffByFile';
 import { isLargeFileDiff } from '@diffstalker/core/git/diffParse';
 import { diffModel } from '../utils/diffRows';
@@ -578,13 +579,13 @@ export const useRepoStore = defineStore('repo', () => {
       if (gen !== generation) {
         // Superseded by a newer open(): release the ref THIS call just
         // acquired — the newer open owns releasing whatever is held.
-        client.closeRepo(ref.id).catch(() => {});
+        releaseRef(ref.id);
         return null;
       }
       if (heldRepoId !== null) {
         // Release the prior ref (fire-and-forget): the switch (or same-repo
         // re-open) must not leak a daemon-side refcount.
-        client.closeRepo(heldRepoId).catch(() => {});
+        releaseRef(heldRepoId);
       }
       resetForNewRepo();
       heldRepoId = ref.id;
@@ -608,9 +609,19 @@ export const useRepoStore = defineStore('repo', () => {
       }
       // Refused: nothing moved. The previous repo is still open, still
       // streaming, still on screen — only the reason is new.
+      logFailure('open repo', err, { path });
       shared.value = { ...shared.value, error: errorMessage(err), isLoading: false };
       return null;
     }
+  }
+
+  /**
+   * Release a daemon-side ref without waiting. A refusal is logged: a
+   * leaked refcount keeps the repo's watchers alive with nothing to show
+   * for it. A dead daemon holds no refcount to leak, so that case is quiet.
+   */
+  function releaseRef(id: string): void {
+    client.closeRepo(id).catch((err: unknown) => logDaemonRefusal('release repo', err, { id }));
   }
 
   /**
@@ -662,7 +673,9 @@ export const useRepoStore = defineStore('repo', () => {
     const id = repoId.value ?? heldRepoId;
     heldRepoId = null;
     if (id !== null) {
-      await client.closeRepo(id).catch(() => {});
+      await client.closeRepo(id).catch((err: unknown) => {
+        logDaemonRefusal('release repo', err, { id });
+      });
       if (gen !== generation) return;
       repoId.value = null;
     }
@@ -704,6 +717,11 @@ export const useRepoStore = defineStore('repo', () => {
     // drop isLoading so a pre-first-snapshot drop doesn't leave a view
     // stuck on a loading state beside the error line.
     if (shared.value.error !== CONNECTION_LOST_MESSAGE) {
+      // Once per loss, like the header line: the calls that fail while
+      // the daemon is down all end up here.
+      console.warn('diffstalker: daemon connection lost; reconnecting', {
+        path: repoPath.value,
+      });
       shared.value = { ...shared.value, error: CONNECTION_LOST_MESSAGE, isLoading: false };
     }
     scheduleRecovery();
@@ -777,8 +795,12 @@ export const useRepoStore = defineStore('repo', () => {
       // the fresh stream may already sit past a still-unfetched gap,
       // and an INTERRUPTED earlier recovery must not move the floor.
       void resyncJournal(); // catches internally; never rejects
-    } catch {
+    } catch (err) {
       // Still down (or down again mid-recovery): keep the error, retry.
+      // A daemon that is back and REFUSES the repo (the path is gone)
+      // lands here too, and would retry forever behind the same calm
+      // line: that reason must at least be in the console.
+      logDaemonRefusal('recover repo', err, { path: repoPath.value });
       recovering = false;
       if (gen === generation) scheduleRecovery();
       return;
@@ -922,6 +944,7 @@ export const useRepoStore = defineStore('repo', () => {
       else await client.unstage(id, path);
     } catch (err) {
       if (absorbFailure(err, gen)) return;
+      logFailure(staged ? 'stage file' : 'unstage file', err, { path });
       setRefusal(path, staged, errorMessage(err));
     }
   }
@@ -1051,6 +1074,9 @@ export const useRepoStore = defineStore('repo', () => {
             abandoned = true;
             return;
           }
+          // One line on screen for the batch; every failed file in the
+          // console, since the line cannot say which ones.
+          logFailure('load diff', err, { path: file.path, staged: file.staged });
           firstFailure ??= errorMessage(err);
         }
       }
@@ -1123,6 +1149,7 @@ export const useRepoStore = defineStore('repo', () => {
       // only refetch CHANGED files on later state-changes, silently
       // staying partial. Inactive, the next refreshAllDiffs re-pulls all.
       if (absorbFailure(err, gen)) return;
+      logFailure('load diffs', err);
       if (!opts.quiet) setError(`Failed to load diffs: ${errorMessage(err)}`);
       return;
     }
@@ -1258,6 +1285,7 @@ export const useRepoStore = defineStore('repo', () => {
       wholeFile.value = { key, path: request.path, diff: markRaw(diff) };
     } catch (err) {
       if (token !== wholeFileFetchSeq || absorbFailure(err, gen)) return;
+      logFailure('load whole file', err, { path: request.path });
       setError(`Failed to load whole file: ${errorMessage(err)}`);
     } finally {
       if (gen === generation && token === wholeFileFetchSeq) {
@@ -1442,6 +1470,7 @@ export const useRepoStore = defineStore('repo', () => {
       // Drop the gate so a later look at the same section retries.
       mediaRequested.delete(request.key);
       if (absorbFailure(err, gen)) return;
+      logFailure('load image metadata', err, { path: request.path });
       setError(`Failed to load image metadata: ${errorMessage(err)}`);
     }
   }
@@ -1529,8 +1558,10 @@ export const useRepoStore = defineStore('repo', () => {
     historyPullInFlight = true;
     try {
       await loadHistory(historyCount);
-    } catch {
+    } catch (err) {
       // Transient (e.g. mid-rebase): keep the previous commits visible.
+      // loadHistory absorbs connection loss, so this is a daemon refusal.
+      logFailure('reload history', err);
     } finally {
       historyPullInFlight = false;
     }
@@ -1699,9 +1730,9 @@ export const useRepoStore = defineStore('repo', () => {
       replaceJournalWholesale(full);
       drainEpochResetBuffer();
     } catch (err) {
-      // Daemon errors are not reported: the next mismatched append (or
+      // Daemon errors are not shown: the next mismatched append (or
       // reconnect resync) retries, and the parked batches stay parked.
-      absorbFailure(err, gen);
+      if (!absorbFailure(err, gen)) logFailure('reload journal', err);
     } finally {
       journalPullInFlight = false;
     }
@@ -1801,9 +1832,9 @@ export const useRepoStore = defineStore('repo', () => {
         journalSyncedTo = fetchedTail;
       }
     } catch (err) {
-      // Daemon errors are not reported: the current entries stay visible
+      // Daemon errors are not shown: the current entries stay visible
       // and the next reconnect re-syncs from the SAME watermark.
-      absorbFailure(err, gen);
+      if (!absorbFailure(err, gen)) logFailure('resync journal', err);
     } finally {
       journalPullInFlight = false;
     }
@@ -1874,8 +1905,12 @@ export const useRepoStore = defineStore('repo', () => {
     } catch (err) {
       if (gen !== generation || seq !== compareCountSeq) return;
       if (err instanceof DaemonError && err.status === 422) {
+        // No base branch: a normal state (see applyCompareFailure).
         compare.value = { ...compare.value, commitCount: null };
+        return;
       }
+      // The badge keeps its old count; the reason goes to the console.
+      logDaemonRefusal('count compare commits', err);
     }
   }
 
@@ -1935,6 +1970,7 @@ export const useRepoStore = defineStore('repo', () => {
       };
       return;
     }
+    logFailure('compare', err, { base: selectedCompareBase.value });
     compare.value = {
       ...compare.value,
       loading: false,

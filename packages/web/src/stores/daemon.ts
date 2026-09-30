@@ -61,6 +61,7 @@ import type {
   VersionState,
 } from '@diffstalker/client';
 import { errorMessage } from '../api/errors';
+import { logFailure, logDaemonRefusal } from './failureLog';
 import { delay } from '../utils/delay';
 import { useSettingsStore } from './settings';
 
@@ -244,6 +245,10 @@ export const useDaemonStore = defineStore('daemon', () => {
       // No respawn from a browser: surface the status, let EventSource
       // retry. The attached repo's handlers get the same signal from the
       // client (their onError), so the repo store enters recovery too.
+      // Logged on the transition only: every failed retry fires this too.
+      if (connection.value !== 'disconnected') {
+        console.warn('diffstalker: daemon event stream lost; the browser will retry');
+      }
       connection.value = 'disconnected';
     },
   };
@@ -394,8 +399,9 @@ export const useDaemonStore = defineStore('daemon', () => {
   async function refreshRepos(): Promise<void> {
     try {
       repos.value = await client.listRepos();
-    } catch {
+    } catch (err) {
       // Unreachable daemon: the SSE error handler owns the status line.
+      logDaemonRefusal('list repos', err);
       connection.value = 'disconnected';
     }
   }
@@ -416,8 +422,9 @@ export const useDaemonStore = defineStore('daemon', () => {
       if (servedBy.value === null && state.current !== null) {
         servedBy.value = state.current;
       }
-    } catch {
-      // Nothing to say: the indicator keeps showing what it had.
+    } catch (err) {
+      // Nothing to show: the indicator keeps what it had.
+      logDaemonRefusal('load version', err);
     }
   }
 
@@ -512,13 +519,14 @@ export const useDaemonStore = defineStore('daemon', () => {
         try {
           applyFollow(await client.getFollow());
           return;
-        } catch {
+        } catch (err) {
           if (attempt < FOLLOW_LOAD_ATTEMPTS) {
             await delay(FOLLOW_RETRY_DELAY_MS);
             continue;
           }
           // Bounded retries exhausted: surface the status, leave follow
           // as-is (the App-level fallback escapes the empty state).
+          logFailure('load follow state', err, { attempts: attempt });
           connection.value = 'disconnected';
         }
       }
@@ -544,6 +552,7 @@ export const useDaemonStore = defineStore('daemon', () => {
     try {
       await client.closeRepo(id);
     } catch (err) {
+      logFailure('release repo', err, { id });
       error.value = errorMessage(err);
       return;
     }
