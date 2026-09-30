@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import * as logger from '../utils/logger.js';
 import { GitOperationQueue } from './GitOperationQueue.js';
 import {
   push as gitPush,
@@ -76,6 +77,9 @@ export class RemoteOperationManager extends EventEmitter<RemoteEventMap> {
       this.updateRemoteState({ inProgress: false, lastResult: result });
       this.callbacks.scheduleRefresh();
     } catch (err) {
+      // The daemon answers from this state, never by throwing, so this is
+      // where a failed push/pull/switch leaves its trace.
+      logger.warn(`git ${operation} failed`, err, { repo: this.repoPath });
       const message = err instanceof Error ? err.message : String(err);
       this.updateRemoteState({ inProgress: false, error: message });
     }

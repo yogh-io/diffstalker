@@ -47,6 +47,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { cacheDir, configHome } from '../utils/xdg.js';
+import * as logger from '../utils/logger.js';
 
 /**
  * Extension -> built-in git diff driver. Every driver named here was
@@ -133,6 +134,9 @@ export function userHasAttributesFile(): boolean {
     // Exit 1 is "not set", which is the common case and not a failure.
     const code = (err as { status?: number }).status;
     if (code !== 1) {
+      // Leaving their config alone is right, but it also means no
+      // funcname drivers; say why, once (the answer is memoized).
+      logger.warn('git config core.attributesFile failed; funcname drivers are off', err);
       userOwnsAttributes = true;
       return true;
     }
@@ -171,9 +175,12 @@ export function attributesFilePath(): string | null {
     }
     cachedPath = target;
     return cachedPath;
-  } catch {
+  } catch (err) {
     // Remember the failure too: without this, a read-only cache dir means
     // every createGit call retries the whole mkdir/write dance.
+    logger.warn('Cannot write the attributes file; funcname drivers are off', err, {
+      file: target,
+    });
     cachedPath = null;
     userOwnsAttributes = true;
     return null;

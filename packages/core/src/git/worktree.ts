@@ -4,6 +4,7 @@ import { createGit } from './gitClient.js';
 import { getDefaultBaseBranch } from './diff.js';
 import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
 import { expandPath } from '../utils/pathUtils.js';
+import * as logger from '../utils/logger.js';
 
 /**
  * A single git worktree, as reported by `git worktree list --porcelain`,
@@ -64,7 +65,11 @@ export async function resolveWorktreeRoot(inputPath: string): Promise<string | n
     if (isBare) return null;
     const top = (await git.raw(['rev-parse', '--show-toplevel'])).trim();
     return top || null;
-  } catch {
+  } catch (err) {
+    // Null is the contract (a non-repo path is a normal question), but
+    // the reason is kept at debug: with --debug, "Not a git repository"
+    // for a path that IS one becomes explainable.
+    logger.debug('rev-parse failed', err, { dir });
     return null;
   }
 }
@@ -150,7 +155,10 @@ export async function listWorktreesRaw(anyRepoPath: string): Promise<RawWorktree
   try {
     const git = createGit(dir);
     return parseWorktreePorcelain(await git.raw(['worktree', 'list', '--porcelain']));
-  } catch {
+  } catch (err) {
+    // Same contract as resolveWorktreeRoot: empty for a non-repo, reason
+    // at debug.
+    logger.debug('worktree list failed', err, { dir });
     return [];
   }
 }
@@ -176,7 +184,8 @@ export async function listWorktrees(anyRepoPath: string): Promise<WorktreeInfo[]
       lastActivity: wt.isBare ? null : finiteOrNull(lastGitActivity(wt.path)),
       aheadOfBase: ahead.get(wt.path) ?? null,
     }));
-  } catch {
+  } catch (err) {
+    logger.debug('worktree list failed', err, { dir });
     return [];
   }
 }
@@ -214,6 +223,8 @@ async function aheadOfBaseCounts(
         const out = await git.raw(['rev-list', '--count', '--end-of-options', `${base}..HEAD`]);
         return [wt.path, parseInt(out.trim(), 10)];
       } catch {
+        // The base is not a ref here (a cached choice for a branch that
+        // was deleted): no count, which the picker shows as unknown.
         return null;
       }
     })

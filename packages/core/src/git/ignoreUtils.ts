@@ -1,4 +1,5 @@
 import { createGit } from './gitClient.js';
+import * as logger from '../utils/logger.js';
 
 /**
  * Check which files from a list are ignored by git.
@@ -22,8 +23,17 @@ export async function getIgnoredFiles(repoPath: string, files: string[]): Promis
         // '--' keeps a flag-shaped path (a file literally named '-q') from
         // being read as an option
         return await git.raw(['check-ignore', '--', ...batch]);
-      } catch {
-        // check-ignore exits with code 1 if no files are ignored, which throws
+      } catch (err) {
+        // check-ignore exits with code 1 when no file is ignored, which
+        // throws — with nothing on stderr. A real failure says why on
+        // stderr, and that is the message simple-git throws with. Either
+        // way the batch counts as not ignored.
+        const message = err instanceof Error ? err.message.trim() : String(err);
+        if (message) {
+          logger.warn('git check-ignore failed; ignored files may show as untracked', err, {
+            repo: repoPath,
+          });
+        }
         return '';
       }
     })

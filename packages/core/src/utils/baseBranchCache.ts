@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { cacheDir } from './xdg.js';
 import { ensureTargetDir } from './pathUtils.js';
+import * as logger from './logger.js';
 
 function cachePath(): string {
   return path.join(cacheDir(), 'base-branches.json');
@@ -12,15 +13,16 @@ interface BaseBranchCache {
 }
 
 function loadCache(): BaseBranchCache {
+  const file = cachePath();
+  if (!fs.existsSync(file)) return {};
   try {
-    const file = cachePath();
-    if (fs.existsSync(file)) {
-      return JSON.parse(fs.readFileSync(file, 'utf-8'));
-    }
-  } catch {
-    // Ignore read errors, return empty cache
+    return JSON.parse(fs.readFileSync(file, 'utf-8'));
+  } catch (err) {
+    // The file is there but cannot be used: every stored base-branch
+    // choice is gone, and the next save overwrites the file. Worth a line.
+    logger.warn('Ignoring the base-branch cache', err, { file });
+    return {};
   }
-  return {};
 }
 
 function saveCache(cache: BaseBranchCache): void {

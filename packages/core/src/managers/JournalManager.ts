@@ -558,9 +558,9 @@ export class JournalManager extends EventEmitter<JournalEventMap> {
     try {
       this.doObserve(observation);
     } catch (err) {
-      logger.warn(
-        `Journal observation skipped: ${err instanceof Error ? err.message : String(err)}`
-      );
+      // The classifier threw on inputs the manager already settled: a bug
+      // in this file, so the stack is the useful part.
+      logger.error('Journal observation skipped: classifier threw', err);
     }
   }
 

@@ -201,11 +201,15 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
           ig.add(content);
           ignorers.set(dir, ig);
         } catch (err) {
-          logger.warn(`Failed to read ${absPath}: ${err instanceof Error ? err.message : err}`);
+          logger.warn(`Failed to read ${absPath}`, err, { repo: this.repoPath });
         }
       }
-    } catch {
-      // git ls-files failed — we still have the root ignorer
+    } catch (err) {
+      // The root ignorer still applies, but nested .gitignore files are
+      // not known: the watcher then fires on paths they exclude.
+      logger.warn('git ls-files failed; nested .gitignore files are not applied', err, {
+        repo: this.repoPath,
+      });
     }
 
     return ignorers;
@@ -273,23 +277,30 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     });
     this.gitWatcher.on('add', scheduleRefresh);
     this.gitWatcher.on('unlink', scheduleRefresh);
+    // Watcher errors go to the header (cleared by the next refresh) AND
+    // the log: a header line the user did not catch is gone for good.
     this.gitWatcher.on('error', (err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      this.setError(`Git watcher error: ${message}`);
+      logger.warn('Git dir watcher error', err, { repo: this.repoPath });
+      this.setError(`Git watcher error: ${err instanceof Error ? err.message : String(err)}`);
     });
 
     this.workingDirWatcher.on('change', scheduleRefresh);
     this.workingDirWatcher.on('add', scheduleRefresh);
     this.workingDirWatcher.on('unlink', scheduleRefresh);
     this.workingDirWatcher.on('error', (err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      this.setError(`Working dir watcher error: ${message}`);
+      logger.warn('Working dir watcher error', err, { repo: this.repoPath });
+      this.setError(
+        `Working dir watcher error: ${err instanceof Error ? err.message : String(err)}`
+      );
     });
   }
 
   dispose(): void {
-    this.gitWatcher?.close();
-    this.workingDirWatcher?.close();
+    // close() is async; a rejection here would otherwise be unhandled.
+    const closing = (name: string) => (err: unknown) =>
+      logger.warn(`Failed to close the ${name} watcher`, err, { repo: this.repoPath });
+    this.gitWatcher?.close().catch(closing('git dir'));
+    this.workingDirWatcher?.close().catch(closing('working dir'));
   }
 
   /**
@@ -353,15 +364,23 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     });
   }
 
+  /**
+   * An open repo that git no longer recognizes (its .git deleted or
+   * unreadable). The header says so; this logs it once, on the way in,
+   * not on every refresh while it stays that way.
+   */
+  private notARepo(status: GitStatus): void {
+    if (this._state.status?.isRepo !== false) {
+      logger.warn('Not a git repository (was open as one)', undefined, { repo: this.repoPath });
+    }
+    this.updateState({ status, isLoading: false, error: 'Not a git repository' });
+  }
+
   private async doStatusRefresh(): Promise<void> {
     try {
       const newStatus = await getStatus(this.repoPath);
       if (!newStatus.isRepo) {
-        this.updateState({
-          status: newStatus,
-          isLoading: false,
-          error: 'Not a git repository',
-        });
+        this.notARepo(newStatus);
         return;
       }
       this.updateState({
@@ -372,6 +391,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     } catch (err) {
       // Transient failure (e.g. index.lock contention): keep the previous
       // status and surface the error instead of wiping the file list
+      logger.warn('Status refresh failed', err, { repo: this.repoPath });
       this.updateState({
         isLoading: false,
         error: err instanceof Error ? err.message : 'Unknown error',
@@ -398,18 +418,20 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     // status read so the status snapshot sits inside the double-oid
     // window (gatherJournalInputs re-reads it after the diff reads).
     // A failed read only skips this tick's observation, never the
-    // refresh itself.
-    const oidBefore = await getHeadOid(this.repoPath).catch(() => null);
+    // refresh itself. Debug, not warn: an unborn branch (a repo with no
+    // commit yet) fails this on every refresh, and that is not a fault.
+    const oidBefore = await getHeadOid(this.repoPath).catch((err: unknown) => {
+      logger.debug('HEAD oid unreadable; journal observation skipped', err, {
+        repo: this.repoPath,
+      });
+      return null;
+    });
 
     try {
       const newStatus = await getStatus(this.repoPath);
 
       if (!newStatus.isRepo) {
-        this.updateState({
-          status: newStatus,
-          isLoading: false,
-          error: 'Not a git repository',
-        });
+        this.notARepo(newStatus);
         return;
       }
 
@@ -468,6 +490,9 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         });
       }
     } catch (err) {
+      // Surfaced in the header, and logged: the header clears on the next
+      // refresh, and a refresh that keeps failing is what a log is for.
+      logger.warn('Refresh failed', err, { repo: this.repoPath });
       this.updateState({
         isLoading: false,
         error: err instanceof Error ? err.message : 'Unknown error',
@@ -594,7 +619,11 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         operationInProgress: guardAfter.operation,
         mtimes: guardAfter.mtimes,
       };
-    } catch {
+    } catch (err) {
+      // Torn windows return null above; reaching here means a git read
+      // failed. One skipped tick is safe, a run of them means the journal
+      // is silently stalled, so say so.
+      logger.warn('Journal observation skipped: git read failed', err, { repo: this.repoPath });
       return null;
     }
   }
@@ -654,15 +683,26 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
   // --- Staging operations ---
 
+  /**
+   * A mutation that git refused: the reason goes to the header (and from
+   * there to the client that asked) and to the log. The daemon answers
+   * these from state, never by throwing, so this is the failure's one
+   * chance to leave a trace with the repo and the file named.
+   */
+  private failed(what: string, err: unknown, file?: string): void {
+    logger.warn(`Failed to ${what}`, err, { repo: this.repoPath, file });
+    this.updateState({
+      error: `Failed to ${what}: ${err instanceof Error ? err.message : String(err)}`,
+    });
+  }
+
   async stage(file: FileEntry): Promise<void> {
     try {
       await this.queue.enqueueMutation(() => stageFile(this.repoPath, file.path));
       this.scheduleStatusRefresh();
     } catch (err) {
       await this.refresh();
-      this.updateState({
-        error: `Failed to stage ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      this.failed(`stage ${file.path}`, err, file.path);
     }
   }
 
@@ -672,9 +712,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       this.scheduleStatusRefresh();
     } catch (err) {
       await this.refresh();
-      this.updateState({
-        error: `Failed to unstage ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      this.failed(`unstage ${file.path}`, err, file.path);
     }
   }
 
@@ -684,9 +722,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       this.scheduleRefresh();
     } catch (err) {
       await this.refresh();
-      this.updateState({
-        error: `Failed to stage hunk: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      this.failed('stage hunk', err);
     }
   }
 
@@ -696,9 +732,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       this.scheduleRefresh();
     } catch (err) {
       await this.refresh();
-      this.updateState({
-        error: `Failed to unstage hunk: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      this.failed('unstage hunk', err);
     }
   }
 
@@ -714,9 +748,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       await this.queue.enqueueMutation(operation);
       await this.refresh();
     } catch (err) {
-      this.updateState({
-        error: `Failed to discard ${file.path}: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      this.failed(`discard ${file.path}`, err, file.path);
     }
   }
 
@@ -725,9 +757,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       await this.queue.enqueueMutation(() => gitStageAll(this.repoPath));
       await this.refresh();
     } catch (err) {
-      this.updateState({
-        error: `Failed to stage all: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      this.failed('stage all', err);
     }
   }
 
@@ -736,9 +766,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       await this.queue.enqueueMutation(() => gitUnstageAll(this.repoPath));
       await this.refresh();
     } catch (err) {
-      this.updateState({
-        error: `Failed to unstage all: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      this.failed('unstage all', err);
     }
   }
 
@@ -749,9 +777,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       await this.queue.enqueue(() => gitCommit(this.repoPath, message, amend));
       await this.refresh();
     } catch (err) {
-      this.updateState({
-        error: `Failed to commit: ${err instanceof Error ? err.message : String(err)}`,
-      });
+      this.failed('commit', err);
     }
   }
 
@@ -761,8 +787,9 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     try {
       const stashList = await this.queue.enqueue(() => gitGetStashList(this.repoPath));
       this.updateState({ stashList });
-    } catch {
-      // Silently ignore — stash list is non-critical
+    } catch (err) {
+      // The list on screen stays as it was, so the log is the only trace.
+      logger.warn('Failed to load the stash list', err, { repo: this.repoPath });
     }
   }
 }

@@ -6,6 +6,8 @@
  * (history, compare, explorer) run outside it.
  */
 
+import * as logger from '../utils/logger.js';
+
 interface QueuedOperation<T> {
   execute: () => Promise<T>;
   resolve: (value: T) => void;
@@ -17,6 +19,9 @@ export class GitOperationQueue {
   private isProcessing = false;
   private pendingMutations = 0; // Track pending stage/unstage operations
   private refreshScheduled = false; // Avoid duplicate refresh enqueues
+
+  /** `repoPath` only names the repo in log lines. */
+  constructor(private repoPath?: string) {}
 
   /**
    * Enqueue a git operation to be executed sequentially.
@@ -71,7 +76,10 @@ export class GitOperationQueue {
     this.enqueue(async () => {
       this.refreshScheduled = false;
       await callback();
-    }).catch(() => {
+    }).catch((err: unknown) => {
+      // The refresh callback catches its own git failures into state, so
+      // a rejection here is a bug in that path, not a git problem.
+      logger.error('Scheduled refresh threw', err, { repo: this.repoPath });
       this.refreshScheduled = false;
     });
   }
@@ -115,7 +123,7 @@ const queueRegistry = new Map<string, GitOperationQueue>();
 export function getQueueForRepo(repoPath: string): GitOperationQueue {
   let queue = queueRegistry.get(repoPath);
   if (!queue) {
-    queue = new GitOperationQueue();
+    queue = new GitOperationQueue(repoPath);
     queueRegistry.set(repoPath, queue);
   }
   return queue;

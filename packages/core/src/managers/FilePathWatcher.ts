@@ -73,8 +73,12 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
           rawContent: content,
         });
       }
-    } catch {
-      // Ignore read errors
+    } catch (err) {
+      // A tool that replaces the file (write to a temp name, rename over)
+      // can make it briefly absent between the events; the next event
+      // reads it. Anything else means follow mode is not seeing targets.
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+      logger.warn('Cannot read the follow hook file', err, { file: this.targetFile });
     }
   }
 
@@ -104,8 +108,10 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
         };
         // Don't emit on initial read - caller should check state after start()
       }
-    } catch {
-      // Ignore read errors
+    } catch (err) {
+      // The file exists (created just above when missing), so this is a
+      // real failure: the last-written target is lost until the next write.
+      logger.warn('Cannot read the follow hook file', err, { file: this.targetFile });
     }
 
     // Watch for changes
@@ -120,7 +126,7 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
     // other watchers surface theirs into state; this one has no error slot,
     // so it is logged.
     this.watcher.on('error', (err: unknown) => {
-      logger.warn(`Follow file watcher error: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn('Follow hook file watcher error', err, { file: this.targetFile });
     });
   }
 
@@ -133,7 +139,12 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
       this.debounceTimer = null;
     }
     if (this.watcher) {
-      this.watcher.close();
+      // close() is async; a rejection here would otherwise be unhandled.
+      this.watcher.close().catch((err: unknown) => {
+        logger.warn('Failed to close the follow hook file watcher', err, {
+          file: this.targetFile,
+        });
+      });
       this.watcher = null;
     }
   }
