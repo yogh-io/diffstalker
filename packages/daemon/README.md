@@ -199,7 +199,7 @@ with a 400 so they can never be parsed as git flags.
 | GET    | `/health`                  | `{ok, ready, home, http: {port}, symbols}` — `http.port` is the loopback port a browser reaches the web UI on, or null when only a socket is bound (what `diffstalker link` needs to build a URL at all) |
 | GET    | `/version`                 | `{current, latest, status, install}` — the running version against npm's `latest` dist-tag (`current` \| `outdated` \| `ahead` \| `unknown`). The npm lookup is cached (6h, 5min after a failure) and only ever runs when this endpoint is called; `--no-update-check` skips it, leaving `latest: null`. `install` is `{method, package, command}` — how this daemon was installed (`npm` \| `bun` \| `pnpm` \| `yarn` \| `pacman` \| `unknown`) and the one command that updates it, detected once from where the daemon's own files live. An install nothing owns reports `unknown` with a null command rather than a guess |
 | GET    | `/repos`                   | List open repos (`id`, `path`, `branch`)         |
-| POST   | `/repos`                   | Open a repo: `{"path": "/abs/path"}` → `{id, path}` (201 created, 200 already open). 400 for a relative path or a directory that is not a git repository, 404 when the path does not exist at all. A missing path inside a repo still opens the worktree above it |
+| POST   | `/repos`                   | Open a repo: `{"path": "/abs/path"}` → `{id, path}` (201 created, 200 already open). 400 for a relative path or a directory that is not a git repository, 404 when the path does not exist. One missing last segment under a repo still opens the repo above it (`<repo>/nope` opens `<repo>`); a path missing more than one level deep (`<repo>/nope/deeper`) is a 404 |
 | DELETE | `/repos/:id`               | Close a repo (refcounted per open)               |
 | GET    | `/repos/:id/worktrees`     | Registered worktrees (`path`, `branch`, `head`, `isBare`, `lastActivity`, `aheadOfBase`): main worktree, linked worktrees, and the bare entry in a bare-worktree layout |
 | GET    | `/worktrees?path=`         | Same as above, but for a raw filesystem path instead of an already-opened repo id (e.g. a recently-visited repo a client hasn't opened on this daemon) |
@@ -262,7 +262,10 @@ A conflicted `pull`/`cherry-pick` leaves the repo stopped mid-operation;
 returns the repo to its pre-operation state — no shell required. The
 failing mutation refreshes the shared state before it answers, so the
 `state-change` event carries the wedge too, and `/status` serves that same
-state rather than re-reading the git dir. A failed git operation's
+cached state rather than re-reading the git dir. For an operation started
+from a shell the value lags by the watcher's debounce plus one refresh
+(roughly 150–250 ms after HEAD or the index changes): a `/status` read in
+that window still shows the previous value. A failed git operation's
 `{error}` is git's own message (a rejected push, a patch that does not
 apply); the daemon log records the same text.
 

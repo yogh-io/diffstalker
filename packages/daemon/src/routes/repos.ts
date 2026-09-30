@@ -12,9 +12,11 @@ import { requirePathParam, requireRepo, requireStringField, type RouteDeps } fro
  * not on disk at all is a 404. Only the two refusal reasons are mapped —
  * any other failure is unexpected and stays a logged 500.
  *
- * A missing path INSIDE a repo never lands here: the registry opens the
- * worktree above it (see RepoRegistry.openRepo), so the stat below only
- * ever decides between "not there" and "there, but not a repo".
+ * A path whose LAST segment is missing but whose parent is inside a repo
+ * does not land here: the registry opens the repo above it (see
+ * RepoRegistry.openRepo; git places such a path in its parent). A path
+ * missing more than one level deep does land here, and the stat then
+ * decides between "not there" (404) and "there, but not a repo" (400).
  */
 function refusedOpenError(err: RepoOpenRefused): HttpError {
   if (err.reason === 'not-a-repo' && !fs.existsSync(err.requested)) {
