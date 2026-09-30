@@ -610,6 +610,31 @@ describe('conflicting pull: wedge detection and recovery', () => {
   });
 });
 
+describe('no upstream', () => {
+  test('pull and push on a branch with no upstream are 409s with the reason', async () => {
+    const name = 'daemon-rem-no-upstream';
+    const repoPath = createFixtureRepo(name);
+    writeFixtureFile(repoPath, 'base.txt', 'line one\n');
+    gitExec(repoPath, 'add .');
+    gitExec(repoPath, 'commit -m "initial"');
+    const repoId = await openRepo(repoPath);
+    try {
+      const pull = await postJson(`/repos/${repoId}/pull`, {});
+      expect(pull.status).toBe(409);
+      const pullBody = (await pull.json()) as { error: string };
+      expect(pullBody.error).toContain('no tracking information');
+
+      const push = await postJson(`/repos/${repoId}/push`, {});
+      expect(push.status).toBe(409);
+      const pushBody = (await push.json()) as { error: string };
+      expect(pushBody.error).toContain('No configured push destination');
+    } finally {
+      await closeRepo(repoId);
+      removeFixtureRepo(name);
+    }
+  });
+});
+
 describe('conflicting stash pop', () => {
   test('a pop that conflicts is a 409 and the stash entry is kept', async () => {
     const name = 'daemon-rem-stash-conflict';

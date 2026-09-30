@@ -516,12 +516,14 @@ export async function runStagingMutation(
 /**
  * Failures that mean the operation was legitimately refused by the current
  * repo/remote state (conflicts, rejected pushes, would-be-overwritten
- * checkouts) are 409s; anything else is a real failure, 500.
+ * checkouts, a branch with no upstream to pull from or push to) are 409s;
+ * anything else is a real failure, 500.
  */
+const REFUSED_BY_REPO_STATE =
+  /conflict|rejected|non-fast-forward|would be overwritten|merge|unmerged|no tracking information|no upstream|no configured push destination/i;
+
 function remoteErrorStatus(message: string): number {
-  return /conflict|rejected|non-fast-forward|would be overwritten|merge|unmerged/i.test(message)
-    ? 409
-    : 500;
+  return REFUSED_BY_REPO_STATE.test(message) ? 409 : 500;
 }
 
 /**
