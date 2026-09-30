@@ -385,9 +385,19 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
   }
 }
 
+/** The full ref prefix of a remote-tracking branch. */
+const REMOTE_REF_PREFIX = 'refs/remotes/';
+
 /**
- * Get candidate base branches for PR comparison.
- * Uses git log to find branches that appear in recent history (likely PR targets).
+ * Get candidate base branches for PR comparison: the remote-tracking
+ * branches that appear in recent history (likely PR targets), spelled
+ * `origin/main`.
+ *
+ * Decorations are read in `full` form (`refs/remotes/origin/main`,
+ * `refs/heads/feature/x`, `refs/tags/v1`, `refs/stash`) and only
+ * `refs/remotes/` entries count. The short form cannot be told apart by
+ * shape: `refs/stash` and a local `feature/x` both contain a slash, and
+ * both used to be offered as a base.
  */
 export async function getCandidateBaseBranches(repoPath: string): Promise<string[]> {
   const git = createGit(repoPath);
@@ -396,23 +406,22 @@ export async function getCandidateBaseBranches(repoPath: string): Promise<string
 
   try {
     // Get recent commits with decorations to find branches in our history
-    const logOutput = await git.raw(['log', '--oneline', '--decorate=short', '--all', '-n', '200']);
+    const logOutput = await git.raw(['log', '--oneline', '--decorate=full', '--all', '-n', '200']);
 
-    // Extract remote branch refs from decorations like (origin/main, upstream/feature)
     const refPattern = /\(([^)]+)\)/g;
     for (const line of logOutput.split('\n')) {
       const match = refPattern.exec(line);
       if (match) {
-        const refs = match[1].split(',').map((r) => r.trim());
-        for (const ref of refs) {
-          // Skip HEAD, tags, and local branches - only want remote branches
-          if (ref.startsWith('HEAD') || ref.startsWith('tag:') || !ref.includes('/')) continue;
-          // Clean up "origin/main" from things like "HEAD -> origin/main"
-          const cleaned = ref.replace(/^.*-> /, '');
-          if (cleaned.includes('/') && !seen.has(cleaned)) {
-            seen.add(cleaned);
-            candidates.push(cleaned);
-          }
+        for (const decoration of match[1].split(',')) {
+          // "HEAD -> refs/remotes/origin/main" names the ref after the arrow.
+          const ref = decoration.trim().replace(/^.*-> /, '');
+          if (!ref.startsWith(REMOTE_REF_PREFIX)) continue;
+          const name = ref.slice(REMOTE_REF_PREFIX.length);
+          // `origin/HEAD` is the remote's symbolic default pointer, not a
+          // branch of its own.
+          if (name.endsWith('/HEAD') || seen.has(name)) continue;
+          seen.add(name);
+          candidates.push(name);
         }
       }
       refPattern.lastIndex = 0; // Reset regex state

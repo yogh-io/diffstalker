@@ -938,3 +938,36 @@ describe('synthetic new-file headers are spelled like git spells them (fixture)'
     expect(diff.lines[2].content).toBe('Binary files /dev/null and "b/bin\\"ary" differ');
   });
 });
+
+describe('getCandidateBaseBranches only offers remote-tracking branches (fixture)', () => {
+  const REPO_NAME = 'base-candidates-test';
+  let repoPath: string;
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    writeFixtureFile(repoPath, 'a.txt', 'a\n');
+    gitExec(repoPath, 'add -A');
+    gitExec(repoPath, 'commit -m "init"');
+    // A stash (refs/stash), a local branch with a slash, and a tag: each
+    // is a decoration with a slash in it, and none is a base.
+    writeFixtureFile(repoPath, 'a.txt', 'b\n');
+    gitExec(repoPath, 'stash push -m "wip"');
+    gitExec(repoPath, 'checkout -b feature/x');
+    gitExec(repoPath, 'tag v1/rc');
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  it('a repo with a stash and no remotes has no candidates and no default', async () => {
+    expect(await getCandidateBaseBranches(repoPath)).toEqual([]);
+    expect(await getDefaultBaseBranch(repoPath)).toBeNull();
+  });
+
+  it('a remote-tracking branch is offered, its HEAD pointer is not', async () => {
+    gitExec(repoPath, 'update-ref refs/remotes/origin/main main');
+    gitExec(repoPath, 'update-ref refs/remotes/origin/HEAD refs/remotes/origin/main');
+    expect(await getCandidateBaseBranches(repoPath)).toEqual(['origin/main']);
+  });
+});
