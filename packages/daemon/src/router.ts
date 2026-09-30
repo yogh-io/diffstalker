@@ -28,12 +28,19 @@ import { toWire } from './serialize.js';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
+/**
+ * An expected failure with a message written for the client. `cause` is the
+ * underlying error it was made from (a git failure, an errno): it never
+ * reaches the client, but it is what the daemon's log needs to explain the
+ * response.
+ */
 export class HttpError extends Error {
   constructor(
     readonly status: number,
-    message: string
+    message: string,
+    options?: { cause?: unknown }
   ) {
-    super(message);
+    super(message, options);
     this.name = 'HttpError';
   }
 }
