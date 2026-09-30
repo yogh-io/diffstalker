@@ -13,6 +13,7 @@ import {
   parseNameStatus,
   parseNumstat,
   pathFromDiffHeader,
+  quoteGitPath,
   rawFromLines,
   MAX_FILE_DIFF_BYTES,
 } from './diffParse.js';
@@ -246,19 +247,34 @@ export async function getDiffAgainstHead(repoPath: string, headOid?: string): Pr
 const MAX_UNTRACKED_DIFF_BYTES = MAX_FILE_DIFF_BYTES;
 
 /**
+ * The header lines of a new-file diff, spelled exactly as git spells them
+ * (quoted when the name needs it), so a synthetic section for an untracked
+ * file parses back like a real one. `+++` is omitted for a binary file,
+ * as git omits it.
+ */
+export function newFileHeader(file: string, opts: { binary?: boolean } = {}): DiffLine[] {
+  const oldSide = quoteGitPath(`a/${file}`);
+  const newSide = quoteGitPath(`b/${file}`);
+  const lines: DiffLine[] = [
+    { type: 'header', content: `diff --git ${oldSide} ${newSide}` },
+    { type: 'header', content: 'new file mode 100644' },
+  ];
+  if (opts.binary) {
+    lines.push({ type: 'header', content: `Binary files /dev/null and ${newSide} differ` });
+  } else {
+    lines.push({ type: 'header', content: '--- /dev/null' });
+    lines.push({ type: 'header', content: `+++ ${newSide}` });
+  }
+  return lines;
+}
+
+/**
  * An untracked file too big to read: git's new-file header shape plus the
  * same notice an oversized tracked diff gets. Line count is unknown (the
  * file is never read) — the notice carries the byte size only.
  */
 function tooLargeUntrackedDiff(file: string, bytes: number): DiffResult {
-  const lines: DiffLine[] = [
-    { type: 'header', content: `diff --git a/${file} b/${file}` },
-    { type: 'header', content: 'new file mode 100644' },
-    { type: 'header', content: '--- /dev/null' },
-    { type: 'header', content: `+++ b/${file}` },
-    { type: 'header', content: largeDiffNotice(bytes) },
-  ];
-  return { lines };
+  return { lines: [...newFileHeader(file), { type: 'header', content: largeDiffNotice(bytes) }] };
 }
 
 /**
@@ -269,12 +285,7 @@ function tooLargeUntrackedDiff(file: string, bytes: number): DiffResult {
  * already takes.
  */
 function binaryUntrackedDiff(file: string): DiffResult {
-  const lines: DiffLine[] = [
-    { type: 'header', content: `diff --git a/${file} b/${file}` },
-    { type: 'header', content: 'new file mode 100644' },
-    { type: 'header', content: `Binary files /dev/null and b/${file} differ` },
-  ];
-  return { lines };
+  return { lines: newFileHeader(file, { binary: true }) };
 }
 
 /**
@@ -345,12 +356,7 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
     // extra "+" line, a file NOT ending in one gets the "\ No newline"
     // marker, and an empty file has no hunk at all.
     const content = buffer.toString('utf-8');
-    const lines: DiffLine[] = [
-      { type: 'header', content: `diff --git a/${file} b/${file}` },
-      { type: 'header', content: 'new file mode 100644' },
-      { type: 'header', content: `--- /dev/null` },
-      { type: 'header', content: `+++ b/${file}` },
-    ];
+    const lines: DiffLine[] = newFileHeader(file);
 
     const endsWithNewline = content.endsWith('\n');
     const contentLines = content.split('\n');

@@ -45,8 +45,13 @@ function collectHunks(diff: DiffResult): HunkRef[] {
   for (const line of diff.lines) {
     if (line.type === 'header') {
       flush();
-      const filePath = pathFromDiffHeader(line.content);
-      if (filePath !== null) currentFile = filePath;
+      // Only a `diff --git` line changes the file; the other header
+      // lines (index, ---, +++) belong to it. A `diff --git` line that
+      // does not parse must not leave the hunks that follow stamped under
+      // the previous file, so it clears the file instead.
+      if (line.content.startsWith('diff --git')) {
+        currentFile = pathFromDiffHeader(line.content) ?? '';
+      }
     } else if (line.type === 'hunk') {
       flush();
       current = { headerLine: line, body: [] };

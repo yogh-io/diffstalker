@@ -37,13 +37,17 @@ export function splitDiffByFile(diff: DiffResult): Map<string, DiffResult> {
 
   let current: DiffLine[] | null = null;
   for (const line of diff.lines) {
-    if (line.type === 'header') {
+    if (line.type === 'header' && line.content.startsWith('diff --git')) {
       const path = extractDiffFilePath(line.content);
       if (path !== null) {
         // A repeated path merges into its existing section (a file can be
         // both staged and unstaged in one whole-tree read).
         current = groups.get(path) ?? [];
         groups.set(path, current);
+      } else {
+        // A section whose header does not parse is dropped whole, never
+        // folded into the section before it.
+        current = null;
       }
     }
     current?.push(line);

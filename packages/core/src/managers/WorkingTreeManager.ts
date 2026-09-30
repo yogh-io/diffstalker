@@ -36,7 +36,7 @@ import {
   FileHunkCounts,
 } from '../git/diff.js';
 import { HunkTimeTracker } from '../git/hunkTimes.js';
-import { rawFromLines } from '../git/diffParse.js';
+import { quoteGitPath, rawFromLines } from '../git/diffParse.js';
 import { resolveGitDirs } from '../git/worktree.js';
 import { splitDiffByFile } from '../view/splitDiffByFile.js';
 import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
@@ -724,7 +724,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
    */
   private appendOversizeSection(filePath: string, stat: fs.Stats, lines: DiffLine[]): void {
     const header = [
-      `diff --git a/${filePath} b/${filePath}`,
+      `diff --git ${quoteGitPath('a/' + filePath)} ${quoteGitPath('b/' + filePath)}`,
       'new file mode 100644',
       `${OVERSIZE_UNTRACKED_MARKER} size=${stat.size} mtime=${Math.round(stat.mtimeMs)}`,
     ];

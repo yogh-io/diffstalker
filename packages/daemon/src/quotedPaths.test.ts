@@ -19,6 +19,7 @@ const SOCKET = path.join(os.tmpdir(), `diffstalkerd-quoted-${process.pid}.sock`)
 
 const NAMES = ['tab\tname.txt', 'quote"name.txt', 'back\\slash.txt', '日本.txt'];
 const MOVED = 'moved\tbase.txt';
+const UNTRACKED = ['weird"', 'new\ttab.txt', '新しい.txt'];
 
 let daemon: Daemon;
 let repoPath: string;
@@ -72,6 +73,9 @@ beforeAll(async () => {
   editHash = gitExec(repoPath, 'rev-parse HEAD').trim();
   // Unstaged: one more line in the tab-named file.
   writeFixtureFile(repoPath, NAMES[0], 'a\nb\nc\n');
+  // Untracked: names whose synthetic new-file header must be quoted by us
+  // exactly as git would quote it.
+  for (const name of UNTRACKED) writeFixtureFile(repoPath, name, 'new\n');
 
   daemon = createDaemon();
   await daemon.listen({ socketPath: SOCKET });
@@ -99,6 +103,26 @@ describe('Changes: /status and /diff', () => {
     const entry = wire.status.files.find((f) => f.path === NAMES[0]);
     expect(entry).toMatchObject({ status: 'modified', staged: false, insertions: 1, deletions: 0 });
     expect(wire.hunkCounts.unstaged[NAMES[0]]).toBe(1);
+  });
+
+  test('an untracked file gets a header spelled exactly as git spells it', async () => {
+    const wire = await json<{ status: { files: WireFile[] } }>(`/repos/${repoId}/status`);
+    for (const name of UNTRACKED) {
+      expect(wire.status.files.find((f) => f.path === name)).toMatchObject({
+        status: 'untracked',
+        insertions: 1,
+      });
+
+      const diff = await json<{ lines: { content: string }[] }>(
+        `/repos/${repoId}/diff?path=${encodeURIComponent(name)}`
+      );
+      expect(diffText(diff)).toContain('+new');
+      // Exactly what `git diff` prints for the same name once it is added.
+      gitExec(repoPath, `add -- "${name.replace(/"/g, '\\"')}"`);
+      const real = gitExec(repoPath, 'diff --cached -- .').split('\n');
+      gitExec(repoPath, 'reset -q');
+      expect(diff.lines[0].content).toBe(real[0]);
+    }
   });
 
   test('GET /diff?path= reads the file by its raw path', async () => {

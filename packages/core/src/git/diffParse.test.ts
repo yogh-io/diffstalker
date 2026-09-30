@@ -17,6 +17,7 @@ import {
   parseNumstat,
   pathFromDiffHeader,
   rawFromLines,
+  quoteGitPath,
   unquoteGitPath,
 } from './diffParse.js';
 
@@ -868,5 +869,36 @@ index 111..222 100644
 -a
 +b`;
     expect(countHunksPerFile(diff).get('tab\tname.txt')).toBe(1);
+  });
+});
+
+describe('quoteGitPath', () => {
+  it('leaves a name git prints as-is alone', () => {
+    expect(quoteGitPath('plain/name.txt')).toBe('plain/name.txt');
+    expect(quoteGitPath('b/my dir/file (1).txt')).toBe('b/my dir/file (1).txt');
+  });
+
+  it('quotes exactly what git quotes: control chars, quotes, backslashes, non-ASCII', () => {
+    expect(quoteGitPath('weird"')).toBe('"weird\\""');
+    expect(quoteGitPath('tab\tname.txt')).toBe('"tab\\tname.txt"');
+    expect(quoteGitPath('back\\slash.txt')).toBe('"back\\\\slash.txt"');
+    expect(quoteGitPath('日本.txt')).toBe('"\\346\\227\\245\\346\\234\\254.txt"');
+    expect(quoteGitPath('ctrl\u0001name')).toBe('"ctrl\\001name"');
+    expect(quoteGitPath('del\u007fname')).toBe('"del\\177name"');
+  });
+
+  it('round-trips through unquoteGitPath and pathFromDiffHeader', () => {
+    for (const name of ['weird"', 'tab\tname.txt', 'back\\slash.txt', '日本.txt', 'a"b\\c\td']) {
+      expect(unquoteGitPath(quoteGitPath(name))).toBe(name);
+      const header = `diff --git ${quoteGitPath('a/' + name)} ${quoteGitPath('b/' + name)}`;
+      expect(pathFromDiffHeader(header)).toBe(name);
+    }
+  });
+
+  it('a raw name ending in a quote would be misread; the quoted form is not', () => {
+    // The regression this guards: a synthetic header built from the raw
+    // name `weird"` ends in `"` and reads as a quoted side.
+    expect(pathFromDiffHeader('diff --git a/weird" b/weird"')).toBeNull();
+    expect(pathFromDiffHeader('diff --git "a/weird\\"" "b/weird\\""')).toBe('weird"');
   });
 });

@@ -130,3 +130,42 @@ describe('HunkTimeTracker', () => {
     expect(diff.lines[1].editedAt).toBeGreaterThanOrEqual(before);
   });
 });
+
+describe('HunkTimeTracker and quoted headers', () => {
+  const REPO = 'hunk-times-quoted-test';
+  const repoPath = createFixtureRepo(REPO);
+  writeFixtureFile(repoPath, 'a.txt', 'hello\n');
+  writeFixtureFile(repoPath, 'weird"', 'hello\n');
+
+  afterAll(() => {
+    removeFixtureRepo(REPO);
+  });
+
+  function headerOnly(header: string): DiffLine[] {
+    return [
+      { type: 'header', content: header },
+      { type: 'hunk', content: '@@ -0,0 +1 @@' },
+      { type: 'addition', content: '+x' },
+    ];
+  }
+
+  it('stamps a hunk under the raw path of a quoted header', () => {
+    const tracker = new HunkTimeTracker(repoPath);
+    const diff: DiffResult = { lines: headerOnly('diff --git "a/weird\\"" "b/weird\\""') };
+    tracker.stamp(diff);
+    expect(diff.lines[1].editedAt).toBe(fs.statSync(path.join(repoPath, 'weird"')).mtimeMs);
+  });
+
+  it('a header that does not parse clears the file, so the next hunk is not misfiled', () => {
+    const tracker = new HunkTimeTracker(repoPath);
+    const diff: DiffResult = {
+      lines: [
+        ...headerOnly('diff --git a/a.txt b/a.txt'),
+        ...headerOnly('diff --git a/weird" b/weird"'),
+      ],
+    };
+    tracker.stamp(diff);
+    expect(diff.lines[1].editedAt).toBe(fs.statSync(path.join(repoPath, 'a.txt')).mtimeMs);
+    expect(diff.lines[4].editedAt).toBeUndefined();
+  });
+});

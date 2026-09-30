@@ -98,3 +98,28 @@ describe('splitDiffByFile', () => {
     expect(rawFromLines(split.get('a.ts')!.lines ?? [])).toBe(fileDiffRaw('a.ts', 'A'));
   });
 });
+
+describe('splitDiffByFile and quoted headers', () => {
+  test('keys a section by the raw path when git quoted the header', () => {
+    const raw = [
+      'diff --git "a/weird\\"" "b/weird\\""',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ "b/weird\\""',
+      '@@ -0,0 +1 @@',
+      '+x',
+      '',
+    ].join('\n');
+    const split = splitDiffByFile(toDiffResult(raw));
+    expect([...split.keys()]).toEqual(['weird"']);
+    expect(rawFromLines(split.get('weird"')!.lines)).toBe(raw);
+  });
+
+  test('a section whose header does not parse is dropped, never merged into the one before', () => {
+    const good = fileDiffRaw('src/a.ts', 'A');
+    const broken = ['diff --git a/weird" b/weird"', '@@ -0,0 +1 @@', '+x', ''].join('\n');
+    const split = splitDiffByFile(toDiffResult(good + broken));
+    expect([...split.keys()]).toEqual(['src/a.ts']);
+    expect(rawFromLines(split.get('src/a.ts')!.lines)).toBe(good);
+  });
+});

@@ -423,6 +423,42 @@ const C_ESCAPES = new Map<string, number>([
   ['"', 34],
 ]);
 
+/** The escape letter git writes for a byte, when it has one. */
+const C_ESCAPE_LETTERS = new Map<number, string>(
+  [...C_ESCAPES].map(([letter, byte]) => [byte, letter])
+);
+
+/**
+ * A byte git will not print as-is in a path: a control character, `"`,
+ * `\`, or (under core.quotepath, the default) anything non-ASCII.
+ */
+function needsQuoting(byte: number): boolean {
+  return byte < 0x20 || byte === 0x7f || byte >= 0x80 || byte === 0x22 || byte === 0x5c;
+}
+
+/**
+ * Spell a path the way git does in patch text: as written when nothing in
+ * it needs quoting, otherwise C-quoted (the inverse of unquoteGitPath).
+ *
+ * Every header this codebase writes itself — the new-file diffs it builds
+ * for untracked files — goes through this, so it reads back through
+ * pathFromDiffHeader exactly like a header git wrote. A raw name such as
+ * `weird"` would otherwise end the header in `"` and be taken for a quoted
+ * side.
+ */
+export function quoteGitPath(rawPath: string): string {
+  const bytes = new TextEncoder().encode(rawPath);
+  if (!bytes.some(needsQuoting)) return rawPath;
+  let quoted = '"';
+  for (const byte of bytes) {
+    const letter = C_ESCAPE_LETTERS.get(byte);
+    if (letter !== undefined) quoted += `\\${letter}`;
+    else if (needsQuoting(byte)) quoted += `\\${byte.toString(8).padStart(3, '0')}`;
+    else quoted += String.fromCharCode(byte);
+  }
+  return `${quoted}"`;
+}
+
 /** Undo git's C-style quoting of a path. A value without quotes is returned as-is. */
 export function unquoteGitPath(raw: string): string {
   if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return raw;

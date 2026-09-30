@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { rawFromLines } from '../git/diffParse.js';
+import {
+  countHunksPerFile,
+  pathFromDiffHeader,
+  quoteGitPath,
+  rawFromLines,
+} from '../git/diffParse.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -894,5 +899,42 @@ describe('paths git C-quotes (fixture)', () => {
     const raw = rawFromLines(diff.lines);
     expect(raw).toContain('rename from base.txt');
     expect(raw).toContain('rename to "moved\\tbase.txt"');
+  });
+});
+
+describe('synthetic new-file headers are spelled like git spells them (fixture)', () => {
+  // getDiffForUntracked builds the header itself. It must quote a name
+  // exactly as git would, or the header does not parse back: a raw
+  // `weird"` ends the line in a quote and reads as a quoted side.
+  const REPO_NAME = 'synthetic-header-test';
+  const NAMES = ['weird"', 'tab\tname.txt', '日本.txt', 'plain.txt'];
+  let repoPath: string;
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    for (const name of NAMES) writeFixtureFile(repoPath, name, 'x\n');
+    fs.writeFileSync(path.join(repoPath, 'bin"ary'), Buffer.from([0x00, 0x01]));
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  it('every untracked text file reads back by its raw path', async () => {
+    for (const name of NAMES) {
+      const diff = await getDiffForUntracked(repoPath, name);
+      expect(pathFromDiffHeader(diff.lines[0].content)).toBe(name);
+      expect(diff.lines[0].content).toBe(
+        `diff --git ${quoteGitPath('a/' + name)} ${quoteGitPath('b/' + name)}`
+      );
+      expect(diff.lines[3].content).toBe(`+++ ${quoteGitPath('b/' + name)}`);
+      expect(countHunksPerFile(rawFromLines(diff.lines)).get(name)).toBe(1);
+    }
+  });
+
+  it('an untracked binary file gets git\'s quoted "Binary files" line', async () => {
+    const diff = await getDiffForUntracked(repoPath, 'bin"ary');
+    expect(pathFromDiffHeader(diff.lines[0].content)).toBe('bin"ary');
+    expect(diff.lines[2].content).toBe('Binary files /dev/null and "b/bin\\"ary" differ');
   });
 });
