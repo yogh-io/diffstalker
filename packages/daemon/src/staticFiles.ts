@@ -2,9 +2,9 @@
  * Static-file serving for the bundled web UI (SPA).
  *
  * The router consults this only for GET requests no API route matched, so
- * API routes always win. Paths under the API prefixes (/health, /repos,
- * /events, /follow) never fall back to the SPA either — an unknown
- * /repos/... path stays a JSON 404, exactly as before.
+ * API routes always win. Paths under an API prefix never fall back to the
+ * SPA either — an unknown /repos/... or /settings/... path stays a JSON
+ * 404, so a client that mistypes an endpoint gets an error, not a page.
  *
  * Everything else: a path that maps to a real file under webRoot is served
  * with its content type; anything else gets index.html (SPA fallback).
@@ -15,8 +15,26 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { HttpError } from './router.js';
 
-/** First path segments owned by the REST/SSE API; never SPA routes. */
-const API_PREFIXES = new Set(['health', 'repos', 'events', 'follow']);
+/**
+ * First path segments owned by the REST/SSE API; never SPA routes.
+ *
+ * One entry per top-level segment the route modules register. A test
+ * (staticServing.test.ts) reads every `router.<method>('/...')` call in
+ * src/routes and fails when a segment is missing here, so a new endpoint
+ * cannot quietly fall through to index.html.
+ */
+export const API_PREFIXES: ReadonlySet<string> = new Set([
+  'health',
+  'version',
+  'repos',
+  'resolve',
+  'worktrees',
+  'events',
+  'follow',
+  'settings',
+  'discovered',
+  'browse',
+]);
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

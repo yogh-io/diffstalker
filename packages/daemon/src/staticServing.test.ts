@@ -11,6 +11,7 @@ import * as net from 'node:net';
 import * as path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createDaemon, Daemon } from './server.js';
+import { API_PREFIXES } from './staticFiles.js';
 
 const FIXTURES_DIR = path.resolve(import.meta.dirname, '../test-fixtures');
 const WEB_ROOT = path.join(FIXTURES_DIR, 'web-root');
@@ -73,11 +74,32 @@ describe('daemon static serving (web UI)', () => {
   });
 
   test('unknown paths under API prefixes stay JSON 404s, not SPA fallbacks', async () => {
-    const res = await fetch(`${baseUrl}/repos/nope/bogus`);
-    expect(res.status).toBe(404);
-    expect(res.headers.get('content-type')).toBe('application/json');
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBeTruthy();
+    // One path per top-level API segment, including the ones that used to
+    // fall through to index.html (/settings, /browse, /version, ...).
+    for (const prefix of API_PREFIXES) {
+      const res = await fetch(`${baseUrl}/${prefix}/nope/bogus`);
+      expect(res.status).toBe(404);
+      expect(res.headers.get('content-type')).toBe('application/json');
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toContain(`/${prefix}/nope/bogus`);
+    }
+  });
+
+  test('API_PREFIXES names the first segment of every registered route', () => {
+    // Read the route modules rather than the router: a new
+    // `router.get('/foo', ...)` anywhere in src/routes must land here too,
+    // or GET /foo/anything would be served as the SPA.
+    const routesDir = path.resolve(import.meta.dirname, 'routes');
+    const registered = new Set<string>();
+    for (const name of fs.readdirSync(routesDir)) {
+      if (!name.endsWith('.ts') || name.endsWith('.test.ts')) continue;
+      const source = fs.readFileSync(path.join(routesDir, name), 'utf-8');
+      for (const match of source.matchAll(/router\.(?:get|post|put|delete)\('\/([^'/]+)/g)) {
+        registered.add(match[1]);
+      }
+    }
+    expect(registered.size).toBeGreaterThan(0);
+    expect([...registered].sort()).toEqual([...API_PREFIXES].sort());
   });
 
   test('encoded path traversal cannot escape the web root (403)', async () => {

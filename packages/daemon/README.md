@@ -78,7 +78,10 @@ A browser can only reach the daemon over TCP (`--port`), not a unix socket, and
 the daemon sends no CORS headers — so the web UI is served same-origin from the
 daemon itself. `GET /` and any unmatched non-API GET path return the SPA's
 `index.html` (client-side routing); hashed `/assets/*` are served with a long
-immutable cache. The REST/SSE API always takes precedence over static files.
+immutable cache. The REST/SSE API always takes precedence over static files,
+and an unknown path under an API prefix (`/health`, `/version`, `/repos`,
+`/resolve`, `/worktrees`, `/events`, `/follow`, `/settings`, `/discovered`,
+`/browse`) is a JSON 404, never the SPA page.
 
 Without `--socket`, the daemon binds a unix socket at
 `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock`. The directory is created
