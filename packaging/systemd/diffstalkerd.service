@@ -12,6 +12,9 @@ Type=exec
 # the browser. Leaving the socket to its default is deliberate — it is the
 # same path `diffstalker` probes, so the TUI attaches to THIS daemon instead
 # of spawning its own.
+# Logs go to stderr, so `journalctl --user -u diffstalkerd` has them; add
+# --debug through a drop-in (`systemctl --user edit diffstalkerd`) for the
+# per-request lines. See docs/logging.md.
 ExecStart=/usr/bin/diffstalkerd --port 7337
 
 # In-file outlines, when the optional grammars package is installed. A distro
