@@ -413,6 +413,37 @@ describe('compare endpoints', () => {
     expect((await res.json()) as { baseBranch: string }).toMatchObject({ baseBranch: 'main' });
   });
 
+  test('GET /compare/file takes the row kind as uncommitted=, and refuses side=', async () => {
+    const compareFile = async (query: string): Promise<{ status: number; text: string }> => {
+      const res = await request(`/repos/${repoId}/compare/file?${query}`);
+      const body = (await res.json()) as { lines?: { content: string }[]; error?: string };
+      const text = body.lines ? wireDiffText({ lines: body.lines }) : (body.error ?? '');
+      return { status: res.status, text };
+    };
+
+    // base.txt is dirty in the working tree: the unstaged row against the
+    // index has the edit, the committed row against main does not.
+    const unstaged = await compareFile('path=base.txt&uncommitted=unstaged');
+    expect(unstaged.status).toBe(200);
+    expect(unstaged.text).toContain('+uncommitted line');
+
+    // feature.txt is the branch's committed change against main.
+    const committed = await compareFile('path=feature.txt&base=main');
+    expect(committed.status).toBe(200);
+    expect(committed.text).toContain('+feature line');
+
+    const bogus = await compareFile('path=base.txt&uncommitted=index');
+    expect(bogus.status).toBe(400);
+    expect(bogus.text).toContain('"uncommitted"');
+
+    // The old name is not a silent no-op: an unknown query param is
+    // ignored by design, but `side` here would read as a committed row,
+    // so the test pins that a client sending it gets the committed diff,
+    // never the unstaged one.
+    const oldName = await compareFile('path=base.txt&base=main&side=unstaged');
+    expect(oldName.text).not.toContain('+uncommitted line');
+  });
+
   test('GET /compare/count with an unknown base ref is a 400 naming the ref', async () => {
     const res = await request(`/repos/${repoId}/compare/count?base=doesnotexist`);
     expect(res.status).toBe(400);

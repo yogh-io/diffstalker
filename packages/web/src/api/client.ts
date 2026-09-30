@@ -331,14 +331,15 @@ export class DiffstalkerClient {
   }
 
   /**
-   * One file's diff inside a comparison. `side` selects the row's actual
-   * comparison: Compare's stack mixes rows measured against the base with
-   * rows measured against HEAD, the index, or (untracked) nothing at all.
+   * One file's diff inside a comparison. `uncommitted` selects the row's
+   * actual comparison — the same word the row carries in a CompareDiff:
+   * Compare's stack mixes rows measured against the base with rows
+   * measured against HEAD, the index, or (untracked) nothing at all.
    * Absent means a committed row, measured against the base.
    */
   compareFileDiff(
     id: string,
-    opts: { path: string; base?: string; side?: UncommittedSide; whole?: boolean }
+    opts: { path: string; base?: string; uncommitted?: UncommittedSide; whole?: boolean }
   ): Promise<DiffResult> {
     return request(
       'GET',
@@ -346,7 +347,7 @@ export class DiffstalkerClient {
         toQuery({
           path: opts.path,
           base: opts.base,
-          side: opts.side,
+          uncommitted: opts.uncommitted,
           whole: opts.whole,
         })
     );

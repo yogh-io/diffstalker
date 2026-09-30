@@ -1231,7 +1231,7 @@ export const useRepoStore = defineStore('repo', () => {
       return client.compareFileDiff(id, {
         path: request.path,
         base: selectedCompareBase.value ?? undefined,
-        side: request.side,
+        uncommitted: request.side,
         whole: true,
       });
     }

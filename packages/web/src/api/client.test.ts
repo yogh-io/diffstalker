@@ -138,6 +138,18 @@ describe('history / compare decoding', () => {
     expect(diff.commits[0].date).toBeInstanceOf(Date);
   });
 
+  test('compareFileDiff names the row with uncommitted=, never side=', async () => {
+    // `side` is a tree name on this API (/blob); a compare row's word is
+    // the one it carries in `uncommitted` on the CompareDiff.
+    respond = () => ({ body: { lines: [] } });
+    await client.compareFileDiff('r1', { path: 'a.ts', uncommitted: 'both', whole: true });
+    await client.compareFileDiff('r1', { path: 'a.ts', base: 'origin/main' });
+    expect(fake.calls.map((c) => c.url)).toEqual([
+      '/repos/r1/compare/file?path=a.ts&uncommitted=both&whole=true',
+      '/repos/r1/compare/file?path=a.ts&base=origin%2Fmain',
+    ]);
+  });
+
   test('compare forwards a base pick as a query param — a GET, never a PUT', async () => {
     respond = () => ({
       body: {

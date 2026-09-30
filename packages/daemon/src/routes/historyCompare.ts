@@ -120,7 +120,7 @@ async function resolveRequestedBase(repoPath: string, query: URLSearchParams): P
   return requestedBase;
 }
 
-/** The `side` values GET /compare/file accepts — the four an
+/** The `uncommitted` values GET /compare/file accepts — the four an
  *  UncommittedSide can be, plus the absent case meaning "committed". */
 const UNCOMMITTED_SIDES: ReadonlySet<string> = new Set<UncommittedSide>([
   'staged',
@@ -128,6 +128,27 @@ const UNCOMMITTED_SIDES: ReadonlySet<string> = new Set<UncommittedSide>([
   'both',
   'untracked',
 ]);
+
+/**
+ * Which uncommitted comparison a /compare/file row is: the same word the
+ * row carries in `uncommitted` on a /compare response, so a client echoes
+ * the field it was given. Absent means a committed row against the base.
+ *
+ * Deliberately NOT called `side`: on this API `side` is a tree to read a
+ * file from (`worktree` | `index` | `head`, see /blob and /media), and
+ * these words name a pair of trees, not one.
+ */
+function parseUncommittedParam(query: URLSearchParams): UncommittedSide | null {
+  const raw = query.get('uncommitted');
+  if (raw === null) return null;
+  if (!UNCOMMITTED_SIDES.has(raw)) {
+    throw new HttpError(
+      400,
+      `Invalid "uncommitted" (expected staged, unstaged, both or untracked): ${raw}`
+    );
+  }
+  return raw as UncommittedSide;
+}
 
 /**
  * Which uncommitted work a compare request folds in. The three categories
@@ -201,30 +222,26 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
    * whole-file mode, since it pulls the range whole and splits it
    * client-side and so has no per-file request of its own.
    *
-   * `uncommitted=true` means the row sits against HEAD rather than against
-   * the base: Compare's stack mixes the two, and they are genuinely
-   * different comparisons.
+   * `uncommitted=` names a row that sits against HEAD or the index rather
+   * than against the base: Compare's stack mixes the two, and they are
+   * genuinely different comparisons.
    */
   router.get('/repos/:id/compare/file', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
     const filePath = requirePathParam(query);
     const context = parseWholeParam(query, filePath);
-    const sideParam = query.get('side');
-    if (sideParam !== null && !UNCOMMITTED_SIDES.has(sideParam)) {
-      throw new HttpError(400, `Unknown side: ${sideParam}`);
-    }
-    const side = sideParam as UncommittedSide | null;
+    const uncommitted = parseUncommittedParam(query);
     // An untracked file has no git range at all — every line of it is an
     // addition, so the whole file IS its diff and git diff would answer
     // empty. It is read from disk exactly as the compare list reads it.
-    if (side === 'untracked') {
+    if (uncommitted === 'untracked') {
       sendJson(res, 200, await getDiffForUntracked(handle.path, filePath));
       return;
     }
     const range: DiffRange =
-      side === null
+      uncommitted === null
         ? { kind: 'compare', base: await resolveRequestedBase(handle.path, query) }
-        : { kind: side === 'both' ? 'head' : side };
+        : { kind: uncommitted === 'both' ? 'head' : uncommitted };
     sendJson(res, 200, await getFileDiffInRange(handle.path, range, filePath, { context }));
   });
 
