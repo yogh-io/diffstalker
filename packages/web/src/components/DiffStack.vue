@@ -1,5 +1,5 @@
 <script lang="ts">
-import type { DiffLine, DiffResult, UncommittedSide } from '@diffstalker/core/git/diff';
+import type { DiffLine, DiffResult } from '@diffstalker/core/git/diff';
 import type { FileStatus } from '@diffstalker/core/git/status';
 import { LARGE_DIFF_NOTICE_PREFIX } from '@diffstalker/core/git/diffParse';
 import { diffModel, DIFF_ROW_PX, type DiffNotShown } from '../utils/diffRows';
@@ -257,6 +257,7 @@ import CopyPathButton from './CopyPathButton.vue';
 import WholeFileToggle from './WholeFileToggle.vue';
 import RefPairLabel from './RefPairLabel.vue';
 import type { RefPair } from '../utils/refPair';
+import type { UncommittedSide } from '@diffstalker/core/types/compare';
 import WrapToggle from './WrapToggle.vue';
 
 const props = defineProps<{

@@ -32,6 +32,7 @@ export {
   countHunksPerFile,
   extractHunkPatch,
 } from './diffParse.js';
+import { NO_UNCOMMITTED, type UncommittedParts, type UncommittedSide } from '../types/compare.js';
 export type { DiffLine, DiffResult } from './diffParse.js';
 
 /**
@@ -51,37 +52,6 @@ export interface CompareDiffStats {
   additions: number;
   deletions: number;
 }
-
-/**
- * Which side of the working tree a compare row came from.
- *
- * `both` is the staged+unstaged pair read as ONE `git diff HEAD` rather
- * than as two diffs: a file changed on both sides produces one row, not
- * two chunks for the same path of which only the first survives.
- */
-export type UncommittedSide = 'staged' | 'unstaged' | 'both' | 'untracked';
-
-/**
- * The three categories of uncommitted work a compare can fold in, each
- * asked for independently. All false is the plain branch-vs-base compare.
- */
-export interface UncommittedParts {
-  staged: boolean;
-  unstaged: boolean;
-  untracked: boolean;
-}
-
-export const NO_UNCOMMITTED: UncommittedParts = {
-  staged: false,
-  unstaged: false,
-  untracked: false,
-};
-
-export const ALL_UNCOMMITTED: UncommittedParts = {
-  staged: true,
-  unstaged: true,
-  untracked: true,
-};
 
 export interface CompareFileDiff {
   path: string;

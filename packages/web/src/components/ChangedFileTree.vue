@@ -39,11 +39,12 @@ export function inTreeOrder<T extends { path: string }>(files: T[]): T[] {
  */
 import { computed, nextTick, reactive, ref, toRef } from 'vue';
 import type { TreeRowItem } from '@diffstalker/core/view/fileTree';
-import type { CompareFileDiff, UncommittedSide } from '@diffstalker/core/git/diff';
+import type { CompareFileDiff } from '@diffstalker/core/git/diff';
 import { statusLetter } from '../utils/format';
 import { nextIndex } from '../utils/listNav';
 import { makeBandKeyHandler } from '../composables/usePortraitKeys';
 import { useActiveRowScroll } from '../composables/useActiveRowScroll';
+import type { UncommittedSide } from '@diffstalker/core/types/compare';
 
 const props = defineProps<{
   files: CompareFileDiff[];

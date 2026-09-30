@@ -19,7 +19,7 @@ import {
   getFileDiffInRange,
   NoCommonHistoryError,
 } from '@diffstalker/core/git/diff';
-import type { DiffRange, UncommittedSide } from '@diffstalker/core/git/diff';
+import type { DiffRange } from '@diffstalker/core/git/diff';
 import {
   getCommit,
   getCommitHistory,
@@ -41,6 +41,7 @@ import {
   requireRefField,
   type RouteDeps,
 } from './shared.js';
+import type { UncommittedSide } from '@diffstalker/core/types/compare';
 
 /** A commit hash as the route accepts it: 4 to 40 hex digits, else a 400. */
 function requireCommitHash(hash: string): string {

@@ -23,7 +23,6 @@ import {
   getDiffBetweenRefs,
   getCompareDiff,
   getCommitFiles,
-  ALL_UNCOMMITTED,
   getFileDiffInRange,
   WHOLE_FILE_CONTEXT,
   commitExists,
@@ -40,6 +39,7 @@ import {
   createRepoWithRemote,
   removeRepoWithRemote,
 } from './test-helpers.js';
+import { ALL_UNCOMMITTED } from '../types/compare.js';
 
 describe('getDiff / getDiffForUntracked (fixture)', () => {
   const REPO_NAME = 'diff-ops-test';

@@ -104,13 +104,7 @@ import type {
   WireSharedState,
 } from '@diffstalker/client';
 import type { FileEntry, CommitInfo } from '@diffstalker/core/git/status';
-import { NO_UNCOMMITTED } from '@diffstalker/core/git/diff';
-import type {
-  CompareDiff,
-  CompareFileDiff,
-  DiffResult,
-  UncommittedParts,
-} from '@diffstalker/core/git/diff';
+import type { CompareDiff, CompareFileDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
 import type {
   WholeFileRequest,
@@ -120,6 +114,7 @@ import type {
   RepoCompareState,
   CompareSelectionState,
 } from './types';
+import { NO_UNCOMMITTED, type UncommittedParts } from '@diffstalker/core/types/compare';
 
 /** How long changed-file refetches coalesce into one per-file batch. */
 const DIFF_DEBOUNCE_MS = 20;

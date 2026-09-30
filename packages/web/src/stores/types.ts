@@ -15,13 +15,9 @@ import type {
   InProgressOperation,
   CommitInfo,
 } from '@diffstalker/core/git/status';
-import type {
-  DiffResult,
-  CompareDiff,
-  CompareFileDiff,
-  UncommittedSide,
-} from '@diffstalker/core/git/diff';
+import type { DiffResult, CompareDiff, CompareFileDiff } from '@diffstalker/core/git/diff';
 import type { WireHunkCounts } from '@diffstalker/client';
+import type { UncommittedSide } from '@diffstalker/core/types/compare';
 
 /**
  * Shared repo state: what the daemon broadcasts for the attached repo on

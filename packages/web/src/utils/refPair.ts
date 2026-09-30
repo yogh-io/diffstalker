@@ -20,7 +20,7 @@
  */
 
 import type { FileStatus } from '@diffstalker/core/git/status';
-import type { UncommittedSide } from '@diffstalker/core/git/diff';
+import type { UncommittedSide } from '@diffstalker/core/types/compare';
 
 /** A diff's two sides, described structurally by the surface showing it. */
 export type RefPair =

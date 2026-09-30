@@ -359,6 +359,7 @@ Web keys live in `composables/useGlobalKeys.ts` (and `usePortraitKeys.ts`); the 
 
 ## Gotchas
 
+- **The web may import VALUES from core only out of browser-safe modules** (`view/*`, `types/*`, `git/diffParse`, `utils/blobRef`, `utils/imageSniff`, the pure `symbols/*`). A value import from `git/diff`, `git/status` or another Node-only module drags `node:*` into the browser bundle, where Vite stubs it and the page dies on load. Type-only imports are fine. `vite build` fails on any Node builtin (the `noNodeBuiltins` plugin in `packages/web/vite.config.ts`); the tests cannot catch it, since they run in Node. Shared runtime values live in `core/types/` (e.g. `types/compare.ts` for `NO_UNCOMMITTED`).
 - Blessed: after `box.destroy()`, the screen must be explicitly re-rendered to clear visual artifacts
 - Blessed: box-level key handlers fire before screen-level ones when the box has focus — but both fire (see Modals above)
 - `setImmediate` hacks for race conditions are a code smell — use proper guards at the KeyBindings level

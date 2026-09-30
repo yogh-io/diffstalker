@@ -44,17 +44,12 @@ import type {
   WireSharedState,
 } from '@diffstalker/client';
 import type { CommitInfo } from '@diffstalker/core/git/status';
-import type {
-  CompareDiff,
-  CompareFileDiff,
-  DiffResult,
-  UncommittedParts,
-  UncommittedSide,
-} from '@diffstalker/core/git/diff';
+import type { CompareDiff, CompareFileDiff, DiffResult } from '@diffstalker/core/git/diff';
 import type { DirEntry, FileForDisplay } from '@diffstalker/core/git/explorerData';
 import type { GrepResult } from '@diffstalker/core/git/grep';
 import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
+import type { UncommittedParts, UncommittedSide } from '@diffstalker/core/types/compare';
 
 /**
  * A file read that may carry an outline. `symbols` is absent when it was

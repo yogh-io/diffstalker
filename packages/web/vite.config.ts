@@ -11,8 +11,33 @@
  * that the daemon serves same-origin at GET / (no proxy involved).
  */
 
-import { defineConfig } from 'vite';
+import { isBuiltin } from 'node:module';
+import { defineConfig, type Plugin } from 'vite';
 import vue from '@vitejs/plugin-vue';
+
+/**
+ * Fail the build when anything in the web bundle imports a Node builtin.
+ *
+ * Left alone, Vite swaps the builtin for an empty stub and only warns: the
+ * build passes and the page dies on load the moment the module runs Node
+ * code at import time. That shipped once: a web store imported a VALUE
+ * from core's Node-only git/diff, and a later change made that module call
+ * util.promisify when loaded. The tests run in Node, where the builtin
+ * exists, so only the build can catch it.
+ */
+function noNodeBuiltins(): Plugin {
+  return {
+    name: 'diffstalker-no-node-builtins',
+    enforce: 'pre',
+    apply: 'build',
+    resolveId(source, importer) {
+      if (isBuiltin(source)) {
+        this.error(`Node builtin "${source}" imported by ${importer ?? 'the entry'}: Node-only code reached the web bundle`);
+      }
+      return null;
+    },
+  };
+}
 
 const daemonUrl = process.env.DIFFSTALKER_DAEMON_URL ?? 'http://127.0.0.1:7337';
 
@@ -39,7 +64,7 @@ export const apiPaths = [
 ];
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), noNodeBuiltins()],
   base: '/',
   build: {
     outDir: 'dist',
