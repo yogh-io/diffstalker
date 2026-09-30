@@ -20,11 +20,9 @@
  * is a filesystem walk and no git processes.
  */
 
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { watch, FSWatcher } from 'chokidar';
 import { discoverRepos, type DiscoveredRepo } from '@diffstalker/core/git/discoverRepos';
-import { isUnwatchable } from '@diffstalker/core/utils/watchGuards';
 import type { DaemonEventHub } from './sse.js';
 
 /** How long directory churn must settle before a root is rescanned. */
@@ -55,11 +53,9 @@ interface RootEntry {
 }
 
 /** Never descend into these while watching (the scan skips them too). */
-function ignoredByWatcher(filePath: string, stats?: fs.Stats): boolean {
+function ignoredByWatcher(filePath: string): boolean {
   const name = path.basename(filePath);
-  if (name.startsWith('.') && name !== '.') return true;
-  if (name === 'node_modules') return true;
-  return isUnwatchable(filePath, stats);
+  return (name.startsWith('.') && name !== '.') || name === 'node_modules';
 }
 
 export class DiscoveryController {

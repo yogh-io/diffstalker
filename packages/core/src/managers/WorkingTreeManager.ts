@@ -5,7 +5,6 @@ import { watch, FSWatcher } from 'chokidar';
 import { EventEmitter } from 'node:events';
 import ignore, { Ignore } from 'ignore';
 import * as logger from '../utils/logger.js';
-import { isUnwatchable } from '../utils/watchGuards.js';
 import { GitOperationQueue } from './GitOperationQueue.js';
 import { gitEnv } from '../git/gitClient.js';
 import {
@@ -243,7 +242,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.workingDirWatcher = watch(this.repoPath, {
       persistent: true,
       ignoreInitial: true,
-      ignored: (filePath: string, stats?: fs.Stats) => {
+      ignored: (filePath: string) => {
         const relativePath = path.relative(this.repoPath, filePath);
         if (!relativePath) return false;
 
@@ -256,8 +255,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
             if (ig.ignores(relToDir)) return true;
           }
         }
-        // After the gitignore walk, so an ignored path never pays for the stat.
-        return isUnwatchable(filePath, stats);
+        return false;
       },
       awaitWriteFinish: {
         stabilityThreshold: 100,

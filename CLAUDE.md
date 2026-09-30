@@ -129,7 +129,6 @@ packages/core/src/
 ├── utils/                  # logger, path utils, base-branch cache, xdg dirs
 │   ├── imageSniff.ts       # Pure magic-byte image validation (PNG/JPEG/GIF only) + the caps
 │   ├── binaryDetect.ts     # isBinaryContent: the NUL scan, shared by diff.ts and explorerData.ts
-│   ├── watchGuards.ts      # isUnwatchable: the FIFO guard every chokidar watcher shares
 │   └── blobRef.ts          # blobUrl/mediaUrl — the one copy of the byte-endpoint URL shape
 └── types/                  # Shared type declarations (remote)
 ```

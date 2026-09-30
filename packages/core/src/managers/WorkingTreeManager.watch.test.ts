@@ -6,32 +6,21 @@
  * watcher or timer is created (see CLAUDE.md). Here the watcher IS the thing
  * under test, so it is started deliberately and disposed in afterEach.
  *
- * What is being pinned: a FIFO appearing inside a watched tree used to freeze
- * the entire process. Opening a pipe blocks until a writer arrives, and under
- * bun that block lands on the main thread, so the daemon stopped answering
- * everything — /health included. The guard lives in the watcher's `ignored`
- * predicate because that is the only hook chokidar runs before it opens
- * anything.
+ * What is being pinned: a FIFO inside a watched tree must never freeze the
+ * process. Opening a pipe blocks until a writer arrives. On bun 1.3, fs.watch
+ * opened every entry of a watched directory (on a pool thread, holding its
+ * watcher mutex), so one pipe froze the whole daemon — /health included —
+ * and the code carried a guard in chokidar's `ignored` hook. Bun 1.4 opens
+ * with O_PATH, which never blocks, and Node never opened the entries, so the
+ * guard is gone. These tests stay to catch a runtime that regresses.
  *
- * Note the ordering: the pipe is created AFTER the watcher is up. That is
- * the case the guard covers: chokidar sees the new path, asks `ignored`,
- * and never hands it to fs.watch. A pipe that already exists when a
- * directory is handed to fs.watch is a different story on bun 1.3: bun
- * lists that directory on a pool thread, after fs.watch() has returned,
- * and opens every entry with a plain blocking open while holding its
- * watcher mutex. `ignored` never sees those entries. A FIFO there parks
- * the pool thread, and the next fs.watch() call deadlocks the main
- * thread. Bun 1.4 opens with O_PATH and no longer blocks. Node never did.
- *
- * That is also why the scenarios run in a CHILD process. When the main
- * thread is stuck in open(2) or on that mutex, no timer fires, so neither
- * bun's per-test timeout nor a Promise.race can fail the test: the whole
- * suite hangs until CI kills the job. The parent runs `bun test` on this
- * same file with DIFFSTALKER_WATCH_SCENARIO set, waits with a hard
- * timeout, and SIGKILLs a child that does not come back. A regression is
- * then a failed test, not a hung run. The listing race above can still
- * lose on a slow runner while the pin is bun 1.3; it fails instead of
- * hanging.
+ * The scenarios run in a CHILD process. When the main thread is stuck in
+ * open(2) or on a mutex, no timer fires, so neither bun's per-test timeout
+ * nor a Promise.race can fail the test: the whole suite hangs until CI
+ * kills the job. The parent runs `bun test` on this same file with
+ * DIFFSTALKER_WATCH_SCENARIO set, waits with a hard timeout, and SIGKILLs a
+ * child that does not come back. A regression is then a failed test, not a
+ * hung run.
  */
 
 import { describe, test, expect, beforeAll, afterAll, afterEach } from 'bun:test';
@@ -54,7 +43,7 @@ const CHILD_TIMEOUT_MS = 20_000;
 
 const SCENARIOS = [
   'a FIFO created in the working tree does not freeze the process',
-  'a socket or FIFO is skipped while ordinary files and symlinks are still watched',
+  'a FIFO beside ordinary files and symlinks does not stop the watcher',
 ] as const;
 
 /** Resolves once the event loop has turned `ms` later. A frozen loop never settles it. */
@@ -145,8 +134,8 @@ if (process.env[SCENARIO_ENV] === '1') {
       execFileSync('mkfifo', [fifoPath]);
 
       try {
-        // Without the guard the main thread blocks in open(2) here and this
-        // never resolves.
+        // On a runtime whose fs.watch opens the pipe, the main thread blocks
+        // in open(2) here and this never resolves.
         await expectEventLoopAlive(500);
       } finally {
         fs.unlinkSync(fifoPath);
