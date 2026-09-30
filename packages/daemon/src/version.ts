@@ -18,6 +18,7 @@
  */
 
 import * as fs from 'node:fs';
+import { debug as logDebug, warn as logWarn } from '@diffstalker/core/utils/logger';
 import { createInstallService, type InstallInfo, type InstallService } from './install.js';
 
 /** How the running version relates to the latest published one. */
@@ -62,7 +63,8 @@ export function readCurrentVersion(): string | null {
     const raw = fs.readFileSync(new URL('../package.json', import.meta.url), 'utf-8');
     const parsed = JSON.parse(raw) as { version?: unknown };
     return typeof parsed.version === 'string' ? parsed.version : null;
-  } catch {
+  } catch (err) {
+    logWarn('Cannot read the daemon version from its package.json', err);
     return null;
   }
 }
@@ -122,7 +124,10 @@ export function createVersionService(
     pending = fetchLatest()
       // A registry that is unreachable, slow, or answering nonsense is not
       // a daemon error — it just means the latest version is unknown.
-      .catch(() => null)
+      .catch((err: unknown) => {
+        logDebug('Latest version lookup failed', err);
+        return null;
+      })
       .then((value) => {
         const ttl = value === null ? FAILURE_TTL_MS : LATEST_TTL_MS;
         cached = { value, expiresAt: Date.now() + ttl };

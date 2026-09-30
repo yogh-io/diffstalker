@@ -9,6 +9,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { error as logError } from '@diffstalker/core/utils/logger';
 import { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
 import { createJournalStore } from '@diffstalker/core/managers/JournalManager';
 import type { JournalStore } from '@diffstalker/core/types/journal';
@@ -199,6 +200,18 @@ export class RepoRegistry {
 }
 
 /**
+ * Start the first refresh of a freshly opened repo without waiting for it.
+ * Git failures land in the manager's state (and its log line), so a
+ * rejection here is the refresh path itself breaking — logged, never
+ * dropped.
+ */
+export function warmUp(handle: RepoHandle): void {
+  handle.manager.workingTree.refresh().catch((err: unknown) => {
+    logError('First refresh threw', err, { repo: handle.path });
+  });
+}
+
+/**
  * Open a repo and warm up its status/hunk counts on first open. Every
  * caller that opens a repo on behalf of a user wants this pair (POST /repos
  * and the entry point's positional paths), so it lives here in one copy.
@@ -208,9 +221,6 @@ export async function openAndWarm(
   inputPath: string
 ): Promise<OpenResult> {
   const opened = await registry.openRepo(inputPath);
-  if (opened.created) {
-    // Errors land in manager state, not here.
-    opened.handle.manager.workingTree.refresh().catch(() => {});
-  }
+  if (opened.created) warmUp(opened.handle);
   return opened;
 }

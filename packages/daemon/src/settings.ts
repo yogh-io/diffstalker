@@ -22,7 +22,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { expandPath } from '@diffstalker/core/utils/pathUtils';
-import { error as logError } from '@diffstalker/core/utils/logger';
+import { warn as logWarn, error as logError } from '@diffstalker/core/utils/logger';
 
 export interface DaemonSettings {
   /**
@@ -132,13 +132,20 @@ export class SettingsStore {
     let text: string;
     try {
       text = fs.readFileSync(this.file, 'utf-8');
-    } catch {
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        // Not the first-run case: the file is there and cannot be read,
+        // and the next save will overwrite it with defaults.
+        logError('Cannot read the settings file; running with defaults', err, {
+          file: this.file,
+        });
+      }
       return this.current; // no file yet
     }
     try {
       this.current = sanitize(JSON.parse(text));
     } catch (err) {
-      logError(`Ignoring invalid settings file ${this.file}: ${String(err)}`);
+      logWarn('Ignoring the settings file: not valid JSON', err, { file: this.file });
     }
     return this.current;
   }

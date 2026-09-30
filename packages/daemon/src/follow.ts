@@ -23,7 +23,8 @@
  */
 
 import { FilePathWatcher, WatcherState } from '@diffstalker/core/managers/FilePathWatcher';
-import type { RepoRegistry, OpenResult } from './repoRegistry.js';
+import { debug as logDebug, error as logError } from '@diffstalker/core/utils/logger';
+import { warmUp, type RepoRegistry, type OpenResult } from './repoRegistry.js';
 import type { DaemonEventHub } from './sse.js';
 
 export interface FollowState {
@@ -84,7 +85,13 @@ export class FollowController {
   }
 
   private enqueue(state: WatcherState): void {
-    this.queue = this.queue.then(() => this.follow(state)).catch(() => {});
+    this.queue = this.queue
+      .then(() => this.follow(state))
+      .catch((err: unknown) => {
+        // follow() handles the one expected failure (not a repo) itself,
+        // so this is a bug in the switch; the chain must survive it.
+        logError('Follow switch threw', err, { path: state.path });
+      });
   }
 
   private async follow(state: WatcherState): Promise<void> {
@@ -93,8 +100,11 @@ export class FollowController {
     let opened: OpenResult;
     try {
       opened = await this.registry.openRepo(state.path);
-    } catch {
+    } catch (err) {
       // Not a git repository: keep the current follow, broadcast nothing.
+      // Editors write every file they open here, repo or not, so this is
+      // routine and only shows with --debug.
+      logDebug('Follow target ignored', err, { path: state.path });
       return;
     }
     if (this.disposed) {
@@ -102,10 +112,7 @@ export class FollowController {
       this.registry.closeRepo(opened.handle.id);
       return;
     }
-    if (opened.created) {
-      // Warm up status like POST /repos does; errors land in manager state.
-      opened.handle.manager.workingTree.refresh().catch(() => {});
-    }
+    if (opened.created) warmUp(opened.handle);
 
     if (opened.handle.id === this.followedRepoId) {
       // Same repo (possibly a different file inside it): the open above

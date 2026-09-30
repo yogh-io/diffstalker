@@ -23,6 +23,7 @@
 import * as path from 'node:path';
 import { watch, FSWatcher } from 'chokidar';
 import { discoverRepos, type DiscoveredRepo } from '@diffstalker/core/git/discoverRepos';
+import { warn as logWarn } from '@diffstalker/core/utils/logger';
 import type { DaemonEventHub } from './sse.js';
 
 /** How long directory churn must settle before a root is rescanned. */
@@ -124,7 +125,10 @@ export class DiscoveryController {
   private teardown(entry: RootEntry): void {
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = null;
-    void entry.watcher?.close();
+    // close() is async; a rejection here would otherwise be unhandled.
+    entry.watcher?.close().catch((err: unknown) => {
+      logWarn('Failed to close a watch directory watcher', err, { root: entry.state.path });
+    });
     entry.watcher = null;
   }
 
@@ -136,6 +140,9 @@ export class DiscoveryController {
       const result = await discoverRepos(root);
       entry.state = { path: root, repos: result.repos, error: null, capped: result.capped };
     } catch (err) {
+      // Reported on the root (clients show it) and logged: the settings
+      // panel is not where anyone looks when a project list is missing.
+      logWarn('Watch directory scan failed', err, { root });
       entry.state = {
         path: root,
         repos: [],
@@ -156,8 +163,9 @@ export class DiscoveryController {
       ignored: ignoredByWatcher,
     });
     // An unhandled 'error' on an EventEmitter takes the daemon down; a
-    // watch that fails records itself like a failed scan and stays quiet.
+    // watch that fails records itself like a failed scan, and logs.
     watcher.on('error', (err: unknown) => {
+      logWarn('Watch directory watcher error', err, { root });
       entry.state = {
         ...entry.state,
         error: err instanceof Error ? err.message : String(err),

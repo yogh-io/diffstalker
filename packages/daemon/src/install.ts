@@ -23,6 +23,7 @@ import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { warn as logWarn } from '@diffstalker/core/utils/logger';
 
 /** The package manager an install came from, or 'unknown'. */
 export type InstallMethod = 'npm' | 'bun' | 'pnpm' | 'yarn' | 'pacman' | 'unknown';
@@ -193,7 +194,12 @@ export function createInstallService(
   let pending: Promise<InstallInfo> | null = null;
   return {
     info() {
-      pending ??= detectInstall(dir, probe).catch(() => UNKNOWN_INSTALL);
+      pending ??= detectInstall(dir, probe).catch((err: unknown) => {
+        // detectInstall is written not to throw; 'unknown' is still the
+        // right answer if it does, but the reason should not vanish.
+        logWarn('Install detection failed', err, { dir });
+        return UNKNOWN_INSTALL;
+      });
       return pending;
     },
   };
