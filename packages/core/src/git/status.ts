@@ -5,6 +5,21 @@ import * as path from 'node:path';
 import { createGit, gitEnv } from './gitClient.js';
 import { getIgnoredFiles } from './ignoreUtils.js';
 import { MAX_FILE_DIFF_BYTES, parseNumstat } from './diffParse.js';
+import { warn } from '../utils/logger.js';
+
+/** An unknown thrown value as log text. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * True when a `git log` failure means the branch has no commits yet. That
+ * is a normal state for a fresh repo and the callers answer it with an
+ * empty result on purpose; any other log failure is worth a warning.
+ */
+function isUnbornHeadFailure(err: unknown): boolean {
+  return /does not have any commits yet|bad default revision/i.test(errorText(err));
+}
 
 export type FileStatus =
   | 'modified'
@@ -183,10 +198,14 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
   // Fetch line stats for staged and unstaged files. `-z` keeps paths raw
   // (a tab or a quote in a name is otherwise C-quoted and never matches
   // the status entry) and names a rename by its new path.
-  const [stagedNumstat, unstagedNumstat] = await Promise.all([
-    git.diff(['--cached', '--numstat', '-z']).catch(() => ''),
-    git.diff(['--numstat', '-z']).catch(() => ''),
-  ]);
+  // A failed read leaves the counts off rather than failing the status;
+  // the log says so, because entries without counts also just look clean.
+  const numstat = (args: string[]): Promise<string> =>
+    git.diff([...args, '--numstat', '-z']).catch((err: unknown) => {
+      warn(`git diff ${args.join(' ')} --numstat failed in ${repoPath}: ${errorText(err)}`);
+      return '';
+    });
+  const [stagedNumstat, unstagedNumstat] = await Promise.all([numstat(['--cached']), numstat([])]);
 
   const stagedStats = parseNumstat(stagedNumstat);
   const unstagedStats = parseNumstat(unstagedNumstat);
@@ -280,7 +299,11 @@ export async function getHeadMessage(repoPath: string): Promise<string> {
   try {
     const log = await git.log({ n: 1 });
     return log.latest?.message || '';
-  } catch {
+  } catch (err) {
+    // A repo with no commits has no message; anything else is logged.
+    if (!isUnbornHeadFailure(err)) {
+      warn(`git log for the HEAD message failed in ${repoPath}: ${errorText(err)}`);
+    }
     return '';
   }
 }
@@ -359,7 +382,11 @@ export async function getCommitHistory(
       date: new Date(entry.date),
       refs: entry.refs || '',
     }));
-  } catch {
+  } catch (err) {
+    // A repo with no commits has no history; anything else is logged.
+    if (!isUnbornHeadFailure(err)) {
+      warn(`git log failed in ${repoPath}: ${errorText(err)}`);
+    }
     return [];
   }
 }
@@ -407,7 +434,8 @@ export async function getStashList(repoPath: string): Promise<StashEntry[]> {
       index: i,
       message: entry.message,
     }));
-  } catch {
+  } catch (err) {
+    warn(`git stash list failed in ${repoPath}, reporting no stashes: ${errorText(err)}`);
     return [];
   }
 }
@@ -509,7 +537,8 @@ export async function getInProgressOperation(
   let gitDir: string;
   try {
     gitDir = (await git.raw(['rev-parse', '--absolute-git-dir'])).trim();
-  } catch {
+  } catch (err) {
+    warn(`git rev-parse --absolute-git-dir failed in ${repoPath}: ${errorText(err)}`);
     return null;
   }
   const has = (marker: string): boolean => fs.existsSync(path.join(gitDir, marker));

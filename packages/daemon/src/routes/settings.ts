@@ -42,7 +42,7 @@ export function registerSettingsRoutes(router: Router, deps: RouteDeps): void {
     } catch (err) {
       // The reason the path was refused is the whole point of the reply —
       // it is the user's own typed path coming back at them.
-      throw new HttpError(400, err instanceof Error ? err.message : String(err));
+      throw new HttpError(400, err instanceof Error ? err.message : String(err), { cause: err });
     }
 
     try {
@@ -52,7 +52,7 @@ export function registerSettingsRoutes(router: Router, deps: RouteDeps): void {
       // middle of a sentence the user reads. The errno text already names
       // the path and the cause.
       const reason = err instanceof Error ? err.message : String(err);
-      throw new HttpError(500, `Could not save settings: ${reason}`);
+      throw new HttpError(500, `Could not save settings: ${reason}`, { cause: err });
     }
 
     // Scanning new roots happens before the reply, so the client's next
@@ -96,8 +96,10 @@ export function registerSettingsRoutes(router: Router, deps: RouteDeps): void {
     let entries;
     try {
       entries = await listDirectories(dir);
-    } catch {
-      throw new HttpError(404, `Cannot read directory: ${dir}`);
+    } catch (err) {
+      // Missing, not a directory, or not readable: one answer for the
+      // picker, with the errno kept for the log.
+      throw new HttpError(404, `Cannot read directory: ${dir}`, { cause: err });
     }
 
     const parent = path.dirname(dir);

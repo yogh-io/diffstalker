@@ -35,12 +35,14 @@ export function registerSearchRoutes(router: Router, deps: RouteDeps): void {
       sendJson(res, 200, result);
     } catch (err) {
       if (err instanceof GrepQueryTooShortError) {
-        throw new HttpError(400, `Query must be at least ${GREP_MIN_QUERY} characters`);
+        throw new HttpError(400, `Query must be at least ${GREP_MIN_QUERY} characters`, {
+          cause: err,
+        });
       }
       // A NUL, a newline, or an over-long query: the caller's problem to
       // fix, not a server fault. Without this they surfaced as 500s.
       if (err instanceof GrepQueryInvalidError) {
-        throw new HttpError(400, err.message);
+        throw new HttpError(400, err.message, { cause: err });
       }
       throw err;
     }

@@ -4,6 +4,7 @@ import { createGit } from './gitClient.js';
 import { CommitInfo } from './status.js';
 import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
 import { isBinaryContent } from '../utils/binaryDetect.js';
+import { warn } from '../utils/logger.js';
 import { getIgnoredFiles } from './ignoreUtils.js';
 import {
   capLargeFileDiffs,
@@ -134,6 +135,22 @@ export const DIFF_CONTEXT_LINES = 3;
  */
 export const WHOLE_FILE_CONTEXT = 100000;
 
+/** An unknown thrown value as log text. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * The reads in this file answer a failure with an empty diff so a view
+ * never breaks on a transient git error (an index.lock race, a pathspec
+ * that vanished). An empty diff is also what "no changes" looks like, so
+ * the failure is written to the log with what was being read — otherwise
+ * it leaves no trace at all.
+ */
+function warnEmptyDiff(what: string, repoPath: string, err: unknown): void {
+  warn(`${what} failed in ${repoPath}, answering an empty diff: ${errorText(err)}`);
+}
+
 export async function getDiff(
   repoPath: string,
   file?: string,
@@ -153,7 +170,9 @@ export async function getDiff(
 
     const raw = capLargeFileDiffs(await git.diff(args));
     return { lines: parseDiffWithLineNumbers(raw) };
-  } catch {
+  } catch (err) {
+    const scope = file === undefined ? '' : ` -- ${file}`;
+    warnEmptyDiff(`git diff${staged ? ' --cached' : ''}${scope}`, repoPath, err);
     return { lines: [] };
   }
 }
@@ -354,7 +373,8 @@ export async function getDiffForUntracked(repoPath: string, file: string): Promi
     const capped = capLargeFileDiffs(raw);
     if (capped !== raw) return { lines: parseDiffWithLineNumbers(capped) };
     return { lines };
-  } catch {
+  } catch (err) {
+    warnEmptyDiff(`reading untracked file ${file}`, repoPath, err);
     return { lines: [] };
   }
 }
@@ -415,8 +435,10 @@ export async function getCandidateBaseBranches(repoPath: string): Promise<string
         return 0; // Keep discovery order otherwise
       });
     }
-  } catch {
-    // Failed to get branches
+  } catch (err) {
+    // No candidates then — and the compare view says "no base branch",
+    // which reads as a repo without remotes unless the log says otherwise.
+    warn(`git log for base-branch discovery failed in ${repoPath}: ${errorText(err)}`);
   }
 
   return candidates;
@@ -685,9 +707,10 @@ async function renamedFrom(repoPath: string, range: DiffRange, file: string): Pr
   let raw: string;
   try {
     raw = await git.raw(args);
-  } catch {
+  } catch (err) {
     // A rename lookup that fails must not fail the diff: the worst case
     // is the pre-existing behaviour (the file read as an add).
+    warn(`rename lookup for ${file} failed in ${repoPath}: ${errorText(err)}`);
     return null;
   }
   return parseNameStatus(raw).find((entry) => entry.path === file)?.oldPath ?? null;
@@ -715,7 +738,8 @@ export async function getFileDiffInRange(
     const args = rangeArgs(range, ['-M', `-U${context}`]);
     const raw = capLargeFileDiffs(await git.raw([...args, '--', ...paths]));
     return { lines: parseDiffWithLineNumbers(raw) };
-  } catch {
+  } catch (err) {
+    warnEmptyDiff(`git ${rangeArgs(range, []).join(' ')} -- ${file}`, repoPath, err);
     return { lines: [] };
   }
 }
@@ -755,7 +779,8 @@ export async function getCommitDiff(repoPath: string, hash: string): Promise<Dif
       await git.raw(['show', '--format=', `-U${DIFF_CONTEXT_LINES}`, '--end-of-options', hash])
     );
     return { lines: parseDiffWithLineNumbers(raw) };
-  } catch {
+  } catch (err) {
+    warnEmptyDiff(`git show ${hash}`, repoPath, err);
     return { lines: [] };
   }
 }

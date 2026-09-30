@@ -78,9 +78,9 @@ async function serveFile(
   let data: Buffer;
   try {
     data = await fs.promises.readFile(filePath);
-  } catch {
+  } catch (err) {
     // webRoot exists but the file does not (e.g. no index.html): a plain 404.
-    throw new HttpError(404, `Not found: ${path.basename(filePath)}`);
+    throw new HttpError(404, `Not found: ${path.basename(filePath)}`, { cause: err });
   }
   res.writeHead(200, {
     'content-type': CONTENT_TYPES[path.extname(filePath)] ?? 'application/octet-stream',

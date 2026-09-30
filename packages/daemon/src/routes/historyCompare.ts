@@ -72,7 +72,7 @@ async function withoutCommonHistoryAs422<T>(read: () => Promise<T>): Promise<T> 
     return await read();
   } catch (err) {
     if (err instanceof NoCommonHistoryError) {
-      throw new HttpError(422, err.message);
+      throw new HttpError(422, err.message, { cause: err });
     }
     throw err;
   }

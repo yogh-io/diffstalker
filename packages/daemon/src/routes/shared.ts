@@ -391,8 +391,10 @@ async function absoluteGitDir(handle: RepoHandle): Promise<string> {
   }
   try {
     return await pending;
-  } catch {
-    throw new HttpError(500, 'Cannot resolve the git directory for this repository');
+  } catch (err) {
+    throw new HttpError(500, 'Cannot resolve the git directory for this repository', {
+      cause: err,
+    });
   }
 }
 
