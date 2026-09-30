@@ -86,6 +86,24 @@ interface JournalGuardSnapshot {
   mtimes: Map<string, number>;
 }
 
+/**
+ * errno codes chokidar reports for paths a normal tree may hold and that
+ * cannot be watched: a directory the user cannot read, a path that went
+ * away between listing and watching. Routine, so debug. Everything else
+ * (ENOSPC: the inotify limit) is a real problem and stays at warn.
+ */
+const ROUTINE_WATCH_ERRNOS = new Set(['EACCES', 'EPERM', 'ENOENT']);
+
+function isRoutineWatchError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return typeof code === 'string' && ROUTINE_WATCH_ERRNOS.has(code);
+}
+
+/** The status of a directory git does not recognize (or that is gone). */
+function noRepoStatus(): GitStatus {
+  return { files: [], branch: { current: '', ahead: 0, behind: 0 }, isRepo: false };
+}
+
 /** What gatherJournalInputs hands doRefresh for the journal-observation emit. */
 interface JournalInputs {
   headDiff: DiffResult;
@@ -126,6 +144,16 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
   get state(): GitState {
     return this._state;
+  }
+
+  /**
+   * Why git cannot be run in this repo right now, or null: its directory
+   * is gone, or git stopped recognizing it. The daemon reads this before
+   * running a git command for a request, so the answer is one status and
+   * this reason rather than a 500 with simple-git's stack.
+   */
+  get unavailable(): string | null {
+    return this._state.status?.isRepo === false ? this._state.error : null;
   }
 
   private updateState(partial: Partial<GitState>): void {
@@ -185,7 +213,14 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       const output = execFileSync(
         'git',
         ['ls-files', '-z', '--cached', '--others', '**/.gitignore'],
-        { cwd: this.repoPath, encoding: 'utf-8', env: gitEnv() }
+        {
+          cwd: this.repoPath,
+          encoding: 'utf-8',
+          env: gitEnv(),
+          // Piped, not inherited: git's stderr then lands in the thrown
+          // error (and so in the log line) instead of raw on our stderr.
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }
       );
 
       for (const entry of output.split('\0')) {
@@ -280,7 +315,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     // Watcher errors go to the header (cleared by the next refresh) AND
     // the log: a header line the user did not catch is gone for good.
     this.gitWatcher.on('error', (err: unknown) => {
-      logger.warn('Git dir watcher error', err, { repo: this.repoPath });
+      this.logWatchError('Git dir watcher error', err);
       this.setError(`Git watcher error: ${err instanceof Error ? err.message : String(err)}`);
     });
 
@@ -288,11 +323,16 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.workingDirWatcher.on('add', scheduleRefresh);
     this.workingDirWatcher.on('unlink', scheduleRefresh);
     this.workingDirWatcher.on('error', (err: unknown) => {
-      logger.warn('Working dir watcher error', err, { repo: this.repoPath });
+      this.logWatchError('Working dir watcher error', err);
       this.setError(
         `Working dir watcher error: ${err instanceof Error ? err.message : String(err)}`
       );
     });
+  }
+
+  private logWatchError(message: string, err: unknown): void {
+    if (isRoutineWatchError(err)) logger.debug(message, err, { repo: this.repoPath });
+    else logger.warn(message, err, { repo: this.repoPath });
   }
 
   dispose(): void {
@@ -365,22 +405,42 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   }
 
   /**
-   * An open repo that git no longer recognizes (its .git deleted or
-   * unreadable). The header says so; this logs it once, on the way in,
+   * An open repo git can no longer run in: its directory was deleted, or
+   * git stopped recognizing it (.git deleted or unreadable). The header
+   * says so, `unavailable` reports it; this logs it once, on the way in,
    * not on every refresh while it stays that way.
    */
-  private notARepo(status: GitStatus): void {
+  private notARepo(status: GitStatus, reason: string): void {
     if (this._state.status?.isRepo !== false) {
-      logger.warn('Not a git repository (was open as one)', undefined, { repo: this.repoPath });
+      logger.warn(`${reason} (was open as one)`, undefined, { repo: this.repoPath });
     }
-    this.updateState({ status, isLoading: false, error: 'Not a git repository' });
+    this.updateState({ status, isLoading: false, error: reason });
+  }
+
+  /**
+   * A refresh that threw. A vanished directory is the not-a-repo case,
+   * not a transient failure: simple-git throws before running git, and
+   * would on every refresh and every request until the repo is closed.
+   * Anything else (index.lock contention, permissions) keeps the previous
+   * status and surfaces the error instead of wiping the file list.
+   */
+  private refreshFailed(what: string, err: unknown): void {
+    if (!fs.existsSync(this.repoPath)) {
+      this.notARepo(noRepoStatus(), 'Repository directory no longer exists');
+      return;
+    }
+    logger.warn(what, err, { repo: this.repoPath });
+    this.updateState({
+      isLoading: false,
+      error: err instanceof Error ? err.message : 'Unknown error',
+    });
   }
 
   private async doStatusRefresh(): Promise<void> {
     try {
       const newStatus = await getStatus(this.repoPath);
       if (!newStatus.isRepo) {
-        this.notARepo(newStatus);
+        this.notARepo(newStatus, 'Not a git repository');
         return;
       }
       this.updateState({
@@ -389,13 +449,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         isLoading: false,
       });
     } catch (err) {
-      // Transient failure (e.g. index.lock contention): keep the previous
-      // status and surface the error instead of wiping the file list
-      logger.warn('Status refresh failed', err, { repo: this.repoPath });
-      this.updateState({
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Unknown error',
-      });
+      this.refreshFailed('Status refresh failed', err);
     }
   }
 
@@ -431,7 +485,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       const newStatus = await getStatus(this.repoPath);
 
       if (!newStatus.isRepo) {
-        this.notARepo(newStatus);
+        this.notARepo(newStatus, 'Not a git repository');
         return;
       }
 
@@ -492,11 +546,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     } catch (err) {
       // Surfaced in the header, and logged: the header clears on the next
       // refresh, and a refresh that keeps failing is what a log is for.
-      logger.warn('Refresh failed', err, { repo: this.repoPath });
-      this.updateState({
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Unknown error',
-      });
+      this.refreshFailed('Refresh failed', err);
     }
   }
 
@@ -621,9 +671,9 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       };
     } catch (err) {
       // Torn windows return null above; reaching here means a git read
-      // failed. One skipped tick is safe, a run of them means the journal
-      // is silently stalled, so say so.
-      logger.warn('Journal observation skipped: git read failed', err, { repo: this.repoPath });
+      // failed. The refresh this rides in fails on the same cause and
+      // logs it at warn, so this is the detail behind that line, at debug.
+      logger.debug('Journal observation skipped: git read failed', err, { repo: this.repoPath });
       return null;
     }
   }

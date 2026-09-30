@@ -5,7 +5,7 @@
  * startWatching(), so no chokidar watchers or timers are created.
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 import { rawFromLines } from '../git/diffParse.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -386,6 +386,38 @@ describe('WorkingTreeManager', () => {
       expect(mtimes!.has('other.txt')).toBe(false);
 
       resetRepo();
+    });
+
+    test('a repo whose directory vanished reports it once and stops running git', async () => {
+      const base = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-vanish-'));
+      const repoDir = path.join(base, 'repo');
+      fs.mkdirSync(repoDir);
+      const lines: string[] = [];
+      const stderrSpy = spyOn(process.stderr, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+        lines.push(String(chunk));
+        return true;
+      }) as typeof process.stderr.write);
+      try {
+        const manager = new WorkingTreeManager(repoDir, new GitOperationQueue());
+        fs.rmSync(repoDir, { recursive: true, force: true });
+
+        await manager.refresh();
+        await manager.refresh();
+        await manager.refresh();
+
+        const state = manager.state;
+        expect(state.status!.isRepo).toBe(false);
+        expect(state.error).toBe('Repository directory no longer exists');
+        expect(manager.unavailable).toBe('Repository directory no longer exists');
+        // One line on the transition, not one per refresh.
+        const gone = lines.filter((line) => line.includes('no longer exists'));
+        expect(gone).toHaveLength(1);
+        expect(gone[0]).toContain(' warn  ');
+        expect(lines.filter((line) => line.includes('Refresh failed'))).toHaveLength(0);
+      } finally {
+        stderrSpy.mockRestore();
+        fs.rmSync(base, { recursive: true, force: true });
+      }
     });
 
     test('sets isRepo false and error for a non-repo directory', async () => {
