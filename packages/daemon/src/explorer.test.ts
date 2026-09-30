@@ -150,7 +150,15 @@ describe('explorer endpoints', () => {
     const res = await request(`/repos/${repoId}/tree?dir=README.md`);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('Not a directory');
+    expect(body.error).toContain('Not a directory (a file)');
+  });
+
+  test('GET /tree on a path below a file is a 404: nothing exists there', async () => {
+    // readdir reports ENOTDIR for this too, but the requested path is not
+    // the wrong kind of thing — it is not there at all.
+    const res = await request(`/repos/${repoId}/tree?dir=README.md/sub`);
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: string }).error).toContain('No such directory');
   });
 
   test('GET /file returns text content with flags off', async () => {
@@ -195,7 +203,15 @@ describe('explorer endpoints', () => {
   test('GET /file on a directory is a 400 (wrong node kind)', async () => {
     const res = await request(`/repos/${repoId}/file?path=src`);
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toContain('Not a regular file');
+    expect(((await res.json()) as { error: string }).error).toBe(
+      'Not a regular file (a directory): src'
+    );
+  });
+
+  test('GET /file on a path below a file is a 404, like any missing path', async () => {
+    const res = await request(`/repos/${repoId}/file?path=README.md/sub.txt`);
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: string }).error).toContain('No such file');
   });
 
   test('GET /file on a FIFO is a prompt 400 and the daemon stays responsive', async () => {

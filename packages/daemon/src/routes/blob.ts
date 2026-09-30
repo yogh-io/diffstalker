@@ -169,9 +169,9 @@ function requireStagedParam(query: URLSearchParams): boolean {
  * Anything else is a genuine failure and stays a 500.
  */
 function throwBlobError(err: unknown): never {
-  if (err instanceof NotRegularBlobError) throw new HttpError(400, err.message);
-  if (err instanceof UnsafeBlobPathError) throw new HttpError(400, err.message);
-  if (err instanceof BlobTooLargeError) throw new HttpError(413, err.message);
+  if (err instanceof NotRegularBlobError) throw new HttpError(400, err.message, { cause: err });
+  if (err instanceof UnsafeBlobPathError) throw new HttpError(400, err.message, { cause: err });
+  if (err instanceof BlobTooLargeError) throw new HttpError(413, err.message, { cause: err });
   throw err;
 }
 

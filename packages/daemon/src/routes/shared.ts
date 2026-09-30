@@ -422,6 +422,29 @@ export function fsErrorCode(err: unknown): string | null {
   return (err as NodeJS.ErrnoException | null)?.code ?? null;
 }
 
+/**
+ * What is at a path, worded for an error message ("a directory", "a
+ * FIFO"), or null when nothing is there. Symlinks are followed, as the
+ * reads that call this follow them. Every route that serves repo paths
+ * uses the same rule: a path that does not exist is a 404, a path that
+ * exists but is the wrong kind of thing is a 400 that names the kind.
+ */
+export async function nodeKind(absPath: string): Promise<string | null> {
+  let stats: fs.Stats;
+  try {
+    stats = await fs.promises.stat(absPath);
+  } catch (err) {
+    const code = fsErrorCode(err);
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw err;
+  }
+  if (stats.isDirectory()) return 'a directory';
+  if (stats.isFile()) return 'a file';
+  if (stats.isFIFO()) return 'a FIFO';
+  if (stats.isSocket()) return 'a socket';
+  return 'a device';
+}
+
 /** Failures that stem from a concurrent index/worktree change are 409s. */
 function gitErrorStatus(message: string): number {
   return /index\.lock|did not match|conflict|apply|nothing to commit/i.test(message) ? 409 : 500;

@@ -23,12 +23,14 @@ import {
 import { listAllFiles } from '@diffstalker/core/git/status';
 import type { FileForDisplay } from '@diffstalker/core/git/explorerData';
 import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
+import * as path from 'node:path';
 import { Router, HttpError, sendJson } from '../router.js';
 import {
   dropEntriesEscapingRoot,
   ensureStatus,
   fsErrorCode,
   isGitDirSegment,
+  nodeKind,
   parseBoolParam,
   requirePathParam,
   requireRepo,
@@ -109,11 +111,15 @@ export function registerExplorerRoutes(router: Router, deps: RouteDeps): void {
       );
     } catch (err) {
       const code = fsErrorCode(err);
-      if (code === 'ENOENT') {
-        throw new HttpError(404, `No such directory: ${dir || '/'}`);
-      }
-      if (code === 'ENOTDIR') {
-        throw new HttpError(400, `Not a directory: ${dir}`);
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        // ENOTDIR means a file sits somewhere on the path: the path itself
+        // (a 400 naming what it is) or a parent of it (then the requested
+        // path does not exist, a 404 like any other).
+        const kind = await nodeKind(path.join(handle.path, rel));
+        if (kind === null) {
+          throw new HttpError(404, `No such directory: ${dir || '/'}`, { cause: err });
+        }
+        throw new HttpError(400, `Not a directory (${kind}): ${dir}`, { cause: err });
       }
       throw err;
     }
@@ -133,13 +139,19 @@ export function registerExplorerRoutes(router: Router, deps: RouteDeps): void {
       sendJson(res, 200, await withSymbols(file, rel, parseBoolParam(query, 'symbols', false)));
     } catch (err) {
       // Directories, FIFOs, sockets, devices: refused up front (a FIFO
-      // read would block the event loop for every client).
+      // read would block the event loop for every client), naming the
+      // kind so the client can say why.
       if (err instanceof NotRegularFileError) {
-        throw new HttpError(400, err.message);
+        const kind = await nodeKind(path.join(handle.path, rel));
+        throw new HttpError(400, `Not a regular file (${kind ?? 'unknown'}): ${relPath}`, {
+          cause: err,
+        });
       }
       const code = fsErrorCode(err);
+      // ENOTDIR here is a file on the way to the path: nothing exists at
+      // the path itself, so it is a 404 like ENOENT.
       if (code === 'ENOENT' || code === 'ENOTDIR') {
-        throw new HttpError(404, `No such file: ${relPath}`);
+        throw new HttpError(404, `No such file: ${relPath}`, { cause: err });
       }
       throw err;
     }
