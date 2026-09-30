@@ -428,11 +428,24 @@ function gitErrorStatus(message: string): number {
 }
 
 /**
+ * A git failure the manager recorded, as the HttpError the client gets.
+ *
+ * The manager keeps only git's message (it never rethrows), and that
+ * message IS what the user needs — "push rejected", "patch does not
+ * apply" — so it becomes the HttpError's message and also its cause, the
+ * one thing the router logs. Every failure a route sends leaves through
+ * HttpError this way; a mutation is not a second path around that rule.
+ */
+function gitFailure(status: number, message: string): HttpError {
+  return new HttpError(status, message, { cause: message });
+}
+
+/**
  * Run a staging mutation and translate the manager's swallowed-error model
  * to HTTP: the manager never rethrows, it records failures in state.error.
- * On failure respond 409/500 with {error}; on success refresh so the
- * response reflects the committed state, and return the unified mutation
- * envelope {state}.
+ * A failure is a 409/500 HttpError carrying git's message; on success
+ * refresh so the response reflects the committed state, and return the
+ * unified mutation envelope {state}.
  */
 export async function runStagingMutation(
   workingTree: WorkingTreeManager,
@@ -445,8 +458,7 @@ export async function runStagingMutation(
   await mutate();
   const error = workingTree.state.error;
   if (error) {
-    sendJson(res, gitErrorStatus(error), { error });
-    return;
+    throw gitFailure(gitErrorStatus(error), error);
   }
   await workingTree.refresh();
   sendJson(res, 200, { state: serializeSharedState(workingTree.state) });
@@ -469,9 +481,17 @@ function remoteErrorStatus(message: string): number {
  * snapshot, or null when another operation was already in progress — a
  * null (or an up-front inProgress read) is a 409; the snapshot is never
  * read from the shared slot, so a racing call can never claim another
- * operation's result as its own. On failure respond 409/500 with {error};
- * on success refresh the working tree and respond with the unified
- * mutation envelope {state, result}.
+ * operation's result as its own. A failure is a 409/500 HttpError carrying
+ * git's message; on success respond with the unified mutation envelope
+ * {state, result}.
+ *
+ * The working tree is refreshed on BOTH outcomes, before the response.
+ * The manager only *schedules* a refresh after success, and schedules none
+ * after a failure — yet a failed pull or cherry-pick is exactly the one
+ * that leaves the repo wedged mid-operation. Refreshing here puts the
+ * wedge in the manager's state (and so on the SSE stream) before the 409
+ * lands, which is what lets GET /status serve that state as-is instead of
+ * re-reading the git dir on every call.
  */
 export async function runRemoteMutation(
   handle: RepoHandle,
@@ -492,15 +512,11 @@ export async function runRemoteMutation(
     // Our call hit the manager's guard: another op won the race.
     throw busy();
   }
-  if (outcome.error) {
-    sendJson(res, remoteErrorStatus(outcome.error), { error: outcome.error });
-    return;
-  }
-  // Unified mutation envelope: the client wants fresh status after a
-  // pull/reset/cherry-pick, not just a result string. The manager only
-  // *schedules* a refresh; await a real one so the state is current.
   const workingTree = handle.manager.workingTree;
   await workingTree.refresh();
+  if (outcome.error) {
+    throw gitFailure(remoteErrorStatus(outcome.error), outcome.error);
+  }
   sendJson(res, 200, {
     state: serializeSharedState(workingTree.state),
     result: outcome.lastResult,

@@ -258,7 +258,12 @@ values are rejected with a 400 so they can never be parsed as git flags.
 
 A conflicted `pull`/`cherry-pick` leaves the repo stopped mid-operation;
 `GET /status` reports it in `operationInProgress` and `POST /abort`
-returns the repo to its pre-operation state — no shell required.
+returns the repo to its pre-operation state — no shell required. The
+failing mutation refreshes the shared state before it answers, so the
+`state-change` event carries the wedge too, and `/status` serves that same
+state rather than re-reading the git dir. A failed git operation's
+`{error}` is git's own message (a rejected push, a patch that does not
+apply); the daemon log records the same text.
 
 History, compare, and explorer data are stateless, pulled on demand: the
 daemon never holds a client's selection, loaded history, or tree expansion.

@@ -530,6 +530,12 @@ describe('conflicting pull: wedge detection and recovery', () => {
     const name = 'daemon-rem-wedge-abort';
     const { repoPath, repoId } = await makeWedgedRepo(name);
     try {
+      // The failed pull refreshed the manager before answering, so the
+      // wedge is already in the one state every reader serves — /status
+      // does not re-read the git dir to find it.
+      const cached = daemon.getRepo(repoId)!.manager.workingTree.state;
+      expect(cached.operationInProgress).toBe('rebase');
+
       // The client can SEE it is wedged.
       const statusRes = await request(`/repos/${repoId}/status`);
       expect(statusRes.status).toBe(200);
