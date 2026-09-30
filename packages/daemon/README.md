@@ -188,8 +188,9 @@ not in status, 409 when the repo state refuses the operation (conflicts,
 rejected pushes, an operation already in progress, nothing to abort), 500
 for real failures.
 
-Ref-like fields (`name`, `hash`, `branch`) must not start with `-`; such
-values are rejected with a 400 so they can never be parsed as git flags.
+Ref-like values (the body fields `name`, `hash`, `branch` and the `base`
+query param) must not be empty or start with `-`; such values are rejected
+with a 400 so they can never be parsed as git flags.
 
 ### Reads
 

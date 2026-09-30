@@ -413,6 +413,21 @@ describe('compare endpoints', () => {
     expect((await res.json()) as { baseBranch: string }).toMatchObject({ baseBranch: 'main' });
   });
 
+  test('a flag-shaped or empty ?base= is refused before git sees it', async () => {
+    for (const route of ['compare', 'compare/count', 'compare/file?path=base.txt&x=']) {
+      const sep = route.includes('?') ? '&' : '?';
+      const flag = await request(`/repos/${repoId}/${route}${sep}base=--output=x`);
+      expect(flag.status).toBe(400);
+      const flagBody = (await flag.json()) as { error: string };
+      expect(flagBody.error).toContain('must not start with "-"');
+
+      const empty = await request(`/repos/${repoId}/${route}${sep}base=`);
+      expect(empty.status).toBe(400);
+      const emptyBody = (await empty.json()) as { error: string };
+      expect(emptyBody.error).toContain('expected a ref');
+    }
+  });
+
   test('GET /compare/file takes the row kind as uncommitted=, and refuses side=', async () => {
     const compareFile = async (query: string): Promise<{ status: number; text: string }> => {
       const res = await request(`/repos/${repoId}/compare/file?${query}`);

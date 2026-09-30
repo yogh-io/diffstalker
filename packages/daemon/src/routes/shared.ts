@@ -95,18 +95,35 @@ export function requireStringField(
 }
 
 /**
- * Require a ref-like string field (branch name, commit hash). Flag-shaped
- * values (leading '-') are rejected so a name can never be parsed as a git
- * option — defense in depth on top of the end-of-options guards in core
- * (a branch "name" of -f once reached `git checkout -f` and discarded the
- * working tree).
+ * The one rule for a ref-like value (branch name, commit hash), wherever
+ * it arrives from: flag-shaped values (leading '-') are rejected so a name
+ * can never be parsed as a git option — defense in depth on top of the
+ * end-of-options guards in core (a branch "name" of -f once reached `git
+ * checkout -f` and discarded the working tree). An empty value is refused
+ * too: git would read it as no ref at all.
  */
-export function requireRefField(body: unknown, field: string): string {
-  const value = requireStringField(body, field);
+function requireRefShape(value: string, name: string): string {
+  if (value.length === 0) {
+    throw new HttpError(400, `Invalid "${name}" (expected a ref)`);
+  }
   if (value.startsWith('-')) {
-    throw new HttpError(400, `Invalid "${field}" (must not start with "-"): ${value}`);
+    throw new HttpError(400, `Invalid "${name}" (must not start with "-"): ${value}`);
   }
   return value;
+}
+
+/** Require a ref-like string field on a JSON body (see requireRefShape). */
+export function requireRefField(body: unknown, field: string): string {
+  return requireRefShape(requireStringField(body, field), field);
+}
+
+/**
+ * Optional ref-like query param, checked by the same rule as a body ref;
+ * absent yields null. A ref is a ref whichever way it reaches a route.
+ */
+export function optionalRefParam(query: URLSearchParams, name: string): string | null {
+  const raw = query.get(name);
+  return raw === null ? null : requireRefShape(raw, name);
 }
 
 /**

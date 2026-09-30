@@ -32,6 +32,7 @@ import {
 } from '@diffstalker/core/utils/baseBranchCache';
 import { Router, HttpError, sendJson } from '../router.js';
 import {
+  optionalRefParam,
   parseBoolParam,
   parsePositiveIntParam,
   parseWholeParam,
@@ -110,7 +111,7 @@ async function resolveUsableBaseBranch(repoPath: string): Promise<string> {
  * having no usable base at all is server-side state (422).
  */
 async function resolveRequestedBase(repoPath: string, query: URLSearchParams): Promise<string> {
-  const requestedBase = query.get('base');
+  const requestedBase = optionalRefParam(query, 'base');
   if (requestedBase === null) {
     return resolveUsableBaseBranch(repoPath);
   }
