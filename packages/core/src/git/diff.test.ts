@@ -17,6 +17,7 @@ import {
   getCommitCountBetweenRefs,
   getDiffBetweenRefs,
   getCompareDiff,
+  getCommitFiles,
   ALL_UNCOMMITTED,
   getFileDiffInRange,
   WHOLE_FILE_CONTEXT,
@@ -823,5 +824,75 @@ describe('getFileDiffInRange (fixture)', () => {
   it('a path that does not exist is empty, not a throw', async () => {
     const diff = await getFileDiffInRange(repoPath, { kind: 'head' }, 'nope.txt');
     expect(diff.lines).toEqual([]);
+  });
+});
+
+describe('paths git C-quotes (fixture)', () => {
+  // A tab, a double quote, a backslash and a non-ASCII name: git prints
+  // each of these C-quoted in patch headers and (without -z) in the list
+  // outputs, so a parser that does not unquote loses the file.
+  const REPO_NAME = 'quoted-paths-diff-test';
+  const NAMES = ['tab\tname.txt', 'quote"name.txt', 'back\\slash.txt', '日本.txt'];
+  const MOVED = 'moved\tbase.txt';
+  let repoPath: string;
+  let editHash: string;
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    for (const name of NAMES) writeFixtureFile(repoPath, name, 'a\n');
+    writeFixtureFile(repoPath, 'base.txt', 'keep\n');
+    gitExec(repoPath, 'add -A');
+    gitExec(repoPath, 'commit -m "base"');
+    gitExec(repoPath, 'checkout -b feature');
+    for (const name of NAMES) writeFixtureFile(repoPath, name, 'a\nb\n');
+    // A rename onto a name git has to quote (fs, not the shell).
+    fs.renameSync(path.join(repoPath, 'base.txt'), path.join(repoPath, MOVED));
+    gitExec(repoPath, 'add -A');
+    gitExec(repoPath, 'commit -m "edit and move"');
+    editHash = gitExec(repoPath, 'rev-parse HEAD').trim();
+    // One more unstaged edit for the uncommitted rows.
+    writeFixtureFile(repoPath, NAMES[0], 'a\nb\nc\n');
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  it('getCompareDiff lists every quoted name by its raw path, with counts and status', async () => {
+    const diff = await getCompareDiff(repoPath, 'main');
+    const byPath = new Map(diff.files.map((f) => [f.path, f]));
+    for (const name of NAMES) {
+      expect(byPath.get(name)).toMatchObject({ status: 'modified', additions: 1, deletions: 0 });
+      expect(byPath.get(name)!.diff.lines.length).toBeGreaterThan(0);
+    }
+    expect(byPath.get(MOVED)).toMatchObject({ status: 'renamed', additions: 0, deletions: 0 });
+    expect(diff.stats.filesChanged).toBe(NAMES.length + 1);
+  });
+
+  it('getCommitFiles does the same for one commit', async () => {
+    const files = await getCommitFiles(repoPath, editHash);
+    const byPath = new Map(files.map((f) => [f.path, f]));
+    for (const name of NAMES) {
+      expect(byPath.get(name)).toMatchObject({ status: 'modified', additions: 1 });
+    }
+    expect(byPath.get(MOVED)?.status).toBe('renamed');
+  });
+
+  it('getCompareDiff folds in an uncommitted row for a quoted name', async () => {
+    const diff = await getCompareDiff(repoPath, 'main', {
+      staged: false,
+      unstaged: true,
+      untracked: false,
+    });
+    const rows = diff.files.filter((f) => f.path === NAMES[0]);
+    expect(rows.map((f) => f.uncommitted)).toEqual([undefined, 'unstaged']);
+    expect(rows[1]).toMatchObject({ additions: 1, deletions: 0 });
+  });
+
+  it('getFileDiffInRange keeps a rename onto a quoted name a rename', async () => {
+    const diff = await getFileDiffInRange(repoPath, { kind: 'commit', hash: editHash }, MOVED);
+    const raw = rawFromLines(diff.lines);
+    expect(raw).toContain('rename from base.txt');
+    expect(raw).toContain('rename to "moved\\tbase.txt"');
   });
 });

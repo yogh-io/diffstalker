@@ -563,3 +563,52 @@ describe('in-progress operation detection and recovery (fixture)', () => {
     }
   });
 });
+
+describe('paths git C-quotes (fixture)', () => {
+  // git status is read with --null, so the paths are raw; the numstat
+  // read that adds the +/- counts must be too, or a tab, a quote, a
+  // backslash or a non-ASCII name gets no counts.
+  const REPO_NAME = 'quoted-paths-status-test';
+  const NAMES = ['tab\tname.txt', 'quote"name.txt', 'back\\slash.txt', '日本.txt'];
+  let repoPath: string;
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    for (const name of NAMES) writeFixtureFile(repoPath, name, 'a\n');
+    writeFixtureFile(repoPath, 'plain.txt', 'keep\n');
+    gitExec(repoPath, 'add -A');
+    gitExec(repoPath, 'commit -m "base"');
+    // Staged: one added line each, plus a rename onto a quoted name.
+    for (const name of NAMES) writeFixtureFile(repoPath, name, 'a\nb\n');
+    fs.renameSync(path.join(repoPath, 'plain.txt'), path.join(repoPath, 'moved\tplain.txt'));
+    gitExec(repoPath, 'add -A');
+    // Unstaged: one more line each.
+    for (const name of NAMES) writeFixtureFile(repoPath, name, 'a\nb\nc\n');
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  it('reports +/- counts on both sides of every quoted name', async () => {
+    const status = await getStatus(repoPath);
+    for (const name of NAMES) {
+      const staged = status.files.find((f) => f.path === name && f.staged);
+      const unstaged = status.files.find((f) => f.path === name && !f.staged);
+      expect(staged).toMatchObject({ status: 'modified', insertions: 1, deletions: 0 });
+      expect(unstaged).toMatchObject({ status: 'modified', insertions: 1, deletions: 0 });
+    }
+  });
+
+  it('keys a staged rename by its new path, so it gets counts too', async () => {
+    const status = await getStatus(repoPath);
+    const renamed = status.files.find((f) => f.path === 'moved\tplain.txt');
+    expect(renamed).toMatchObject({
+      status: 'renamed',
+      staged: true,
+      originalPath: 'plain.txt',
+      insertions: 0,
+      deletions: 0,
+    });
+  });
+});

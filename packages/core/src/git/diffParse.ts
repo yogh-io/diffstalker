@@ -386,9 +386,9 @@ export function countHunksPerFile(rawDiff: string): Map<string, number> {
   let currentFile: string | null = null;
   for (const line of rawDiff.split('\n')) {
     if (line.startsWith('diff --git')) {
-      const match = line.match(/^diff --git a\/.+ b\/(.+)$/);
-      if (match) {
-        currentFile = match[1];
+      const filePath = pathFromDiffHeader(line);
+      if (filePath !== null) {
+        currentFile = filePath;
         if (!result.has(currentFile)) {
           result.set(currentFile, 0);
         }
@@ -401,19 +401,163 @@ export function countHunksPerFile(rawDiff: string): Map<string, number> {
 }
 
 /**
- * Parse `git diff --numstat` output into per-file addition/deletion counts.
- * A binary file prints `-` for both counts and is recorded as 0/0. A path
- * may contain tabs, so everything after the second tab is the path.
+ * How git spells a path that needs it in patch text: C-style quoting.
+ *
+ * A path with a tab, a double quote, a backslash, a control character or
+ * (with core.quotepath, the default) any non-ASCII byte comes out as
+ * `"..."` with those bytes escaped — `\t`, `\"`, `\\`, `\346\227\245`.
+ * That quoting is in every `diff --git` header line, and there is no
+ * option to turn it off there. The list outputs (`--numstat`,
+ * `--name-status`) are read with `-z` instead, which prints raw paths
+ * NUL-separated; only the patch headers need unquoting.
+ */
+const C_ESCAPES = new Map<string, number>([
+  ['a', 7],
+  ['b', 8],
+  ['f', 12],
+  ['n', 10],
+  ['r', 13],
+  ['t', 9],
+  ['v', 11],
+  ['\\', 92],
+  ['"', 34],
+]);
+
+/** Undo git's C-style quoting of a path. A value without quotes is returned as-is. */
+export function unquoteGitPath(raw: string): string {
+  if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return raw;
+  const inner = raw.slice(1, -1);
+  const encoder = new TextEncoder();
+  // Octal escapes are single bytes of a UTF-8 sequence, so the whole
+  // string is rebuilt as bytes and decoded once at the end.
+  const bytes: number[] = [];
+  let at = 0;
+  while (at < inner.length) {
+    const slash = inner.indexOf('\\', at);
+    if (slash === -1) {
+      bytes.push(...encoder.encode(inner.slice(at)));
+      break;
+    }
+    bytes.push(...encoder.encode(inner.slice(at, slash)));
+    const octal = /^[0-7]{1,3}/.exec(inner.slice(slash + 1, slash + 4));
+    if (octal !== null) {
+      bytes.push(parseInt(octal[0], 8));
+      at = slash + 1 + octal[0].length;
+      continue;
+    }
+    const escaped = C_ESCAPES.get(inner[slash + 1] ?? '');
+    if (escaped !== undefined) {
+      bytes.push(escaped);
+      at = slash + 2;
+      continue;
+    }
+    // Not an escape git writes: keep the backslash as it is.
+    bytes.push(92);
+    at = slash + 1;
+  }
+  return new TextDecoder().decode(Uint8Array.from(bytes));
+}
+
+/**
+ * Where the last quoted token of a header opens, or -1. Inside a quoted
+ * token every `"` is escaped, so scanning back from the closing quote,
+ * the first `"` behind an even run of backslashes is the opening one.
+ */
+function openingQuote(text: string): number {
+  for (let i = text.length - 2; i >= 0; i--) {
+    if (text[i] !== '"') continue;
+    let slashes = 0;
+    for (let j = i - 1; j >= 0 && text[j] === '\\'; j--) slashes++;
+    if (slashes % 2 === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * The new-side path of a `diff --git a/<old> b/<new>` header, unquoted,
+ * or null for any other line. The ONE place the header is read: every
+ * path parser (hunk counts, compare and history rows, edit-time stamps,
+ * the per-file splitter) keys on the path exactly as `git status` spells
+ * it, and this is what makes a `"tab\tname.txt"` header match.
+ *
+ * A quoted side ends in `"`; an unquoted one is everything after the last
+ * ` b/` (a plain path may contain spaces, and git writes no better
+ * separator in this line).
+ */
+export function pathFromDiffHeader(line: string): string | null {
+  const prefix = 'diff --git ';
+  if (!line.startsWith(prefix)) return null;
+  const rest = line.slice(prefix.length);
+  if (rest.endsWith('"')) {
+    const open = openingQuote(rest);
+    if (open === -1) return null;
+    const unquoted = unquoteGitPath(rest.slice(open));
+    return unquoted.startsWith('b/') ? unquoted.slice(2) : null;
+  }
+  const at = rest.lastIndexOf(' b/');
+  return at === -1 ? null : rest.slice(at + 3);
+}
+
+/**
+ * Parse `git diff --numstat -z` output into per-file addition/deletion
+ * counts, keyed by the file's (new) path. Fields are NUL-separated, so a
+ * path arrives raw — tabs, quotes and all. A binary file prints `-` for
+ * both counts and is recorded as 0/0. A rename or copy prints an empty
+ * path field followed by the old and the new path as two more fields.
  */
 export function parseNumstat(raw: string): Map<string, { additions: number; deletions: number }> {
   const stats = new Map<string, { additions: number; deletions: number }>();
-  for (const line of raw.trim().split('\n')) {
-    if (!line) continue;
-    const parts = line.split('\t');
+  const fields = raw.split('\0');
+  for (let i = 0; i < fields.length; i++) {
+    const record = fields[i];
+    if (record === '') continue; // the trailing NUL, or a blank line
+    const parts = record.split('\t');
     if (parts.length < 3) continue;
     const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
     const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-    stats.set(parts.slice(2).join('\t'), { additions, deletions });
+    let filePath = parts.slice(2).join('\t');
+    if (filePath === '') {
+      // Rename/copy: `<add>\t<del>\t` then `<old>` and `<new>` fields.
+      filePath = fields[i + 2] ?? '';
+      i += 2;
+    }
+    if (filePath !== '') stats.set(filePath, { additions, deletions });
   }
   return stats;
+}
+
+/** One row of `git diff --name-status -z`: the status letter and the path(s). */
+export interface NameStatusEntry {
+  /** The first letter of git's status code: A, M, D, R, C, T, U, ... */
+  code: string;
+  /** The (new) path. */
+  path: string;
+  /** The old path of a rename or copy. */
+  oldPath?: string;
+}
+
+/**
+ * Parse `git diff --name-status -z` output. Fields are NUL-separated: a
+ * status code then the path, and for a rename or copy (`R100`, `C75`) the
+ * old path and then the new one.
+ */
+export function parseNameStatus(raw: string): NameStatusEntry[] {
+  const entries: NameStatusEntry[] = [];
+  const fields = raw.split('\0');
+  for (let i = 0; i < fields.length; i++) {
+    const status = fields[i];
+    if (status === '') continue;
+    const code = status[0];
+    if (code === 'R' || code === 'C') {
+      const oldPath = fields[i + 1];
+      const path = fields[i + 2];
+      if (oldPath !== undefined && path !== undefined) entries.push({ code, path, oldPath });
+      i += 2;
+    } else {
+      const path = fields[i + 1];
+      if (path !== undefined) entries.push({ code, path });
+      i += 1;
+    }
+  }
+  return entries;
 }

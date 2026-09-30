@@ -46,6 +46,12 @@ describe('extractDiffFilePath', () => {
     expect(extractDiffFilePath('diff --git a/my dir/f.ts b/my dir/f.ts')).toBe('my dir/f.ts');
   });
 
+  it('unquotes a header git had to C-quote, so it matches the status path', () => {
+    expect(extractDiffFilePath('diff --git "a/tab\\tname.txt" "b/tab\\tname.txt"')).toBe(
+      'tab\tname.txt'
+    );
+  });
+
   it('returns null for a non-git-header line', () => {
     expect(extractDiffFilePath('@@ -1 +1 @@')).toBeNull();
     expect(extractDiffFilePath('+++ b/src/foo.ts')).toBeNull();

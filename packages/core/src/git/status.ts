@@ -180,10 +180,12 @@ export async function getStatus(repoPath: string): Promise<GitStatus> {
     }
   }
 
-  // Fetch line stats for staged and unstaged files
+  // Fetch line stats for staged and unstaged files. `-z` keeps paths raw
+  // (a tab or a quote in a name is otherwise C-quoted and never matches
+  // the status entry) and names a rename by its new path.
   const [stagedNumstat, unstagedNumstat] = await Promise.all([
-    git.diff(['--cached', '--numstat']).catch(() => ''),
-    git.diff(['--numstat']).catch(() => ''),
+    git.diff(['--cached', '--numstat', '-z']).catch(() => ''),
+    git.diff(['--numstat', '-z']).catch(() => ''),
   ]);
 
   const stagedStats = parseNumstat(stagedNumstat);

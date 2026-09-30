@@ -9,7 +9,9 @@ import {
   capLargeFileDiffs,
   largeDiffNotice,
   parseDiffWithLineNumbers,
+  parseNameStatus,
   parseNumstat,
+  pathFromDiffHeader,
   rawFromLines,
   MAX_FILE_DIFF_BYTES,
 } from './diffParse.js';
@@ -455,42 +457,40 @@ export async function commitExists(repoPath: string, revision: string): Promise<
   }
 }
 
+/** The path a diff chunk is about: its `diff --git` header line, unquoted. */
+function chunkPath(chunk: string): string | null {
+  const end = chunk.indexOf('\n');
+  return pathFromDiffHeader(end === -1 ? chunk : chunk.slice(0, end));
+}
+
 /**
  * Per-file rows from the three reads git gives for any range: numstat for
  * the counts, name-status for the kind of change, and the patch itself.
- * Compare and a single commit both build their file list this way.
- * Sorted by path.
+ * The two lists are read with `-z`, so their paths are raw; the patch
+ * headers are C-quoted and go through pathFromDiffHeader — that is what
+ * lets a `"tab\tname.txt"` chunk find its own counts and status. Compare
+ * and a single commit both build their file list this way. Sorted by path.
  */
 function buildFileDiffs(numstat: string, nameStatus: string, rawDiff: string): CompareFileDiff[] {
   const fileStats = parseNumstat(numstat);
 
-  // Parse name-status: "A/M/D/R filepath" per line
-  const nameStatusLines = nameStatus
-    .trim()
-    .split('\n')
-    .filter((l) => l);
   const fileStatuses: Map<string, CompareFileDiff['status']> = new Map();
-  for (const line of nameStatusLines) {
-    const parts = line.split('\t');
-    if (parts.length >= 2) {
-      const statusChar = parts[0][0];
-      const filepath = parts[parts.length - 1]; // Use last part for renamed files
-      let status: CompareFileDiff['status'];
-      switch (statusChar) {
-        case 'A':
-          status = 'added';
-          break;
-        case 'D':
-          status = 'deleted';
-          break;
-        case 'R':
-          status = 'renamed';
-          break;
-        default:
-          status = 'modified';
-      }
-      fileStatuses.set(filepath, status);
+  for (const entry of parseNameStatus(nameStatus)) {
+    let status: CompareFileDiff['status'];
+    switch (entry.code) {
+      case 'A':
+        status = 'added';
+        break;
+      case 'D':
+        status = 'deleted';
+        break;
+      case 'R':
+        status = 'renamed';
+        break;
+      default:
+        status = 'modified';
     }
+    fileStatuses.set(entry.path, status);
   }
 
   // Split raw diff by file headers
@@ -498,11 +498,9 @@ function buildFileDiffs(numstat: string, nameStatus: string, rawDiff: string): C
   const diffChunks = rawDiff.split(/(?=^diff --git )/m).filter((chunk) => chunk.trim());
 
   for (const chunk of diffChunks) {
-    // Extract file path from the diff header
-    const match = chunk.match(/^diff --git a\/.+ b\/(.+)$/m);
-    if (!match) continue;
+    const filepath = chunkPath(chunk);
+    if (filepath === null) continue;
 
-    const filepath = match[1];
     const lines = parseDiffWithLineNumbers(chunk);
     const stats = fileStats.get(filepath) || { additions: 0, deletions: 0 };
     const status = fileStatuses.get(filepath) || 'modified';
@@ -551,8 +549,8 @@ async function compareCommitted(
   // together: per-file stats, file statuses, the full diff, the status
   // for the uncommitted count, and the commits between base and HEAD.
   const [numstat, nameStatus, rawDiff, { files: statusFiles }, log] = await Promise.all([
-    git.raw(['diff', '--numstat', `${base}...HEAD`]),
-    git.raw(['diff', '--name-status', `${base}...HEAD`]),
+    git.raw(['diff', '--numstat', '-z', `${base}...HEAD`]),
+    git.raw(['diff', '--name-status', '-z', `${base}...HEAD`]),
     git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, `${base}...HEAD`]).then(capLargeFileDiffs),
     status,
     git.log({ from: base, to: 'HEAD' }),
@@ -683,7 +681,7 @@ function rangeArgs(range: DiffRange, flags: string[]): string[] {
  */
 async function renamedFrom(repoPath: string, range: DiffRange, file: string): Promise<string | null> {
   const git = createGit(repoPath);
-  const args = rangeArgs(range, ['--name-status', '-M', '--diff-filter=R']);
+  const args = rangeArgs(range, ['--name-status', '-z', '-M', '--diff-filter=R']);
   let raw: string;
   try {
     raw = await git.raw(args);
@@ -692,13 +690,7 @@ async function renamedFrom(repoPath: string, range: DiffRange, file: string): Pr
     // is the pre-existing behaviour (the file read as an add).
     return null;
   }
-  for (const line of raw.trim().split('\n')) {
-    if (!line) continue;
-    // "R087\told.txt\tnew.txt"
-    const parts = line.split('\t');
-    if (parts.length >= 3 && parts[2] === file) return parts[1];
-  }
-  return null;
+  return parseNameStatus(raw).find((entry) => entry.path === file)?.oldPath ?? null;
 }
 
 /**
@@ -741,8 +733,8 @@ export async function getCommitFiles(repoPath: string, hash: string): Promise<Co
   const show = (options: string[]): Promise<string> =>
     git.raw(['show', '--format=', ...options, '--end-of-options', hash]);
   const [numstat, nameStatus, rawDiff] = await Promise.all([
-    show(['--numstat']),
-    show(['--name-status']),
+    show(['--numstat', '-z']),
+    show(['--name-status', '-z']),
     show([`-U${DIFF_CONTEXT_LINES}`]).then(capLargeFileDiffs),
   ]);
   return buildFileDiffs(numstat, nameStatus, rawDiff);
@@ -822,7 +814,7 @@ async function readTrackedRows(
   const git = createGit(repoPath);
   const range = trackedRange(side);
   const [stats, raw] = await Promise.all([
-    git.raw(rangeArgs(range, ['--numstat'])).then(parseNumstat),
+    git.raw(rangeArgs(range, ['--numstat', '-z'])).then(parseNumstat),
     git.raw(rangeArgs(range, [`-U${DIFF_CONTEXT_LINES}`])).then(capLargeFileDiffs),
   ]);
 
@@ -830,9 +822,8 @@ async function readTrackedRows(
   const rows: CompareFileDiff[] = [];
   for (const chunk of raw.split(/(?=^diff --git )/m)) {
     if (!chunk.trim()) continue;
-    const match = chunk.match(/^diff --git a\/.+ b\/(.+)$/m);
-    if (!match) continue;
-    const filepath = match[1];
+    const filepath = chunkPath(chunk);
+    if (filepath === null) continue;
     const pair = statusPairs.get(filepath);
     rows.push({
       path: filepath,

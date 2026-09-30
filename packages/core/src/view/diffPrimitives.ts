@@ -4,6 +4,7 @@
  */
 
 import type { DiffLine } from '../git/diff.js';
+import { pathFromDiffHeader } from '../git/diffParse.js';
 import { computeWordDiff, expandSegmentsToWords, WordDiffSegment } from './wordDiff.js';
 
 /** Parsed "@@ -a,b +c,d @@ ctx" hunk header. Counts default to 1 when omitted. */
@@ -17,7 +18,6 @@ export interface ParsedHunkHeader {
 }
 
 const HUNK_HEADER_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
-const GIT_HEADER_RE = /^diff --git a\/.+ b\/(.+)$/;
 
 /**
  * Parse a hunk header line into its ranges. Returns null when the line
@@ -36,11 +36,13 @@ export function parseHunkHeader(content: string): ParsedHunkHeader | null {
 }
 
 /**
- * Extract the file path from a "diff --git a/... b/..." header line.
- * Returns null for any other header content.
+ * Extract the file path from a "diff --git a/... b/..." header line,
+ * unquoted so it matches the path as `git status` spells it. Returns null
+ * for any other header content. The parsing itself lives in
+ * git/diffParse (pure, browser-safe) so every header reader shares it.
  */
 export function extractDiffFilePath(content: string): string | null {
-  return GIT_HEADER_RE.exec(content)?.[1] ?? null;
+  return pathFromDiffHeader(content);
 }
 
 /**

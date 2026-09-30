@@ -13,8 +13,11 @@ import {
   LARGE_DIFF_NOTICE_PREFIX,
   MAX_FILE_DIFF_BYTES,
   MAX_FILE_DIFF_LINES,
+  parseNameStatus,
   parseNumstat,
+  pathFromDiffHeader,
   rawFromLines,
+  unquoteGitPath,
 } from './diffParse.js';
 
 describe('parseDiffLine', () => {
@@ -718,17 +721,20 @@ describe('capLargeFileDiffs', () => {
   });
 });
 
-describe('parseNumstat', () => {
+/**
+ * NUL-terminated records, as `-z` prints them. Built with a helper because
+ * a literal `\0` followed by a digit is an octal escape in a JS string.
+ */
+const z = (...fields: string[]): string => fields.join('\0') + '\0';
+
+describe('parseNumstat (-z)', () => {
   it('parses single file numstat', () => {
-    const result = parseNumstat('10\t5\tfile.ts');
+    const result = parseNumstat('10\t5\tfile.ts\0');
     expect(result.get('file.ts')).toEqual({ additions: 10, deletions: 5 });
   });
 
   it('parses multiple files', () => {
-    const output = `10\t5\tfile1.ts
-20\t3\tfile2.ts
-1\t0\tfile3.ts`;
-    const result = parseNumstat(output);
+    const result = parseNumstat(z('10\t5\tfile1.ts', '20\t3\tfile2.ts', '1\t0\tfile3.ts'));
 
     expect(result.size).toBe(3);
     expect(result.get('file1.ts')).toEqual({ additions: 10, deletions: 5 });
@@ -737,7 +743,7 @@ describe('parseNumstat', () => {
   });
 
   it('handles binary files (marked with -)', () => {
-    const result = parseNumstat('-\t-\timage.png');
+    const result = parseNumstat('-\t-\timage.png\0');
     expect(result.get('image.png')).toEqual({ additions: 0, deletions: 0 });
   });
 
@@ -745,33 +751,122 @@ describe('parseNumstat', () => {
     expect(parseNumstat('').size).toBe(0);
   });
 
-  it('handles output with only whitespace', () => {
-    expect(parseNumstat('  \n  \n  ').size).toBe(0);
+  it('keeps a path raw: tabs, quotes and non-ASCII are not quoted with -z', () => {
+    const result = parseNumstat(
+      z('5\t3\tpath\twith\ttabs.ts', '1\t1\tquote"name.txt', '1\t1\t日本.txt')
+    );
+    expect(result.get('path\twith\ttabs.ts')).toEqual({ additions: 5, deletions: 3 });
+    expect(result.get('quote"name.txt')).toEqual({ additions: 1, deletions: 1 });
+    expect(result.get('日本.txt')).toEqual({ additions: 1, deletions: 1 });
   });
 
-  it('handles paths with tabs', () => {
-    const result = parseNumstat('5\t3\tpath\twith\ttabs.ts');
-    expect(result.get('path\twith\ttabs.ts')).toEqual({ additions: 5, deletions: 3 });
+  it('keys a rename by its new path', () => {
+    // A rename prints an empty path field, then the old and new paths.
+    const result = parseNumstat(z('2\t1\t', 'old.txt', 'new dir/new.txt', '3\t0\tother.ts'));
+    expect(result.get('new dir/new.txt')).toEqual({ additions: 2, deletions: 1 });
+    expect(result.has('old.txt')).toBe(false);
+    expect(result.get('other.ts')).toEqual({ additions: 3, deletions: 0 });
   });
 
   it('handles zero additions and deletions', () => {
-    const result = parseNumstat('0\t0\tfile.ts');
+    const result = parseNumstat('0\t0\tfile.ts\0');
     expect(result.get('file.ts')).toEqual({ additions: 0, deletions: 0 });
   });
 
-  it('handles large numbers', () => {
-    const result = parseNumstat('1000\t500\tlarge.ts');
-    expect(result.get('large.ts')).toEqual({ additions: 1000, deletions: 500 });
-  });
-
-  it('skips malformed lines', () => {
-    const output = `10\t5\tvalid.ts
-malformed line
-20\t3\talso-valid.ts`;
-    const result = parseNumstat(output);
-
+  it('skips malformed records', () => {
+    const result = parseNumstat(z('10\t5\tvalid.ts', 'malformed record', '20\t3\talso-valid.ts'));
     expect(result.size).toBe(2);
     expect(result.has('valid.ts')).toBe(true);
     expect(result.has('also-valid.ts')).toBe(true);
+  });
+});
+
+describe('parseNameStatus (-z)', () => {
+  it('reads a status code and a raw path per record', () => {
+    expect(parseNameStatus(z('M', 'a.ts', 'A', 'tab\tname.txt', 'D', 'quote"name.txt'))).toEqual([
+      { code: 'M', path: 'a.ts' },
+      { code: 'A', path: 'tab\tname.txt' },
+      { code: 'D', path: 'quote"name.txt' },
+    ]);
+  });
+
+  it('reads a rename or copy as old path then new path, keeping only the letter', () => {
+    expect(parseNameStatus(z('R087', 'old.txt', 'new.txt', 'C100', 'a.txt', 'b.txt'))).toEqual([
+      { code: 'R', path: 'new.txt', oldPath: 'old.txt' },
+      { code: 'C', path: 'b.txt', oldPath: 'a.txt' },
+    ]);
+  });
+
+  it('handles empty output', () => {
+    expect(parseNameStatus('')).toEqual([]);
+  });
+});
+
+describe('unquoteGitPath', () => {
+  it('returns an unquoted value as-is', () => {
+    expect(unquoteGitPath('plain/name.txt')).toBe('plain/name.txt');
+    expect(unquoteGitPath('')).toBe('');
+  });
+
+  it('undoes the escapes git writes for a tab, a quote and a backslash', () => {
+    expect(unquoteGitPath('"tab\\tname.txt"')).toBe('tab\tname.txt');
+    expect(unquoteGitPath('"quote\\"name.txt"')).toBe('quote"name.txt');
+    expect(unquoteGitPath('"back\\\\slash.txt"')).toBe('back\\slash.txt');
+  });
+
+  it('decodes octal escapes as UTF-8 bytes (core.quotepath)', () => {
+    expect(unquoteGitPath('"\\346\\227\\245\\346\\234\\254.txt"')).toBe('日本.txt');
+    expect(unquoteGitPath('"caf\\303\\251.txt"')).toBe('café.txt');
+  });
+
+  it('keeps an escape git never writes as written', () => {
+    expect(unquoteGitPath('"odd\\qname"')).toBe('odd\\qname');
+  });
+});
+
+describe('pathFromDiffHeader', () => {
+  it('reads the b/ path of a plain header, spaces included', () => {
+    expect(pathFromDiffHeader('diff --git a/src/foo.ts b/src/foo.ts')).toBe('src/foo.ts');
+    expect(pathFromDiffHeader('diff --git a/my dir/f.ts b/my dir/f.ts')).toBe('my dir/f.ts');
+  });
+
+  it('unquotes a header git had to quote', () => {
+    expect(pathFromDiffHeader('diff --git "a/tab\\tname.txt" "b/tab\\tname.txt"')).toBe(
+      'tab\tname.txt'
+    );
+    expect(pathFromDiffHeader('diff --git "a/quote\\"name.txt" "b/quote\\"name.txt"')).toBe(
+      'quote"name.txt'
+    );
+    expect(pathFromDiffHeader('diff --git "a/back\\\\slash.txt" "b/back\\\\slash.txt"')).toBe(
+      'back\\slash.txt'
+    );
+    const octal = '\\346\\227\\245\\346\\234\\254.txt';
+    expect(pathFromDiffHeader(`diff --git "a/${octal}" "b/${octal}"`)).toBe('日本.txt');
+  });
+
+  it('handles a rename where only one side needs quoting', () => {
+    expect(pathFromDiffHeader('diff --git a/plain.txt "b/moved\\tplain.txt"')).toBe(
+      'moved\tplain.txt'
+    );
+    expect(pathFromDiffHeader('diff --git "a/tab\\tname.txt" b/plain.txt')).toBe('plain.txt');
+  });
+
+  it('returns null for any other line', () => {
+    expect(pathFromDiffHeader('+++ b/src/foo.ts')).toBeNull();
+    expect(pathFromDiffHeader('@@ -1 +1 @@')).toBeNull();
+    expect(pathFromDiffHeader('diff --git nonsense')).toBeNull();
+  });
+});
+
+describe('countHunksPerFile keys quoted headers by the raw path', () => {
+  it('matches the path git status would report', () => {
+    const diff = `diff --git "a/tab\\tname.txt" "b/tab\\tname.txt"
+index 111..222 100644
+--- "a/tab\\tname.txt"
++++ "b/tab\\tname.txt"
+@@ -1,1 +1,1 @@
+-a
++b`;
+    expect(countHunksPerFile(diff).get('tab\tname.txt')).toBe(1);
   });
 });

@@ -1,8 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { DiffResult, DiffLine } from './diff.js';
-
-const FILE_HEADER = /^diff --git a\/.+ b\/(.+)$/;
+import { pathFromDiffHeader } from './diffParse.js';
 
 /**
  * Hash a hunk's added/removed lines. Context lines and the @@ header are
@@ -46,8 +45,8 @@ function collectHunks(diff: DiffResult): HunkRef[] {
   for (const line of diff.lines) {
     if (line.type === 'header') {
       flush();
-      const match = line.content.match(FILE_HEADER);
-      if (match) currentFile = match[1];
+      const filePath = pathFromDiffHeader(line.content);
+      if (filePath !== null) currentFile = filePath;
     } else if (line.type === 'hunk') {
       flush();
       current = { headerLine: line, body: [] };

@@ -68,10 +68,14 @@ module.exports = {
     {
       name: "view-no-node-runtime",
       comment:
-        "view/ must stay browser-safe: it may import git/ and utils/ TYPES only (erased at build). A RUNTIME import of git/ or utils/ drags in node-only code (git/status pulls simple-git + node:child_process; utils/xdg pulls node:os). Dep-cruiser tracks runtime edges only by default, so type-only imports never trip this; a real runtime import does. This is the guard the layer exists for — it catches dropping `type` from an import, which build+deps+tests otherwise miss until the browser bundle breaks. Test files are exempt: they never enter a browser bundle (splitDiffByFile.test.ts parses fixtures with git/diffParse).",
+        "view/ must stay browser-safe: it may import git/ and utils/ TYPES only (erased at build). A RUNTIME import of git/ or utils/ drags in node-only code (git/status pulls simple-git + node:child_process; utils/xdg pulls node:os). Dep-cruiser tracks runtime edges only by default, so type-only imports never trip this; a real runtime import does. This is the guard the layer exists for — it catches dropping `type` from an import, which build+deps+tests otherwise miss until the browser bundle breaks. Test files are exempt: they never enter a browser bundle (splitDiffByFile.test.ts parses fixtures with git/diffParse). Single runtime exception: git/diffParse, which is dependency-free by design (the CLI and web already bundle it) and holds the one diff-header path parser view/ shares with git/.",
       severity: "error",
       from: { path: "^src/view/", pathNot: "\\.test\\.ts$" },
-      to: { path: "^src/(git|utils|symbols)/", dependencyTypesNot: ["type-only"] },
+      to: {
+        path: "^src/(git|utils|symbols)/",
+        pathNot: "^src/git/diffParse\\.ts$",
+        dependencyTypesNot: ["type-only"],
+      },
     },
     {
       name: "managers-no-view",

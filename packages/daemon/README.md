@@ -289,6 +289,14 @@ included: the response is byte-identical to the plain one.
 Repo ids are stable hashes of the worktree root, so a cached id still
 addresses the same repo after a daemon restart.
 
+Every `path` on the wire — in status entries, hunk counts, compare and
+commit rows — is the raw path, exactly as `git status` spells it, even when
+git C-quotes it in patch text (a tab, a double quote, a backslash, a
+non-ASCII name): the daemon reads git's list outputs with `-z` and unquotes
+`diff --git` headers. The header lines inside a `DiffResult` keep git's
+quoting, because a hunk patch built from them must be one `git apply`
+accepts.
+
 ### One stream per tab
 
 There are two event streams: `GET /events` for the daemon (open repos,
