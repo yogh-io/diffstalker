@@ -137,7 +137,8 @@ export class ModalController {
       })
       .catch((err) => {
         this.clearModal();
-        logger.error('Failed to load base branches', err);
+        // warn, not error: error prints a stack, and stderr is the screen.
+        logger.warn('Failed to load base branches', err);
       });
   }
 
