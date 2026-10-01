@@ -147,6 +147,19 @@ Kept here so the same ideas do not get re-proposed as though they were new.
 > Lifting one more rejection does not open the rest. Everything else in this
 > document still needs its own trigger.
 
+> **Update, 2026-10-01: the §6 trigger fired for stacked pull requests.** The
+> author stacks PRs with `gh stack` and asked to pick one PR of a stack in
+> Compare, setting head and base together. `docs/stacked-compare.md` records
+> the decision. What it changes here:
+>
+> - **Built:** a stack strip in Compare, read from git topology, and a `head`
+>   parameter on the compare reads. Compare's head was always HEAD before.
+> - **Not a widening of the base picker.** The picker still lists remote
+>   branches only. The strip is a separate closed list, built from the stack.
+> - **Still rejected, and re-confirmed:** a free-text revspec box or any ref
+>   input; anything that talks to GitHub (PR numbers, titles, review state);
+>   stack mutations from the browser.
+
 Conventional viewer features, judged real but not worth it now: expanding
 context around a hunk; an ignore-whitespace toggle; marking a file as seen;
 filtering or sorting the changed-file set; bounding a very large changeset with a

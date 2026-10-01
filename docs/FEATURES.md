@@ -787,6 +787,17 @@ git operations.
   Enter/Space/Left/Right on the button) — view state only; keyboard file
   navigation skips files hidden under a collapsed folder, and the stacked
   diffs on the right are unaffected.
+- **Stacked pull requests in Compare** — when the branches between the base
+  and HEAD form a stack (a line of branch tips, as `gh stack` or
+  `rebase --update-refs` leave them), a strip under the base picker lists
+  them bottom to top: `all · upstream/main ← pr-1 ← pr-2 ← pr-3`. Picking a
+  layer sets both sides at once: base is the layer below, head is the layer,
+  so the diff is exactly that PR's. `all` is the normal compare. The stack is
+  read from git alone (`GET /repos/:id/compare/stack`), so it works for a
+  stack linked on GitHub with no local tracking, and it shows branch names,
+  not PR numbers. Uncommitted toggles apply only to the checked-out layer. A
+  fork above HEAD is not drawn as a tree; the strip says so. The layer is in
+  the URL (`?head=`). See `docs/stacked-compare.md`.
 - File cards in the stacked diffs (every surface built on the stack —
   Changes, Compare, History, Journal): each file is one bordered, rounded
   card with a tinted body, a 3px left spine, and a header ranked one surface

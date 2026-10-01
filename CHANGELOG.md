@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.13.6] - 2026-10-01
 
 ### Added
 
@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   log: newlines are escaped and credentials are removed. In the web UI, every
   error the page shows also lands in the browser console with its detail. See
   `docs/logging.md`.
+- **Compare can show one PR of a stack.** If the branches between the base
+  and HEAD form a stack of pull requests (for example made with `gh stack`),
+  Compare lists them in a strip. Pick one and the diff shows just that PR:
+  its own branch against the branch below it. The stack comes from git, not
+  from GitHub, so no network or login is needed.
 
 ### Changed
 
