@@ -526,27 +526,36 @@ function buildFileDiffs(numstat: string, nameStatus: string, rawDiff: string): C
 }
 
 /**
- * Get diff between HEAD and a base ref (for PR-like view).
- * Uses three-dot diff (merge-base) to show only changes on current branch.
+ * Get diff between a head and a base ref (for PR-like view). Uses three-dot
+ * diff (merge-base) to show only changes on the head's branch. The head is
+ * HEAD unless the caller names one — a layer of a stack, see
+ * docs/stacked-compare.md §4.
  */
-export async function getDiffBetweenRefs(repoPath: string, baseRef: string): Promise<CompareDiff> {
+export async function getDiffBetweenRefs(
+  repoPath: string,
+  baseRef: string,
+  head?: string
+): Promise<CompareDiff> {
   const git = createGit(repoPath);
-  return compareCommitted(git, baseRef, git.status());
+  return compareCommitted(git, baseRef, git.status(), head);
 }
 
 /**
  * The committed compare proper. `status` is passed in so getCompareDiff
- * can share the one `git status` its uncommitted rows need too.
+ * can share the one `git status` its uncommitted rows need too. Without a
+ * `head` the range is spelled with the literal `HEAD`, so every git call
+ * is the one it was before heads existed.
  */
 async function compareCommitted(
   git: SimpleGit,
   baseRef: string,
-  status: Promise<StatusResult>
+  status: Promise<StatusResult>,
+  head: string = 'HEAD'
 ): Promise<CompareDiff> {
   // Get merge-base for three-dot diff. With no common ancestor git exits 1
   // with empty output (simple-git resolves with ''); the diff would then
   // collapse to HEAD...HEAD and silently report an empty compare.
-  const mergeBase = await git.raw(['merge-base', '--end-of-options', baseRef, 'HEAD']);
+  const mergeBase = await git.raw(['merge-base', '--end-of-options', baseRef, head]);
   const base = mergeBase.trim();
   if (!base) {
     throw new NoCommonHistoryError(baseRef);
@@ -554,13 +563,13 @@ async function compareCommitted(
 
   // Everything below depends only on the base, so the five reads run
   // together: per-file stats, file statuses, the full diff, the status
-  // for the uncommitted count, and the commits between base and HEAD.
+  // for the uncommitted count, and the commits between base and head.
   const [numstat, nameStatus, rawDiff, { files: statusFiles }, log] = await Promise.all([
-    git.raw(['diff', '--numstat', '-z', `${base}...HEAD`]),
-    git.raw(['diff', '--name-status', '-z', `${base}...HEAD`]),
-    git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, `${base}...HEAD`]).then(capLargeFileDiffs),
+    git.raw(['diff', '--numstat', '-z', `${base}...${head}`]),
+    git.raw(['diff', '--name-status', '-z', `${base}...${head}`]),
+    git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, `${base}...${head}`]).then(capLargeFileDiffs),
     status,
-    git.log({ from: base, to: 'HEAD' }),
+    git.log({ from: base, to: head }),
   ]);
 
   const fileDiffs = buildFileDiffs(numstat, nameStatus, rawDiff);
@@ -611,17 +620,18 @@ async function compareCommitted(
  */
 export async function getCommitCountBetweenRefs(
   repoPath: string,
-  baseRef: string
+  baseRef: string,
+  head: string = 'HEAD'
 ): Promise<number> {
   const git = createGit(repoPath);
 
-  const mergeBase = await git.raw(['merge-base', '--end-of-options', baseRef, 'HEAD']);
+  const mergeBase = await git.raw(['merge-base', '--end-of-options', baseRef, head]);
   const base = mergeBase.trim();
   if (!base) {
     throw new NoCommonHistoryError(baseRef);
   }
 
-  const count = await git.raw(['rev-list', '--count', '--end-of-options', `${base}..HEAD`]);
+  const count = await git.raw(['rev-list', '--count', '--end-of-options', `${base}..${head}`]);
   return Number.parseInt(count.trim(), 10);
 }
 
@@ -633,8 +643,9 @@ export async function getCommitCountBetweenRefs(
 export type DiffRange =
   /** History: what one commit changed, against its parent. */
   | { kind: 'commit'; hash: string }
-  /** Compare's committed rows: base…HEAD, three-dot. */
-  | { kind: 'compare'; base: string }
+  /** Compare's committed rows: base…head, three-dot; the head is HEAD
+   *  unless named (a stack layer). Still a named range, not a revspec. */
+  | { kind: 'compare'; base: string; head?: string }
   /** Compare's staged+unstaged rows: HEAD against the working tree. */
   | { kind: 'head' }
   /** Compare's staged-only rows: HEAD against the index. */
@@ -657,7 +668,7 @@ function rangeArgs(range: DiffRange, flags: string[]): string[] {
       // flag-shaped hash from being read as an option.
       return ['show', '--format=', ...flags, '--end-of-options', range.hash];
     case 'compare':
-      return ['diff', ...flags, `${range.base}...HEAD`];
+      return ['diff', ...flags, `${range.base}...${range.head ?? 'HEAD'}`];
     case 'head':
       return ['diff', ...flags, 'HEAD'];
     case 'staged':
@@ -891,14 +902,24 @@ async function readUntrackedRows(
  * path rather than merged into it: the two sit against different bases
  * (the merge-base and the index/HEAD), so one merged row would be a diff
  * of nothing in particular.
+ *
+ * `head` names what the committed rows end at instead of HEAD (a stack
+ * layer). Uncommitted work only exists against HEAD, so a head together
+ * with any uncommitted part is a programming error: the daemon refuses
+ * that request before it gets here, and this throws rather than guess
+ * which of the two the caller meant.
  */
 export async function getCompareDiff(
   repoPath: string,
   baseRef: string,
-  parts: UncommittedParts = NO_UNCOMMITTED
+  parts: UncommittedParts = NO_UNCOMMITTED,
+  head?: string
 ): Promise<CompareDiff> {
   const side = trackedSide(parts);
-  if (side === null && !parts.untracked) return getDiffBetweenRefs(repoPath, baseRef);
+  if (side === null && !parts.untracked) return getDiffBetweenRefs(repoPath, baseRef, head);
+  if (head !== undefined) {
+    throw new Error('Uncommitted work can only be compared against HEAD, not a named head');
+  }
 
   // One `git status` serves both the committed compare (its uncommitted
   // count) and the uncommitted rows, and the two sides read together.

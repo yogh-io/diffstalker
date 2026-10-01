@@ -20,6 +20,7 @@ import {
   NoCommonHistoryError,
 } from '@diffstalker/core/git/diff';
 import type { DiffRange } from '@diffstalker/core/git/diff';
+import { getStack } from '@diffstalker/core/git/stack';
 import {
   getCommit,
   getCommitHistory,
@@ -120,6 +121,35 @@ async function resolveRequestedBase(repoPath: string, query: URLSearchParams): P
     throw new HttpError(400, `Unknown base ref: ${requestedBase}`);
   }
   return requestedBase;
+}
+
+/**
+ * The head a compare request reads up to: the client's `?head=` (a stack
+ * layer, see docs/stacked-compare.md §4), checked exactly as `?base=` is.
+ * Absent is undefined, which core reads as HEAD — so a request without it
+ * is byte for byte the request it was before heads existed.
+ */
+async function resolveRequestedHead(
+  repoPath: string,
+  query: URLSearchParams
+): Promise<string | undefined> {
+  const requestedHead = optionalRefParam(query, 'head');
+  if (requestedHead === null) return undefined;
+  if (!(await commitExists(repoPath, requestedHead))) {
+    throw new HttpError(400, `Unknown head ref: ${requestedHead}`);
+  }
+  return requestedHead;
+}
+
+/**
+ * Uncommitted work only exists against HEAD, so a named head together
+ * with any uncommitted part is a contradiction, refused up front — before
+ * any git runs, since no ref lookup can make it make sense.
+ */
+function refuseHeadWithUncommitted(query: URLSearchParams, uncommitted: boolean): void {
+  if (uncommitted && query.get('head') !== null) {
+    throw new HttpError(400, 'head cannot be combined with uncommitted work (it only exists against HEAD)');
+  }
 }
 
 /** The `uncommitted` values GET /compare/file accepts — the four an
@@ -233,6 +263,7 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     const filePath = requirePathParam(query);
     const context = parseWholeParam(query, filePath);
     const uncommitted = parseUncommittedParam(query);
+    refuseHeadWithUncommitted(query, uncommitted !== null);
     // An untracked file has no git range at all — every line of it is an
     // addition, so the whole file IS its diff and git diff would answer
     // empty. It is read from disk exactly as the compare list reads it.
@@ -242,7 +273,11 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     }
     const range: DiffRange =
       uncommitted === null
-        ? { kind: 'compare', base: await resolveRequestedBase(handle.path, query) }
+        ? {
+            kind: 'compare',
+            base: await resolveRequestedBase(handle.path, query),
+            head: await resolveRequestedHead(handle.path, query),
+          }
         : { kind: uncommitted === 'both' ? 'head' : uncommitted };
     sendJson(res, 200, await getFileDiffInRange(handle.path, range, filePath, { context }));
   });
@@ -295,22 +330,40 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
   router.get('/repos/:id/compare/count', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
     const base = await resolveRequestedBase(handle.path, query);
+    const head = await resolveRequestedHead(handle.path, query);
     const commits = await withoutCommonHistoryAs422(() =>
-      getCommitCountBetweenRefs(handle.path, base)
+      getCommitCountBetweenRefs(handle.path, base, head)
     );
     sendJson(res, 200, { baseBranch: base, commits });
+  });
+
+  /**
+   * The stack of branches between the base (the trunk) and HEAD, and above
+   * it — what the Compare strip lists. A read, so both API modes carry it.
+   * The base resolves exactly as on /compare; a trunk with no common
+   * history is an empty stack here, not a 422, because Compare itself has
+   * already said so for that base.
+   */
+  router.get('/repos/:id/compare/stack', async ({ params, query, res }) => {
+    const handle = requireRepo(registry, params.id);
+    const base = await resolveRequestedBase(handle.path, query);
+    sendJson(res, 200, await getStack(handle.path, base));
   });
 
   router.get('/repos/:id/compare', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
     const parts = uncommittedParts(query);
+    refuseHeadWithUncommitted(query, parts.staged || parts.unstaged || parts.untracked);
     const base = await resolveRequestedBase(handle.path, query);
+    const head = await resolveRequestedHead(handle.path, query);
 
     // Response is the CompareDiff itself — consistent with /diff returning
     // the DiffResult directly. It already carries the resolved base as
     // `baseBranch`; which uncommitted work was folded in shows per row in
     // `files[].uncommitted`.
-    const diff = await withoutCommonHistoryAs422(() => getCompareDiff(handle.path, base, parts));
+    const diff = await withoutCommonHistoryAs422(() =>
+      getCompareDiff(handle.path, base, parts, head)
+    );
     sendJson(res, 200, diff);
   });
 }
