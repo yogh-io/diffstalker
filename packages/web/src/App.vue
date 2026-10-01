@@ -372,14 +372,21 @@ async function applyHistoryAnchor(
 }
 
 /**
- * Compare: the base is applied BEFORE anything is pulled (it decides what
- * is pulled), and only when it differs — setSelectedCompareBase re-pulls
- * the whole comparison. The file anchor is a PATH, mapped to an index in
- * the resolved file set; with no file set yet, park it.
+ * Compare: the base and the picked stack layer are applied BEFORE anything
+ * is pulled (they decide what is pulled), and only when one differs — the
+ * pick re-pulls the whole comparison, and both go in one call so a link
+ * that names both pulls it once. A head that is absent means `all`, so
+ * Back out of a layer lands on the whole stack; a base that is absent is
+ * left alone (a detected base is never written, so there is nothing to
+ * restore it to). The file anchor is a PATH, mapped to an index in the
+ * resolved file set; with no file set yet, park it. The head is not
+ * parked with it: it lives in the store, so the URL already carries it
+ * while the pull is in flight.
  */
 async function applyCompareAnchor(state: UrlState, ctx: RestoreContext): Promise<void> {
-  if (state.base !== null && state.base !== repo.selectedCompareBase) {
-    await repo.setSelectedCompareBase(state.base);
+  const base = state.base !== null && state.base !== repo.selectedCompareBase ? state.base : undefined;
+  if (base !== undefined || state.head !== repo.selectedStackHead) {
+    await repo.setComparePick({ base, head: state.head });
     if (ctx.isStale()) return;
   }
   if (state.at === null) {

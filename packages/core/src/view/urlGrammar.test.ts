@@ -174,7 +174,7 @@ describe('whole=1 — the anchored file drawn in full', () => {
     expect(parseUrl(pathname, `?${search}`).whole).toBe('src/a b+c.ts');
   });
 
-  test('writes at a PINNED position: base, whole, at', () => {
+  test('writes at a PINNED position: base, head, whole, at', () => {
     // Order is load-bearing: writeUrl compares path+search as a STRING,
     // so a differently ordered URL never compares equal and would be
     // rewritten on the first write after landing on a shared link.
@@ -185,9 +185,10 @@ describe('whole=1 — the anchored file drawn in full', () => {
         home: '/home/j',
         at: 'u:a.ts',
         base: 'origin/main',
+        head: 'feature/x',
         whole: 'a.ts',
       })
-    ).toBe('/changes/~/w/ds?base=origin/main&whole=a.ts&at=u:a.ts');
+    ).toBe('/changes/~/w/ds?base=origin/main&head=feature/x&whole=a.ts&at=u:a.ts');
   });
 
   test('omitted, null and empty all write nothing', () => {
@@ -209,5 +210,47 @@ describe('whole=1 — the anchored file drawn in full', () => {
     const back = parseUrl(pathname, `?${search}`);
     expect(back.whole).toBe('src/a b+c.ts');
     expect(back.at).toBe('u:src/a b+c.ts');
+  });
+});
+
+describe('head — the picked layer of a stack (Compare only)', () => {
+  test('parses the layer name; absent and empty are both null', () => {
+    expect(parseUrl('/compare/~/w/ds', '?base=upstream/main').head).toBeNull();
+    expect(parseUrl('/compare/~/w/ds', '?head=').head).toBeNull();
+    expect(parseUrl('/compare/~/w/ds', '?base=upstream/main&head=feature/nginx').head).toBe(
+      'feature/nginx'
+    );
+  });
+
+  test('reaches the repo-less early return too', () => {
+    expect(parseUrl('/compare', '?head=feature/nginx').head).toBe('feature/nginx');
+  });
+
+  test('omitted, null and empty all write nothing', () => {
+    const place = { view: 'compare' as const, repoPath: '/home/j/w/ds', home: '/home/j', base: 'm' };
+    expect(buildUrlPath(place)).toBe('/compare/~/w/ds?base=m');
+    expect(buildUrlPath({ ...place, head: null })).toBe('/compare/~/w/ds?base=m');
+    expect(buildUrlPath({ ...place, head: '' })).toBe('/compare/~/w/ds?base=m');
+  });
+
+  test('round-trips next to base, so F5 on a layer link lands on the same layer', () => {
+    // The URL `base` is the trunk pick and `head` the layer: both must
+    // come back, or a reload silently shows the whole stack again.
+    const url = buildUrlPath({
+      view: 'compare',
+      repoPath: '/home/j/w/ds',
+      home: '/home/j',
+      base: 'upstream/main',
+      head: 'feature/aer-4693 nginx+image',
+      at: 'src/a.ts',
+    });
+    expect(url).toBe(
+      '/compare/~/w/ds?base=upstream/main&head=feature/aer-4693%20nginx%2Bimage&at=src/a.ts'
+    );
+    const [pathname, search] = url.split('?');
+    const back = parseUrl(pathname, `?${search}`);
+    expect(back.base).toBe('upstream/main');
+    expect(back.head).toBe('feature/aer-4693 nginx+image');
+    expect(back.at).toBe('src/a.ts');
   });
 });

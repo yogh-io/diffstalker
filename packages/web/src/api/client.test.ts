@@ -183,6 +183,44 @@ describe('history / compare decoding', () => {
     expect(fake.calls[0].url).toBe('/repos/r1/compare/count?base=origin%2Fdev');
   });
 
+  test('a picked stack layer rides as head= on compare, count and file, after base', async () => {
+    respond = (call) =>
+      call.url.includes('/compare/file')
+        ? { body: { lines: [] } }
+        : {
+            body: {
+              baseBranch: 'feature/nginx',
+              stats: { filesChanged: 0, additions: 0, deletions: 0 },
+              files: [],
+              commits: [],
+              uncommittedCount: 0,
+            },
+          };
+    await client.compare('r1', { base: 'feature/nginx', head: 'feature/nginx-image' });
+    await client.compareCount('r1', { base: 'feature/nginx', head: 'feature/nginx-image' });
+    await client.compareFileDiff('r1', {
+      path: 'a.ts',
+      base: 'feature/nginx',
+      head: 'feature/nginx-image',
+      whole: true,
+    });
+    expect(fake.calls.map((c) => c.url)).toEqual([
+      '/repos/r1/compare?base=feature%2Fnginx&head=feature%2Fnginx-image',
+      '/repos/r1/compare/count?base=feature%2Fnginx&head=feature%2Fnginx-image',
+      '/repos/r1/compare/file?path=a.ts&base=feature%2Fnginx&head=feature%2Fnginx-image&whole=true',
+    ]);
+  });
+
+  test('compareStack reads the stack for a trunk; absent means the detected one', async () => {
+    const stack = { trunk: 'upstream/main', layers: [], forkedAbove: false };
+    respond = () => ({ body: stack });
+    await expect(client.compareStack('r1')).resolves.toEqual(stack);
+    await client.compareStack('r1', { base: 'upstream/main' });
+    expect(fake.calls.map((c) => [c.method, c.url])).toEqual([
+      ['GET', '/repos/r1/compare/stack'],
+      ['GET', '/repos/r1/compare/stack?base=upstream%2Fmain'],
+    ]);
+  });
 });
 
 describe('journal', () => {

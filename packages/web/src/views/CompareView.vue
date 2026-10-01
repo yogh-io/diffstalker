@@ -5,8 +5,10 @@
  *
  * - Top bar (persistent): base-branch selector (candidates pulled once
  *   per activation; changing it re-reads the compare with ?base=… —
- *   nothing is persisted daemon-side), the include-uncommitted toggle,
- *   and the diff-colored stats line.
+ *   nothing is persisted daemon-side), the stack strip when the branch
+ *   sits in a stack of two or more layers (picking one narrows the
+ *   compare to that layer's own diff, docs/stacked-compare.md), the
+ *   include-uncommitted toggles, and the diff-colored stats line.
  * - Commits section: collapsible, collapsed by default.
  * - PR body: file tree (left, core/view/fileTree — same collapsing tree
  *   the CLI renders) and stacked per-file diffs (right, the shared
@@ -36,10 +38,11 @@ import type { UncommittedParts } from '@diffstalker/core/types/compare';
 import DiffStack, { type StackFile } from '../components/DiffStack.vue';
 import SplitResizer from '../components/SplitResizer.vue';
 import ChangedFileTree, { inTreeOrder } from '../components/ChangedFileTree.vue';
+import StackStrip from '../components/StackStrip.vue';
 
 const repo = useRepoStore();
 const ui = useUiStore();
-const { compare } = storeToRefs(repo);
+const { compare, compareStack, selectedStackHead, pickedLayer, comparePair } = storeToRefs(repo);
 
 // Seeded from the store so the choice survives a tab switch (the ref
 // itself is component-local and would otherwise reset to all-off).
@@ -88,6 +91,9 @@ const files = computed(() => compareDiff.value?.files ?? []);
 /** The branch being compared (the "head" of the PR); null when unknown. */
 const currentBranch = computed(() => repo.shared.status?.branch?.current || null);
 
+/** What the loaded rows are the head of: the picked layer, else the branch. */
+const headLabel = computed(() => comparePair.value.head ?? currentBranch.value);
+
 /** Selector options: the candidates, plus the current base if absent. */
 const baseOptions = computed(() => {
   const base = compare.value.baseBranch;
@@ -106,6 +112,28 @@ async function onBaseChange(event: Event): Promise<void> {
   // nothing is persisted daemon-side.
   await repo.setSelectedCompareBase(branch, { ...uncommitted });
 }
+
+/**
+ * The strip shows only for a real stack: one layer is just the branch,
+ * and `all` would be the only other thing to click.
+ */
+const showStack = computed(() => (compareStack.value?.layers.length ?? 0) >= 2);
+
+async function onPickLayer(name: string | null): Promise<void> {
+  if (name === selectedStackHead.value) return;
+  // Like a base change: it re-pulls the comparison, so it gets an entry.
+  beginUserNav({ view: 'compare' });
+  await repo.setSelectedStackHead(name, { ...uncommitted });
+}
+
+/**
+ * Uncommitted work only exists against HEAD. With another layer picked
+ * the toggles would ask for a diff the daemon refuses, so they are not
+ * offered; their state is kept for when the pick returns to HEAD.
+ */
+const uncommittedHidden = computed(
+  () => pickedLayer.value !== null && !pickedLayer.value.isHead
+);
 
 /**
  * Explicit :checked/@change instead of v-model: with v-model the extra
@@ -247,10 +275,11 @@ const stackFiles = computed<StackFile[]>(() =>
     // The two kinds of row in this stack sit against DIFFERENT bases: the
     // committed ones against the merge-base, the uncommitted ones against
     // HEAD. Until now only an [uncommitted] tag hinted at that, and it
-    // never mentioned a base at all.
+    // never mentioned a base at all. With a layer picked the committed
+    // pair is the layer below and the layer, not the trunk and HEAD.
     refPair: file.uncommitted
       ? ({ kind: 'compare-uncommitted', side: file.uncommitted } as const)
-      : ({ kind: 'compare', base: compare.value.baseBranch ?? null } as const),
+      : ({ kind: 'compare', base: comparePair.value.base, head: comparePair.value.head } as const),
   }))
 );
 
@@ -294,10 +323,10 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
     <header class="topbar" data-testid="compare-topbar">
       <Teleport defer to="#view-toolbar-slot" :disabled="!isPortrait">
         <label class="base-select">
-          <span v-if="currentBranch" class="head-branch mono" :title="currentBranch">{{
-            currentBranch
+          <span v-if="headLabel" class="head-branch mono" :title="headLabel">{{
+            headLabel
           }}</span>
-          <span v-if="currentBranch" class="arrow" aria-hidden="true">→</span>
+          <span v-if="headLabel" class="arrow" aria-hidden="true">→</span>
           <span class="eyebrow">base</span>
           <select
             class="mono"
@@ -315,7 +344,22 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
         </label>
       </Teleport>
 
-      <fieldset class="uncommitted-toggles" data-testid="uncommitted-toggles">
+      <!-- Under the base picker: the trunk it picks is what the stack
+           hangs off. Not lifted into the tab band in portrait — it needs
+           a full row of its own, and scrolls inside that row. -->
+      <StackStrip
+        v-if="showStack && compareStack"
+        :stack="compareStack"
+        :active="selectedStackHead"
+        :disabled="compare.loading"
+        @pick="onPickLayer"
+      />
+
+      <fieldset
+        v-if="!uncommittedHidden"
+        class="uncommitted-toggles"
+        data-testid="uncommitted-toggles"
+      >
         <legend>include</legend>
         <label v-for="part in UNCOMMITTED_LABELS" :key="part.key" class="uncommitted-toggle">
           <input
@@ -376,8 +420,8 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
       class="panel-note"
       data-testid="compare-clean"
     >
-      No changes{{ currentBranch ? ` on ${currentBranch}` : '' }} compared to
-      {{ compareDiff.baseBranch }}.
+      No changes{{ headLabel ? ` on ${headLabel}` : '' }} compared to
+      {{ comparePair.base }}.
     </p>
 
     <template v-else-if="compareDiff">
@@ -501,6 +545,14 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
 .topbar-busy {
   color: var(--text-dim);
   font-size: var(--fs-small);
+}
+
+/* The strip takes a full row of its own under the picker, toggles and
+   stats (order puts it last in the wrapping topbar whatever its place in
+   the markup). It scrolls inside that row; it never wraps or widens the
+   page. Reaches StackStrip's root via the parent-scope attribute. */
+.stack-strip {
+  order: 1;
 }
 
 .uncommitted-toggles {

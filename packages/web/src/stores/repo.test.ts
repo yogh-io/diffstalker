@@ -29,6 +29,7 @@ import type { FileEntry, FileStatus } from '@diffstalker/core/git/status';
 import type { JournalHunkEntry } from '@diffstalker/core/types/journal';
 import { parseDiffWithLineNumbers, rawFromLines } from '@diffstalker/core/git/diffParse';
 import type { WorkingDiffEntry } from './repo';
+import type { CompareStack, StackLayer } from '@diffstalker/core/types/stack';
 
 /**
  * A wire diff body. The wire carries LINES only — the raw text used to be
@@ -155,6 +156,10 @@ function defaultGetRoutes(url: string): FakeResponse | undefined {
   // Before the /compare prefix below, which would otherwise swallow it.
   if (url.startsWith('/repos/r1/compare/count')) {
     return { body: { baseBranch: 'origin/main', commits: 3 } };
+  }
+  // Same: a branch in no stack, which is what every non-stack test wants.
+  if (url.startsWith('/repos/r1/compare/stack')) {
+    return { body: { trunk: 'origin/main', layers: [], forkedAbove: false } };
   }
   if (url.startsWith('/repos/r1/compare')) {
     return { body: compareBody() };
@@ -1677,6 +1682,339 @@ describe('compare', () => {
     ]);
   });
 
+});
+
+// --- Stacked compare ---
+
+describe('stacked compare', () => {
+  // A console.error spy made with spyOn is the SAME mock, calls and all,
+  // for every later spyOn on it; restore it so a count here is this
+  // test's own.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function layer(name: string, commits: number, isHead = false): StackLayer {
+    return { name, refs: [name], tip: `${name}-tip`, commits, isHead };
+  }
+
+  /** Three layers on origin/main; HEAD is on the top one. */
+  const STACK: CompareStack = {
+    trunk: 'origin/main',
+    layers: [layer('feature/a', 2), layer('feature/b', 1), layer('feature/c', 3, true)],
+    forkedAbove: false,
+  };
+
+  /**
+   * The daemon with a stack: the stack route answers it, and a compare
+   * asked with a base reports that base as its own — for a layer that is
+   * the layer below, which the store must NOT show as the trunk.
+   */
+  function withStack(stack: CompareStack = STACK): void {
+    onRequest = (call) => {
+      if (call.url.startsWith('/repos/r1/compare/stack')) return { body: stack };
+      if (call.url.startsWith('/repos/r1/compare?')) {
+        const base = new URLSearchParams(call.url.split('?')[1]).get('base');
+        if (base !== null) return { body: { ...(compareBody() as object), baseBranch: base } };
+      }
+      return undefined;
+    };
+  }
+
+  function compareUrls(): string[] {
+    return fake.callsTo('/compare?').map((c) => c.url);
+  }
+
+  test('the stack rides beside every compare pull, for the same trunk', async () => {
+    withStack();
+    const { store, source } = await openStore();
+    await store.refreshCompare();
+    expect(store.compareStack).toEqual(STACK);
+    expect(fake.callsTo('/compare/stack').map((c) => c.url)).toEqual(['/repos/r1/compare/stack']);
+
+    await store.setSelectedCompareBase('origin/dev');
+    source.emit('state-change', wireState());
+    await flush();
+    expect(fake.callsTo('/compare/stack').map((c) => c.url)).toEqual([
+      '/repos/r1/compare/stack',
+      '/repos/r1/compare/stack?base=origin%2Fdev',
+      '/repos/r1/compare/stack?base=origin%2Fdev',
+    ]);
+    // No layer picked: today's request, byte for byte.
+    expect(compareUrls().at(-1)).toBe(
+      '/repos/r1/compare?base=origin%2Fdev&staged=false&unstaged=false&untracked=false'
+    );
+  });
+
+  test('a middle layer asks for the layer below as base and itself as head, with no uncommitted parts', async () => {
+    withStack();
+    const { store } = await openStore();
+    await store.setSelectedStackHead('feature/b', { staged: true, unstaged: true, untracked: true });
+    expect(compareUrls()).toEqual(['/repos/r1/compare?base=feature%2Fa&head=feature%2Fb']);
+    expect(store.comparePair).toEqual({ base: 'feature/a', head: 'feature/b' });
+    expect(store.pickedLayer).toEqual(layer('feature/b', 1));
+    // The diff's own base is feature/a; the picker keeps showing the trunk.
+    expect(store.compare.compareDiff!.baseBranch).toBe('feature/a');
+    expect(store.compare.baseBranch).toBe('origin/main');
+    // The categories are remembered for when the pick returns to HEAD.
+    expect(store.getLastUncommitted()).toEqual({ staged: true, unstaged: true, untracked: true });
+  });
+
+  test('the bottom layer sits on the trunk', async () => {
+    withStack();
+    const { store } = await openStore();
+    await store.setSelectedStackHead('feature/a');
+    expect(compareUrls()).toEqual(['/repos/r1/compare?base=origin%2Fmain&head=feature%2Fa']);
+    expect(store.comparePair).toEqual({ base: 'origin/main', head: 'feature/a' });
+  });
+
+  test('the layer at HEAD sends no head, so the uncommitted categories still apply', async () => {
+    withStack();
+    const { store } = await openStore();
+    await store.setSelectedStackHead('feature/c', { staged: true, unstaged: false, untracked: false });
+    expect(compareUrls()).toEqual([
+      '/repos/r1/compare?base=feature%2Fb&staged=true&unstaged=false&untracked=false',
+    ]);
+    expect(store.comparePair).toEqual({ base: 'feature/b', head: null });
+    expect(store.pickedLayer!.isHead).toBe(true);
+  });
+
+  test('picking the trunk clears the layer: it named a place in the old stack', async () => {
+    withStack();
+    const { store } = await openStore();
+    await store.setSelectedStackHead('feature/b');
+    await store.setSelectedCompareBase('origin/dev');
+    expect(store.selectedStackHead).toBeNull();
+    expect(compareUrls().at(-1)).toBe(
+      '/repos/r1/compare?base=origin%2Fdev&staged=false&unstaged=false&untracked=false'
+    );
+  });
+
+  test('a name that is not a layer is an error line — never a silent fallback to all', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    withStack();
+    const { store } = await openStore();
+    await store.refreshCompare();
+    await store.setSelectedStackHead('feature/gone');
+
+    expect(store.compare.error).toBe('feature/gone is not a layer of this stack');
+    expect(store.compare.compareDiff).toBeNull();
+    expect(store.compare.commitCount).toBeNull();
+    expect(store.compare.loading).toBe(false);
+    // The pick stays — the URL keeps naming it — and the trunk and the
+    // stack stay, so `all` and every real layer are still on offer.
+    expect(store.selectedStackHead).toBe('feature/gone');
+    expect(store.compare.baseBranch).toBe('origin/main');
+    expect(store.compareStack).toEqual(STACK);
+    // Nothing was pulled under a name that resolves to nothing.
+    expect(compareUrls()).toEqual(['/repos/r1/compare?staged=false&unstaged=false&untracked=false']);
+    expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+
+  test('a picked layer whose branch disappears shows the same error on the next refresh', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    withStack();
+    const { store, source } = await openStore();
+    await store.setSelectedStackHead('feature/b');
+    expect(store.compare.error).toBeNull();
+
+    withStack({ ...STACK, layers: [layer('feature/a', 2), layer('feature/c', 4, true)] });
+    source.emit('state-change', wireState());
+    await flush();
+    expect(store.compare.error).toBe('feature/b is not a layer of this stack');
+    expect(store.compare.compareDiff).toBeNull();
+    expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+
+  test('the count pull asks for the same pair, and claims no number for an unknown layer', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    withStack();
+    const { store } = await openStore();
+    await store.setSelectedStackHead('feature/b');
+    await store.refreshCompareCount();
+    expect(fake.callsTo('/compare/count').map((c) => c.url).at(-1)).toBe(
+      '/repos/r1/compare/count?base=feature%2Fa&head=feature%2Fb'
+    );
+
+    await store.setSelectedStackHead('feature/gone');
+    const before = fake.callsTo('/compare/count').length;
+    await store.refreshCompareCount();
+    expect(fake.callsTo('/compare/count')).toHaveLength(before);
+    expect(store.compare.commitCount).toBeNull();
+  });
+
+  test('a slow stack for an older pick cannot land over a newer one', async () => {
+    const slowStack = new Deferred<FakeResponse>();
+    let held = true;
+    onRequest = (call) => {
+      if (call.url.startsWith('/repos/r1/compare/stack')) {
+        if (held) {
+          held = false;
+          return slowStack.promise;
+        }
+        return { body: STACK };
+      }
+      return undefined;
+    };
+    const { store } = await openStore();
+
+    const first = store.setSelectedStackHead('feature/b'); // its stack is held
+    const second = store.setSelectedStackHead(null); // answers at once
+    await second;
+    await flush();
+    expect(store.compare.compareDiff!.baseBranch).toBe('origin/main');
+
+    slowStack.resolve({ body: STACK });
+    await first;
+    await flush();
+    // The stale pick asked for nothing more and changed nothing.
+    expect(compareUrls()).toEqual(['/repos/r1/compare?staged=false&unstaged=false&untracked=false']);
+    expect(store.comparePair).toEqual({ base: 'origin/main', head: null });
+    expect(store.compare.loading).toBe(false);
+  });
+
+  test('with no layer picked, a stack the daemon refuses leaves the compare alone', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onRequest = (call) =>
+      call.url.startsWith('/repos/r1/compare/stack')
+        ? { status: 500, body: { error: 'for-each-ref exploded' } }
+        : undefined;
+    const { store } = await openStore();
+    await store.refreshCompare();
+    expect(store.compare.compareDiff).not.toBeNull();
+    expect(store.compare.error).toBeNull();
+    expect(store.compareStack).toBeNull();
+    expect(consoleError).toHaveBeenCalledTimes(1); // the reason is on the console
+
+    // A 422 is "nothing to compare against": the compare says so, the
+    // stack stays quiet.
+    consoleError.mockClear();
+    onRequest = (call) =>
+      call.url.startsWith('/repos/r1/compare')
+        ? { status: 422, body: { error: 'No base branch' } }
+        : undefined;
+    await store.refreshCompare();
+    expect(store.compare.noBaseBranch).toBe(true);
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  test('with a layer picked, a stack the daemon refuses fails the compare like any refusal', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    withStack();
+    const { store } = await openStore();
+    await store.setSelectedStackHead('feature/b');
+    onRequest = (call) =>
+      call.url.startsWith('/repos/r1/compare/stack')
+        ? { status: 500, body: { error: 'for-each-ref exploded' } }
+        : undefined;
+    await store.refreshCompare();
+    expect(store.compare.error).toBe('Failed to load compare diff: for-each-ref exploded');
+  });
+
+  test('a restored base and head land together: one stack, one compare', async () => {
+    withStack();
+    const { store } = await openStore();
+    await store.setComparePick({ base: 'origin/dev', head: 'feature/b' });
+    expect(store.selectedCompareBase).toBe('origin/dev');
+    expect(store.selectedStackHead).toBe('feature/b');
+    expect(fake.callsTo('/compare/stack').map((c) => c.url)).toEqual([
+      '/repos/r1/compare/stack?base=origin%2Fdev',
+    ]);
+    expect(compareUrls()).toEqual(['/repos/r1/compare?base=feature%2Fa&head=feature%2Fb']);
+  });
+
+  test('whole-file mode on a compare row reads the picked pair, not the trunk', async () => {
+    withStack();
+    const { store } = await openStore();
+    await store.setSelectedStackHead('feature/b');
+    onRequest = (call) =>
+      call.url.startsWith('/repos/r1/compare/file') ? { body: diffBody('whole') } : undefined;
+    await store.setWholeFile({ view: 'compare', key: 'c:a.ts', path: 'a.ts' });
+    expect(fake.callsTo('/compare/file').map((c) => c.url)).toEqual([
+      '/repos/r1/compare/file?path=a.ts&base=feature%2Fa&head=feature%2Fb&whole=true',
+    ]);
+    expect(store.wholeFile?.key).toBe('c:a.ts');
+  });
+
+  test('the loaded pair follows the diff on screen, not the pick', async () => {
+    withStack();
+    const { store } = await openStore();
+    await store.refreshCompare({ staged: true, unstaged: false, untracked: false });
+    expect(store.compare.pair).toEqual({
+      base: 'origin/main',
+      head: null,
+      uncommitted: { staged: true, unstaged: false, untracked: false },
+    });
+
+    // The layer's own pull is held: the rows on screen are still the old
+    // pair's, and say so.
+    const slow = new Deferred<FakeResponse>();
+    const stacked = onRequest;
+    onRequest = (call) =>
+      call.url === '/repos/r1/compare?base=feature%2Fa&head=feature%2Fb'
+        ? slow.promise
+        : stacked?.(call);
+    const pick = store.setSelectedStackHead('feature/b', { staged: true, unstaged: false, untracked: false });
+    await flush();
+    expect(store.selectedStackHead).toBe('feature/b');
+    expect(store.comparePair).toEqual({ base: 'origin/main', head: null });
+    expect(store.compare.pair!.head).toBeNull();
+
+    // Whole-file on one of those rows asks for the pair it was read with:
+    // base + the row's uncommitted side, and NO head (the daemon refuses
+    // the two together).
+    await store.setWholeFile({ view: 'compare', key: 'staged:a.ts', path: 'a.ts', side: 'staged' });
+    expect(fake.callsTo('/compare/file').map((c) => c.url)).toEqual([
+      '/repos/r1/compare/file?path=a.ts&base=origin%2Fmain&uncommitted=staged&whole=true',
+    ]);
+
+    slow.resolve({ body: { ...(compareBody() as object), baseBranch: 'feature/a' } });
+    await pick;
+    await flush();
+    expect(store.comparePair).toEqual({ base: 'feature/a', head: 'feature/b' });
+    expect(store.compare.pair).toEqual({
+      base: 'feature/a',
+      head: 'feature/b',
+      uncommitted: { staged: false, unstaged: false, untracked: false },
+    });
+  });
+
+  test('a state-change re-pull under a non-HEAD pick still sends no uncommitted parts', async () => {
+    withStack();
+    const { store, source } = await openStore();
+    await store.setSelectedStackHead('feature/b', { staged: true, unstaged: true, untracked: true });
+    source.emit('state-change', wireState());
+    await flush();
+    expect(compareUrls()).toEqual([
+      '/repos/r1/compare?base=feature%2Fa&head=feature%2Fb',
+      '/repos/r1/compare?base=feature%2Fa&head=feature%2Fb',
+    ]);
+  });
+
+  test('an unknown layer is re-tried on the next state-change, so a branch that comes back is found', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    withStack({ ...STACK, layers: [layer('feature/a', 2), layer('feature/c', 4, true)] });
+    const { store, source } = await openStore();
+    await store.setSelectedStackHead('feature/b');
+    expect(store.compare.error).toBe('feature/b is not a layer of this stack');
+
+    withStack();
+    source.emit('state-change', wireState());
+    await flush();
+    expect(store.compare.error).toBeNull();
+    expect(store.compare.compareDiff).not.toBeNull();
+    expect(store.comparePair).toEqual({ base: 'feature/a', head: 'feature/b' });
+  });
+
+  test('a repo switch drops the pick and the stack', async () => {
+    withStack();
+    const { store } = await openStore();
+    await store.setSelectedStackHead('feature/b');
+    onRequest = null;
+    await store.open('/other');
+    expect(store.selectedStackHead).toBeNull();
+    expect(store.compareStack).toBeNull();
+  });
 });
 
 // --- Reconnect ---

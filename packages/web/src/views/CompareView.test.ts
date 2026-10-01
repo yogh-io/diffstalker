@@ -25,8 +25,11 @@ import { useRepoStore } from '../stores/repo';
 import { makeFakeFetch } from '../testing/fakes';
 import type { CommitInfo } from '@diffstalker/core/git/status';
 import type { CompareDiff, CompareFileDiff, DiffResult } from '@diffstalker/core/git/diff';
+import type { CompareStack, StackLayer } from '@diffstalker/core/types/stack';
+import { NO_UNCOMMITTED } from '@diffstalker/core/types/compare';
 import { loadPrefs } from '../prefs';
 import { stubMatchMedia, addToolbarSlot } from '../testing/portrait';
+import stackStripSource from '../components/StackStrip.vue?raw';
 
 function fileDiff(
   path: string,
@@ -89,6 +92,7 @@ function mountView(compareDiff: CompareDiff | null = makeCompareDiff()): {
   if (compareDiff) {
     repo.compare = {
       compareDiff,
+      pair: { base: compareDiff.baseBranch, head: null, uncommitted: NO_UNCOMMITTED },
       baseBranch: compareDiff.baseBranch,
       commitCount: compareDiff.commits.length,
       loading: false,
@@ -153,16 +157,21 @@ describe('top bar', () => {
 
   test('the base pick stays client-side: a GET with ?base=…, never a PUT', async () => {
     // Real store, real setSelectedCompareBase: with a repo attached the
-    // pick must produce a GET /compare?base=… and nothing else.
-    const fake = makeFakeFetch(() => ({
-      body: {
-        baseBranch: 'origin/dev',
-        stats: { filesChanged: 0, additions: 0, deletions: 0 },
-        files: [],
-        commits: [],
-        uncommittedCount: 0,
-      },
-    }));
+    // pick must produce a GET /compare?base=… (and the stack that rides
+    // beside every compare pull) and nothing else.
+    const fake = makeFakeFetch((call) =>
+      call.url.includes('/compare/stack')
+        ? { body: { trunk: 'origin/dev', layers: [], forkedAbove: false } }
+        : {
+            body: {
+              baseBranch: 'origin/dev',
+              stats: { filesChanged: 0, additions: 0, deletions: 0 },
+              files: [],
+              commits: [],
+              uncommittedCount: 0,
+            },
+          }
+    );
     vi.stubGlobal('fetch', fake.fn);
     try {
       const repo = useRepoStore();
@@ -176,6 +185,7 @@ describe('top bar', () => {
       await flushPromises();
 
       expect(fake.calls.map((c) => [c.method, c.url])).toEqual([
+        ['GET', '/repos/r1/compare/stack?base=origin%2Fdev'],
         ['GET', '/repos/r1/compare?base=origin%2Fdev&staged=false&unstaged=false&untracked=false'],
       ]);
     } finally {
@@ -264,6 +274,146 @@ describe('top bar', () => {
     expect(stats.text()).toContain('3 files changed');
     expect(stats.find('.count-add').text()).toBe('+40');
     expect(stats.find('.count-del').text()).toBe('−12');
+  });
+});
+
+describe('stack strip', () => {
+  function layer(name: string, commits: number, isHead = false): StackLayer {
+    return { name, refs: [name], tip: `${name}-tip`, commits, isHead };
+  }
+
+  const STACK: CompareStack = {
+    trunk: 'origin/main',
+    layers: [layer('feature/a', 2), layer('feature/b', 1), layer('feature/c', 3, true)],
+    forkedAbove: false,
+  };
+
+  function mountWithStack(stack: CompareStack | null, head: string | null = null) {
+    const repo = useRepoStore();
+    repo.compareStack = stack;
+    repo.selectedStackHead = head;
+    return mountView();
+  }
+
+  test('shows only for two or more layers', () => {
+    expect(mountWithStack(null).wrapper.find('[data-testid="stack-strip"]').exists()).toBe(false);
+    expect(
+      mountWithStack({ ...STACK, layers: [layer('feature/a', 2, true)] })
+        .wrapper.find('[data-testid="stack-strip"]')
+        .exists()
+    ).toBe(false);
+    const { wrapper } = mountWithStack(STACK);
+    const strip = wrapper.find('[data-testid="compare-topbar"] [data-testid="stack-strip"]');
+    expect(strip.exists()).toBe(true);
+    expect(strip.find('[data-testid="stack-trunk"]').text()).toBe('origin/main');
+    expect(strip.findAll('[data-testid="stack-layer"]')).toHaveLength(3);
+  });
+
+  test('picking a layer calls setSelectedStackHead with the name + the categories', async () => {
+    const { wrapper, repo } = mountWithStack(STACK);
+    const pick = vi.spyOn(repo, 'setSelectedStackHead').mockResolvedValue(undefined);
+    await wrapper.find('[data-testid="uncommitted-toggle-staged"]').setValue(true);
+
+    await wrapper.findAll('[data-testid="stack-layer"]')[1].trigger('click');
+    expect(pick).toHaveBeenCalledWith('feature/b', {
+      staged: true,
+      unstaged: false,
+      untracked: false,
+    });
+
+    // Re-picking the current layer is a no-op; `all` picks null.
+    repo.selectedStackHead = 'feature/b';
+    await wrapper.vm.$nextTick();
+    await wrapper.findAll('[data-testid="stack-layer"]')[1].trigger('click');
+    expect(pick).toHaveBeenCalledTimes(1);
+    await wrapper.find('[data-testid="stack-all"]').trigger('click');
+    expect(pick).toHaveBeenLastCalledWith(null, { staged: true, unstaged: false, untracked: false });
+  });
+
+  test('the uncommitted toggles go away under a layer that is not HEAD, and stay under HEAD', async () => {
+    const { wrapper, repo } = mountWithStack(STACK, 'feature/b');
+    expect(wrapper.find('[data-testid="uncommitted-toggles"]').exists()).toBe(false);
+
+    repo.selectedStackHead = 'feature/c'; // the checked-out layer
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="uncommitted-toggles"]').exists()).toBe(true);
+
+    repo.selectedStackHead = null;
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="uncommitted-toggles"]').exists()).toBe(true);
+  });
+
+  test('the file headers name the LOADED pair: the layer below…the layer', async () => {
+    const { wrapper, repo } = mountWithStack(STACK);
+    const labels = () =>
+      wrapper.findAll('[data-testid="file-diff"] [data-testid="ref-pair"]').map((el) => el.text());
+    expect(labels()[0]).toBe('origin/main…HEAD');
+
+    // A pick whose pull is still in flight changes nothing on screen: the
+    // rows are still the old pair's.
+    repo.selectedStackHead = 'feature/b';
+    await wrapper.vm.$nextTick();
+    expect(labels()[0]).toBe('origin/main…HEAD');
+
+    repo.compare = {
+      ...repo.compare,
+      pair: { base: 'feature/a', head: 'feature/b', uncommitted: NO_UNCOMMITTED },
+    };
+    await wrapper.vm.$nextTick();
+    expect(labels()[0]).toBe('feature/a…feature/b');
+    // The uncommitted row keeps its own pair: it never sits against a layer.
+    expect(labels()[2]).toBe('HEAD → working tree');
+
+    repo.compare = {
+      ...repo.compare,
+      pair: { base: 'feature/b', head: null, uncommitted: NO_UNCOMMITTED },
+    };
+    await wrapper.vm.$nextTick();
+    expect(labels()[0]).toBe('feature/b…HEAD');
+  });
+
+  test('the eyebrow and the clean state name the loaded pair, not the checked-out branch', async () => {
+    const repo = useRepoStore();
+    repo.shared = {
+      ...repo.shared,
+      status: { files: [], branch: { current: 'feature/c', ahead: 0, behind: 0 }, isRepo: true },
+    };
+    const { wrapper } = mountView(makeCompareDiff([], []));
+    expect(wrapper.find('.head-branch').text()).toBe('feature/c');
+    expect(wrapper.find('[data-testid="compare-clean"]').text()).toBe(
+      'No changes on feature/c compared to origin/main.'
+    );
+
+    repo.compare = {
+      ...repo.compare,
+      pair: { base: 'feature/a', head: 'feature/b', uncommitted: NO_UNCOMMITTED },
+    };
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('.head-branch').text()).toBe('feature/b');
+    expect(wrapper.find('[data-testid="compare-clean"]').text()).toBe(
+      'No changes on feature/b compared to feature/a.'
+    );
+  });
+
+  test('the strip is disabled while a pull is in flight, like the base picker', async () => {
+    const { wrapper, repo } = mountWithStack(STACK);
+    const buttons = () => wrapper.findAll('[data-testid="stack-strip"] button');
+    expect(buttons().every((b) => b.attributes('disabled') === undefined)).toBe(true);
+    repo.compare = { ...repo.compare, loading: true };
+    await wrapper.vm.$nextTick();
+    expect(buttons().every((b) => b.attributes('disabled') !== undefined)).toBe(true);
+  });
+
+  test('the picked layer is the pressed one; a name the stack lacks presses nothing', async () => {
+    const { wrapper } = mountWithStack(STACK, 'feature/gone');
+    const pressed = () =>
+      wrapper
+        .findAll('[data-testid="stack-strip"] button')
+        .filter((b) => b.attributes('aria-pressed') === 'true')
+        .map((b) => b.text());
+    expect(pressed()).toEqual([]);
+    // `all` is still there to get out with.
+    expect(wrapper.find('[data-testid="stack-all"]').exists()).toBe(true);
   });
 });
 
@@ -659,6 +809,7 @@ describe('empty and edge states', () => {
     const repo = useRepoStore();
     repo.compare = {
       compareDiff: null,
+      pair: null,
       baseBranch: null,
     commitCount: null,
       loading: false,
@@ -686,6 +837,7 @@ describe('empty and edge states', () => {
     const repo = useRepoStore();
     repo.compare = {
       compareDiff: null,
+      pair: null,
       baseBranch: null,
     commitCount: null,
       loading: true,
@@ -701,6 +853,7 @@ describe('empty and edge states', () => {
     const repo = useRepoStore();
     repo.compare = {
       compareDiff: null,
+      pair: null,
       baseBranch: null,
     commitCount: null,
       loading: false,
@@ -752,6 +905,28 @@ describe('portrait layout', () => {
     expect(
       wrapper.find('[data-testid="compare-topbar"] [data-testid="uncommitted-toggles"]').exists()
     ).toBe(true);
+  });
+
+  test('the stack strip stays in the topbar, on a row that scrolls inside itself', () => {
+    const repo = useRepoStore();
+    repo.compareStack = {
+      trunk: 'origin/main',
+      layers: [
+        { name: 'feature/a', refs: ['feature/a'], tip: 'a', commits: 2, isHead: false },
+        { name: 'feature/b', refs: ['feature/b'], tip: 'b', commits: 1, isHead: true },
+      ],
+      forkedAbove: false,
+    };
+    const { wrapper } = mountView();
+    const slot = document.querySelector('#view-toolbar-slot')!;
+    expect(slot.querySelector('[data-testid="stack-strip"]')).toBeNull();
+    const strip = wrapper.find('[data-testid="compare-topbar"] [data-testid="stack-strip"]');
+    expect(strip.exists()).toBe(true);
+    // A long stack must scroll INSIDE the strip, never widen the page
+    // (happy-dom computes no scoped styles, so the rule is read as text).
+    const rule = stackStripSource.match(/\.stack-strip\s*\{[^}]*\}/)?.[0] ?? '';
+    expect(rule).toMatch(/overflow-x:\s*auto/);
+    expect(rule).toMatch(/white-space:\s*nowrap/);
   });
 
   test('the lifted commits toggle still opens the in-view commit list', async () => {

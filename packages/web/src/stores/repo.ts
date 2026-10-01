@@ -46,7 +46,10 @@
  *   advance>, and an epoch change or pruned gap replaces the log
  *   wholesale ("journal restarted") instead of leaving a silent hole;
  * - the compare base is per-client too: selectedCompareBase rides along
- *   as GET /compare?base=… — nothing is persisted daemon-side.
+ *   as GET /compare?base=… — nothing is persisted daemon-side. So is the
+ *   picked stack layer (selectedStackHead): it turns into the request's
+ *   base + head pair against the stack pulled beside every compare
+ *   (docs/stacked-compare.md §5).
  *
  * A refused stage/unstage is the one error that OUTLIVES the next wire
  * state: it is kept beside shared.error and re-shown until the outcome
@@ -115,6 +118,7 @@ import type {
   CompareSelectionState,
 } from './types';
 import { NO_UNCOMMITTED, type UncommittedParts } from '@diffstalker/core/types/compare';
+import type { CompareStack, StackLayer } from '@diffstalker/core/types/stack';
 
 /** How long changed-file refetches coalesce into one per-file batch. */
 const DIFF_DEBOUNCE_MS = 20;
@@ -212,6 +216,31 @@ interface Refusal {
   staged: boolean;
 }
 
+/**
+ * What a picked stack layer asks the daemon for: the layer below it (or
+ * the trunk, for the bottom one) as base and the layer itself as head —
+ * except at HEAD's tip, where no head is sent: the daemon's default is
+ * that same tip, and only a request without a head may fold uncommitted
+ * work in. Null when the name is not a layer of this stack; the caller
+ * says so, it never falls back to the whole stack.
+ */
+export interface LayerPick {
+  layer: StackLayer;
+  base: string;
+  head: string | undefined;
+}
+
+export function resolveLayerPick(stack: CompareStack, name: string): LayerPick | null {
+  const index = stack.layers.findIndex((layer) => layer.name === name);
+  if (index === -1) return null;
+  const layer = stack.layers[index];
+  return {
+    layer,
+    base: index === 0 ? stack.trunk : stack.layers[index - 1].name,
+    head: layer.isHead ? undefined : layer.name,
+  };
+}
+
 /** The last snapshot workingDiffs changed-set diffing compares against. */
 interface WorkingSnapshot {
   files: Map<string, FileEntry>;
@@ -261,6 +290,7 @@ function initialHistory(): RepoHistoryState {
 function initialCompare(): RepoCompareState {
   return {
     compareDiff: null,
+    pair: null,
     baseBranch: null,
     commitCount: null,
     loading: false,
@@ -331,6 +361,18 @@ export const useRepoStore = defineStore('repo', () => {
    * never persisted daemon-side (the viewer mutates nothing).
    */
   const selectedCompareBase = shallowRef<string | null>(null);
+  /**
+   * The picked layer of the stack between that base and HEAD, by name.
+   * Null is today's compare (trunk…HEAD, the whole stack) and the
+   * default. Per-client like the base: it only shapes the next GET.
+   */
+  const selectedStackHead = shallowRef<string | null>(null);
+  /**
+   * The stack the last compare pull came with (GET /compare/stack for the
+   * same trunk). Null until pulled, and when the daemon had none to give.
+   * The strip draws from it, and a picked layer resolves against it.
+   */
+  const compareStack = shallowRef<CompareStack | null>(null);
 
   /**
    * Whole-file mode: the one file currently drawn in full instead of as
@@ -538,6 +580,8 @@ export const useRepoStore = defineStore('repo', () => {
     journalRestarted.value = false;
     compare.value = initialCompare();
     selectedCompareBase.value = null;
+    selectedStackHead.value = null;
+    compareStack.value = null;
     // Repo B must not inherit repo A's whole-file key: it would name a
     // file that may not exist here, and the first URL write would carry
     // `whole=1` into the new repo's address.
@@ -856,7 +900,11 @@ export const useRepoStore = defineStore('repo', () => {
     if (history.value.commits.length > 0) {
       void reloadHistory();
     }
-    if (compare.value.compareDiff !== null && !compare.value.loading) {
+    // Open means loaded OR showing an error: a layer whose branch was
+    // deleted stays unknown until something re-pulls, and the branch
+    // coming back is exactly the kind of move this handler is for.
+    const compareOpen = compare.value.compareDiff !== null || compare.value.error !== null;
+    if (compareOpen && !compare.value.loading) {
       void refreshCompare(lastUncommitted);
     } else {
       // Compare is not open: still keep the rail's commit count current,
@@ -1223,9 +1271,16 @@ export const useRepoStore = defineStore('repo', () => {
       return client.commitDiff(id, request.hash, { path: request.path, whole: true });
     }
     if (request.view === 'compare') {
+      // The row sits between the pair it was LOADED with — not the pair
+      // the current pick will pull: while a layer's pull is in flight the
+      // row on screen is still the old pair's, and an uncommitted row
+      // sent with the new head would be refused.
+      const pair = compare.value.pair;
+      if (pair === null) return Promise.reject(new Error('No compare is loaded'));
       return client.compareFileDiff(id, {
         path: request.path,
-        base: selectedCompareBase.value ?? undefined,
+        base: pair.base,
+        head: pair.head ?? undefined,
         uncommitted: request.side,
         whole: true,
       });
@@ -1908,10 +1963,16 @@ export const useRepoStore = defineStore('repo', () => {
     if (id === null) return;
     const gen = generation;
     const seq = ++compareCountSeq;
+    // The same pair the compare would ask for. A picked layer the cached
+    // stack cannot place has no count: the full refresh is what reports
+    // that, this one just stops claiming a number.
+    const pair = pickedRequest();
+    if (pair === null) {
+      compare.value = { ...compare.value, commitCount: null };
+      return;
+    }
     try {
-      const { commits } = await client.compareCount(id, {
-        base: selectedCompareBase.value ?? undefined,
-      });
+      const { commits } = await client.compareCount(id, pair);
       if (gen !== generation || seq !== compareCountSeq) return;
       compare.value = { ...compare.value, commitCount: commits };
     } catch (err) {
@@ -1926,6 +1987,91 @@ export const useRepoStore = defineStore('repo', () => {
     }
   }
 
+  /**
+   * The base + head pair the picked layer stands for, resolved against
+   * the cached stack; today's `?base=` alone when no layer is picked.
+   * Null when a layer is picked that the stack does not hold.
+   */
+  function pickedRequest(): { base: string | undefined; head: string | undefined } | null {
+    const head = selectedStackHead.value;
+    if (head === null) return { base: selectedCompareBase.value ?? undefined, head: undefined };
+    const stack = compareStack.value;
+    if (stack === null) return null;
+    const pick = resolveLayerPick(stack, head);
+    if (pick === null) return null;
+    return { base: pick.base, head: pick.head };
+  }
+
+  /**
+   * The stack for a trunk, or null when there is none to show. Only for
+   * the pull that rides BESIDE a compare: with no layer picked the stack
+   * draws nothing but the strip, so a refusal must not take the compare
+   * down with it. A 422 is the daemon's "nothing to compare against" and
+   * the compare pull reports it; anything else goes to the console.
+   */
+  function absorbStackFailure(err: unknown): null {
+    if (!(err instanceof DaemonError && err.status === 422)) {
+      logDaemonRefusal('load compare stack', err, { base: selectedCompareBase.value });
+    }
+    return null;
+  }
+
+  /** What one compare pull asked for, kept beside the diff it got back. */
+  interface ComparePull {
+    stack: CompareStack | null;
+    diff: CompareDiff;
+    head: string | undefined;
+    uncommitted: UncommittedParts;
+  }
+
+  /**
+   * No layer picked: today's compare. Nothing hangs on the stack, so it
+   * rides beside the compare, not ahead of it, and its failure leaves the
+   * compare alone.
+   */
+  async function pullWholeStack(
+    id: string,
+    trunk: string | undefined,
+    uncommitted: UncommittedParts
+  ): Promise<ComparePull> {
+    const [stack, diff] = await Promise.all([
+      client.compareStack(id, { base: trunk }).catch(absorbStackFailure),
+      client.compare(id, { base: trunk, ...uncommitted }),
+    ]);
+    return { stack, diff, head: undefined, uncommitted };
+  }
+
+  /**
+   * A layer picked: the layer decides what to ask for, so the stack comes
+   * first — and a stack the daemon refuses fails the compare like any
+   * other refusal would. Null when the request was superseded meanwhile,
+   * or the name is not a layer (reported here, the caller is done).
+   */
+  async function pullLayer(
+    id: string,
+    trunk: string | undefined,
+    head: string,
+    uncommitted: UncommittedParts,
+    isStale: () => boolean
+  ): Promise<ComparePull | null> {
+    const stack = await client.compareStack(id, { base: trunk });
+    if (isStale()) return null;
+    const pick = resolveLayerPick(stack, head);
+    if (pick === null) {
+      applyUnknownLayer(head, stack);
+      return null;
+    }
+    // Uncommitted work only exists against HEAD: the categories go only
+    // with the layer at HEAD's tip, which sends no head.
+    const atHead = pick.head === undefined;
+    const diff = await client.compare(id, {
+      base: pick.base,
+      head: pick.head,
+      ...(atHead ? uncommitted : {}),
+    });
+    return { stack, diff, head: pick.head, uncommitted: atHead ? uncommitted : NO_UNCOMMITTED };
+  }
+
   async function refreshCompare(
     uncommitted: UncommittedParts = NO_UNCOMMITTED
   ): Promise<void> {
@@ -1934,30 +2080,66 @@ export const useRepoStore = defineStore('repo', () => {
     if (id === null) return;
     const gen = generation;
     const seq = ++compareRequestSeq;
+    const isStale = (): boolean => gen !== generation || seq !== compareRequestSeq;
     compare.value = { ...compare.value, loading: true, error: null, noBaseBranch: false };
+    const trunk = selectedCompareBase.value ?? undefined;
+    const head = selectedStackHead.value;
     try {
-      const diff = await client.compare(id, {
-        base: selectedCompareBase.value ?? undefined,
-        ...uncommitted,
-      });
-      if (gen !== generation || seq !== compareRequestSeq) return;
+      const pull =
+        head === null
+          ? await pullWholeStack(id, trunk, uncommitted)
+          : await pullLayer(id, trunk, head, uncommitted, isStale);
+      if (pull === null || isStale()) return;
+      const { stack, diff } = pull;
       // The loaded list is the authority on its own length: take the count
       // from it and retire any count request still in flight, so the badge
       // can never contradict the commits the user is looking at.
       compareCountSeq += 1;
+      compareStack.value = stack;
       compare.value = {
         ...compare.value,
         compareDiff: diff,
-        baseBranch: diff.baseBranch,
+        pair: { base: diff.baseBranch, head: pull.head ?? null, uncommitted: pull.uncommitted },
+        // With a layer picked the diff's own base is the layer below; the
+        // picker keeps showing the trunk, which is what the user picked.
+        baseBranch: head === null || stack === null ? diff.baseBranch : stack.trunk,
         commitCount: diff.commits.length,
         loading: false,
         noBaseBranch: false,
         selection: reanchoredCompareSelection(compare.value, diff),
       };
     } catch (err) {
-      if (gen !== generation || seq !== compareRequestSeq) return;
+      if (isStale()) return;
       applyCompareFailure(err);
     }
+  }
+
+  /**
+   * A picked layer the stack does not hold — a link to a branch that was
+   * deleted, or renamed since. The pick stays (the URL keeps naming it),
+   * the error line says so, and `all` is the way out. Never a silent
+   * fallback to the whole stack: that would show a different diff under
+   * the name the user asked for.
+   */
+  function applyUnknownLayer(head: string, stack: CompareStack): void {
+    const message = `${head} is not a layer of this stack`;
+    logFailure('compare', new Error(message), {
+      head,
+      layers: stack.layers.map((layer) => layer.name),
+    });
+    compareCountSeq += 1;
+    compareStack.value = stack;
+    compare.value = {
+      ...compare.value,
+      compareDiff: null,
+      pair: null,
+      baseBranch: stack.trunk,
+      commitCount: null,
+      loading: false,
+      error: message,
+      noBaseBranch: false,
+      selection: { type: null, index: 0, diff: null },
+    };
   }
 
   function applyCompareFailure(err: unknown): void {
@@ -1974,6 +2156,7 @@ export const useRepoStore = defineStore('repo', () => {
       compare.value = {
         ...compare.value,
         compareDiff: null,
+        pair: null,
         baseBranch: null,
         commitCount: null,
         loading: false,
@@ -1999,15 +2182,62 @@ export const useRepoStore = defineStore('repo', () => {
   /**
    * Pick the base the compare view reads against (read-only: rides the
    * next GET /compare as ?base=…, never persisted daemon-side) and
-   * re-pull with it.
+   * re-pull with it. The base is the trunk a stack hangs off, so a new
+   * one clears the picked layer: the old layer names a place in the old
+   * stack.
    */
-  async function setSelectedCompareBase(
+  function setSelectedCompareBase(
     branch: string,
     uncommitted: UncommittedParts = NO_UNCOMMITTED
   ): Promise<void> {
-    selectedCompareBase.value = branch;
+    return setComparePick({ base: branch, head: null }, uncommitted);
+  }
+
+  /** Pick a stack layer (null is `all`, the whole stack) and re-pull. */
+  function setSelectedStackHead(
+    head: string | null,
+    uncommitted: UncommittedParts = NO_UNCOMMITTED
+  ): Promise<void> {
+    return setComparePick({ head }, uncommitted);
+  }
+
+  /**
+   * Both picks at once, one pull — what a restored URL needs, since its
+   * base and head land together and setting them one after the other
+   * would pull the comparison twice. `base` left out keeps the current one.
+   */
+  async function setComparePick(
+    pick: { base?: string; head: string | null },
+    uncommitted: UncommittedParts = NO_UNCOMMITTED
+  ): Promise<void> {
+    if (pick.base !== undefined) selectedCompareBase.value = pick.base;
+    selectedStackHead.value = pick.head;
     await refreshCompare(uncommitted);
   }
+
+  /** The picked layer resolved against the cached stack, or null. */
+  const currentPick = computed<LayerPick | null>(() => {
+    const head = selectedStackHead.value;
+    const stack = compareStack.value;
+    if (head === null || stack === null) return null;
+    return resolveLayerPick(stack, head);
+  });
+
+  /** The picked layer as the cached stack knows it, or null. */
+  const pickedLayer = computed<StackLayer | null>(() => currentPick.value?.layer ?? null);
+
+  /**
+   * The two refs the LOADED compare rows sit between, for the label on
+   * every file header: the base the daemon resolved and the layer the
+   * diff was pulled for, or null for HEAD. From the loaded pair, never
+   * the current pick — the rows on screen do not change until the next
+   * pull lands.
+   */
+  const comparePair = computed<{ base: string | null; head: string | null }>(() => {
+    const pair = compare.value.pair;
+    if (pair === null) return { base: compare.value.baseBranch, head: null };
+    return { base: pair.base, head: pair.head };
+  });
 
   function selectCompareFile(index: number): void {
     const compareDiff = compare.value.compareDiff;
@@ -2041,6 +2271,10 @@ export const useRepoStore = defineStore('repo', () => {
     journalRestarted,
     compare,
     selectedCompareBase,
+    selectedStackHead,
+    compareStack,
+    pickedLayer,
+    comparePair,
     // lifecycle
     open,
     dispose,
@@ -2068,6 +2302,8 @@ export const useRepoStore = defineStore('repo', () => {
     getLastUncommitted,
     getCandidateBaseBranches,
     setSelectedCompareBase,
+    setSelectedStackHead,
+    setComparePick,
     selectCompareFile,
   };
 });

@@ -32,17 +32,30 @@ describe('refPairLabel', () => {
   });
 
   test('compare uses git’s own three-dot notation, not an arrow', () => {
-    expect(refPairLabel({ kind: 'compare', base: 'origin/main' })).toBe('origin/main…HEAD');
+    expect(refPairLabel({ kind: 'compare', base: 'origin/main', head: null })).toBe(
+      'origin/main…HEAD'
+    );
   });
 
   test('compare with no resolved base still names the shape', () => {
-    expect(refPairLabel({ kind: 'compare', base: null })).toBe('base…HEAD');
+    expect(refPairLabel({ kind: 'compare', base: null, head: null })).toBe('base…HEAD');
+  });
+
+  test('a picked stack layer names both ends: the layer below, then the layer', () => {
+    // The pair a layer's diff actually sits between — NOT trunk…HEAD,
+    // which is what the same row would read without the layer.
+    expect(
+      refPairLabel({ kind: 'compare', base: 'feature/jsp-to-html', head: 'feature/nginx' })
+    ).toBe('feature/jsp-to-html…feature/nginx');
+    expect(refPairTitle({ kind: 'compare', base: 'feature/jsp-to-html', head: 'feature/nginx' })).toContain(
+      'feature/nginx'
+    );
   });
 
   test('compare’s uncommitted rows sit against a DIFFERENT base, and say so', () => {
     // The whole reason this is worth printing: one stack, two bases.
     expect(refPairLabel({ kind: 'compare-uncommitted', side: 'both' })).toBe('HEAD → working tree');
-    expect(refPairLabel({ kind: 'compare', base: 'origin/main' })).not.toBe(
+    expect(refPairLabel({ kind: 'compare', base: 'origin/main', head: null })).not.toBe(
       refPairLabel({ kind: 'compare-uncommitted', side: 'both' })
     );
   });
@@ -63,7 +76,8 @@ describe('refPairTitle', () => {
       working(true),
       working(false, 'untracked' as FileStatus),
       working(false, 'deleted' as FileStatus),
-      { kind: 'compare', base: 'origin/main' },
+      { kind: 'compare', base: 'origin/main', head: null },
+      { kind: 'compare', base: 'feature/a', head: 'feature/b' },
       { kind: 'compare-uncommitted', side: 'both' },
       { kind: 'commit', shortHash: 'a1b2c3d' },
       { kind: 'journal' },

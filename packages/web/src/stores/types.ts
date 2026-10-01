@@ -17,7 +17,7 @@ import type {
 } from '@diffstalker/core/git/status';
 import type { DiffResult, CompareDiff, CompareFileDiff } from '@diffstalker/core/git/diff';
 import type { WireHunkCounts } from '@diffstalker/client';
-import type { UncommittedSide } from '@diffstalker/core/types/compare';
+import type { UncommittedParts, UncommittedSide } from '@diffstalker/core/types/compare';
 
 /**
  * Shared repo state: what the daemon broadcasts for the attached repo on
@@ -66,9 +66,25 @@ export interface CompareSelectionState {
   diff: DiffResult | null;
 }
 
+/**
+ * The pair a loaded compare was pulled with: the base the daemon resolved,
+ * the picked stack layer (null for HEAD) and the uncommitted parts folded
+ * in. The rows on screen belong to THIS pair, not to the current pick:
+ * while a new layer's pull is in flight the old rows keep their own
+ * labels, and a whole-file read on one of them asks for the pair it was
+ * read with (an uncommitted row next to a head would be refused).
+ */
+export interface LoadedComparePair {
+  base: string;
+  head: string | null;
+  uncommitted: UncommittedParts;
+}
+
 /** Base-branch comparison state (per-client; pulled on demand). */
 export interface RepoCompareState {
   compareDiff: CompareDiff | null;
+  /** What compareDiff was pulled with; null until one has loaded. */
+  pair: LoadedComparePair | null;
   baseBranch: string | null;
   /**
    * How many commits the compare would list, kept live from the moment the

@@ -50,6 +50,7 @@ import type { GrepResult } from '@diffstalker/core/git/grep';
 import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import type { UncommittedParts, UncommittedSide } from '@diffstalker/core/types/compare';
+import type { CompareStack } from '@diffstalker/core/types/stack';
 
 /**
  * A file read that may carry an outline. `symbols` is absent when it was
@@ -330,11 +331,20 @@ export class DiffstalkerClient {
    * actual comparison — the same word the row carries in a CompareDiff:
    * Compare's stack mixes rows measured against the base with rows
    * measured against HEAD, the index, or (untracked) nothing at all.
-   * Absent means a committed row, measured against the base.
+   * Absent means a committed row, measured against the base. `head` is
+   * the picked stack layer; the daemon refuses it next to `uncommitted`
+   * (uncommitted work only exists against HEAD), and the store never
+   * sends the two together.
    */
   compareFileDiff(
     id: string,
-    opts: { path: string; base?: string; uncommitted?: UncommittedSide; whole?: boolean }
+    opts: {
+      path: string;
+      base?: string;
+      head?: string;
+      uncommitted?: UncommittedSide;
+      whole?: boolean;
+    }
   ): Promise<DiffResult> {
     return request(
       'GET',
@@ -342,6 +352,7 @@ export class DiffstalkerClient {
         toQuery({
           path: opts.path,
           base: opts.base,
+          head: opts.head,
           uncommitted: opts.uncommitted,
           whole: opts.whole,
         })
@@ -354,17 +365,21 @@ export class DiffstalkerClient {
 
   /**
    * The branch-vs-base compare. The three uncommitted categories are
-   * independent: naming none is the plain committed compare.
+   * independent: naming none is the plain committed compare. `head` is a
+   * picked stack layer (absent means HEAD, today's compare); the daemon
+   * answers 400 when it comes with any uncommitted category, so the
+   * store sends the categories only while the head is HEAD.
    */
   async compare(
     id: string,
-    opts: { base?: string } & Partial<UncommittedParts> = {}
+    opts: { base?: string; head?: string } & Partial<UncommittedParts> = {}
   ): Promise<CompareDiff> {
     const diff = await request<WireCompareDiff>(
       'GET',
       this.repoPath(id, '/compare') +
         toQuery({
           base: opts.base,
+          head: opts.head,
           staged: opts.staged,
           unstaged: opts.unstaged,
           untracked: opts.untracked,
@@ -379,8 +394,20 @@ export class DiffstalkerClient {
    * CompareDiff is orders of magnitude too heavy to fetch for a number.
    * Both fields are JSON-native, so nothing is revived.
    */
-  compareCount(id: string, opts: { base?: string } = {}): Promise<CompareCount> {
-    return request('GET', this.repoPath(id, '/compare/count') + toQuery({ base: opts.base }));
+  compareCount(id: string, opts: { base?: string; head?: string } = {}): Promise<CompareCount> {
+    return request(
+      'GET',
+      this.repoPath(id, '/compare/count') + toQuery({ base: opts.base, head: opts.head })
+    );
+  }
+
+  /**
+   * The stack of branches between the compare trunk and HEAD, as git
+   * topology shows it (docs/stacked-compare.md). `base` resolves exactly
+   * as on /compare: absent means the detected trunk. JSON-native.
+   */
+  compareStack(id: string, opts: { base?: string } = {}): Promise<CompareStack> {
+    return request('GET', this.repoPath(id, '/compare/stack') + toQuery({ base: opts.base }));
   }
 
   // --- Journal ---

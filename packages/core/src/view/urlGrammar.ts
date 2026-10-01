@@ -1,7 +1,7 @@
 /**
  * The web UI's URL grammar, as pure functions — the ONE copy of it.
  *
- *   /<view>/<repo-segments…>[?base=…][&whole=<path>][&at=…]
+ *   /<view>/<repo-segments…>[?base=…][&head=…][&whole=<path>][&at=…]
  *
  * The web client reads these URLs (useUrlSync) and `diffstalker link`
  * writes them, and the two must agree byte for byte: a link that encodes a
@@ -77,6 +77,12 @@ export interface UrlState {
   /** Compare only: the explicitly picked base branch. */
   base: string | null;
   /**
+   * Compare only: the picked layer of a stack of branches (its name, as
+   * the strip shows it). Absent means the whole stack up to HEAD. See
+   * docs/stacked-compare.md.
+   */
+  head: string | null;
+  /**
    * Repo-relative path of the ONE file drawn whole instead of as hunks,
    * or null. A path rather than a flag because History's anchor is a
    * commit, not a file: `whole=1` there could not say which file it
@@ -90,6 +96,7 @@ export const EMPTY_URL_STATE: UrlState = {
   view: null,
   at: null,
   base: null,
+  head: null,
   whole: null,
 };
 
@@ -106,14 +113,16 @@ export function parseUrl(pathname: string, search: string = ''): UrlState {
   const query = readQuery(search);
   const at = query.get('at') ?? null;
   const base = query.get('base') ?? null;
+  // A picked layer. An empty value is the same as absent: the whole stack.
+  const head = query.get('head') || null;
   // The file drawn whole. An empty value is the same as absent: no file.
   const whole = query.get('whole') || null;
-  if (rest.length === 0) return { repo: null, view, at, base, whole };
+  if (rest.length === 0) return { repo: null, view, at, base, head, whole };
   // The sentinel test runs on the RAW segment: a directory named `~` is
   // written `%7E` and must not be read as "under $HOME".
   const homeRelative = rest[0] === HOME_SENTINEL;
   const segs = (homeRelative ? rest.slice(1) : rest).map(safeDecode);
-  return { repo: { homeRelative, path: segs.join('/') }, view, at, base, whole };
+  return { repo: { homeRelative, path: segs.join('/') }, view, at, base, head, whole };
 }
 
 /**
@@ -146,22 +155,27 @@ export interface UrlPlace {
   at?: string | null;
   /** Compare only, and only when explicitly picked. */
   base?: string | null;
+  /** Compare only: the picked stack layer. Omitted or null means all. */
+  head?: string | null;
   /** Path of the file drawn whole. Omitted or null means hunks. */
   whole?: string | null;
 }
 
 /**
  * Build the path+search a place is addressed by. Query order is
- * `base`, `whole`, `at` — PINNED, matching what the web writes, so a link
- * and the URL the app rewrites after landing on it are identical (an
- * identical write
- * writes nothing, which keeps a shared link out of the Back stack).
+ * `base`, `head`, `whole`, `at` — PINNED, matching what the web writes, so
+ * a link and the URL the app rewrites after landing on it are identical
+ * (an identical write writes nothing, which keeps a shared link out of
+ * the Back stack).
  */
 export function buildUrlPath(place: UrlPlace): string {
   if (place.repoPath === null) return '/';
   const query: string[] = [];
   if (place.base !== null && place.base !== undefined) {
     query.push(`base=${encodeQueryValue(place.base)}`);
+  }
+  if (place.head !== null && place.head !== undefined && place.head !== '') {
+    query.push(`head=${encodeQueryValue(place.head)}`);
   }
   if (place.whole !== null && place.whole !== undefined && place.whole !== '') {
     query.push(`whole=${encodeQueryValue(place.whole)}`);

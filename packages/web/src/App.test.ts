@@ -76,6 +76,10 @@ function repoGetRoutes(url: string): FakeResponse | undefined {
   if (/^\/repos\/[^/]+\/compare\/count/.test(url)) {
     return { body: { baseBranch: 'origin/main', commits: 0 } };
   }
+  // Pulled beside every compare; a branch in no stack.
+  if (/^\/repos\/[^/]+\/compare\/stack/.test(url)) {
+    return { body: { trunk: 'origin/main', layers: [], forkedAbove: false } };
+  }
   if (/^\/repos\/[^/]+\/compare\?/.test(url)) {
     return {
       body: {
@@ -685,6 +689,62 @@ describe('view toolbar slot', () => {
 
 // --- Deep link on a cold load against a slow or down daemon ---
 
+describe('Back through stack layers', () => {
+  const STACK = {
+    trunk: 'origin/main',
+    layers: [
+      { name: 'feature/a', refs: ['feature/a'], tip: 'a', commits: 2, isHead: false },
+      { name: 'feature/b', refs: ['feature/b'], tip: 'b', commits: 1, isHead: false },
+      { name: 'feature/c', refs: ['feature/c'], tip: 'c', commits: 3, isHead: true },
+    ],
+    forkedAbove: false,
+  };
+
+  function here(): string {
+    return window.location.pathname + window.location.search;
+  }
+
+  /** Back/Forward as the browser delivers it: the URL is already there. */
+  async function popTo(url: string): Promise<void> {
+    window.history.replaceState(null, '', url);
+    window.dispatchEvent(new Event('popstate'));
+    await flushPromises();
+    await flushPromises();
+  }
+
+  test('Back from a layer to another layer, then to all, re-pulls what the URL names', async () => {
+    fake = makeFakeFetch((call) =>
+      /^\/repos\/[^/]+\/compare\/stack/.test(call.url) ? { body: STACK } : routes(call)
+    );
+    vi.stubGlobal('fetch', fake.fn);
+    const wrapper = await mountWithRepos([REPO_ONE]);
+    const repo = useRepoStore();
+    const compares = () => fake.calls.filter((c) => /\/compare\?/.test(c.url)).map((c) => c.url);
+
+    useUiStore().setActiveView('compare');
+    await flushPromises();
+    expect(here()).toBe('/compare/repo');
+    await repo.setSelectedStackHead('feature/a');
+    await flushPromises();
+    expect(here()).toBe('/compare/repo?head=feature/a');
+    await repo.setSelectedStackHead('feature/b');
+    await flushPromises();
+    expect(here()).toBe('/compare/repo?head=feature/b');
+
+    await popTo('/compare/repo?head=feature/a');
+    expect(repo.selectedStackHead).toBe('feature/a');
+    expect(compares().at(-1)).toBe('/repos/r1/compare?base=origin%2Fmain&head=feature%2Fa');
+    expect(here()).toBe('/compare/repo?head=feature/a');
+
+    // Absent means all: Back out of the stack lands on the whole of it.
+    await popTo('/compare/repo');
+    expect(repo.selectedStackHead).toBeNull();
+    expect(compares().at(-1)).toBe('/repos/r1/compare?staged=false&unstaged=false&untracked=false');
+    expect(here()).toBe('/compare/repo');
+    wrapper.unmount();
+  });
+});
+
 describe('deep link on a cold load', () => {
   const HOME = '/home/u';
   const DEEP = '/compare/~/gitRepos/calculator/pr-8858-wt?at=source/CommonPage.ts';
@@ -784,7 +844,56 @@ describe('deep link on a cold load', () => {
     await flushPromises();
     expect(useDaemonStore().activeRepoId).toBe('r-calc');
     expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(false);
+    expect(here().startsWith(DEEP_NO_ANCHOR)).toBe(true);
+    // The parked anchor has landed (the compare pull answered); only its
+    // URL write is still to come — after the restore is over, as it is
+    // against a real daemon, so it is an ambient anchor move and flushes
+    // after the throttle.
+    expect(useRepoStore().compare.selection.type).toBe('file');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await flushPromises();
     expect(here()).toBe(DEEP);
+    wrapper.unmount();
+  });
+
+  test('F5 on a layer link lands on the same layer: base is the trunk, head the layer', async () => {
+    const LAYER = `${DEEP_NO_ANCHOR}?base=origin/main&head=feature/b&at=source/CommonPage.ts`;
+    const stack = {
+      trunk: 'origin/main',
+      layers: [
+        { name: 'feature/a', refs: ['feature/a'], tip: 'a', commits: 2, isHead: false },
+        { name: 'feature/b', refs: ['feature/b'], tip: 'b', commits: 1, isHead: false },
+        { name: 'feature/c', refs: ['feature/c'], tip: 'c', commits: 3, isHead: true },
+      ],
+      forkedAbove: false,
+    };
+    fake = makeFakeFetch((call) =>
+      /^\/repos\/[^/]+\/compare\/stack/.test(call.url) ? { body: stack } : slowRoutes(call)
+    );
+    vi.stubGlobal('fetch', fake.fn);
+    window.history.replaceState(null, '', LAYER);
+    const wrapper = mountApp();
+    await flushPromises();
+    health.resolve({ body: { ok: true, ready: true, home: HOME } });
+    openRepo.resolve({ body: { id: 'r-calc', path: ABS } });
+    await flushPromises();
+    await flushPromises();
+
+    const repo = useRepoStore();
+    expect(repo.selectedCompareBase).toBe('origin/main');
+    expect(repo.selectedStackHead).toBe('feature/b');
+    // The view's activation pull goes out before the restore applies the
+    // pick (as it does for base); the pull that counts is the last one,
+    // and it asked for the layer's own pair, not the trunk's.
+    const compares = fake.calls.filter((c) => /\/compare\?/.test(c.url)).map((c) => c.url);
+    expect(compares.at(-1)).toBe('/repos/r-calc/compare?base=feature%2Fa&head=feature%2Fb');
+    expect(wrapper.find('[data-testid="stack-strip"]').exists()).toBe(true);
+
+    // The anchor lands after the throttle, and the URL is the link again.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await flushPromises();
+    expect(repo.compare.selection.type).toBe('file');
+    expect(here()).toBe(LAYER);
     wrapper.unmount();
   });
 

@@ -26,8 +26,11 @@ import type { UncommittedSide } from '@diffstalker/core/types/compare';
 export type RefPair =
   /** Changes: one row of the working tree, either side of the index. */
   | { kind: 'working'; staged: boolean; status: FileStatus }
-  /** Compare: the branch's own commits, base…HEAD (three-dot). */
-  | { kind: 'compare'; base: string | null }
+  /**
+   * Compare: the branch's own commits, base…head (three-dot). `head` is
+   * the picked stack layer; null is HEAD, the checked-out branch.
+   */
+  | { kind: 'compare'; base: string | null; head: string | null }
   /**
    * Compare: the uncommitted rows. Which two things they sit between
    * depends on the category — the staged row is HEAD against the index,
@@ -74,9 +77,9 @@ export function refPairLabel(pair: RefPair): string {
       }
       return pair.staged ? `HEAD ${ARROW} index` : `index ${ARROW} working tree`;
     case 'compare':
-      // Three dots, not an arrow: this is base…HEAD, the branch's own
+      // Three dots, not an arrow: this is base…head, the branch's own
       // commits, and the dots are git's own notation for it.
-      return pair.base === null ? 'base…HEAD' : `${pair.base}…HEAD`;
+      return `${pair.base ?? 'base'}…${pair.head ?? 'HEAD'}`;
     case 'compare-uncommitted':
       // A DIFFERENT base from the committed rows in the same stack, which
       // is exactly why this is worth printing.
@@ -98,7 +101,9 @@ export function refPairTitle(pair: RefPair): string {
         ? 'What you have staged: HEAD compared against the index'
         : 'What you have not staged yet: the index compared against the file on disk';
     case 'compare':
-      return 'Everything this branch adds on top of its base (three-dot diff)';
+      return pair.head === null
+        ? 'Everything this branch adds on top of its base (three-dot diff)'
+        : `Everything ${pair.head} adds on top of the layer below it (three-dot diff)`;
     case 'compare-uncommitted':
       return `Uncommitted work: ${uncommittedPairLabel(pair.side)} — not the compare base`;
     case 'commit':

@@ -10,6 +10,9 @@
  *
  *  - `base` passes: it decides what `at` is resolved against, and it is an
  *    explicit per-visit pick (a detected base is never written back).
+ *  - `head` passes for the same reason: the picked stack layer decides
+ *    which two refs the anchored file is diffed between. Absent is the
+ *    whole stack, today's compare.
  *  - `whole` passes: it names the ONE file drawn in full rather than as
  *    hunks. One file at a time, by construction — that is what keeps it a
  *    property of the anchor and not an expansion set. It carries a PATH,
@@ -26,13 +29,14 @@
  * the URL because it is per-anchor and per-visit; a preference is neither.
  * See docs/whole-file-mode.md §8.2.
  *
- *   /<view>/<repo-segments…>[?base=…][&whole=<path>][&at=…]
+ *   /<view>/<repo-segments…>[?base=…][&head=…][&whole=<path>][&at=…]
  *   /                                                  (no repo open)
  *   /changes/~/w/diffstalker?at=u:packages/web/src/App.vue
  *   /changes/~/w/diffstalker?whole=src/App.vue&at=u:src/App.vue
  *   /history/~/w/diffstalker?whole=src/App.vue&at=4d1c44a
  *   /history/~/w/diffstalker?at=4d1c44a
  *   /compare/~/w/calculator/fix-bbox?base=upstream/main&at=src/a.ts
+ *   /compare/~/w/calculator/fix-bbox?base=upstream/main&head=feature/nginx&at=src/a.ts
  *   /explorer/srv/git/thing?at=packages/web/src/App.vue
  *
  * VIEW FIRST. Segment 0 is a view keyword from a closed set, so parsing is
@@ -58,7 +62,10 @@
  * seqs restart on a daemon restart or a prune, so a remembered one would
  * point at an unrelated entry. Compare also carries `base`, the EXPLICIT
  * pick only — absent means "let the daemon detect", and a detected base is
- * never written back, so a link records what you asked for.
+ * never written back, so a link records what you asked for. `head` is the
+ * picked stack layer, written whenever one is picked: `base` is the trunk
+ * the stack hangs off, `head` the layer in it, and F5 on a layer link must
+ * land on the same layer.
  *
  * Query values are encoded with encodeURIComponent, then `%2F` and `%3A`
  * are put back as `/` and `:` (both legal raw in a query). Reading splits
@@ -193,6 +200,8 @@ interface Place {
   view: ViewName;
   at: string | null;
   base: string | null;
+  /** The picked stack layer, or null for the whole stack. */
+  head: string | null;
   /** Path of the file drawn whole, or null. */
   whole: string | null;
 }
@@ -332,6 +341,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     const view = ui.activeView;
     const at = abs === null ? null : currentAnchor();
     const base = abs !== null && view === 'compare' ? repo.selectedCompareBase : null;
+    const head = abs !== null && view === 'compare' ? repo.selectedStackHead : null;
     // Whole-file mode is a property OF the anchor, so it is only written
     // when it describes the file the view is actually aimed at.
     //
@@ -346,13 +356,14 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     const wholePath = repo.wholeFile?.path ?? null;
     const whole = wholeWritable(view, at, wholePath) ? wholePath : null;
     if (abs === null)
-      return { url: '/', repoPath: null, view, at: null, base: null, whole: null };
+      return { url: '/', repoPath: null, view, at: null, base: null, head: null, whole: null };
     return {
-      url: buildUrlPath({ view, repoPath: abs, home: home.value, at, base, whole }),
+      url: buildUrlPath({ view, repoPath: abs, home: home.value, at, base, head, whole }),
       repoPath: abs,
       view,
       at,
       base,
+      head,
       whole,
     };
   }
@@ -399,6 +410,10 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       written.repoPath === next.repoPath &&
       written.view === next.view &&
       written.base === next.base &&
+      // A layer pick changes which diff the anchor is in, exactly as a
+      // base change does; it must mint its own entry, not hide in the
+      // anchor throttle.
+      written.head === next.head &&
       // WITHOUT this, toggling whole-file looks like plain anchor movement:
       // it would be deferred into the 400ms throttle and always flushed as
       // 'replace', so the toggle could never mint a Back entry.
@@ -515,6 +530,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       () => ui.activeView,
       () => ui.activeStackKey,
       () => repo.selectedCompareBase,
+      () => repo.selectedStackHead,
       () => repo.wholeFile,
       () => repo.compare.selection,
       () => repo.history.selectedCommit,

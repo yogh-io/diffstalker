@@ -92,7 +92,7 @@ function activeRepo(path = `${HOME}/w/diffstalker`): void {
 
 /** Every UrlState field, so a test only spells out what it is about. */
 function state(part: Partial<UrlState>): UrlState {
-  return { repo: null, view: null, at: null, base: null, whole: null, ...part };
+  return { repo: null, view: null, at: null, base: null, head: null, whole: null, ...part };
 }
 
 describe('parseUrl', () => {
@@ -131,6 +131,20 @@ describe('parseUrl', () => {
         repo: { homeRelative: true, path: 'w/x' },
         view: 'compare',
         base: 'upstream/main',
+        at: 'src/a.ts',
+      })
+    );
+  });
+
+  test('compare carries the picked stack layer next to the trunk', () => {
+    expect(
+      parseUrl('/compare/~/w/x', '?base=upstream/main&head=feature/nginx&at=src/a.ts')
+    ).toEqual(
+      state({
+        repo: { homeRelative: true, path: 'w/x' },
+        view: 'compare',
+        base: 'upstream/main',
+        head: 'feature/nginx',
         at: 'src/a.ts',
       })
     );
@@ -529,5 +543,52 @@ describe('whole-file mode in the URL (F5 must land in the same view)', () => {
     await flushPromises();
     expect(document.title).not.toBe(hunksTitle);
     expect(document.title).toContain('whole');
+  });
+});
+
+describe('a picked stack layer in the URL (F5 must land on the same layer)', () => {
+  test('writes head= after base=, only on Compare', async () => {
+    activeRepo();
+    const repo = useRepoStore();
+    const ui = useUiStore();
+    ui.setActiveView('compare');
+    repo.selectedCompareBase = 'upstream/main';
+    repo.selectedStackHead = 'feature/nginx';
+    mount(Harness);
+    await flushPromises();
+    expect(here()).toBe('/compare/~/w/diffstalker?base=upstream/main&head=feature/nginx');
+
+    // Another view says nothing about it: the pick is Compare's alone.
+    ui.setActiveView('changes');
+    await flushPromises();
+    expect(here()).toBe('/changes/~/w/diffstalker');
+  });
+
+  test('all (null) writes nothing, so today\'s links are unchanged', async () => {
+    activeRepo();
+    const repo = useRepoStore();
+    useUiStore().setActiveView('compare');
+    repo.selectedCompareBase = 'upstream/main';
+    mount(Harness);
+    await flushPromises();
+    expect(here()).toBe('/compare/~/w/diffstalker?base=upstream/main');
+  });
+
+  test('picking a layer is undoable — it does not vanish into the anchor throttle', async () => {
+    // Same guard as whole-file mode: a change anchorOnly() cannot see is
+    // deferred and flushed as replace, and could never mint a Back entry.
+    activeRepo();
+    const repo = useRepoStore();
+    useUiStore().setActiveView('compare');
+    mount(Harness);
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+
+    beginUserNav({ view: 'compare' });
+    repo.selectedStackHead = 'feature/nginx';
+    await flushPromises();
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(here()).toBe('/compare/~/w/diffstalker?head=feature/nginx');
   });
 });
