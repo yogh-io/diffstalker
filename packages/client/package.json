@@ -30,12 +30,12 @@
     "diffstalkerd": "workspace:*",
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.4.0",
-    "dependency-cruiser": "^18.2.0",
-    "eslint": "^10.9.1",
+    "dependency-cruiser": "^18.5.0",
+    "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-sonarjs": "^4.2.0",
-    "prettier": "^3.9.6",
+    "eslint-plugin-sonarjs": "^4.2.2",
+    "prettier": "^3.9.9",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.68.0"
+    "typescript-eslint": "^8.71.0"
   }
 }
