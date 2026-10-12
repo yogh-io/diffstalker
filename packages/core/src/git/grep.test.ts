@@ -150,7 +150,7 @@ describe('searching', () => {
   });
 
   test('rejects a query shorter than the minimum', async () => {
-    expect(grepRepo(repo, 'ab')).rejects.toThrow(GrepQueryTooShortError);
+    await expect(grepRepo(repo, 'ab')).rejects.toThrow(GrepQueryTooShortError);
     expect(GREP_MIN_QUERY).toBe(3);
   });
 
@@ -278,15 +278,17 @@ describe('budgets', () => {
     commit();
 
     await grepRepo(repo, 'x'.repeat(GREP_MAX_QUERY));
-    expect(grepRepo(repo, 'x'.repeat(GREP_MAX_QUERY + 1))).rejects.toThrow(GrepQueryInvalidError);
+    await expect(grepRepo(repo, 'x'.repeat(GREP_MAX_QUERY + 1))).rejects.toThrow(
+      GrepQueryInvalidError
+    );
   });
 
   test('a NUL in the query is refused, not passed to execFile', async () => {
-    expect(grepRepo(repo, 'ab\0cd')).rejects.toThrow(GrepQueryInvalidError);
+    await expect(grepRepo(repo, 'ab\0cd')).rejects.toThrow(GrepQueryInvalidError);
   });
 
   test('a newline in the query is refused — git grep -F would read it as two patterns', async () => {
-    expect(grepRepo(repo, 'alpha\nbeta')).rejects.toThrow(GrepQueryInvalidError);
+    await expect(grepRepo(repo, 'alpha\nbeta')).rejects.toThrow(GrepQueryInvalidError);
   });
 });
 

@@ -65,12 +65,14 @@ export async function execGitBytes(
 
 /**
  * simple-git blocks explicitly-provided env vars like EDITOR or
- * GIT_CONFIG_GLOBAL behind unsafe flags. We forward the parent process's
- * OWN environment — exactly what the git child would inherit if no env
- * were passed at all — so allowing these categories reintroduces nothing
- * that implicit inheritance did not already permit. No value in this env
- * ever comes from a client. allowUnsafeEditor additionally permits the
- * `-c core.editor=true` used by rebaseContinue.
+ * GIT_CONFIG_GLOBAL behind unsafe flags, and since v4 also rejects any
+ * `GIT_*`, EDITOR or PAGER key not named in `allowEnvironment`. We forward
+ * the parent process's OWN environment — exactly what git would inherit
+ * if simple-git were not in the way — so allowing these categories, and
+ * naming every key we pass, reintroduces nothing a plain spawn would not
+ * permit. No value in this env ever comes from a client.
+ * allowUnsafeEditor additionally permits the `-c core.editor=true` used by
+ * rebaseContinue.
  */
 const ENV_PASSTHROUGH_UNSAFE: SimpleGitOptions['unsafe'] = {
   allowUnsafeEditor: true,
@@ -124,12 +126,14 @@ export function createGit(repoPath: string, options: CreateGitOptions = {}): Sim
   const attributesFile = attributesFilePath();
   const config = attributesFile === null ? [] : [`core.attributesFile=${attributesFile}`];
 
+  const env = gitEnv();
   return simpleGit({
     baseDir: repoPath,
     unsafe: ENV_PASSTHROUGH_UNSAFE,
+    allowEnvironment: Object.keys(env),
     timeout: {
       block: options.longRunning === true ? GIT_LONG_IDLE_TIMEOUT_MS : GIT_IDLE_TIMEOUT_MS,
     },
     config,
-  }).env(gitEnv());
+  }).env(env);
 }

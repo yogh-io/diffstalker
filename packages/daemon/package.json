@@ -57,20 +57,20 @@
   },
   "dependencies": {
     "chokidar": "^5.0.0",
-    "ignore": "^7.0.5",
-    "simple-git": "^3.27.0"
+    "ignore": "^7.0.12",
+    "simple-git": "^4.0.2"
   },
   "devDependencies": {
     "@diffstalker/core": "workspace:*",
     "@eslint/js": "^10.0.1",
-    "@types/node": "^26.4.0",
-    "dependency-cruiser": "^18.2.0",
-    "eslint": "^10.9.1",
+    "@types/node": "^26.6.4",
+    "dependency-cruiser": "^18.5.0",
+    "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-sonarjs": "^4.2.0",
-    "prettier": "^3.9.6",
+    "eslint-plugin-sonarjs": "^4.2.2",
+    "prettier": "^3.9.9",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.68.0",
+    "typescript-eslint": "^8.71.1",
     "web-tree-sitter": "0.26.11"
   }
 }
