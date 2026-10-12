@@ -43,11 +43,15 @@ describe('what the strip says', () => {
     expect(trunk.element.tagName).toBe('SPAN');
 
     const buttons = layerButtons(wrapper);
+    // The shared `feature/` is said once, before the layers, not on each.
+    expect(wrapper.find('[data-testid="stack-prefix"]').text()).toBe('feature/');
     expect(buttons.map((b) => b.find('.name').text())).toEqual([
-      'feature/jsp-to-html',
-      'feature/nginx',
-      'feature/nginx-image',
+      'jsp-to-html',
+      'nginx',
+      'nginx-image',
     ]);
+    // Numbered bottom to top.
+    expect(buttons.map((b) => b.find('.pos').text())).toEqual(['1', '2', '3']);
     expect(buttons.map((b) => b.find('.commits').text())).toEqual([
       '3 commits',
       '1 commit',
@@ -91,10 +95,29 @@ describe('what the strip says', () => {
 
   test('the other refs at a tip are read out from the button, but not shown in the label', () => {
     const buttons = layerButtons(mountStrip());
-    expect(buttons[0].find('.name').text()).toBe('feature/jsp-to-html');
+    expect(buttons[0].find('.name').text()).toBe('jsp-to-html');
     expect(buttons[0].text()).toContain('also upstream/feature/jsp-to-html');
     expect(buttons[0].attributes('title')).toContain('upstream/feature/jsp-to-html');
     expect(buttons[1].text()).not.toContain('also');
+  });
+
+  test('the full name is read out, though the label shows it shortened', () => {
+    const buttons = layerButtons(mountStrip());
+    expect(buttons[1].find('.name').attributes('aria-hidden')).toBe('true');
+    expect(buttons[1].find('.visually-hidden').text()).toBe('feature/nginx');
+    expect(buttons[1].attributes('title')).toContain('feature/nginx');
+  });
+
+  test('names with nothing in common are shown whole, with no prefix', () => {
+    const wrapper = mountStrip(null, {
+      ...STACK,
+      layers: [layer('feature/a', 1), layer('fix/b', 1, true)],
+    });
+    expect(wrapper.find('[data-testid="stack-prefix"]').exists()).toBe(false);
+    expect(layerButtons(wrapper).map((b) => b.find('.name').text())).toEqual([
+      'feature/a',
+      'fix/b',
+    ]);
   });
 
   test('disabled while a compare pull is in flight, like the base picker', () => {
