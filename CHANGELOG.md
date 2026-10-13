@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the strip could name the layer after it. Now, once branches are pushed,
   only pushed ones make layers, and a pushed name wins. A stack where
   nothing is pushed yet works as before.
+- **The repo picker now ranks a bare-repo project by its worktrees.** For
+  a project laid out as a bare repo with worktrees around it, the picker
+  read the age from the bare repo's own files, which sit untouched for
+  months, so a project you worked in minutes ago showed as months old and
+  sorted near the bottom. The age is now the newest activity in any of
+  the project's worktrees.
 
 ## [0.13.6] - 2026-10-01
 

@@ -31,10 +31,12 @@ export interface DiscoveredRepo {
   branch: string | null;
   /**
    * Most recent git activity (epoch ms), or null when nothing could be
-   * stat'ed. The newest mtime of the git dir's `index` and `HEAD` — the
-   * two files every commit, checkout and staging touches — which is the
-   * same measure worktree listing uses, so a repo does not read as
-   * differently aged depending on which list it appears in.
+   * stat'ed. The newest mtime of `index` and `HEAD` — the two files every
+   * commit, checkout and staging touches — across the git dir and each of
+   * its linked worktrees (`<git-dir>/worktrees/*`). That is the measure
+   * worktree listing uses per worktree, taken over the whole project: in a
+   * bare layout the work happens only in the worktrees, and the bare dir's
+   * own files sit untouched for months.
    *
    * This is what lets a client rank a projects folder: a directory you
    * have not touched in two years is still a repo, but it is not what you
@@ -142,14 +144,23 @@ async function branchFromHead(gitDir: string): Promise<string | null> {
 }
 
 /**
- * When this repo was last touched: the newest mtime of the git dir's
- * `index` and `HEAD`. Null when neither can be stat'ed.
+ * When this repo was last touched: the newest mtime of `index` and `HEAD`
+ * in the git dir and in each linked worktree's git dir under it. Null
+ * when none can be stat'ed.
  */
 async function lastActivityOf(gitDir: string): Promise<number | null> {
+  const dirs = [gitDir];
+  try {
+    const linked = await fs.readdir(path.join(gitDir, 'worktrees'));
+    dirs.push(...linked.map((name) => path.join(gitDir, 'worktrees', name)));
+  } catch {
+    // No worktrees dir: a repo without linked worktrees, the usual case.
+  }
+  const files = dirs.flatMap((dir) => [path.join(dir, 'index'), path.join(dir, 'HEAD')]);
   const times = await Promise.all(
-    ['index', 'HEAD'].map(async (name) => {
+    files.map(async (file) => {
       try {
-        return (await fs.stat(path.join(gitDir, name))).mtimeMs;
+        return (await fs.stat(file)).mtimeMs;
       } catch {
         return null; // missing (a repo with no index yet), or unreadable
       }

@@ -73,6 +73,27 @@ describe('discoverRepos', () => {
     expect(alpha?.lastActivity).toBeGreaterThan(Date.now() - 60_000);
   });
 
+  it("counts a linked worktree's activity toward its project (bare layout)", async () => {
+    // A bare repo with worktrees around it: the bare dir's own index and
+    // HEAD sit untouched while all the work lands in a worktree's git dir.
+    const project = path.join(root, 'bare-project');
+    const bare = path.join(project, '.bare');
+    const worktreeGitDir = path.join(bare, 'worktrees', 'feat');
+    fs.mkdirSync(worktreeGitDir, { recursive: true });
+    fs.writeFileSync(path.join(bare, 'HEAD'), 'ref: refs/heads/main\n');
+    fs.writeFileSync(path.join(project, '.git'), `gitdir: ${bare}\n`);
+    fs.writeFileSync(path.join(worktreeGitDir, 'HEAD'), 'ref: refs/heads/feat\n');
+    const old = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(path.join(bare, 'HEAD'), old, old);
+    try {
+      const { repos } = await discoverRepos(root);
+      const found = repos.find((repo) => repo.name === 'bare-project');
+      expect(found?.lastActivity).toBeGreaterThan(Date.now() - 60_000);
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+
   it('drops a leftover worktree directory whose git dir was pruned', async () => {
     const stale = path.join(root, 'stale-worktree');
     fs.mkdirSync(stale, { recursive: true });
