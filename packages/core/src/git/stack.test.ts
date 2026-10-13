@@ -47,8 +47,10 @@ describe('getStack (fixture)', () => {
     gitExec(repoPath, 'update-ref refs/remotes/upstream/top top');
 
     // A side branch off main that is NOT on the stack's line: never a layer.
+    // Pushed, so from main it is a real fork, not a scratch branch.
     gitExec(repoPath, 'checkout -b side main');
     commit(repoPath, 'side.txt', 'side work');
+    gitExec(repoPath, 'update-ref refs/remotes/upstream/side side');
 
     // An orphan root with no history in common with trunk.
     gitExec(repoPath, 'checkout --orphan orphan');
@@ -111,9 +113,11 @@ describe('getStack (fixture)', () => {
 
   it('a fork above HEAD drops those layers and says so', async () => {
     // A second branch on top of middle, beside top: from middle there are
-    // two tips above HEAD that neither reach the other.
+    // two tips above HEAD that neither reach the other. Both pushed: an
+    // unpushed one beside a pushed line is not a fork.
     gitExec(repoPath, 'checkout -b top-b middle');
     commit(repoPath, 'top-b.txt', 'top b');
+    gitExec(repoPath, 'update-ref refs/remotes/upstream/top-b top-b');
     gitExec(repoPath, 'checkout middle');
     try {
       const stack = await getStack(repoPath, 'upstream/main');
@@ -128,6 +132,7 @@ describe('getStack (fixture)', () => {
     } finally {
       gitExec(repoPath, 'checkout top');
       gitExec(repoPath, 'branch -D top-b');
+      gitExec(repoPath, 'update-ref -d refs/remotes/upstream/top-b');
     }
   });
 
@@ -340,6 +345,108 @@ describe('getStack: remote copies behind their local branch (fixture)', () => {
     } finally {
       gitExec(repoPath, 'branch middle top~1');
       gitExec(repoPath, 'checkout top');
+    }
+  });
+});
+
+describe('getStack: unpushed branches beside a pushed stack (fixture)', () => {
+  const REPO_NAME = 'stack-unpushed-test';
+  let repoPath: string;
+  let tips: Record<string, string>;
+
+  beforeAll(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    tips = {};
+    commit(repoPath, 'base.txt', 'base');
+    gitExec(repoPath, 'update-ref refs/remotes/upstream/main main');
+    // Three pushed PRs. middle has three commits, and a backup branch and
+    // a scratch branch point at older commits inside it.
+    gitExec(repoPath, 'checkout -b bottom');
+    commit(repoPath, 'bottom.txt', 'bottom');
+    gitExec(repoPath, 'checkout -b middle');
+    tips.old1 = commit(repoPath, 'middle.txt', 'middle one');
+    tips.old2 = commit(repoPath, 'middle.txt', 'middle two');
+    commit(repoPath, 'middle.txt', 'middle three');
+    gitExec(repoPath, 'checkout -b top');
+    commit(repoPath, 'top.txt', 'top');
+    for (const b of ['bottom', 'middle', 'top']) {
+      gitExec(repoPath, `update-ref refs/remotes/upstream/${b} ${b}`);
+    }
+    gitExec(repoPath, `branch backup/middle-prev ${tips.old1}`);
+    gitExec(repoPath, `branch P2 ${tips.old2}`);
+    // Scratch branches at the same tips as the PRs; Q2 sorts before middle.
+    gitExec(repoPath, 'branch Q2 middle');
+    gitExec(repoPath, 'branch Q3 top');
+  });
+
+  afterAll(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  it('an unpushed branch inside a pushed layer does not split it', async () => {
+    const stack = await getStack(repoPath, 'upstream/main');
+    expect(outline(stack.layers)).toEqual(['bottom:1', 'middle:3', 'top:1*']);
+    const refs = stack.layers.flatMap((l) => l.refs);
+    expect(refs).not.toContain('backup/middle-prev');
+    expect(refs).not.toContain('P2');
+  });
+
+  it('a pushed branch names the layer over an unpushed one at the same tip', async () => {
+    gitExec(repoPath, 'checkout bottom');
+    try {
+      const stack = await getStack(repoPath, 'upstream/main');
+      expect(outline(stack.layers)).toEqual(['bottom:1*', 'middle:3', 'top:1']);
+      expect(stack.layers[1].refs).toEqual(['Q2', 'middle', 'upstream/middle']);
+    } finally {
+      gitExec(repoPath, 'checkout top');
+    }
+  });
+
+  it('the checked-out branch still names its layer, pushed or not', async () => {
+    gitExec(repoPath, 'checkout Q3');
+    try {
+      const stack = await getStack(repoPath, 'upstream/main');
+      expect(stack.layers.at(-1)).toMatchObject({ name: 'Q3', isHead: true });
+    } finally {
+      gitExec(repoPath, 'checkout top');
+    }
+  });
+
+  it('an unpushed branch checked out inside a layer is still the HEAD layer', async () => {
+    gitExec(repoPath, 'checkout P2');
+    try {
+      const stack = await getStack(repoPath, 'upstream/main');
+      expect(outline(stack.layers)).toEqual(['bottom:1', 'P2:2*', 'middle:1', 'top:1']);
+    } finally {
+      gitExec(repoPath, 'checkout top');
+    }
+  });
+
+  it('an unpushed layer above every pushed one stays: a new layer not pushed yet', async () => {
+    gitExec(repoPath, 'checkout -b next top');
+    commit(repoPath, 'next.txt', 'next');
+    try {
+      const stack = await getStack(repoPath, 'upstream/main');
+      expect(outline(stack.layers)).toEqual(['bottom:1', 'middle:3', 'top:1', 'next:1*']);
+    } finally {
+      gitExec(repoPath, 'checkout top');
+      gitExec(repoPath, 'branch -D next');
+    }
+  });
+
+  it('an old unpushed copy of a layer above HEAD is not a fork', async () => {
+    // A backup of an older top, beside the pushed top: from middle the two
+    // tips above HEAD fork, but the pushed ones form one line.
+    gitExec(repoPath, 'checkout -b top-prev middle');
+    commit(repoPath, 'top.txt', 'top, older version');
+    gitExec(repoPath, 'checkout middle');
+    try {
+      const stack = await getStack(repoPath, 'upstream/main');
+      expect(outline(stack.layers)).toEqual(['bottom:1', 'middle:3*', 'top:1']);
+      expect(stack.forkedAbove).toBe(false);
+    } finally {
+      gitExec(repoPath, 'checkout top');
+      gitExec(repoPath, 'branch -D top-prev');
     }
   });
 });

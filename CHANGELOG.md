@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The stack strip in Compare no longer shows backup and scratch branches
+  as layers.** A local branch that was never pushed, pointing at an older
+  commit inside a PR (a `backup/*` branch, say), split that PR into several
+  layers. And when such a branch sat at the same commit as a PR's branch,
+  the strip could name the layer after it. Now, once branches are pushed,
+  only pushed ones make layers, and a pushed name wins. A stack where
+  nothing is pushed yet works as before.
+
 ## [0.13.6] - 2026-10-01
 
 ### Added

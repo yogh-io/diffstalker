@@ -93,6 +93,23 @@ function withoutRemoteCopies(refs: CandidateRef[], locals: Map<string, string>):
 }
 
 /**
+ * The short names that have a remote-tracking copy on some remote:
+ * `upstream/feature/x` names `feature/x`. A local branch with a copy is
+ * one that was pushed, which is what a PR's branch is; a backup or a
+ * scratch branch never was. The remote is the first path segment, as in
+ * withoutRemoteCopies. Not `%(upstream)`: a branch made from
+ * `upstream/main` tracks main, which says nothing about being pushed.
+ */
+function pushedNames(candidates: CandidateRef[]): Set<string> {
+  return new Set(candidates.filter((r) => !r.local).map((r) => r.name.slice(r.name.indexOf('/') + 1)));
+}
+
+/** A remote-tracking ref, or a local branch with a remote-tracking copy. */
+function isPushed(ref: CandidateRef, pushed: Set<string>): boolean {
+  return !ref.local || pushed.has(ref.name);
+}
+
+/**
  * The first-parent line from `from` (excluded) up to `to`, oldest first,
  * so a commit's index plus one is its distance from `from`. Capped at
  * STACK_WALK_LIMIT: past the cap the oldest commits are missing.
@@ -144,21 +161,29 @@ async function independentTips(git: SimpleGit, tips: string[]): Promise<string[]
  * first, then remote-tracking, each sorted. `preferred` (the checked-out
  * branch) wins the name when it is one of them, so the HEAD layer is
  * called what the user checked out and not whichever local branch at the
- * same commit sorts first. A flag-shaped name (`-x`) is never picked over
- * another: the name travels as `?head=`, which refuses a leading dash.
+ * same commit sorts first. Otherwise a pushed local branch wins, then a
+ * remote-tracking name, then any other local branch: a scratch branch at
+ * a PR's tip is not the PR. A flag-shaped name (`-x`) is never picked
+ * over another: the name travels as `?head=`, which refuses a leading dash.
  */
 function nameLayer(
   refs: CandidateRef[],
-  preferred: string | null
+  preferred: string | null,
+  pushed: Set<string>
 ): { name: string; refs: string[] } | null {
   if (refs.length === 0) return null;
   const local = refs.filter((r) => r.local).map((r) => r.name).sort();
   const remote = refs.filter((r) => !r.local).map((r) => r.name).sort();
   const names = [...local, ...remote];
+  const byPreference = [
+    ...local.filter((n) => pushed.has(n)),
+    ...remote,
+    ...local.filter((n) => !pushed.has(n)),
+  ];
   const name =
     preferred !== null && local.includes(preferred)
       ? preferred
-      : (names.find((n) => !n.startsWith('-')) ?? names[0]);
+      : (byPreference.find((n) => !n.startsWith('-')) ?? byPreference[0]);
   return { name, refs: names };
 }
 
@@ -166,12 +191,13 @@ function nameLayer(
  * The layers on one first-parent line: every tip on `line` that has a
  * candidate ref, in line order, each counting the commits since the layer
  * below (or since the start of the line). HEAD's tip is a layer even with
- * no ref at it (rule 6); `head` is null for the line above HEAD.
+ * no ref at it (rule 7); `head` is null for the line above HEAD.
  */
 function layersOnLine(
   line: string[],
   refsByTip: Map<string, CandidateRef[]>,
-  head: Head | null
+  head: Head | null,
+  pushed: Set<string>
 ): StackLayer[] {
   const layers: StackLayer[] = [];
   let below = -1;
@@ -179,7 +205,7 @@ function layersOnLine(
     const tip = line[i];
     const isHead = tip === head?.tip;
     const named =
-      nameLayer(refsByTip.get(tip) ?? [], head?.branch ?? null) ??
+      nameLayer(refsByTip.get(tip) ?? [], head?.branch ?? null, pushed) ??
       (isHead ? { name: head.name, refs: [] } : null);
     if (named === null) continue;
     layers.push({ ...named, tip, commits: i - below, isHead });
@@ -192,7 +218,10 @@ function layersOnLine(
  * The layers above HEAD: the refs that contain HEAD, on the first-parent
  * line from the topmost of them. Two tips neither of which reaches the
  * other are a fork: no layers, `forked: true` — one line is shown or
- * none, never a tree flattened into a guess. A tip the top does reach but
+ * none, never a tree flattened into a guess. Unpushed branches do not
+ * make a fork on their own: when all the tips fork but the pushed ones
+ * form one line, that line is the stack (an older copy of a layer, kept
+ * as a backup, sits beside it). A tip the top does reach but
  * that sits off its first-parent line (a side branch merged into a layer)
  * is simply not a layer, exactly as below HEAD.
  */
@@ -201,7 +230,8 @@ async function layersAbove(
   trunk: string,
   headTip: string,
   locals: Map<string, string>,
-  refsByTip: Map<string, CandidateRef[]>
+  refsByTip: Map<string, CandidateRef[]>,
+  pushed: Set<string>
 ): Promise<{ layers: StackLayer[]; forked: boolean }> {
   const above = withoutRemoteCopies(await listCandidates(git, trunk, headTip), locals).filter(
     (r) => r.tip !== headTip
@@ -209,11 +239,38 @@ async function layersAbove(
   const tips = [...new Set(above.map((r) => r.tip))];
   if (tips.length === 0) return { layers: [], forked: false };
 
-  const tops = await independentTips(git, tips);
+  let tops = await independentTips(git, tips);
+  if (tops.length > 1) {
+    const pushedTips = [...new Set(above.filter((r) => isPushed(r, pushed)).map((r) => r.tip))];
+    if (pushedTips.length > 0) tops = await independentTips(git, pushedTips);
+  }
   if (tops.length !== 1) return { layers: [], forked: true };
 
   const line = await firstParentLine(git, headTip, tops[0]);
-  return { layers: layersOnLine(line, refsByTip, null), forked: false };
+  return { layers: layersOnLine(line, refsByTip, null, pushed), forked: false };
+}
+
+/**
+ * Drops the layers that only unpushed branches name and that sit below a
+ * pushed layer, bottom to top in, bottom to top out. Such a branch points
+ * inside a PR (a backup of an older tip, a scratch copy) and would split
+ * it in two. Its commits go to the layer above. An unpushed tip above
+ * every pushed one stays a layer: that is a new layer not pushed yet, and
+ * a stack nobody pushed keeps every branch. The HEAD layer always stays.
+ */
+function withoutUnpushedInside(layers: StackLayer[], pushedTips: Set<string>): StackLayer[] {
+  const kept: StackLayer[] = [];
+  let pushedAbove = false;
+  for (const layer of [...layers].reverse()) {
+    const isPushedTip = pushedTips.has(layer.tip);
+    if (pushedAbove && !isPushedTip && !layer.isHead) {
+      kept[kept.length - 1].commits += layer.commits;
+      continue;
+    }
+    kept.push({ ...layer });
+    if (isPushedTip) pushedAbove = true;
+  }
+  return kept.reverse();
 }
 
 /**
@@ -236,20 +293,27 @@ export async function getStack(repoPath: string, trunk: string): Promise<Compare
     firstParentLine(git, mergeBase, head.tip),
   ]);
   const locals = localTips(allCandidates);
+  const pushed = pushedNames(allCandidates);
   const refsByTip = new Map<string, CandidateRef[]>();
+  const pushedTips = new Set<string>();
   for (const ref of withoutRemoteCopies(allCandidates, locals)) {
     const at = refsByTip.get(ref.tip);
     if (at) at.push(ref);
     else refsByTip.set(ref.tip, [ref]);
+    if (isPushed(ref, pushed)) pushedTips.add(ref.tip);
   }
 
-  const below = layersOnLine(line, refsByTip, head);
+  const below = layersOnLine(line, refsByTip, head, pushed);
   // HEAD at the merge-base (checked out at trunk, or merged into it): the
   // line is empty, and the HEAD layer has no commits of its own.
   if (!below.some((l) => l.isHead)) {
     below.push({ name: head.name, refs: [], tip: head.tip, commits: 0, isHead: true });
   }
 
-  const above = await layersAbove(git, trunk, head.tip, locals, refsByTip);
-  return { trunk, layers: [...below, ...above.layers], forkedAbove: above.forked };
+  const above = await layersAbove(git, trunk, head.tip, locals, refsByTip, pushed);
+  return {
+    trunk,
+    layers: withoutUnpushedInside([...below, ...above.layers], pushedTips),
+    forkedAbove: above.forked,
+  };
 }

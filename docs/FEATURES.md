@@ -795,7 +795,10 @@ git operations.
   so the diff is exactly that PR's. `all` is the normal compare. The stack is
   read from git alone (`GET /repos/:id/compare/stack`), so it works for a
   stack linked on GitHub with no local tracking, and it shows branch names,
-  not PR numbers. Uncommitted toggles apply only to the checked-out layer. A
+  not PR numbers. When some branches are pushed, a branch that never was (a
+  backup, a scratch copy) does not split a pushed PR into layers, and does
+  not name a layer a pushed branch also sits at. Uncommitted toggles apply
+  only to the checked-out layer. A
   fork above HEAD is not drawn as a tree; the strip says so. The layer is in
   the URL (`?head=`). See `docs/stacked-compare.md`.
 - File cards in the stacked diffs (every surface built on the stack —

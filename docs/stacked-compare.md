@@ -65,25 +65,50 @@ What topology cannot give: PR numbers. The strip shows branch names only.
 4. **Above HEAD:** candidates that contain HEAD (`for-each-ref --contains HEAD`)
    and are not at HEAD's tip. Of their tips, `merge-base --independent`
    names the ones no other reaches. More than one is a fork above HEAD:
-   those layers are left out and the result says `forkedAbove: true`. One
+   those layers are left out and the result says `forkedAbove: true`,
+   unless the pushed tips alone (rule 6) form one line: then that line is
+   used, and an unpushed tip beside it (an old copy of a layer) is not a
+   fork. One
    line is shown or none; a tree is never flattened into a guess. With one
    top, the layers are the tips on `rev-list --first-parent HEAD..top`
    (same cap); a tip the top reaches but that sits off that line (a side
    branch merged into a layer) is not a layer, exactly as below HEAD.
-5. Group refs by tip commit: one **layer** per tip. Its `name` is the local
-   branch if there is one (the checked-out branch when several sit at
-   HEAD's tip), else the remote-tracking name; a flag-shaped name (`-x`)
-   is never picked while another is there, because the name travels as
-   `?head=`. `refs` lists every name at that tip (local first, then remote,
+5. Group refs by tip commit: one **layer** per tip. Its `name` is the
+   checked-out branch if it sits there; else a pushed local branch (rule
+   6), then a remote-tracking name, then any other local branch, so a
+   scratch branch at a PR's tip does not name the PR. A flag-shaped name
+   (`-x`) is never picked while another is there, because the name
+   travels as `?head=`. `refs` lists every name at that tip (local first, then remote,
    each sorted). A remote-tracking ref `<remote>/<name>` is dropped from
    the candidates when a local branch `<name>` is a candidate too: between
    a commit and a push the copy is behind, and would otherwise be a layer
    of its own (half a PR). The local branch is the user's truth; a copy at
    the same tip still lists in `refs`.
-6. HEAD's tip is always a layer, `isHead: true`, even with no ref at it
+6. **Pushed and unpushed.** A ref is pushed when it is remote-tracking, or
+   a local branch with a remote-tracking copy of the same name on any
+   remote (at any tip). Not `%(upstream)`: a branch made from
+   `upstream/main` tracks main, which says nothing about being pushed. A
+   tip that only unpushed branches name, with a pushed layer above it, is
+   dropped and its commits go to the layer above: a backup of an older tip
+   or a scratch copy points inside a PR and would split it. An unpushed
+   tip above every pushed one stays (a new layer not pushed yet), and a
+   stack with nothing pushed keeps every branch.
+
+   This is a heuristic, chosen knowingly (2026-10-13). Topology alone
+   cannot tell a backup branch from a layer boundary: both are a ref on
+   the line. A real stack with ~20 `backup/*` branches and temporary
+   `P2`/`Q2` branches split one PR into three and named layers `Q2`, `Q3`,
+   `Q5`. Alternatives weighed and rejected: exclude patterns on branch
+   names (special-casing a naming scheme is worse than a guess based on
+   git state); gh-stack's per-worktree file (the real repo had two, both
+   describing older stacks with older tips, so it would be confidently
+   wrong); showing every ref with no filter (the strip is unusable with
+   twenty backups). Being pushed is a weak signal, but it is git state
+   that any stack meant for review has, and it is better than nothing.
+7. HEAD's tip is always a layer, `isHead: true`, even with no ref at it
    (detached, or commits past the last branch). Its name is then the current
    branch name, or `HEAD` when detached.
-7. Layers are ordered bottom to top. Each carries `commits`: the count from
+8. Layers are ordered bottom to top. Each carries `commits`: the count from
    the layer below (or from `mb` for the bottom one).
 
 A single layer is not a stack. The client shows the strip only for two or more.
