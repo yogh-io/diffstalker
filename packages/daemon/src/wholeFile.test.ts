@@ -212,15 +212,28 @@ describe('one file inside a range (History and Compare)', () => {
     expect(res.status).toBe(400);
   });
 
-  test('GET /compare/file?uncommitted=both reads against HEAD, not the base', async () => {
-    // long.txt is dirty in the working tree but identical at HEAD on this
-    // branch, so the two comparisons genuinely differ.
-    const res = await request(
-      `/repos/${repoId}/compare/file?path=long.txt&uncommitted=both&whole=true`
-    );
-    expect(res.status).toBe(200);
-    const lines = ((await res.json()) as { lines: WireDiffLine[] }).lines;
-    expect(lines.filter((l) => l.type === 'context').length).toBe(LINE_COUNT - 2);
+  test('GET /compare/file?uncommitted= reads from the merge-base to the index or working tree', async () => {
+    // renamed.txt: the branch's rename with two edits, and one more edit
+    // on disk, not staged. The row holds the commit's work and the disk's.
+    fs.writeFileSync(path.join(repoDir, 'renamed.txt'), EDITED.replace('line30\n', 'EDITED30\n'));
+    const read = async (uncommitted: string): Promise<WireDiffLine[]> => {
+      const res = await request(
+        `/repos/${repoId}/compare/file?path=renamed.txt&base=main&uncommitted=${uncommitted}&whole=true`
+      );
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { lines: WireDiffLine[] }).lines;
+    };
+    try {
+      const both = await read('both');
+      expect(both.map((l) => l.content).join('\n')).toContain('rename from old.txt');
+      expect(both.filter((l) => l.type === 'addition').length).toBe(3);
+      expect(both.filter((l) => l.type === 'context').length).toBe(LINE_COUNT - 3);
+      // Staged ends at the index, which holds only the commit's two edits.
+      const staged = await read('staged');
+      expect(staged.filter((l) => l.type === 'addition').length).toBe(2);
+    } finally {
+      gitExec(repoDir, 'checkout -- renamed.txt');
+    }
   });
 
   test('GET /compare/file with an unknown uncommitted kind is a 400', async () => {

@@ -436,8 +436,8 @@ describe('compare endpoints', () => {
       return { status: res.status, text };
     };
 
-    // base.txt is dirty in the working tree: the unstaged row against the
-    // index has the edit, the committed row against main does not.
+    // base.txt is dirty in the working tree: a row holding that edit reads
+    // up to the working tree, a committed-only row against main does not.
     const unstaged = await compareFile('path=base.txt&uncommitted=unstaged');
     expect(unstaged.status).toBe(200);
     expect(unstaged.text).toContain('+uncommitted line');
@@ -482,17 +482,16 @@ describe('compare endpoints', () => {
     expect(body.error).toContain('No common history');
   });
 
-  test('GET /compare folds in each uncommitted category on its own', async () => {
+  test('GET /compare folds the uncommitted work it is asked for into the rows', async () => {
     // base.txt is dirty in the working tree only — so it must appear
-    // under ?unstaged=true and NOT under ?staged=true. One "uncommitted"
-    // flag could not tell those two apart.
+    // under ?staged&unstaged and NOT under ?staged alone.
     const unstaged = (await (
-      await request(`/repos/${repoId}/compare?base=main&unstaged=true`)
+      await request(`/repos/${repoId}/compare?base=main&staged=true&unstaged=true`)
     ).json()) as WireCompareDiff;
     const rows = unstaged.files.filter((f) => f.uncommitted);
     expect(rows.map((f) => [f.path, f.uncommitted])).toEqual([['base.txt', 'unstaged']]);
     expect(wireDiffText(rows[0].diff)).toContain('+uncommitted line');
-    // The committed side is still there too.
+    // The committed rows are still there too.
     expect(unstaged.files.some((f) => f.path === 'feature.txt' && !f.uncommitted)).toBe(true);
 
     const staged = (await (
@@ -505,6 +504,31 @@ describe('compare endpoints', () => {
       await request(`/repos/${repoId}/compare?base=main`)
     ).json()) as WireCompareDiff;
     expect(committed.files.some((f) => f.uncommitted)).toBe(false);
+  });
+
+  test('GET /compare lists a file the commits and the working tree both touch as ONE row', async () => {
+    writeFixtureFile(repoPath, 'feature.txt', 'feature line\nmore on disk\n');
+    try {
+      const diff = (await (
+        await request(`/repos/${repoId}/compare?base=main&staged=true&unstaged=true`)
+      ).json()) as WireCompareDiff;
+      const rows = diff.files.filter((f) => f.path === 'feature.txt');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].uncommitted).toBe('unstaged');
+      const text = wireDiffText(rows[0].diff);
+      expect(text).toContain('+feature line');
+      expect(text).toContain('+more on disk');
+    } finally {
+      gitExec(repoPath, 'checkout -- feature.txt');
+    }
+  });
+
+  test('GET /compare with unstaged but not staged is a 400', async () => {
+    // Unstaged edits sit on top of staged ones; no tree holds only them.
+    const res = await request(`/repos/${repoId}/compare?base=main&unstaged=true`);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('staged');
   });
 
   test('GET /compare with a malformed category param is a 400', async () => {

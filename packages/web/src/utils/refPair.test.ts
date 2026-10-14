@@ -52,11 +52,16 @@ describe('refPairLabel', () => {
     );
   });
 
-  test('compare’s uncommitted rows sit against a DIFFERENT base, and say so', () => {
-    // The whole reason this is worth printing: one stack, two bases.
-    expect(refPairLabel({ kind: 'compare-uncommitted', side: 'both' })).toBe('HEAD → working tree');
-    expect(refPairLabel({ kind: 'compare', base: 'origin/main', head: null })).not.toBe(
-      refPairLabel({ kind: 'compare-uncommitted', side: 'both' })
+  test('compare’s uncommitted rows start at the same base, and say where they end', () => {
+    // One row per file, from the merge-base: only the end differs.
+    const row = (side: 'staged' | 'unstaged' | 'both' | 'untracked') =>
+      refPairLabel({ kind: 'compare-uncommitted', base: 'origin/main', side });
+    expect(row('staged')).toBe('origin/main…index');
+    expect(row('unstaged')).toBe('origin/main…working tree');
+    expect(row('both')).toBe('origin/main…working tree');
+    expect(row('untracked')).toBe('origin/main…working tree');
+    expect(refPairLabel({ kind: 'compare-uncommitted', base: null, side: 'staged' })).toBe(
+      'base…index'
     );
   });
 
@@ -78,7 +83,8 @@ describe('refPairTitle', () => {
       working(false, 'deleted' as FileStatus),
       { kind: 'compare', base: 'origin/main', head: null },
       { kind: 'compare', base: 'feature/a', head: 'feature/b' },
-      { kind: 'compare-uncommitted', side: 'both' },
+      { kind: 'compare-uncommitted', base: 'origin/main', side: 'both' },
+      { kind: 'compare-uncommitted', base: 'origin/main', side: 'staged' },
       { kind: 'commit', shortHash: 'a1b2c3d' },
       { kind: 'journal' },
     ];

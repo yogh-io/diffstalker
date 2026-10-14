@@ -22,6 +22,7 @@ import {
   getCommitCountBetweenRefs,
   getDiffBetweenRefs,
   getCompareDiff,
+  getMergeBase,
   getCommitFiles,
   getFileDiffInRange,
   WHOLE_FILE_CONTEXT,
@@ -333,85 +334,88 @@ describe('getCompareDiff (fixture)', () => {
     gitExec(repoPath, 'clean -fd');
   }
 
-  it('lists a file changed BOTH by a branch commit and uncommitted as two entries', async () => {
-    // The bug: only the committed entry survived, so an edit on top of a
-    // file the branch already touches simply vanished from the compare.
+  it('lists a file changed BOTH by a branch commit and uncommitted as ONE row', async () => {
+    // The compare reads as the PR would if the work were committed: one
+    // diff per file from the merge-base, holding the commit's edit and the
+    // working tree's together, not one row per side.
     writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nc\nD\ne\n');
     try {
       const diff = await getCompareDiff(repoPath, 'main', ALL_UNCOMMITTED);
       const entries = diff.files.filter((f) => f.path === 'tracked.txt');
-      expect(entries).toHaveLength(2);
-      expect(entries.map((f) => f.uncommitted ?? 'committed')).toEqual(['committed', 'both']);
-      // Both carry a real diff, not just a header.
-      for (const entry of entries) {
-        expect(entry.diff.lines.some((l) => l.type === 'addition')).toBe(true);
-      }
-      // The uncommitted entry shows the working-tree edit, not the commit's.
-      expect(entries[1].diff.lines.some((l) => l.content.includes('+D'))).toBe(true);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({ uncommitted: 'unstaged', additions: 2, deletions: 2 });
+      const raw = rawFromLines(entries[0].diff.lines);
+      expect(raw).toContain('+B');
+      expect(raw).toContain('+D');
+      expect(diff.stats).toMatchObject({ filesChanged: 1, additions: 2, deletions: 2 });
+    } finally {
+      resetRepo();
+    }
+  });
+
+  it('drops a row whose commit an uncommitted edit undoes', async () => {
+    writeFixtureFile(repoPath, 'tracked.txt', 'a\nb\nc\nd\ne\n');
+    try {
+      const diff = await getCompareDiff(repoPath, 'main', ALL_UNCOMMITTED);
+      expect(diff.files.some((f) => f.path === 'tracked.txt')).toBe(false);
+      // The commit is still listed: only the files read as committed.
+      expect(diff.commits).toHaveLength(1);
     } finally {
       resetRepo();
     }
   });
 
   it('carries staged AND unstaged edits to one file in a single entry', async () => {
-    // Read as two diffs, the staged chunk won and the unstaged one was
-    // dropped — while the stats still counted both.
     writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nc\nSTAGED\ne\n');
     gitExec(repoPath, 'add tracked.txt');
     writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nUNSTAGED\nSTAGED\ne\n');
     try {
       const diff = await getCompareDiff(repoPath, 'main', ALL_UNCOMMITTED);
-      const entry = diff.files.find((f) => f.path === 'tracked.txt' && f.uncommitted);
-      expect(entry).toBeDefined();
-      const raw = entry!.diff.lines.map((l) => l.content).join('\n');
+      const entries = diff.files.filter((f) => f.path === 'tracked.txt');
+      expect(entries).toHaveLength(1);
+      expect(entries[0].uncommitted).toBe('both');
+      const raw = rawFromLines(entries[0].diff.lines);
+      expect(raw).toContain('+B');
       expect(raw).toContain('+STAGED');
       expect(raw).toContain('+UNSTAGED');
-      expect(entry!.additions).toBe(2);
-      expect(entry!.deletions).toBe(2);
+      expect(entries[0]).toMatchObject({ additions: 3, deletions: 3 });
     } finally {
       resetRepo();
     }
   });
 
-  it('reads each uncommitted category on its own', async () => {
-    // The three categories are independent controls, not one switch:
-    // "what am I about to commit" and "what have I touched" are different
-    // reviews, and a file must land in exactly the one it belongs to.
+  it('reads staged work up to the index and untracked files on their own', async () => {
     writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nc\nSTAGED\ne\n');
     gitExec(repoPath, 'add tracked.txt');
     writeFixtureFile(repoPath, 'tracked.txt', 'a\nB\nUNSTAGED\nSTAGED\ne\n');
     writeFixtureFile(repoPath, 'new.txt', 'fresh\n');
     try {
+      // Staged: the PR if you committed what is staged. The unstaged edit
+      // is not in it, and the row is still one row with the commit's edit.
       const stagedOnly = await getCompareDiff(repoPath, 'main', {
         staged: true,
         unstaged: false,
         untracked: false,
       });
-      const staged = stagedOnly.files.filter((f) => f.uncommitted);
-      expect(staged.map((f) => [f.path, f.uncommitted])).toEqual([['tracked.txt', 'staged']]);
-      const stagedRaw = staged[0].diff.lines.map((l) => l.content).join('\n');
+      expect(stagedOnly.files.map((f) => [f.path, f.uncommitted])).toEqual([
+        ['tracked.txt', 'staged'],
+      ]);
+      const stagedRaw = rawFromLines(stagedOnly.files[0].diff.lines);
+      expect(stagedRaw).toContain('+B');
       expect(stagedRaw).toContain('+STAGED');
       expect(stagedRaw).not.toContain('+UNSTAGED');
 
-      const unstagedOnly = await getCompareDiff(repoPath, 'main', {
-        staged: false,
-        unstaged: true,
-        untracked: false,
-      });
-      const unstaged = unstagedOnly.files.filter((f) => f.uncommitted);
-      expect(unstaged.map((f) => [f.path, f.uncommitted])).toEqual([['tracked.txt', 'unstaged']]);
-      const unstagedRaw = unstaged[0].diff.lines.map((l) => l.content).join('\n');
-      expect(unstagedRaw).toContain('+UNSTAGED');
-      expect(unstagedRaw).not.toContain('+STAGED');
-
+      // Untracked alone: the committed rows untouched, the new file added.
       const untrackedOnly = await getCompareDiff(repoPath, 'main', {
         staged: false,
         unstaged: false,
         untracked: true,
       });
-      expect(untrackedOnly.files.filter((f) => f.uncommitted).map((f) => f.path)).toEqual([
-        'new.txt',
+      expect(untrackedOnly.files.map((f) => [f.path, f.uncommitted])).toEqual([
+        ['new.txt', 'untracked'],
+        ['tracked.txt', undefined],
       ]);
+      expect(rawFromLines(untrackedOnly.files[1].diff.lines)).not.toContain('+STAGED');
 
       // None of them: the plain committed compare, nothing folded in.
       const committedOnly = await getCompareDiff(repoPath, 'main');
@@ -419,6 +423,25 @@ describe('getCompareDiff (fixture)', () => {
     } finally {
       resetRepo();
     }
+  });
+
+  it('tags a file only the working tree touches, and leaves a committed-only row untagged', async () => {
+    writeFixtureFile(repoPath, '.gitignore', 'ignored.txt\nmore.txt\n');
+    try {
+      const diff = await getCompareDiff(repoPath, 'main', ALL_UNCOMMITTED);
+      expect(diff.files.map((f) => [f.path, f.uncommitted])).toEqual([
+        ['.gitignore', 'unstaged'],
+        ['tracked.txt', undefined],
+      ]);
+    } finally {
+      resetRepo();
+    }
+  });
+
+  it('refuses unstaged without staged: no tree holds only the unstaged edits', async () => {
+    await expect(
+      getCompareDiff(repoPath, 'main', { staged: false, unstaged: true, untracked: false })
+    ).rejects.toThrow('needs staged too');
   });
 
   it('includes untracked files and skips ignored ones', async () => {
@@ -808,26 +831,42 @@ describe('getFileDiffInRange (fixture)', () => {
     expect(rawFromLines(diff.lines)).toContain('rename from old.txt');
   });
 
-  it('head range reads the working tree against HEAD', async () => {
-    writeFixtureFile(repoPath, 'new.txt', BASE.replace('line3\n', 'EDITED3\n').replace('line9\n', 'EDITED9\n'));
-    const diff = await getFileDiffInRange(repoPath, { kind: 'head' }, 'new.txt');
-    expect(diff.lines.filter((l) => l.type === 'addition').length).toBe(1);
-    const whole = await getFileDiffInRange(repoPath, { kind: 'head' }, 'new.txt', {
-      context: WHOLE_FILE_CONTEXT,
-    });
-    expect(whole.lines.filter((l) => l.type === 'context').length).toBe(39);
-    gitExec(repoPath, 'checkout -- .');
+  it('compare-uncommitted reads from the merge-base to the working tree or the index', async () => {
+    const TWICE = BASE.replace('line3\n', 'EDITED3\n').replace('line9\n', 'EDITED9\n');
+    writeFixtureFile(repoPath, 'new.txt', TWICE);
+    try {
+      const mergeBase = await getMergeBase(repoPath, 'main');
+      const worktree = { kind: 'compare-uncommitted', mergeBase, tip: 'worktree' } as const;
+      const diff = await getFileDiffInRange(repoPath, worktree, 'new.txt');
+      const raw = rawFromLines(diff.lines);
+      // The commit's rename and edit, and the working tree's edit on top.
+      expect(raw).toContain('rename from old.txt');
+      expect(diff.lines.filter((l) => l.type === 'addition').length).toBe(2);
+      const whole = await getFileDiffInRange(repoPath, worktree, 'new.txt', {
+        context: WHOLE_FILE_CONTEXT,
+      });
+      expect(whole.lines.filter((l) => l.type === 'context').length).toBe(38);
+
+      // The edit is not staged, so the index holds only the commit's.
+      const index = { kind: 'compare-uncommitted', mergeBase, tip: 'index' } as const;
+      const staged = await getFileDiffInRange(repoPath, index, 'new.txt');
+      expect(staged.lines.filter((l) => l.type === 'addition').length).toBe(1);
+    } finally {
+      gitExec(repoPath, 'checkout -- .');
+    }
   });
 
   it('an unchanged file yields nothing — the mode is not a file reader', async () => {
-    const diff = await getFileDiffInRange(repoPath, { kind: 'head' }, 'new.txt', {
+    const diff = await getFileDiffInRange(repoPath, { kind: 'compare', base: 'HEAD' }, 'new.txt', {
       context: WHOLE_FILE_CONTEXT,
     });
     expect(diff.lines).toEqual([]);
   });
 
   it('a path that does not exist is empty, not a throw', async () => {
-    const diff = await getFileDiffInRange(repoPath, { kind: 'head' }, 'nope.txt');
+    const mergeBase = await getMergeBase(repoPath, 'main');
+    const range = { kind: 'compare-uncommitted', mergeBase, tip: 'worktree' } as const;
+    const diff = await getFileDiffInRange(repoPath, range, 'nope.txt');
     expect(diff.lines).toEqual([]);
   });
 });
@@ -883,15 +922,17 @@ describe('paths git C-quotes (fixture)', () => {
     expect(byPath.get(MOVED)?.status).toBe('renamed');
   });
 
-  it('getCompareDiff folds in an uncommitted row for a quoted name', async () => {
+  it('getCompareDiff folds uncommitted work into the row for a quoted name', async () => {
     const diff = await getCompareDiff(repoPath, 'main', {
-      staged: false,
+      staged: true,
       unstaged: true,
       untracked: false,
     });
     const rows = diff.files.filter((f) => f.path === NAMES[0]);
-    expect(rows.map((f) => f.uncommitted)).toEqual([undefined, 'unstaged']);
-    expect(rows[1]).toMatchObject({ additions: 1, deletions: 0 });
+    expect(rows.map((f) => f.uncommitted)).toEqual(['unstaged']);
+    // The commit's `+b` and the working tree's `+c`, from the merge-base.
+    expect(rows[0]).toMatchObject({ additions: 2, deletions: 0 });
+    expect(diff.files.find((f) => f.path === MOVED)).toMatchObject({ status: 'renamed' });
   });
 
   it('getFileDiffInRange keeps a rename onto a quoted name a rename', async () => {

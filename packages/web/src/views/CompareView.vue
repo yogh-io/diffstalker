@@ -47,11 +47,10 @@ const { compare, compareStack, selectedStackHead, pickedLayer, comparePair } = s
 // Seeded from the store so the choice survives a tab switch (the ref
 // itself is component-local and would otherwise reset to all-off).
 //
-// Three independent categories, not one "uncommitted" switch: staged
-// (HEAD vs index), unstaged (index vs working tree) and untracked. They
-// are separate reviews — "what am I about to commit" is not "what have I
-// touched" — and folding them into one flag made it impossible to tell
-// which of them a missing file belonged to.
+// Three categories, not one "uncommitted" switch: staged alone reads the
+// branch as it would be if you committed what is staged, staged plus
+// unstaged as it would be if you committed everything you touched, and
+// untracked adds the new files. Unstaged needs staged (see stagedLocked).
 const uncommitted = reactive<UncommittedParts>(repo.getLastUncommitted());
 const UNCOMMITTED_LABELS: ReadonlyArray<{ key: keyof UncommittedParts; label: string }> = [
   { key: 'staged', label: 'staged' },
@@ -136,12 +135,20 @@ const uncommittedHidden = computed(
 );
 
 /**
+ * Unstaged edits sit on top of staged ones: the working tree holds both,
+ * and no tree holds only the unstaged ones. So ticking unstaged ticks
+ * staged too, and staged stays ticked until unstaged is off again.
+ */
+const stagedLocked = computed(() => uncommitted.unstaged);
+
+/**
  * Explicit :checked/@change instead of v-model: with v-model the extra
  * @change listener can run before the model updates and re-query with
  * the stale flag.
  */
 async function onUncommittedToggle(key: keyof UncommittedParts, event: Event): Promise<void> {
   uncommitted[key] = (event.target as HTMLInputElement).checked;
+  if (uncommitted.unstaged) uncommitted.staged = true;
   await repo.refreshCompare({ ...uncommitted });
 }
 
@@ -230,9 +237,9 @@ function toggleFileCollapsed(key: string): void {
 }
 
 /**
- * Whole-file mode for one compare row. The row carries which comparison
- * it belongs to: a committed row is measured against the base, an
- * uncommitted one against HEAD, and the daemon needs to be told which.
+ * Whole-file mode for one compare row. Every row starts at the merge-base,
+ * but where it ends depends on the uncommitted work it holds (HEAD, the
+ * index or the working tree), and the daemon needs to be told which.
  */
 function toggleWholeFile(key: string): void {
   beginUserNav({ view: 'compare' });
@@ -257,8 +264,7 @@ function toggleWholeFile(key: string): void {
 }
 
 /** Compare files mapped onto the stack's shape, keyed by compareFileKey
- *  — NOT by path: a file that is both committed on the branch and edited
- *  in the working tree is listed twice. Diffs are pre-embedded, so the
+ *  (see there for why not by path alone). Diffs are pre-embedded, so the
  *  stack's placeholder branch never triggers. */
 const treeOrderedFiles = computed(() => inTreeOrder(files.value));
 
@@ -272,13 +278,16 @@ const stackFiles = computed<StackFile[]>(() =>
     diff:
       repo.wholeFile?.key === compareFileKey(file) ? repo.wholeFile.diff : file.diff,
     collapsed: collapsedFiles.has(compareFileKey(file)),
-    // The two kinds of row in this stack sit against DIFFERENT bases: the
-    // committed ones against the merge-base, the uncommitted ones against
-    // HEAD. Until now only an [uncommitted] tag hinted at that, and it
-    // never mentioned a base at all. With a layer picked the committed
-    // pair is the layer below and the layer, not the trunk and HEAD.
+    // Every row starts at the merge-base. A row that holds uncommitted
+    // work ends at the index or the working tree instead of HEAD, and the
+    // label says which. With a layer picked the pair is the layer below
+    // and the layer, not the trunk and HEAD.
     refPair: file.uncommitted
-      ? ({ kind: 'compare-uncommitted', side: file.uncommitted } as const)
+      ? ({
+          kind: 'compare-uncommitted',
+          base: comparePair.value.base,
+          side: file.uncommitted,
+        } as const)
       : ({ kind: 'compare', base: comparePair.value.base, head: comparePair.value.head } as const),
   }))
 );
@@ -366,6 +375,12 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
             type="checkbox"
             :data-testid="`uncommitted-toggle-${part.key}`"
             :checked="uncommitted[part.key]"
+            :disabled="part.key === 'staged' && stagedLocked"
+            :title="
+              part.key === 'staged' && stagedLocked
+                ? 'Unstaged edits sit on top of staged ones, so unstaged includes these'
+                : undefined
+            "
             @change="onUncommittedToggle(part.key, $event)"
           />
           <span>{{ part.label }}</span>

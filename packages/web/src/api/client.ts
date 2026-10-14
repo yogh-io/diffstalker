@@ -327,14 +327,13 @@ export class DiffstalkerClient {
   }
 
   /**
-   * One file's diff inside a comparison. `uncommitted` selects the row's
-   * actual comparison — the same word the row carries in a CompareDiff:
-   * Compare's stack mixes rows measured against the base with rows
-   * measured against HEAD, the index, or (untracked) nothing at all.
-   * Absent means a committed row, measured against the base. `head` is
-   * the picked stack layer; the daemon refuses it next to `uncommitted`
-   * (uncommitted work only exists against HEAD), and the store never
-   * sends the two together.
+   * One file's diff inside a comparison. `uncommitted` is the word the
+   * row carries in a CompareDiff, and it sets where the diff ends: the
+   * index for staged work, the working tree once the row holds unstaged
+   * or untracked work. Absent ends at the head. Every row starts at the
+   * merge-base. `head` is the picked stack layer; the daemon refuses it
+   * next to `uncommitted` (uncommitted work only exists on top of HEAD),
+   * and the store never sends the two together.
    */
   compareFileDiff(
     id: string,
@@ -364,11 +363,12 @@ export class DiffstalkerClient {
   }
 
   /**
-   * The branch-vs-base compare. The three uncommitted categories are
-   * independent: naming none is the plain committed compare. `head` is a
-   * picked stack layer (absent means HEAD, today's compare); the daemon
-   * answers 400 when it comes with any uncommitted category, so the
-   * store sends the categories only while the head is HEAD.
+   * The branch-vs-base compare, with any uncommitted work folded into the
+   * same rows: naming none is the plain committed compare, and `unstaged`
+   * needs `staged` (a 400 without it). `head` is a picked stack layer
+   * (absent means HEAD, today's compare); the daemon answers 400 when it
+   * comes with any uncommitted category, so the store sends the
+   * categories only while the head is HEAD.
    */
   async compare(
     id: string,

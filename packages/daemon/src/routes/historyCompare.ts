@@ -17,6 +17,7 @@ import {
   getDefaultBaseBranch,
   resolveEffectiveBaseBranch,
   getFileDiffInRange,
+  getMergeBase,
   NoCommonHistoryError,
 } from '@diffstalker/core/git/diff';
 import type { DiffRange } from '@diffstalker/core/git/diff';
@@ -42,7 +43,7 @@ import {
   requireRefField,
   type RouteDeps,
 } from './shared.js';
-import type { UncommittedSide } from '@diffstalker/core/types/compare';
+import type { UncommittedParts, UncommittedSide } from '@diffstalker/core/types/compare';
 
 /** A commit hash as the route accepts it: 4 to 40 hex digits, else a 400. */
 function requireCommitHash(hash: string): string {
@@ -142,7 +143,7 @@ async function resolveRequestedHead(
 }
 
 /**
- * Uncommitted work only exists against HEAD, so a named head together
+ * Uncommitted work only exists on top of HEAD, so a named head together
  * with any uncommitted part is a contradiction, refused up front — before
  * any git runs, since no ref lookup can make it make sense.
  */
@@ -162,13 +163,13 @@ const UNCOMMITTED_SIDES: ReadonlySet<string> = new Set<UncommittedSide>([
 ]);
 
 /**
- * Which uncommitted comparison a /compare/file row is: the same word the
- * row carries in `uncommitted` on a /compare response, so a client echoes
- * the field it was given. Absent means a committed row against the base.
+ * Which uncommitted work a /compare/file row holds: the same word the row
+ * carries in `uncommitted` on a /compare response, so a client echoes the
+ * field it was given. Absent means a row that holds only committed work.
  *
  * Deliberately NOT called `side`: on this API `side` is a tree to read a
  * file from (`worktree` | `index` | `head`, see /blob and /media), and
- * these words name a pair of trees, not one.
+ * these words name kinds of work, not a tree.
  */
 function parseUncommittedParam(query: URLSearchParams): UncommittedSide | null {
   const raw = query.get('uncommitted');
@@ -183,19 +184,26 @@ function parseUncommittedParam(query: URLSearchParams): UncommittedSide | null {
 }
 
 /**
- * Which uncommitted work a compare request folds in. The three categories
- * are independent query flags; naming none is the plain committed compare.
+ * Which uncommitted work a compare request folds in. Naming none is the
+ * plain committed compare.
  */
-function uncommittedParts(query: URLSearchParams): {
-  staged: boolean;
-  unstaged: boolean;
-  untracked: boolean;
-} {
+function uncommittedParts(query: URLSearchParams): UncommittedParts {
   return {
     staged: parseBoolParam(query, 'staged', false),
     unstaged: parseBoolParam(query, 'unstaged', false),
     untracked: parseBoolParam(query, 'untracked', false),
   };
+}
+
+/**
+ * `unstaged` needs `staged`: unstaged edits sit on top of staged ones, so
+ * the branch plus only the unstaged edits is no tree there is to diff
+ * against.
+ */
+function refuseUnstagedWithoutStaged(parts: UncommittedParts): void {
+  if (parts.unstaged && !parts.staged) {
+    throw new HttpError(400, 'unstaged needs staged too (unstaged edits sit on top of staged ones)');
+  }
 }
 
 export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): void {
@@ -254,9 +262,10 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
    * whole-file mode, since it pulls the range whole and splits it
    * client-side and so has no per-file request of its own.
    *
-   * `uncommitted=` names a row that sits against HEAD or the index rather
-   * than against the base: Compare's stack mixes the two, and they are
-   * genuinely different comparisons.
+   * `uncommitted=` names the uncommitted work the row holds, which sets
+   * where its diff ends: the index for staged work, the working tree once
+   * it holds unstaged work. It starts at the merge-base either way, as
+   * every row of the compare does.
    */
   router.get('/repos/:id/compare/file', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
@@ -271,14 +280,15 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
       sendJson(res, 200, await getDiffForUntracked(handle.path, filePath));
       return;
     }
+    const base = await resolveRequestedBase(handle.path, query);
     const range: DiffRange =
       uncommitted === null
-        ? {
-            kind: 'compare',
-            base: await resolveRequestedBase(handle.path, query),
-            head: await resolveRequestedHead(handle.path, query),
-          }
-        : { kind: uncommitted === 'both' ? 'head' : uncommitted };
+        ? { kind: 'compare', base, head: await resolveRequestedHead(handle.path, query) }
+        : {
+            kind: 'compare-uncommitted',
+            mergeBase: await withoutCommonHistoryAs422(() => getMergeBase(handle.path, base)),
+            tip: uncommitted === 'staged' ? 'index' : 'worktree',
+          };
     sendJson(res, 200, await getFileDiffInRange(handle.path, range, filePath, { context }));
   });
 
@@ -354,12 +364,13 @@ export function registerHistoryCompareRoutes(router: Router, deps: RouteDeps): v
     const handle = requireRepo(registry, params.id);
     const parts = uncommittedParts(query);
     refuseHeadWithUncommitted(query, parts.staged || parts.unstaged || parts.untracked);
+    refuseUnstagedWithoutStaged(parts);
     const base = await resolveRequestedBase(handle.path, query);
     const head = await resolveRequestedHead(handle.path, query);
 
     // Response is the CompareDiff itself — consistent with /diff returning
     // the DiffResult directly. It already carries the resolved base as
-    // `baseBranch`; which uncommitted work was folded in shows per row in
+    // `baseBranch`; which uncommitted work each row holds shows in
     // `files[].uncommitted`.
     const diff = await withoutCommonHistoryAs422(() =>
       getCompareDiff(handle.path, base, parts, head)

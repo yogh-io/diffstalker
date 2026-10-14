@@ -214,23 +214,28 @@ describe('top bar', () => {
     expect(options.map((o) => o.text())).toEqual(['origin/main', 'origin/dev']);
   });
 
-  test('each uncommitted category toggles on its own', async () => {
-    // The point of three boxes: ticking "unstaged" must not drag staged
-    // or untracked work in with it.
+  test('unstaged brings staged with it, and staged stays on until unstaged is off', async () => {
+    // Unstaged edits sit on top of staged ones: no tree holds only them,
+    // so the daemon refuses unstaged without staged.
     const { wrapper, repo } = mountView();
     const spy = vi.spyOn(repo, 'refreshCompare').mockResolvedValue(undefined);
+    const toggle = (key: string) => wrapper.find(`[data-testid="uncommitted-toggle-${key}"]`);
 
-    await wrapper.find('[data-testid="uncommitted-toggle-unstaged"]').setValue(true);
-    expect(spy).toHaveBeenLastCalledWith({ staged: false, unstaged: true, untracked: false });
-
-    await wrapper.find('[data-testid="uncommitted-toggle-staged"]').setValue(true);
+    await toggle('unstaged').setValue(true);
     expect(spy).toHaveBeenLastCalledWith({ staged: true, unstaged: true, untracked: false });
+    expect((toggle('staged').element as HTMLInputElement).checked).toBe(true);
+    expect(toggle('staged').attributes('disabled')).toBeDefined();
 
-    await wrapper.find('[data-testid="uncommitted-toggle-untracked"]').setValue(true);
+    await toggle('untracked').setValue(true);
     expect(spy).toHaveBeenLastCalledWith({ staged: true, unstaged: true, untracked: true });
 
-    await wrapper.find('[data-testid="uncommitted-toggle-unstaged"]').setValue(false);
+    await toggle('unstaged').setValue(false);
     expect(spy).toHaveBeenLastCalledWith({ staged: true, unstaged: false, untracked: true });
+    expect(toggle('staged').attributes('disabled')).toBeUndefined();
+
+    // Staged and untracked each still go on and off alone.
+    await toggle('staged').setValue(false);
+    expect(spy).toHaveBeenLastCalledWith({ staged: false, unstaged: false, untracked: true });
   });
 
   test('a category ON, then a base change: setSelectedCompareBase gets the categories', async () => {
@@ -361,15 +366,16 @@ describe('stack strip', () => {
     };
     await wrapper.vm.$nextTick();
     expect(labels()[0]).toBe('feature/a…feature/b');
-    // The uncommitted row keeps its own pair: it never sits against a layer.
-    expect(labels()[2]).toBe('HEAD → working tree');
 
+    // The checked-out layer: a row holding uncommitted work starts at the
+    // same layer below, and ends at the working tree instead of HEAD.
     repo.compare = {
       ...repo.compare,
       pair: { base: 'feature/b', head: null, uncommitted: NO_UNCOMMITTED },
     };
     await wrapper.vm.$nextTick();
     expect(labels()[0]).toBe('feature/b…HEAD');
+    expect(labels()[2]).toBe('feature/b…working tree');
   });
 
   test('the eyebrow and the clean state name the loaded pair, not the checked-out branch', async () => {

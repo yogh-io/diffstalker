@@ -28,9 +28,9 @@ export interface TreeRowItem {
  *
  * One row per input entry, always: directories are shared between files,
  * but a file leaf is never reused. Two entries CAN carry the same path —
- * compare lists a file twice when the branch's commits touch it and it
- * also has uncommitted changes — and merging them into one leaf dropped
- * the second entry's diff out of the view entirely.
+ * compare lists a file twice when the branch deleted it and it is back on
+ * disk, untracked — and merging them into one leaf dropped the second
+ * entry's diff out of the view entirely.
  */
 export function buildFileTree<T extends { path: string }>(files: T[]): FileTreeNode {
   // Root node

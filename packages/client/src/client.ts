@@ -342,8 +342,9 @@ export class DiffstalkerClient {
   }
 
   /**
-   * The branch-vs-base compare. The three uncommitted categories are
-   * independent: naming none is the plain committed compare.
+   * The branch-vs-base compare, with any uncommitted work folded into the
+   * same rows: naming none is the plain committed compare, and `unstaged`
+   * needs `staged` (a 400 without it).
    */
   async compare(
     id: string,

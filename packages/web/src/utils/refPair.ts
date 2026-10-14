@@ -3,7 +3,8 @@
  *
  * Every diff surface in this app already fixes a ref pair — Changes
  * compares the index against the working tree, Compare a merge-base
- * against HEAD, History a commit against its parent — and until now not
+ * against HEAD (or the index or working tree, with uncommitted work
+ * folded in), History a commit against its parent — and until now not
  * one of them said so. The reader was left to infer it from which tab
  * they were on. That is the whole reason "what am I comparing against"
  * felt unanswerable: not that it could not be chosen, but that the app
@@ -32,12 +33,12 @@ export type RefPair =
    */
   | { kind: 'compare'; base: string | null; head: string | null }
   /**
-   * Compare: the uncommitted rows. Which two things they sit between
-   * depends on the category — the staged row is HEAD against the index,
-   * the unstaged row the index against the working tree — and none of
-   * them is the compare base.
+   * Compare: a row that holds uncommitted work. It starts at the same
+   * merge-base as every other row, and ends at the index when it holds
+   * only staged work, or at the working tree once it holds unstaged or
+   * untracked work.
    */
-  | { kind: 'compare-uncommitted'; side: UncommittedSide }
+  | { kind: 'compare-uncommitted'; base: string | null; side: UncommittedSide }
   /** History: what one commit changed, against its parent. */
   | { kind: 'commit'; shortHash: string }
   /** Journal: every entry is worktree-vs-HEAD by construction. */
@@ -46,18 +47,9 @@ export type RefPair =
 /** U+2192 RIGHTWARDS ARROW — the direction of the change, old to new. */
 const ARROW = '→';
 
-/** What one uncommitted category actually compares. */
-function uncommittedPairLabel(side: UncommittedSide): string {
-  switch (side) {
-    case 'staged':
-      return `HEAD ${ARROW} index`;
-    case 'unstaged':
-      return `index ${ARROW} working tree`;
-    case 'both':
-      return `HEAD ${ARROW} working tree`;
-    case 'untracked':
-      return `nothing ${ARROW} new file`;
-  }
+/** Where a compare row that holds uncommitted work ends. */
+function uncommittedTip(side: UncommittedSide): string {
+  return side === 'staged' ? 'index' : 'working tree';
 }
 
 /**
@@ -81,9 +73,9 @@ export function refPairLabel(pair: RefPair): string {
       // commits, and the dots are git's own notation for it.
       return `${pair.base ?? 'base'}…${pair.head ?? 'HEAD'}`;
     case 'compare-uncommitted':
-      // A DIFFERENT base from the committed rows in the same stack, which
-      // is exactly why this is worth printing.
-      return uncommittedPairLabel(pair.side);
+      // The same three dots: it starts where the committed rows start,
+      // and only its end differs.
+      return `${pair.base ?? 'base'}…${uncommittedTip(pair.side)}`;
     case 'commit':
       return `${pair.shortHash}^ ${ARROW} ${pair.shortHash}`;
     case 'journal':
@@ -105,7 +97,9 @@ export function refPairTitle(pair: RefPair): string {
         ? 'Everything this branch adds on top of its base (three-dot diff)'
         : `Everything ${pair.head} adds on top of the layer below it (three-dot diff)`;
     case 'compare-uncommitted':
-      return `Uncommitted work: ${uncommittedPairLabel(pair.side)} — not the compare base`;
+      return pair.side === 'staged'
+        ? 'Everything this branch adds on top of its base, plus what you have staged (three-dot diff against the index)'
+        : 'Everything this branch adds on top of its base, plus your uncommitted work (three-dot diff against the working tree)';
     case 'commit':
       return 'What this commit changed, against its parent';
     case 'journal':

@@ -59,8 +59,8 @@ export interface CompareFileDiff {
   additions: number;
   deletions: number;
   diff: DiffResult;
-  /** Set only on rows that are NOT in the branch's commits: which
-   *  uncommitted side produced this row. Absent on committed rows. */
+  /** Which uncommitted work this row holds, when the compare folded any
+   *  in. Absent on a row that holds only committed work. */
   uncommitted?: UncommittedSide;
 }
 
@@ -537,37 +537,39 @@ export async function getDiffBetweenRefs(
   head?: string
 ): Promise<CompareDiff> {
   const git = createGit(repoPath);
-  return compareCommitted(git, baseRef, git.status(), head);
+  return compareRange(git, baseRef, git.status(), head);
 }
 
 /**
- * The committed compare proper. `status` is passed in so getCompareDiff
- * can share the one `git status` its uncommitted rows need too. Without a
- * `head` the range is spelled with the literal `HEAD`, so every git call
- * is the one it was before heads existed.
+ * The compare proper. `status` is passed in so getCompareDiff can share
+ * the one `git status` its untracked rows need too.
+ *
+ * The rows run from the merge-base to `head`, or, with a `tip`, to the
+ * index or the working tree: HEAD plus the uncommitted work folded in. A
+ * tip only exists on top of HEAD, so it never comes with a named head.
+ * Without a `head` the range is spelled with the literal `HEAD`, so every
+ * git call is the one it was before heads existed.
  */
-async function compareCommitted(
+async function compareRange(
   git: SimpleGit,
   baseRef: string,
   status: Promise<StatusResult>,
-  head: string = 'HEAD'
+  head: string = 'HEAD',
+  tip?: UncommittedTip
 ): Promise<CompareDiff> {
-  // Get merge-base for three-dot diff. With no common ancestor git exits 1
-  // with empty output (simple-git resolves with ''); the diff would then
-  // collapse to HEAD...HEAD and silently report an empty compare.
-  const mergeBase = await git.raw(['merge-base', '--end-of-options', baseRef, head]);
-  const base = mergeBase.trim();
-  if (!base) {
-    throw new NoCommonHistoryError(baseRef);
-  }
+  const base = await readMergeBase(git, baseRef, head);
+  const range: DiffRange =
+    tip === undefined
+      ? { kind: 'compare', base, head }
+      : { kind: 'compare-uncommitted', mergeBase: base, tip };
 
   // Everything below depends only on the base, so the five reads run
   // together: per-file stats, file statuses, the full diff, the status
   // for the uncommitted count, and the commits between base and head.
   const [numstat, nameStatus, rawDiff, { files: statusFiles }, log] = await Promise.all([
-    git.raw(['diff', '--numstat', '-z', `${base}...${head}`]),
-    git.raw(['diff', '--name-status', '-z', `${base}...${head}`]),
-    git.raw(['diff', `-U${DIFF_CONTEXT_LINES}`, `${base}...${head}`]).then(capLargeFileDiffs),
+    git.raw(rangeArgs(range, ['--numstat', '-z'])),
+    git.raw(rangeArgs(range, ['--name-status', '-z'])),
+    git.raw(rangeArgs(range, [`-U${DIFF_CONTEXT_LINES}`])).then(capLargeFileDiffs),
     status,
     git.log({ from: base, to: head }),
   ]);
@@ -624,15 +626,34 @@ export async function getCommitCountBetweenRefs(
   head: string = 'HEAD'
 ): Promise<number> {
   const git = createGit(repoPath);
+  const base = await readMergeBase(git, baseRef, head);
+  const count = await git.raw(['rev-list', '--count', '--end-of-options', `${base}..${head}`]);
+  return Number.parseInt(count.trim(), 10);
+}
 
-  const mergeBase = await git.raw(['merge-base', '--end-of-options', baseRef, head]);
-  const base = mergeBase.trim();
+/**
+ * The commit a compare starts from: the merge-base of the base and the
+ * head (HEAD unless named), as a full hash.
+ *
+ * Throws NoCommonHistoryError on an unrelated base. With no common
+ * ancestor git exits 1 with empty output (simple-git resolves with ''),
+ * and a diff from that would collapse to HEAD...HEAD and silently report
+ * an empty compare.
+ */
+export async function getMergeBase(
+  repoPath: string,
+  baseRef: string,
+  head: string = 'HEAD'
+): Promise<string> {
+  return readMergeBase(createGit(repoPath), baseRef, head);
+}
+
+async function readMergeBase(git: SimpleGit, baseRef: string, head: string): Promise<string> {
+  const base = (await git.raw(['merge-base', '--end-of-options', baseRef, head])).trim();
   if (!base) {
     throw new NoCommonHistoryError(baseRef);
   }
-
-  const count = await git.raw(['rev-list', '--count', '--end-of-options', `${base}..${head}`]);
-  return Number.parseInt(count.trim(), 10);
+  return base;
 }
 
 /**
@@ -646,12 +667,15 @@ export type DiffRange =
   /** Compare's committed rows: base…head, three-dot; the head is HEAD
    *  unless named (a stack layer). Still a named range, not a revspec. */
   | { kind: 'compare'; base: string; head?: string }
-  /** Compare's staged+unstaged rows: HEAD against the working tree. */
-  | { kind: 'head' }
-  /** Compare's staged-only rows: HEAD against the index. */
-  | { kind: 'staged' }
-  /** Compare's unstaged-only rows: the index against the working tree. */
-  | { kind: 'unstaged' };
+  /** Compare with uncommitted work folded in: from the merge-base of
+   *  base and HEAD (see getMergeBase) to the index or the working tree. */
+  | { kind: 'compare-uncommitted'; mergeBase: string; tip: UncommittedTip };
+
+/**
+ * What a compare with uncommitted work folded in reads up to: the index
+ * (staged work) or the working tree (staged and unstaged work).
+ */
+export type UncommittedTip = 'index' | 'worktree';
 
 /**
  * How a range is spelled as git arguments, with the SUBCOMMAND first —
@@ -669,12 +693,11 @@ function rangeArgs(range: DiffRange, flags: string[]): string[] {
       return ['show', '--format=', ...flags, '--end-of-options', range.hash];
     case 'compare':
       return ['diff', ...flags, `${range.base}...${range.head ?? 'HEAD'}`];
-    case 'head':
-      return ['diff', ...flags, 'HEAD'];
-    case 'staged':
-      return ['diff', '--cached', ...flags];
-    case 'unstaged':
-      return ['diff', ...flags];
+    case 'compare-uncommitted':
+      // Git has no three-dot spelling for the index or the working tree,
+      // so the merge-base comes in already resolved. (`--merge-base` would
+      // resolve it, but needs git 2.30.)
+      return ['diff', ...(range.tip === 'index' ? ['--cached'] : []), ...flags, range.mergeBase];
   }
 }
 
@@ -781,80 +804,60 @@ export async function getCommitDiff(repoPath: string, hash: string): Promise<Dif
   }
 }
 
-
 /**
- * Which git range reads one uncommitted side, and how a status pair is
- * read for it. Staged and unstaged asked for TOGETHER are one `git diff
- * HEAD`, never two diffs concatenated: a file changed on both sides would
- * otherwise produce two chunks for the same path, of which only the first
- * survived, so half its edits went missing while the stats still counted
- * them.
+ * What a compare with uncommitted work reads up to. Staged alone is the
+ * index; unstaged is the working tree, which holds the staged edits too.
+ * Unstaged without staged would be HEAD plus only the edits on top of the
+ * index, which is no tree anywhere: it throws, and the daemon refuses
+ * that request before it gets here.
  */
-function trackedSide(parts: UncommittedParts): Exclude<UncommittedSide, 'untracked'> | null {
-  if (parts.staged && parts.unstaged) return 'both';
-  if (parts.staged) return 'staged';
-  if (parts.unstaged) return 'unstaged';
+function uncommittedTip(parts: UncommittedParts): UncommittedTip | null {
+  if (parts.unstaged && !parts.staged) {
+    throw new Error('Unstaged work sits on top of staged work, so it needs staged too');
+  }
+  if (parts.unstaged) return 'worktree';
+  if (parts.staged) return 'index';
   return null;
 }
 
-function trackedRange(side: Exclude<UncommittedSide, 'untracked'>): DiffRange {
-  switch (side) {
-    case 'both':
-      return { kind: 'head' };
-    case 'staged':
-      return { kind: 'staged' };
-    case 'unstaged':
-      return { kind: 'unstaged' };
-  }
+/** A porcelain status column that shows a change: not blank, untracked or ignored. */
+function isChange(column: string): boolean {
+  return column !== '' && column !== ' ' && column !== '?' && column !== '!';
 }
 
 /**
- * The status letter a row shows, read from the porcelain column the row's
- * side actually describes: an `AM` file is an addition to the staged row
- * and a modification to the unstaged one, and labelling both from the
- * index column would call a working-tree edit an add.
+ * Tags each tracked row with the uncommitted work it holds, read from the
+ * porcelain status: staged when the index column shows a change, unstaged
+ * when the working-tree column does and the tip includes the working
+ * tree. A row with neither holds only committed work and stays untagged.
+ * A staged rename marks its old path too, in case the diff does not pair
+ * the two the way the index does.
  */
-function sideStatus(
-  side: Exclude<UncommittedSide, 'untracked'>,
-  index: string,
-  workingDir: string
-): CompareFileDiff['status'] {
-  const columns = side === 'staged' ? [index] : side === 'unstaged' ? [workingDir] : [index, workingDir];
-  if (columns.includes('R')) return 'renamed';
-  if (columns.includes('D')) return 'deleted';
-  if (columns.includes('A') || columns.includes('?')) return 'added';
-  return 'modified';
+function tagUncommittedRows(
+  rows: CompareFileDiff[],
+  status: StatusResult,
+  tip: UncommittedTip
+): CompareFileDiff[] {
+  const staged = new Set<string>();
+  const unstaged = new Set<string>();
+  for (const file of status.files) {
+    if (isChange(file.index)) {
+      staged.add(file.path);
+      if (file.from) staged.add(file.from);
+    }
+    if (tip === 'worktree' && isChange(file.working_dir)) unstaged.add(file.path);
+  }
+  return rows.map((row) => {
+    const side = uncommittedSide(staged.has(row.path), unstaged.has(row.path));
+    return side === null ? row : { ...row, uncommitted: side };
+  });
 }
 
-/** The tracked (staged and/or unstaged) rows for one side. */
-async function readTrackedRows(
-  repoPath: string,
-  side: Exclude<UncommittedSide, 'untracked'>,
-  status: StatusResult
-): Promise<CompareFileDiff[]> {
-  const git = createGit(repoPath);
-  const range = trackedRange(side);
-  const [stats, raw] = await Promise.all([
-    git.raw(rangeArgs(range, ['--numstat', '-z'])).then(parseNumstat),
-    git.raw(rangeArgs(range, [`-U${DIFF_CONTEXT_LINES}`])).then(capLargeFileDiffs),
-  ]);
-
-  const statusPairs = new Map(status.files.map((f) => [f.path, f]));
-  const rows: CompareFileDiff[] = [];
-  for (const chunk of raw.split(/(?=^diff --git )/m)) {
-    if (!chunk.trim()) continue;
-    const filepath = chunkPath(chunk);
-    if (filepath === null) continue;
-    const pair = statusPairs.get(filepath);
-    rows.push({
-      path: filepath,
-      status: sideStatus(side, pair?.index ?? '', pair?.working_dir ?? ''),
-      ...(stats.get(filepath) ?? { additions: 0, deletions: 0 }),
-      diff: { lines: parseDiffWithLineNumbers(chunk) },
-      uncommitted: side,
-    });
-  }
-  return rows;
+function uncommittedSide(staged: boolean, unstaged: boolean): UncommittedSide | null {
+  if (staged && unstaged) return 'both';
+  if (staged) return 'staged';
+  if (unstaged) return 'unstaged';
+  return null;
 }
 
 /**
@@ -892,22 +895,27 @@ async function readUntrackedRows(
 /**
  * The branch-vs-base compare, optionally folding in uncommitted work.
  *
- * The three categories are independent: staged (HEAD vs index), unstaged
- * (index vs working tree) and untracked (files git diff never reports).
- * Asking for none of them is the plain committed compare. Asking for
- * staged AND unstaged reads them as one `git diff HEAD` — see
- * trackedSide for why that must not be two diffs.
+ * The result reads as the pull request would if the folded-in work were
+ * committed too: ONE diff per file, from the merge-base to the index
+ * (staged) or to the working tree (staged and unstaged). A file the
+ * branch's commits touched that also has uncommitted edits is one row
+ * holding both, and a commit undone by an uncommitted edit leaves no row.
+ * Each row is tagged with the uncommitted work it holds (see
+ * tagUncommittedRows). Untracked files, which git diff never reports, are
+ * read from disk and added as new files.
  *
- * An uncommitted row is kept SEPARATE from the committed row for the same
- * path rather than merged into it: the two sit against different bases
- * (the merge-base and the index/HEAD), so one merged row would be a diff
- * of nothing in particular.
+ * Unstaged without staged has no tree to read up to, so it throws (see
+ * uncommittedTip).
  *
- * `head` names what the committed rows end at instead of HEAD (a stack
- * layer). Uncommitted work only exists against HEAD, so a head together
- * with any uncommitted part is a programming error: the daemon refuses
- * that request before it gets here, and this throws rather than guess
- * which of the two the caller meant.
+ * The one case left as two rows: a path the branch deleted that sits on
+ * disk again, untracked. Git lists it as deleted, and the file on disk is
+ * a separate untracked row.
+ *
+ * `head` names what the rows end at instead of HEAD (a stack layer).
+ * Uncommitted work only exists on top of HEAD, so a head together with
+ * any uncommitted part is a programming error: the daemon refuses that
+ * request before it gets here, and this throws rather than guess which of
+ * the two the caller meant.
  */
 export async function getCompareDiff(
   repoPath: string,
@@ -915,53 +923,36 @@ export async function getCompareDiff(
   parts: UncommittedParts = NO_UNCOMMITTED,
   head?: string
 ): Promise<CompareDiff> {
-  const side = trackedSide(parts);
-  if (side === null && !parts.untracked) return getDiffBetweenRefs(repoPath, baseRef, head);
+  const tip = uncommittedTip(parts);
+  if (tip === null && !parts.untracked) return getDiffBetweenRefs(repoPath, baseRef, head);
   if (head !== undefined) {
     throw new Error('Uncommitted work can only be compared against HEAD, not a named head');
   }
 
-  // One `git status` serves both the committed compare (its uncommitted
-  // count) and the uncommitted rows, and the two sides read together.
+  // One `git status` serves the compare (its uncommitted count), the row
+  // tags and the untracked rows.
   const git = createGit(repoPath);
   const status = git.status();
-  const [committedDiff, trackedRows, untrackedRows] = await Promise.all([
-    compareCommitted(git, baseRef, status),
-    side === null ? [] : status.then((s) => readTrackedRows(repoPath, side, s)),
+  const [compared, statusResult, untrackedRows] = await Promise.all([
+    compareRange(git, baseRef, status, 'HEAD', tip ?? undefined),
+    status,
     parts.untracked ? status.then((s) => readUntrackedRows(repoPath, s)) : [],
   ]);
-  const uncommittedRows: CompareFileDiff[] = [...trackedRows, ...untrackedRows];
+  const trackedRows =
+    tip === null ? compared.files : tagUncommittedRows(compared.files, statusResult, tip);
+  const files = [...trackedRows, ...untrackedRows].sort((a, b) => a.path.localeCompare(b.path));
 
-  // Committed rows keep their place; an uncommitted row for the same path
-  // is listed right after it, and one for a path the branch never
-  // committed is appended.
-  const uncommittedByPath = new Map<string, CompareFileDiff[]>();
-  for (const row of uncommittedRows) {
-    const rows = uncommittedByPath.get(row.path);
-    if (rows) rows.push(row);
-    else uncommittedByPath.set(row.path, [row]);
-  }
-  const mergedFiles: CompareFileDiff[] = [];
-  for (const file of committedDiff.files) {
-    mergedFiles.push(file, ...(uncommittedByPath.get(file.path) ?? []));
-    uncommittedByPath.delete(file.path);
-  }
-  for (const rows of uncommittedByPath.values()) mergedFiles.push(...rows);
-
-  mergedFiles.sort((a, b) => a.path.localeCompare(b.path));
-
-  // filesChanged counts distinct PATHS: a file listed twice (committed and
-  // uncommitted) is still one file changed.
-  const seenPaths = new Set(mergedFiles.map((f) => f.path));
+  // filesChanged counts distinct PATHS, so the one case listed twice
+  // (deleted by the branch, back on disk untracked) is one file changed.
   return {
-    baseBranch: committedDiff.baseBranch,
+    baseBranch: compared.baseBranch,
     stats: {
-      filesChanged: seenPaths.size,
-      additions: mergedFiles.reduce((sum, f) => sum + f.additions, 0),
-      deletions: mergedFiles.reduce((sum, f) => sum + f.deletions, 0),
+      filesChanged: new Set(files.map((f) => f.path)).size,
+      additions: files.reduce((sum, f) => sum + f.additions, 0),
+      deletions: files.reduce((sum, f) => sum + f.deletions, 0),
     },
-    files: mergedFiles,
-    commits: committedDiff.commits,
-    uncommittedCount: committedDiff.uncommittedCount,
+    files,
+    commits: compared.commits,
+    uncommittedCount: compared.uncommittedCount,
   };
 }

@@ -72,7 +72,7 @@ export interface CompareSelectionState {
  * in. The rows on screen belong to THIS pair, not to the current pick:
  * while a new layer's pull is in flight the old rows keep their own
  * labels, and a whole-file read on one of them asks for the pair it was
- * read with (an uncommitted row next to a head would be refused).
+ * read with (uncommitted work next to a head would be refused).
  */
 export interface LoadedComparePair {
   base: string;

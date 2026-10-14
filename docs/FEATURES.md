@@ -774,15 +774,21 @@ git operations.
   diffs get the full width below.
 - **Compare** — a GitHub-PR-style view against a base branch: base selector
   (a client-side pick read via `GET /compare?base=…` — never persisted
-  daemon-side), three independent include toggles — staged, unstaged,
-  untracked — stats, a collapsible commits list, a file tree, and stacked
-  per-file diffs with sticky collapse headers. The toggles are separate
-  because they are separate reviews: "what am I about to commit" is not
-  "what have I touched". Each folded-in row is tagged with the side it came
-  from (`[staged]`, `[unstaged]`, `[untracked]`, or `[uncommitted]` when
-  staged and unstaged are read together as one diff against HEAD), and a
-  file that a branch commit touched AND has uncommitted edits is listed
-  once per side.
+  daemon-side), three include toggles — staged, unstaged, untracked —
+  stats, a collapsible commits list, a file tree, and stacked per-file
+  diffs with sticky collapse headers. The toggles fold uncommitted work
+  into the same rows, so the view reads as the pull request would if that
+  work were committed too: one diff per file from the merge-base, ending at
+  the index (staged) or the working tree (staged and unstaged). A file a
+  branch commit touched that also has uncommitted edits is one row holding
+  both, and a commit an uncommitted edit undoes leaves no row. Ticking
+  unstaged ticks staged too, and staged stays on until unstaged is off:
+  unstaged edits sit on top of staged ones, and no tree holds only them.
+  Untracked adds each untracked file as a new file. A row that holds
+  uncommitted work is tagged with which (`[staged]`, `[unstaged]`,
+  `[untracked]`, or `[uncommitted]` for staged and unstaged edits). The one
+  path listed twice is a file the branch deleted that is back on disk,
+  untracked.
   Tree folders collapse per-directory (chevron button or row click,
   Enter/Space/Left/Right on the button) — view state only; keyboard file
   navigation skips files hidden under a collapsed folder, and the stacked
@@ -824,10 +830,10 @@ git operations.
   between: `index → working tree`, `HEAD → index`, `origin/main…HEAD`,
   `a1b2c3d^ → a1b2c3d`. Every view already fixed a pair and none of them
   said so, which is what made "what am I comparing against" feel
-  unanswerable. Not a picker: nothing here is editable. It also disambiguates
-  Compare's mixed stack, where committed rows sit against the merge-base and
-  each uncommitted row against its own side (`HEAD → index`,
-  `index → working tree`, `HEAD → working tree`, `nothing → new file`).
+  unanswerable. Not a picker: nothing here is editable. In Compare every row
+  starts at the merge-base, and a row holding uncommitted work names where
+  it ends instead of HEAD: `origin/main…index` or
+  `origin/main…working tree`.
 - **"whole file" toggle in the Changes, Compare and History diff headers** —
   draws that one file in full, every line numbered, with the changed lines
   marked in place, instead of hunks with three lines of context around each.

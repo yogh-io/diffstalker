@@ -128,10 +128,10 @@ const visibleOrder = computed(() =>
 );
 
 /**
- * The tag an uncommitted row carries (Compare only). It names the SIDE,
- * not just the fact of being uncommitted: with the categories controlled
- * separately, "which of these three is this row" is the question the tag
- * has to answer. `both` is staged and unstaged read together as one diff.
+ * The tag a row that holds uncommitted work carries (Compare only). It
+ * names WHICH work, not just the fact of it: a staged file and one only
+ * edited on disk read differently once committed. `both` is a file with
+ * staged and unstaged edits.
  */
 function sideTag(side: UncommittedSide): string {
   return side === 'both' ? '[uncommitted]' : `[${side}]`;
@@ -183,7 +183,7 @@ const { onPointerEnter, onPointerLeave } = useActiveRowScroll(
     @pointerleave="onPointerLeave"
   >
     <!-- fileIndex is in the key: two rows can carry the same fullPath (a
-         Compare file both committed and uncommitted). -->
+         Compare file the branch deleted, back on disk untracked). -->
     <template v-for="row in renderRows" :key="`${row.type}:${row.fullPath}:${row.fileIndex}`">
       <!-- role=presentation: only file rows are listbox options. The whole
            row toggles; the button is the a11y surface (aria-expanded +

@@ -7,7 +7,8 @@
  * Unlike ViewFileButton and CopyPathButton (self-contained, store-reading,
  * path-only), this one takes props and emits. Which fetch to fire is a
  * property of the SURFACE, not of the path: Changes compares index against
- * the working tree, Compare compares a merge-base against HEAD, History a
+ * the working tree, Compare compares a merge-base against HEAD (or the
+ * index or working tree, with uncommitted work folded in), History a
  * commit against its parent. The owner knows the pair; a path does not.
  *
  * The ref pair is never picked here, or anywhere. It is inherited from the

@@ -60,9 +60,9 @@ describe('buildFileTree', () => {
   });
 
   it('gives two entries with the same path a row each', () => {
-    // Compare with "include uncommitted" lists a file twice when the
-    // branch's commits touch it AND it has uncommitted edits. Merging
-    // them into one leaf dropped the second entry's diff out of the view.
+    // Compare with "untracked" ticked lists a file twice when the branch
+    // deleted it and it is back on disk, untracked. Merging them into one
+    // leaf dropped the second entry's diff out of the view.
     const files = [{ path: 'src/a.ts' }, { path: 'src/a.ts' }, { path: 'src/b.ts' }];
     const root = buildFileTree(files);
     const src = root.children[0];

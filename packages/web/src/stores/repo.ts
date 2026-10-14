@@ -188,10 +188,10 @@ export function workingDiffKey(file: FileEntry): string {
 }
 
 /**
- * Stack key for a compare row. The path alone is NOT unique: with any
- * uncommitted category included, a file the branch's commits touch and
- * that also has uncommitted edits is listed twice, once per side. The
- * side is part of the key so the two rows can never collapse into one.
+ * Stack key for a compare row. The path alone is NOT unique: a file the
+ * branch deleted that is back on disk untracked is two rows. And a row
+ * whose uncommitted work changes is a different diff (it ends at another
+ * tree), so a whole-file body read for the old one must not carry over.
  */
 export function compareFileKey(file: CompareFileDiff): string {
   return `${file.uncommitted ?? 'c'}:${file.path}`;
@@ -1263,8 +1263,8 @@ export const useRepoStore = defineStore('repo', () => {
   /**
    * The read behind one whole-file request. Compare's rows are pulled per
    * file from the daemon (the stack pulls the range whole and splits it
-   * client-side, so there is no per-file request to widen), and its
-   * uncommitted rows sit against HEAD rather than against the base.
+   * client-side, so there is no per-file request to widen), and a row's
+   * uncommitted work decides where its diff ends.
    */
   function fetchWholeDiff(id: string, request: WholeFileRequest): Promise<DiffResult> {
     if (request.view === 'history') {
@@ -1299,7 +1299,7 @@ export const useRepoStore = defineStore('repo', () => {
    *
    * The request names its SURFACE, not just a key: Changes and Compare
    * both use `u:`-prefixed keys, and the two mean different comparisons
-   * (index-vs-worktree, and HEAD-vs-worktree inside a branch comparison).
+   * (index-vs-worktree, and merge-base-vs-worktree in a branch comparison).
    * A key alone could not pick the right read.
    *
    * Never rejects. A failed fetch leaves the mode OFF rather than on-and-

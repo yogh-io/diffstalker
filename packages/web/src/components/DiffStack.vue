@@ -17,8 +17,8 @@ export interface StackFile {
   status: FileStatus;
   /** Staged-side section (Changes, phase 1); unused by Compare. */
   staged?: boolean;
-  /** Compare's uncommitted marker on the header: which side the row is,
-   *  absent on a committed row. */
+  /** Compare's uncommitted marker on the header: which uncommitted work
+   *  the row holds, absent on a row of committed work only. */
   uncommitted?: UncommittedSide;
   stats: { insertions: number; deletions: number };
   /**

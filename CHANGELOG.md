@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Compare now folds uncommitted work into the branch's rows.** With
+  staged, unstaged or untracked ticked, a file the branch's commits touched
+  that also has uncommitted edits was listed twice: once for the commits,
+  once for the edits, each against a different base. Now each file is one
+  row, from the merge-base to the index (staged) or the working tree
+  (staged and unstaged), so Compare reads as the pull request would if you
+  committed that work too. An edit that undoes a commit leaves no row. A
+  row holding uncommitted work keeps its tag, and its header says where it
+  ends (`origin/main…working tree`). Ticking unstaged now ticks staged as
+  well: unstaged edits sit on top of staged ones, and no tree holds only
+  them.
+
 ## [0.13.7] - 2026-10-13
 
 ### Fixed

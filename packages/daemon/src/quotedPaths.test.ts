@@ -162,21 +162,23 @@ describe('History: /commits/:hash', () => {
 });
 
 describe('Compare: /compare and /compare/file', () => {
-  test('/compare lists the committed rows and the unstaged row by raw path', async () => {
+  test('/compare lists every row by raw path, the unstaged edit folded into its row', async () => {
     const diff = await json<{ files: WireRow[]; stats: { filesChanged: number } }>(
-      `/repos/${repoId}/compare?base=main&unstaged=true`
+      `/repos/${repoId}/compare?base=main&staged=true&unstaged=true`
     );
-    for (const name of NAMES) {
-      const committed = diff.files.find((f) => f.path === name && !f.uncommitted);
+    for (const name of NAMES.slice(1)) {
+      const committed = diff.files.find((f) => f.path === name);
       expect(committed).toMatchObject({ status: 'modified', additions: 1, deletions: 0 });
+      expect(committed?.uncommitted).toBeUndefined();
     }
     expect(diff.files.find((f) => f.path === MOVED)?.status).toBe('renamed');
-    const unstaged = diff.files.find((f) => f.path === NAMES[0] && f.uncommitted);
-    expect(unstaged).toMatchObject({ uncommitted: 'unstaged', additions: 1, deletions: 0 });
+    const rows = diff.files.filter((f) => f.path === NAMES[0]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ uncommitted: 'unstaged', additions: 2, deletions: 0 });
     expect(diff.stats.filesChanged).toBe(NAMES.length + 1);
   });
 
-  test('/compare/file reads one quoted name against the base and against the index', async () => {
+  test('/compare/file reads one quoted name against the base, and up to the working tree', async () => {
     for (const name of NAMES) {
       const row = await json<{ lines: { content: string }[] }>(
         `/repos/${repoId}/compare/file?path=${encodeURIComponent(name)}&base=main`
