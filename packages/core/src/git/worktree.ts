@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createGit } from './gitClient.js';
-import { getDefaultBaseBranch } from './diff.js';
+import { findDefaultBase } from './diff.js';
 import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
 import { expandPath } from '../utils/pathUtils.js';
 import * as logger from '../utils/logger.js';
@@ -178,7 +178,7 @@ export async function listWorktrees(anyRepoPath: string): Promise<WorktreeInfo[]
     const git = createGit(dir);
     const out = await git.raw(['worktree', 'list', '--porcelain']);
     const raw = parseWorktreePorcelain(out);
-    const ahead = await aheadOfBaseCounts(raw, dir);
+    const ahead = await aheadOfBaseCounts(raw);
     return raw.map((wt) => ({
       ...wt,
       lastActivity: wt.isBare ? null : finiteOrNull(lastGitActivity(wt.path)),
@@ -196,40 +196,33 @@ function finiteOrNull(time: number): number | null {
 }
 
 /**
- * Commits-ahead-of-base for every non-bare worktree, keyed by path.
- *
- * The candidate-base discovery (`getDefaultBaseBranch`) scans recent `git
- * log --all`, which is the expensive part — it runs ONCE per family (from
- * `anyPathInFamily`, since sibling worktrees share the same refs) and is
- * reused for every worktree that has no explicit persisted base-branch
- * choice of its own. A worktree with an explicit choice (set via the
- * Compare tab) uses that instead, same rule as resolveEffectiveBaseBranch.
+ * Commits-ahead-of-base for every non-bare worktree, keyed by path. A
+ * worktree with an explicit persisted base-branch choice (set via the
+ * Compare tab) counts against that; the rest count against their own
+ * default base, which depends on each worktree's HEAD. Same rule as
+ * resolveEffectiveBaseBranch.
  */
-async function aheadOfBaseCounts(
-  worktrees: RawWorktreeInfo[],
-  anyPathInFamily: string
-): Promise<Map<string, number>> {
-  const nonBare = worktrees.filter((wt) => !wt.isBare);
-  if (nonBare.length === 0) return new Map();
-
-  const discoveredDefault = await getDefaultBaseBranch(anyPathInFamily).catch(() => null);
-
+async function aheadOfBaseCounts(worktrees: RawWorktreeInfo[]): Promise<Map<string, number>> {
   const entries = await Promise.all(
-    nonBare.map(async (wt): Promise<[string, number] | null> => {
-      const base = getCachedBaseBranch(wt.path) ?? discoveredDefault;
-      if (!base) return null;
-      try {
-        const git = createGit(wt.path);
-        const out = await git.raw(['rev-list', '--count', '--end-of-options', `${base}..HEAD`]);
-        return [wt.path, parseInt(out.trim(), 10)];
-      } catch {
-        // The base is not a ref here (a cached choice for a branch that
-        // was deleted): no count, which the picker shows as unknown.
-        return null;
-      }
-    })
+    worktrees
+      .filter((wt) => !wt.isBare)
+      .map(async (wt): Promise<[string, number] | null> => {
+        const chosen = getCachedBaseBranch(wt.path);
+        if (chosen === undefined) {
+          const found = await findDefaultBase(wt.path);
+          return found ? [wt.path, found.ahead] : null;
+        }
+        try {
+          const git = createGit(wt.path);
+          const out = await git.raw(['rev-list', '--count', '--end-of-options', `${chosen}..HEAD`]);
+          return [wt.path, parseInt(out.trim(), 10)];
+        } catch {
+          // The base is not a ref here (a cached choice for a branch that
+          // was deleted): no count, which the picker shows as unknown.
+          return null;
+        }
+      })
   );
-
   return new Map(entries.filter((e): e is [string, number] => e !== null));
 }
 

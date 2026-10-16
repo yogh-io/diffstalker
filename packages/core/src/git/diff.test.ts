@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import {
   countHunksPerFile,
   pathFromDiffHeader,
@@ -19,6 +19,7 @@ import {
   getCommitDiff,
   getCandidateBaseBranches,
   getDefaultBaseBranch,
+  findDefaultBase,
   getCommitCountBetweenRefs,
   getDiffBetweenRefs,
   getCompareDiff,
@@ -1010,5 +1011,107 @@ describe('getCandidateBaseBranches only offers remote-tracking branches (fixture
     gitExec(repoPath, 'update-ref refs/remotes/origin/main main');
     gitExec(repoPath, 'update-ref refs/remotes/origin/HEAD refs/remotes/origin/main');
     expect(await getCandidateBaseBranches(repoPath)).toEqual(['origin/main']);
+  });
+});
+
+describe('findDefaultBase picks the remote mainline the branch forked from (fixture)', () => {
+  const REPO_NAME = 'default-base-test';
+  let repoPath: string;
+  /** Commits on main, oldest first. */
+  let main: string[];
+
+  beforeEach(() => {
+    repoPath = createFixtureRepo(REPO_NAME);
+    main = [];
+    for (let i = 0; i < 4; i++) {
+      writeFixtureFile(repoPath, 'a.txt', `${i}\n`);
+      gitExec(repoPath, 'add a.txt');
+      gitExec(repoPath, `commit -m "main ${i}"`);
+      main.push(gitExec(repoPath, 'rev-parse HEAD').trim());
+    }
+  });
+
+  afterEach(() => {
+    removeFixtureRepo(REPO_NAME);
+  });
+
+  /** A remote with these branches; `head` names the one its HEAD points at. */
+  function addRemote(name: string, branches: Record<string, string>, head?: string): void {
+    gitExec(repoPath, `remote add ${name} /nonexistent/${name}.git`);
+    for (const [branch, commit] of Object.entries(branches)) {
+      gitExec(repoPath, `update-ref refs/remotes/${name}/${branch} ${commit}`);
+    }
+    if (head) {
+      gitExec(repoPath, `symbolic-ref refs/remotes/${name}/HEAD refs/remotes/${name}/${head}`);
+    }
+  }
+
+  /** A branch `feature` cut from `commit`, with one commit of its own. */
+  function branchFrom(commit: string): void {
+    gitExec(repoPath, `checkout -q -b feature ${commit}`);
+    writeFixtureFile(repoPath, 'feature.txt', 'feature\n');
+    gitExec(repoPath, 'add feature.txt');
+    gitExec(repoPath, 'commit -m "feature"');
+  }
+
+  it('a stale fork main loses to the mainline the branch was cut from, though the branch tracks the fork', async () => {
+    addRemote('origin', { main: main[3] }, 'main');
+    addRemote('fork', { main: main[0] }, 'main');
+    branchFrom(main[3]);
+    // Pushed to the fork: the branch tracks fork/feature.
+    gitExec(repoPath, 'update-ref refs/remotes/fork/feature HEAD');
+    gitExec(repoPath, 'branch -q -u fork/feature');
+
+    expect(await findDefaultBase(repoPath)).toEqual({ branch: 'origin/main', ahead: 1 });
+    expect(await getDefaultBaseBranch(repoPath)).toBe('origin/main');
+  });
+
+  it('the commit count beats the remote name: a stale upstream loses to a current origin', async () => {
+    addRemote('upstream', { main: main[0] }, 'main');
+    addRemote('origin', { main: main[3] }, 'main');
+    branchFrom(main[3]);
+
+    expect(await findDefaultBase(repoPath)).toEqual({ branch: 'origin/main', ahead: 1 });
+  });
+
+  it('a tie goes to upstream, then origin, then the remote name', async () => {
+    addRemote('zeta', { main: main[3] }, 'main');
+    addRemote('fork', { main: main[3] }, 'main');
+    addRemote('origin', { main: main[3] }, 'main');
+    addRemote('upstream', { main: main[3] }, 'main');
+    branchFrom(main[3]);
+
+    expect(await getDefaultBaseBranch(repoPath)).toBe('upstream/main');
+    gitExec(repoPath, 'remote remove upstream');
+    expect(await getDefaultBaseBranch(repoPath)).toBe('origin/main');
+    gitExec(repoPath, 'remote remove origin');
+    expect(await getDefaultBaseBranch(repoPath)).toBe('fork/main');
+  });
+
+  it("a remote's mainline is its HEAD, else its main, else its master", async () => {
+    branchFrom(main[3]);
+
+    // HEAD names develop: develop is the mainline, though main is closer.
+    addRemote('origin', { main: main[3], develop: main[2] }, 'develop');
+    expect(await findDefaultBase(repoPath)).toEqual({ branch: 'origin/develop', ahead: 2 });
+    gitExec(repoPath, 'remote remove origin');
+
+    // No HEAD: main, though master is closer.
+    addRemote('origin', { main: main[0], master: main[3] });
+    expect(await findDefaultBase(repoPath)).toEqual({ branch: 'origin/main', ahead: 4 });
+    gitExec(repoPath, 'remote remove origin');
+
+    // No HEAD and no main: master.
+    addRemote('origin', { master: main[1] });
+    expect(await findDefaultBase(repoPath)).toEqual({ branch: 'origin/master', ahead: 3 });
+  });
+
+  it('a remote with only feature branches has no mainline, so no default', async () => {
+    addRemote('origin', { 'feature-x': main[3] });
+    branchFrom(main[3]);
+
+    expect(await findDefaultBase(repoPath)).toBeNull();
+    // The picker still offers its branches.
+    expect(await getCandidateBaseBranches(repoPath)).toEqual(['origin/feature-x']);
   });
 });

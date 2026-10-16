@@ -95,6 +95,7 @@ beforeAll(async () => {
   gitExec(repoPath, 'add .');
   gitExec(repoPath, 'commit -m "second commit"');
   // Remote-tracking ref so base-branch discovery has a candidate.
+  gitExec(repoPath, 'remote add origin /nonexistent/origin.git');
   gitExec(repoPath, 'update-ref refs/remotes/origin/main main');
   gitExec(repoPath, 'checkout -b feature');
   writeFixtureFile(repoPath, 'feature.txt', 'feature line\n');
@@ -133,6 +134,7 @@ beforeAll(async () => {
   gitExec(mergeRepoPath, 'add -A');
   gitExec(mergeRepoPath, 'commit -m "orphan commit"');
   gitExec(mergeRepoPath, 'checkout main');
+  gitExec(mergeRepoPath, 'remote add origin /nonexistent/origin.git');
   gitExec(mergeRepoPath, 'update-ref refs/remotes/origin/main main');
 
   daemon = createDaemon();

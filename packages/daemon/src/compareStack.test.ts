@@ -71,6 +71,7 @@ beforeAll(async () => {
 
   repoPath = createFixtureRepo(FIXTURE);
   commit('base.txt', 'base');
+  gitExec(repoPath, 'remote add upstream /nonexistent/upstream.git');
   gitExec(repoPath, 'update-ref refs/remotes/upstream/main main');
   gitExec(repoPath, 'checkout -b bottom');
   commit('bottom.txt', 'bottom');
@@ -124,7 +125,7 @@ describe('GET /compare/stack', () => {
 
   test('without base resolves the same base /compare would', async () => {
     // Nothing persisted: the discovered default is upstream/main, the one
-    // remote-tracking ref in recent history.
+    // remote's mainline.
     const res = await request(`/repos/${repoId}/compare/stack`);
     expect(res.status).toBe(200);
     expect(((await res.json()) as CompareStack).trunk).toBe('upstream/main');

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Compare now defaults to the mainline the branch forked from.** The
+  default base was the first `main` or `master` among the remote-tracking
+  branches, preferring any remote not named `origin`. That suits a clone
+  where `origin` is your fork and `upstream` the real repo, but with the
+  names the other way round (`origin` the real repo, `fork` your fork) it
+  picked the fork's `main`. When that `main` was years old, Compare showed
+  dozens of commits that were never part of the branch. Now each remote
+  offers its default branch (its `HEAD`, else `main`, else `master`), and
+  the one with the fewest commits between it and the branch wins. A tie
+  goes to `upstream`, then `origin`. The worktree switcher's commits-ahead
+  count uses the same default, now worked out per worktree. The base
+  picker no longer puts non-`origin` remotes first either.
+
 ## [0.13.8] - 2026-10-15
 
 ### Changed

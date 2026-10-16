@@ -789,6 +789,13 @@ git operations.
   `[untracked]`, or `[uncommitted]` for staged and unstaged edits). The one
   path listed twice is a file the branch deleted that is back on disk,
   untracked.
+  With no base picked, the base is the remote mainline the branch forked
+  from, whatever the remotes are called. Each remote offers its default
+  branch (its `HEAD`, else `main`, else `master`), and the one with the
+  fewest commits between it and HEAD wins; a tie goes to `upstream`, then
+  `origin`. So a fork whose `main` stopped moving long ago does not win
+  just because the branch was pushed there. The worktree switcher's
+  commits-ahead count uses the same default, per worktree.
   Tree folders collapse per-directory (chevron button or row click,
   Enter/Space/Left/Right on the button) — view state only; keyboard file
   navigation skips files hidden under a collapsed folder, and the stacked

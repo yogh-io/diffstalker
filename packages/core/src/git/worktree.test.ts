@@ -3,11 +3,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, it, expect } from 'vitest';
 import {
+  listWorktrees,
   parseWorktreePorcelain,
   pickDefaultWorktree,
   resolveGitDirs,
   type WorktreeInfo,
 } from './worktree.js';
+import { createFixtureRepo, gitExec, removeFixtureRepo, writeFixtureFile } from './test-helpers.js';
 
 describe('parseWorktreePorcelain', () => {
   it('parses a bare-repo layout with several worktrees', () => {
@@ -168,5 +170,48 @@ describe('resolveGitDirs', () => {
   it('returns null for a non-repo directory', () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-gd-'));
     expect(resolveGitDirs(root)).toBeNull();
+  });
+});
+
+describe('listWorktrees aheadOfBase (fixture)', () => {
+  const REPO_NAME = 'worktree-ahead-test';
+  const LINKED_NAME = `${REPO_NAME}-linked`;
+
+  afterEach(() => {
+    removeFixtureRepo(REPO_NAME);
+    removeFixtureRepo(LINKED_NAME);
+  });
+
+  function commit(repoPath: string, file: string): string {
+    writeFixtureFile(repoPath, file, `${file}\n`);
+    gitExec(repoPath, `add ${file}`);
+    gitExec(repoPath, `commit -m "${file}"`);
+    return gitExec(repoPath, 'rev-parse HEAD').trim();
+  }
+
+  it('each worktree counts against the default base of its own HEAD', async () => {
+    const repoPath = createFixtureRepo(REPO_NAME);
+    const root = commit(repoPath, 'root.txt');
+    const upstreamTip = commit(repoPath, 'upstream.txt');
+    gitExec(repoPath, `checkout -q -b fork-main ${root}`);
+    const forkTip = commit(repoPath, 'fork.txt');
+    for (const [remote, tip] of [['origin', upstreamTip], ['fork', forkTip]]) {
+      gitExec(repoPath, `remote add ${remote} /nonexistent/${remote}.git`);
+      gitExec(repoPath, `update-ref refs/remotes/${remote}/main ${tip}`);
+    }
+
+    // Main worktree: a branch cut from origin/main.
+    gitExec(repoPath, `checkout -q -b feature ${upstreamTip}`);
+    commit(repoPath, 'feature.txt');
+    // Linked worktree: a branch cut from fork/main. Against origin/main it
+    // would count 2 (fork.txt and its own commit).
+    const linkedPath = path.join(repoPath, '..', LINKED_NAME);
+    gitExec(repoPath, `worktree add -q -b on-fork "${linkedPath}" ${forkTip}`);
+    commit(linkedPath, 'on-fork.txt');
+
+    const worktrees = await listWorktrees(repoPath);
+    const ahead = new Map(worktrees.map((wt) => [wt.branch, wt.aheadOfBase]));
+    expect(ahead.get('feature')).toBe(1);
+    expect(ahead.get('on-fork')).toBe(1);
   });
 });

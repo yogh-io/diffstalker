@@ -63,6 +63,7 @@ beforeAll(async () => {
   writeFixtureFile(repoPath, 'base.txt', 'keep\n');
   gitExec(repoPath, 'add -A');
   gitExec(repoPath, 'commit -m "base"');
+  gitExec(repoPath, 'remote add origin /nonexistent/origin.git');
   gitExec(repoPath, 'update-ref refs/remotes/origin/main main');
   gitExec(repoPath, 'checkout -b feature');
   for (const name of NAMES) writeFixtureFile(repoPath, name, 'a\nb\n');

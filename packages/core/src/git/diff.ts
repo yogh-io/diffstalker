@@ -397,29 +397,13 @@ export async function getCandidateBaseBranches(repoPath: string): Promise<string
       refPattern.lastIndex = 0; // Reset regex state
     }
 
-    // If we found candidates, sort main/master to top, prefer non-origin
-    if (candidates.length > 0) {
-      candidates.sort((a, b) => {
-        const aName = a.split('/').slice(1).join('/');
-        const bName = b.split('/').slice(1).join('/');
-        const aIsMain = aName === 'main' || aName === 'master';
-        const bIsMain = bName === 'main' || bName === 'master';
-
-        // main/master first
-        if (aIsMain && !bIsMain) return -1;
-        if (!aIsMain && bIsMain) return 1;
-
-        // Among main/master, prefer non-origin
-        if (aIsMain && bIsMain) {
-          const aIsOrigin = a.startsWith('origin/');
-          const bIsOrigin = b.startsWith('origin/');
-          if (aIsOrigin && !bIsOrigin) return 1;
-          if (!aIsOrigin && bIsOrigin) return -1;
-        }
-
-        return 0; // Keep discovery order otherwise
-      });
-    }
+    // main/master first; discovery order (most recent first) otherwise.
+    // The default base is not read off this list: see findDefaultBase.
+    const isMain = (name: string): boolean => {
+      const branch = name.split('/').slice(1).join('/');
+      return branch === 'main' || branch === 'master';
+    };
+    candidates.sort((a, b) => Number(isMain(b)) - Number(isMain(a)));
   } catch (err) {
     // No candidates then — and the compare view says "no base branch",
     // which reads as a repo without remotes unless the log says otherwise.
@@ -429,12 +413,93 @@ export async function getCandidateBaseBranches(repoPath: string): Promise<string
   return candidates;
 }
 
+/** Remotes whose mainline wins a tie, most preferred first. */
+const TIE_BREAK_REMOTES = ['upstream', 'origin'];
+
+function tieRank(remote: string): number {
+  const rank = TIE_BREAK_REMOTES.indexOf(remote);
+  return rank === -1 ? TIE_BREAK_REMOTES.length : rank;
+}
+
+interface Mainline {
+  remote: string;
+  /** The full ref, `refs/remotes/origin/main`. */
+  ref: string;
+}
+
 /**
- * Get the best default base branch for PR comparison.
+ * Each remote's mainline: the branch its `HEAD` points at, else its
+ * `main`, else its `master`. A remote with none of these has no mainline.
  */
+async function remoteMainlines(git: SimpleGit): Promise<Mainline[]> {
+  const remotes = (await git.raw(['remote'])).split('\n').filter(Boolean);
+  // refname -> symref target ('' for a plain ref). A ref name cannot
+  // hold a space, so the space split is exact.
+  const refs = new Map<string, string>();
+  const out = await git.raw(['for-each-ref', '--format=%(refname) %(symref)', REMOTE_REF_PREFIX]);
+  for (const line of out.split('\n')) {
+    const [ref, symref = ''] = line.split(' ');
+    if (ref) refs.set(ref, symref);
+  }
+
+  const mainlines: Mainline[] = [];
+  for (const remote of remotes) {
+    const prefix = `${REMOTE_REF_PREFIX}${remote}/`;
+    const head = refs.get(`${prefix}HEAD`);
+    const ref =
+      head && refs.has(head) ? head : [`${prefix}main`, `${prefix}master`].find((r) => refs.has(r));
+    if (ref) mainlines.push({ remote, ref });
+  }
+  return mainlines;
+}
+
+/** The default compare base, and how many commits HEAD has on top of it. */
+export interface DefaultBase {
+  /** Spelled `origin/main`. */
+  branch: string;
+  /** `git rev-list --count <branch>..HEAD`. */
+  ahead: number;
+}
+
+/**
+ * The default compare base: the remote mainline the branch forked from,
+ * whatever the remotes are called. That is the mainline with the fewest
+ * commits between it and HEAD. A fork's main that stopped moving years
+ * ago counts every commit the real mainline gained since, so it loses to
+ * the mainline the branch was cut from. A tie goes to `upstream`, then
+ * `origin`, then the remote name.
+ *
+ * Depends on HEAD, so it is per worktree, not per repo family.
+ */
+export async function findDefaultBase(repoPath: string): Promise<DefaultBase | null> {
+  const git = createGit(repoPath);
+  try {
+    const counted = await Promise.all(
+      (await remoteMainlines(git)).map(async ({ remote, ref }) => ({
+        remote,
+        branch: ref.slice(REMOTE_REF_PREFIX.length),
+        ahead: parseInt((await git.raw(['rev-list', '--count', `${ref}..HEAD`])).trim(), 10),
+      }))
+    );
+    counted.sort(
+      (a, b) =>
+        a.ahead - b.ahead ||
+        tieRank(a.remote) - tieRank(b.remote) ||
+        (a.remote < b.remote ? -1 : a.remote > b.remote ? 1 : 0)
+    );
+    const best = counted[0];
+    return best ? { branch: best.branch, ahead: best.ahead } : null;
+  } catch (err) {
+    // No default then — and the compare view says "no base branch",
+    // which reads as a repo without remotes unless the log says otherwise.
+    warn(`default base-branch discovery failed in ${repoPath}: ${errorText(err)}`);
+    return null;
+  }
+}
+
+/** The default compare base's name; see findDefaultBase. */
 export async function getDefaultBaseBranch(repoPath: string): Promise<string | null> {
-  const candidates = await getCandidateBaseBranches(repoPath);
-  return candidates[0] ?? null;
+  return (await findDefaultBase(repoPath))?.branch ?? null;
 }
 
 /**
