@@ -376,7 +376,7 @@ Web keys live in `composables/useGlobalKeys.ts` (and `usePortraitKeys.ts`); the 
 
 ### Pre-commit Hook
 
-A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `scripts/githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 17 pre-existing warnings are expected (4 in packages/core + 11 in packages/cli + 2 in packages/web; daemon and client 0), 0 errors. 15 of them are sonarjs cognitive-complexity; web's 2 are `vue/one-component-per-file` from the two inline test components in `src/composables/useActiveRowScroll.test.ts`.
+A pre-commit hook runs `bun run lint` (ESLint + dependency-cruiser) before every commit. It lives in `scripts/githooks/pre-commit` and is activated via the `prepare` script after `bun install`. 16 pre-existing warnings are expected (3 in packages/core + 11 in packages/cli + 2 in packages/web; daemon and client 0), 0 errors. 14 of them are sonarjs cognitive-complexity; web's 2 are `vue/one-component-per-file` from the two inline test components in `src/composables/useActiveRowScroll.test.ts`.
 
 ### Architecture Layering (dependency-cruiser)
 

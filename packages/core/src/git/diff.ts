@@ -481,11 +481,12 @@ export async function findDefaultBase(repoPath: string): Promise<DefaultBase | n
         ahead: parseInt((await git.raw(['rev-list', '--count', `${ref}..HEAD`])).trim(), 10),
       }))
     );
+    // Remote names are unique, so the last comparison never ties.
     counted.sort(
       (a, b) =>
         a.ahead - b.ahead ||
         tieRank(a.remote) - tieRank(b.remote) ||
-        (a.remote < b.remote ? -1 : a.remote > b.remote ? 1 : 0)
+        (a.remote < b.remote ? -1 : 1)
     );
     const best = counted[0];
     return best ? { branch: best.branch, ahead: best.ahead } : null;
