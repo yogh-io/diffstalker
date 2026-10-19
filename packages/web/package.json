@@ -24,8 +24,8 @@
     "@diffstalker/core": "workspace:*",
     "fzf": "^0.5.2",
     "highlight.js": "^11.12.0",
-    "pinia": "^4.0.3",
-    "vue": "^3.5.43"
+    "pinia": "^4.1.0",
+    "vue": "^3.5.44"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -38,12 +38,12 @@
     "eslint-plugin-sonarjs": "^4.2.2",
     "eslint-plugin-vue": "^10.11.1",
     "globals": "^17.13.0",
-    "happy-dom": "^20.14.5",
+    "happy-dom": "^21.0.3",
     "prettier": "^3.9.9",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.71.1",
+    "typescript-eslint": "^8.71.2",
     "vite": "^8.3.4",
-    "vitest": "^5.0.0",
+    "vitest": "^5.0.5",
     "vue-eslint-parser": "^10.4.1",
     "vue-tsc": "^3.3.12"
   }
