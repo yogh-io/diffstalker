@@ -1,11 +1,17 @@
 version: 2
+
+# One monthly PR that carries every bun and Actions bump together.
+multi-ecosystem-groups:
+  all-dependencies:
+    schedule:
+      interval: "monthly"
+
 updates:
   # Bun workspace (root drives all packages/* and owns bun.lock).
   - package-ecosystem: "bun"
     directory: "/"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
+    patterns: ["*"]
+    multi-ecosystem-group: "all-dependencies"
     ignore:
       # TypeScript major upgrades need coordinated vue-tsc/typescript-eslint
       # upgrades; TS 7 removes the ./lib/tsc entry point used by vue-tsc 3.
@@ -15,19 +21,9 @@ updates:
       # This runtime version is coupled to vendored grammar artifacts and the
       # BUNDLED_WEB_TREE_SITTER constant; update those together deliberately.
       - dependency-name: "web-tree-sitter"
-    groups:
-      # One PR per week for the routine dev-tooling bumps (eslint, tsc,
-      # prettier, types) — runtime deps still come as individual PRs so a
-      # supply-chain-sensitive bump (simple-git, chokidar, neo-blessed) is
-      # reviewed on its own.
-      dev-dependencies:
-        dependency-type: "development"
-        update-types:
-          - "minor"
-          - "patch"
 
   # Keep the Actions used by the CI / release / CodeQL workflows current.
   - package-ecosystem: "github-actions"
     directory: "/"
-    schedule:
-      interval: "weekly"
+    patterns: ["*"]
+    multi-ecosystem-group: "all-dependencies"
