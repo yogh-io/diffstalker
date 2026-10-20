@@ -72,7 +72,7 @@ async function openRepo(repoPath: string): Promise<string> {
   return ((await res.json()) as { id: string }).id;
 }
 
-/** Close a repo so its manager (and watchers) are disposed. */
+/** Release a repo; daemon.close() disposes the lingering manager. */
 async function closeRepo(repoId: string): Promise<void> {
   await request(`/repos/${repoId}`, { method: 'DELETE' });
 }

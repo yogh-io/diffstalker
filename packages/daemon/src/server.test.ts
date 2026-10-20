@@ -389,8 +389,11 @@ describe('daemon over unix socket', () => {
     // The id is a hash of the worktree root, so a client's cached id
     // addresses the same repo even across a daemon restart.
     const res = await postJson('/repos', { path: repoPath });
-    expect(res.status).toBe(201); // fully removed above, so this recreates
+    // Closed above, but inside the linger window: the live manager is
+    // taken back rather than recreated, so this is a 200, not a 201.
+    expect(res.status).toBe(200);
     const body = (await res.json()) as { id: string };
     expect(body.id).toBe(repoId);
+    expect(daemon.getRepo(repoId)).toBeDefined();
   });
 });

@@ -204,8 +204,8 @@ with a 400 so they can never be parsed as git flags.
 | GET    | `/health`                  | `{ok, ready, home, http: {port}, symbols}` — `http.port` is the loopback port a browser reaches the web UI on, or null when only a socket is bound (what `diffstalker link` needs to build a URL at all) |
 | GET    | `/version`                 | `{current, latest, status, install, restart}` — the running version against npm's `latest` dist-tag (`current` \| `outdated` \| `ahead` \| `unknown`). The npm lookup is cached (6h, 5min after a failure) and only ever runs when this endpoint is called; `--no-update-check` skips it, leaving `latest: null`. `install` is `{method, package, command}` — how this daemon was installed (`npm` \| `bun` \| `pnpm` \| `yarn` \| `pacman` \| `unknown`) and the one command that updates it, detected once from where the daemon's own files live. An install nothing owns reports `unknown` with a null command rather than a guess. `restart` is the command that restarts this daemon (`systemctl --user restart diffstalkerd`, or `sudo systemctl restart …` for a system unit), set only when systemd started this very process (`$SYSTEMD_EXEC_PID` is its pid) and `/proc/self/cgroup` names a plain `.service` unit; otherwise null |
 | GET    | `/repos`                   | List open repos (`id`, `path`, `branch`)         |
-| POST   | `/repos`                   | Open a repo: `{"path": "/abs/path"}` → `{id, path}` (201 created, 200 already open). 400 for a relative path or a directory that is not a git repository, 404 when the path does not exist. One missing last segment under a repo still opens the repo above it (`<repo>/nope` opens `<repo>`); a path missing more than one level deep (`<repo>/nope/deeper`) is a 404 |
-| DELETE | `/repos/:id`               | Close a repo (refcounted per open)               |
+| POST   | `/repos`                   | Open a repo: `{"path": "/abs/path"}` → `{id, path}` (201 created, 200 already open or still kept warm after its release). 400 for a relative path or a directory that is not a git repository, 404 when the path does not exist. One missing last segment under a repo still opens the repo above it (`<repo>/nope` opens `<repo>`); a path missing more than one level deep (`<repo>/nope/deeper`) is a 404 |
+| DELETE | `/repos/:id`               | Close a repo (refcounted per open). At zero it is closed for every client at once (`repo-closed`, gone from `GET /repos`), but the daemon keeps its git state live for 10 minutes (up to 4 such repos) so a reopen in that window is warm |
 | GET    | `/repos/:id/worktrees`     | Registered worktrees (`path`, `branch`, `head`, `isBare`, `lastActivity`, `aheadOfBase`): main worktree, linked worktrees, and the bare entry in a bare-worktree layout |
 | GET    | `/worktrees?path=`         | Same as above, but for a raw filesystem path instead of an already-opened repo id (e.g. a recently-visited repo a client hasn't opened on this daemon) |
 | GET    | `/resolve?path=`           | `{openable, root}` — can this exact path be opened, and as which worktree, without opening it. Same resolver as `POST /repos`, but the path must EXIST (git resolves a missing path to its parent worktree, which would make a typo look openable). A relative path is a 400; not-a-repo is a 200 answer |
@@ -359,9 +359,11 @@ stream), one event per observation (possibly several hunks), batched so
 clients apply them atomically.
 
 The journal store lives above the repo's manager lifecycle: closing a
-repo's last client (a browser F5) disposes the manager but keeps the
-store, so a reopen resumes the same chronology under the same epoch.
-Stores are LRU-capped daemon-wide; an open repo's store is never evicted.
+repo's last client (a browser F5) keeps the store, so a reopen resumes the
+same chronology under the same epoch, even after the lingering manager is
+disposed. While the manager lingers it keeps journaling edits as usual.
+Stores are LRU-capped daemon-wide; the store of an open or lingering repo
+is never evicted.
 
 ## Image bytes
 

@@ -23,19 +23,31 @@ export function repoId(root: string): string {
 /** Daemon-wide bound on retained journal stores (open repos never count out). */
 export const JOURNAL_STORE_CAP = 32;
 
+/** How long a released repo keeps its live manager before it is disposed. */
+export const LINGER_MS = 10 * 60 * 1000;
+
+/** How many released repos may linger at once; past it the oldest goes. */
+export const LINGER_CAP = 4;
+
+export interface RegistryOptions {
+  lingerMs?: number;
+  lingerCap?: number;
+}
+
 /**
  * Journal stores held ABOVE the manager lifecycle, keyed by repo id.
  *
  * Closing a repo's last client drops the refcount to zero (a browser
  * reload only does this because the web app releases its ref with a
  * keepalive DELETE on pagehide — nothing daemon-side detects a vanished
- * client, so an unload without that release would leak the ref) and
- * disposes the core manager but must NOT wipe the session's edit
- * chronology — the store stays here and is re-injected on reopen, where
- * the first observation reconciles itself (a HEAD moved while unobserved
- * becomes a boundary + rebaseline). The map is LRU-capped so a daemon
- * that has touched many repos does not grow without bound; a currently
- * open repo's store is never evicted.
+ * client, so an unload without that release would leak the ref). The
+ * manager lingers for a while and is then disposed, but that must NOT
+ * wipe the session's edit chronology — the store stays here and is
+ * re-injected on reopen, where the first observation reconciles itself
+ * (a HEAD moved while unobserved becomes a boundary + rebaseline). The
+ * map is LRU-capped so a daemon that has touched many repos does not
+ * grow without bound; the store of an open or lingering repo is never
+ * evicted.
  */
 export class JournalStoreCache {
   /** Insertion order doubles as LRU order: acquire() re-inserts. */
@@ -115,21 +127,38 @@ export interface OpenResult {
 /**
  * Lifecycle callbacks, injected by createDaemon (the registry must not
  * import the server or the SSE hubs — that would be a layering inversion).
- * onOpened fires only when an open CREATES the handle, onClosed only when a
- * close actually disposes it (refcount hit zero). disposeAll (daemon
- * shutdown) is silent: the subscribers are being torn down anyway.
+ * onOpened fires when an open makes the repo visible (a new handle, or a
+ * lingering one taken back), onClosed when a close drops the refcount to
+ * zero. disposeAll (daemon shutdown) is silent: the subscribers are being
+ * torn down anyway.
  */
 export interface RegistryEvents {
   onOpened?: (handle: RepoHandle) => void;
   onClosed?: (id: string) => void;
 }
 
+/** A released repo whose manager is kept live for a quick reopen. */
+interface Lingering {
+  handle: RepoHandle;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export class RepoRegistry {
   private byId = new Map<string, RepoHandle>();
   private byPath = new Map<string, RepoHandle>();
+  /** Keyed by root; insertion order is linger order, oldest first. */
+  private lingering = new Map<string, Lingering>();
   private journalStores = new JournalStoreCache();
+  private lingerMs: number;
+  private lingerCap: number;
 
-  constructor(private events: RegistryEvents = {}) {}
+  constructor(
+    private events: RegistryEvents = {},
+    options: RegistryOptions = {}
+  ) {
+    this.lingerMs = options.lingerMs ?? LINGER_MS;
+    this.lingerCap = options.lingerCap ?? LINGER_CAP;
+  }
 
   /**
    * Open a repo by any path: a worktree root, a subdirectory, or a bare
@@ -155,6 +184,19 @@ export class RepoRegistry {
       return { handle: existing, created: false };
     }
 
+    const revived = this.takeLingering(root);
+    if (revived) {
+      revived.refCount = 1;
+      this.byId.set(revived.id, revived);
+      this.byPath.set(root, revived);
+      this.journalStores.acquire(revived.id);
+      // Served warm at once; the refresh catches anything its watchers
+      // could not see while it lingered (a directory replaced, a watch lost).
+      revived.manager.workingTree.scheduleRefresh();
+      this.events.onOpened?.(revived);
+      return { handle: revived, created: false };
+    }
+
     // Inject the repo's surviving journal store (or mint one on first
     // open): the store lives above the manager lifecycle so a close +
     // reopen keeps the session's chronology.
@@ -170,9 +212,32 @@ export class RepoRegistry {
     };
     this.byId.set(handle.id, handle);
     this.byPath.set(root, handle);
-    this.journalStores.prune((storeId) => this.byId.has(storeId));
+    this.pruneJournalStores();
     this.events.onOpened?.(handle);
     return { handle, created: true };
+  }
+
+  /**
+   * The lingering handle for this root, out of the linger set and with its
+   * timer cancelled. A manager that lost its repo while lingering is not
+   * worth reviving: it is disposed here and the open starts fresh.
+   */
+  private takeLingering(root: string): RepoHandle | null {
+    const entry = this.lingering.get(root);
+    if (!entry) return null;
+    clearTimeout(entry.timer);
+    this.lingering.delete(root);
+    if (entry.handle.manager.workingTree.unavailable) {
+      entry.handle.manager.dispose();
+      return null;
+    }
+    return entry.handle;
+  }
+
+  /** Open and lingering repos both have a live manager writing to their store. */
+  private pruneJournalStores(): void {
+    const lingeringIds = new Set([...this.lingering.values()].map((entry) => entry.handle.id));
+    this.journalStores.prune((storeId) => this.byId.has(storeId) || lingeringIds.has(storeId));
   }
 
   getRepo(id: string): RepoHandle | undefined {
@@ -184,11 +249,13 @@ export class RepoRegistry {
   }
 
   /**
-   * Decrement a repo's refcount; dispose the core manager (watchers, queue)
-   * only when the count reaches zero. The journal store is deliberately
-   * NOT dropped — it stays in the LRU cache so a reopen resumes the same
-   * chronology. Returns true when the repo was fully removed, false when
-   * other opens still hold it or the id is unknown.
+   * Decrement a repo's refcount. At zero the repo is closed for every
+   * client (not listed, not addressable, onClosed fires), but its core
+   * manager keeps running for LINGER_MS so a reopen inside that window is
+   * warm. The journal store is deliberately NOT dropped — it stays in the
+   * LRU cache so a reopen resumes the same chronology. Returns true when
+   * the repo was closed, false when other opens still hold it or the id
+   * is unknown.
    */
   closeRepo(id: string): boolean {
     const handle = this.byId.get(id);
@@ -199,18 +266,39 @@ export class RepoRegistry {
 
     this.byId.delete(handle.id);
     this.byPath.delete(handle.path);
-    handle.manager.dispose();
+    this.linger(handle);
     this.events.onClosed?.(handle.id);
     return true;
   }
 
-  /** Dispose every open repo regardless of refcount (daemon shutdown). */
+  private linger(handle: RepoHandle): void {
+    if (this.lingering.size >= this.lingerCap) {
+      const oldest = this.lingering.keys().next().value!;
+      this.disposeLingering(oldest);
+    }
+    const timer = setTimeout(() => this.disposeLingering(handle.path), this.lingerMs);
+    timer.unref();
+    this.lingering.set(handle.path, { handle, timer });
+  }
+
+  private disposeLingering(root: string): void {
+    const entry = this.lingering.get(root);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    this.lingering.delete(root);
+    entry.handle.manager.dispose();
+  }
+
+  /** Dispose every open and lingering repo regardless of refcount (daemon shutdown). */
   disposeAll(): void {
     for (const handle of this.byId.values()) {
       handle.manager.dispose();
     }
     this.byId.clear();
     this.byPath.clear();
+    for (const root of [...this.lingering.keys()]) {
+      this.disposeLingering(root);
+    }
   }
 }
 

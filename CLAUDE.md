@@ -191,7 +191,7 @@ packages/daemon/src/
 ├── router.ts               # Method+path router, JSON bodies, HttpError -> {error}, sendBytes, failure logging
 ├── security.ts             # Loopback Host allow-list, CSRF check on non-GET, image-subresource guard
 ├── staticFiles.ts          # Serves the bundled web UI (SPA fallback); its CONTENT_TYPES are for the SPA only
-├── repoRegistry.ts         # Open repos by path, stable ids, refcounting, follow-ref, journal-store LRU cache
+├── repoRegistry.ts         # Open repos by path, stable ids, refcounting, follow-ref, journal-store LRU cache; a released repo's manager lingers 10 min (cap 4) so a reopen is warm
 ├── follow.ts               # Hook-file watcher -> resolve path -> open repo -> broadcast
 ├── settings.ts             # Persistent daemon settings (~/.config/diffstalker/daemon.json)
 ├── discovery.ts            # Watch directories: scan + watch, 'discovery-change' broadcasts

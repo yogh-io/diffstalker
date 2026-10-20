@@ -184,7 +184,7 @@ describe('GET /events?repo= (combined stream)', () => {
       expect((await sse.next(3000)).event).toBe('snapshot');
       expect((await sse.next(3000)).event).toBe('repo-snapshot');
 
-      // Last ref gone: the registry disposes the repo. The repo channel
+      // Last ref gone: the registry closes the repo. The repo channel
       // must detach this response, not end it.
       await request(`/repos/${id}`, { method: 'DELETE' });
       const seen = await collectUntil(sse, (evt) => evt.event === 'repo-closed', 5000);

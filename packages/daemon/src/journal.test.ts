@@ -251,7 +251,7 @@ describe('store survives close + reopen (browser F5)', () => {
     const before = await journalWhen(id, (j) => j.entries.length >= 2);
     const seededSeq = before.entries.find((e) => e.type === 'hunk')!.seq;
 
-    // F5: the only client releases the repo — manager disposed, store kept.
+    // F5: the only client releases the repo — it closes for clients, store kept.
     const closed = await request(`/repos/${id}`, { method: 'DELETE' });
     expect(closed.status).toBe(200);
     const listed = (await (await request('/repos')).json()) as { id: string }[];
