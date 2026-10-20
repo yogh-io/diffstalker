@@ -193,22 +193,37 @@ export const useDaemonStore = defineStore('daemon', () => {
    * the settings load replaces daemon-owned values, loadVersion pins
    * servedBy once, and the version poll is idempotent.
    */
+  /**
+   * Set by a snapshot that arrived with a repo attached: its pulls wait
+   * for the repo's own first event on the same stream. That event starts
+   * the diff pulls the screen is waiting for, and a browser opens at most
+   * six connections per host, so these go after them, not ahead.
+   */
+  let scopePullsPending = false;
+
+  function pullDaemonScope(): void {
+    scopePullsPending = false;
+    // The snapshot has no branches; the REST list does. Fire-and-forget.
+    void refreshRepos();
+    void loadFollow();
+    // Daemon-owned settings + what they discovered. Pulled here (not
+    // when the panel opens) because the repo switcher lists discovered
+    // repos too, so they must be there before anyone asks.
+    void useSettingsStore().load();
+    // Re-pulled on every (re)connect: a reconnect can mean the daemon
+    // was restarted on a different version. The daemon caches the npm
+    // lookup, so this costs one local request.
+    void loadVersion();
+  }
+
   const streamHandlers: DaemonStreamHandlers = {
     onSnapshot: (refs) => {
       connection.value = 'connected';
       error.value = null;
       mergeSnapshot(refs);
-      // The snapshot has no branches; the REST list does. Fire-and-forget.
-      void refreshRepos();
-      void loadFollow();
-      // Daemon-owned settings + what they discovered. Pulled here (not
-      // when the panel opens) because the repo switcher lists discovered
-      // repos too, so they must be there before anyone asks.
-      void useSettingsStore().load();
-      // Re-pulled on every (re)connect: a reconnect can mean the daemon
-      // was restarted on a different version. The daemon caches the npm
-      // lookup, so this costs one local request.
-      void loadVersion();
+      // The daemon writes the repo's first event right after this one.
+      if (attachedRepo !== null) scopePullsPending = true;
+      else pullDaemonScope();
       startVersionPolling();
     },
     onRepoOpened: (repo) => upsertRepo(repo),
@@ -298,9 +313,14 @@ export const useDaemonStore = defineStore('daemon', () => {
         ...handlers,
         onSnapshot: (state) => {
           handlers.onSnapshot(state);
+          if (scopePullsPending) pullDaemonScope();
           if (!resumePending) return;
           resumePending = false;
           handlers.onResume?.();
+        },
+        onMissing: (event) => {
+          handlers.onMissing(event);
+          if (scopePullsPending) pullDaemonScope();
         },
       },
     };

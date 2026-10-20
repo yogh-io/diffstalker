@@ -221,11 +221,40 @@ describe('useDaemonStore', () => {
       onMissing: vi.fn(),
     });
     FakeEventSource.latest().emit('snapshot', [{ id: 'r1', path: '/repo' }]);
+    FakeEventSource.latest().emit('repo-snapshot', { status: null, error: null });
     await flush();
 
     expect(store.follow).toMatchObject({ followedRepoId: 'r2', followedPath: '/other' });
     // Still the live event (a re-seed would carry the root, '/other').
     expect(store.lastFollowChange).toEqual(live);
+  });
+
+  test('with a repo attached, the daemon-wide pulls wait for its snapshot', async () => {
+    const store = useDaemonStore();
+    const diffPull = vi.fn(() => void fetch('/repos/r1/diff'));
+    store.attachRepo('r1', { onSnapshot: diffPull, onStateChange: vi.fn(), onMissing: vi.fn() });
+    const source = FakeEventSource.latest();
+
+    source.emit('snapshot', [{ id: 'r1', path: '/repo' }]);
+    expect(fake.callsTo('/follow')).toHaveLength(0);
+
+    source.emit('repo-snapshot', { status: null, error: null });
+    await flush();
+    // The repo's own pull went out first, then the daemon-wide ones.
+    const order = fake.calls.map((call) => call.url);
+    expect(order.indexOf('/repos/r1/diff')).toBeLessThan(order.indexOf('/follow'));
+    expect(order).toContain('/repos');
+  });
+
+  test('a repo that is missing still lets the daemon-wide pulls run', async () => {
+    const store = useDaemonStore();
+    store.attachRepo('r1', { onSnapshot: vi.fn(), onStateChange: vi.fn(), onMissing: vi.fn() });
+    const source = FakeEventSource.latest();
+
+    source.emit('snapshot', []);
+    source.emit('repo-missing', { id: 'r1' });
+    await flush();
+    expect(fake.callsTo('/follow')).toHaveLength(1);
   });
 
   test('a reconnect with an unchanged target leaves a newer live event untouched', async () => {
