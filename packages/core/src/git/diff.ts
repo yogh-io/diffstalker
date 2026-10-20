@@ -421,34 +421,44 @@ function tieRank(remote: string): number {
   return rank === -1 ? TIE_BREAK_REMOTES.length : rank;
 }
 
-interface Mainline {
+export interface Mainline {
   remote: string;
   /** The full ref, `refs/remotes/origin/main`. */
   ref: string;
+  /** The commit the ref points at. */
+  commit: string;
 }
 
 /**
  * Each remote's mainline: the branch its `HEAD` points at, else its
  * `main`, else its `master`. A remote with none of these has no mainline.
+ *
+ * Refs are shared by every worktree of a repo, so one answer serves a
+ * whole worktree listing; only the count against HEAD is per worktree.
  */
-async function remoteMainlines(git: SimpleGit): Promise<Mainline[]> {
+export async function remoteMainlines(repoPath: string): Promise<Mainline[]> {
+  const git = createGit(repoPath);
   const remotes = (await git.raw(['remote'])).split('\n').filter(Boolean);
-  // refname -> symref target ('' for a plain ref). A ref name cannot
-  // hold a space, so the space split is exact.
-  const refs = new Map<string, string>();
-  const out = await git.raw(['for-each-ref', '--format=%(refname) %(symref)', REMOTE_REF_PREFIX]);
+  // refname -> commit + symref target ('' for a plain ref). A ref name
+  // cannot hold a space, so the space split is exact.
+  const refs = new Map<string, { commit: string; symref: string }>();
+  const out = await git.raw([
+    'for-each-ref',
+    '--format=%(refname) %(objectname) %(symref)',
+    REMOTE_REF_PREFIX,
+  ]);
   for (const line of out.split('\n')) {
-    const [ref, symref = ''] = line.split(' ');
-    if (ref) refs.set(ref, symref);
+    const [ref, commit, symref = ''] = line.split(' ');
+    if (ref) refs.set(ref, { commit, symref });
   }
 
   const mainlines: Mainline[] = [];
   for (const remote of remotes) {
     const prefix = `${REMOTE_REF_PREFIX}${remote}/`;
-    const head = refs.get(`${prefix}HEAD`);
+    const head = refs.get(`${prefix}HEAD`)?.symref;
     const ref =
       head && refs.has(head) ? head : [`${prefix}main`, `${prefix}master`].find((r) => refs.has(r));
-    if (ref) mainlines.push({ remote, ref });
+    if (ref) mainlines.push({ remote, ref, commit: refs.get(ref)!.commit });
   }
   return mainlines;
 }
@@ -461,35 +471,54 @@ export interface DefaultBase {
   ahead: number;
 }
 
+/** A mainline with its count of commits HEAD has on top of it. */
+export interface MainlineCount {
+  remote: string;
+  /** The full ref, `refs/remotes/origin/main`. */
+  ref: string;
+  ahead: number;
+}
+
+/** `git rev-list --count <base>..<tip>`. */
+export async function countAhead(repoPath: string, base: string, tip = 'HEAD'): Promise<number> {
+  const out = await createGit(repoPath).raw(['rev-list', '--count', `${base}..${tip}`]);
+  return parseInt(out.trim(), 10);
+}
+
+/**
+ * The selection rule behind the default compare base: the mainline with
+ * the fewest commits between it and HEAD. A fork's main that stopped
+ * moving years ago counts every commit the real mainline gained since, so
+ * it loses to the mainline the branch was cut from. A tie goes to
+ * `upstream`, then `origin`, then the remote name. The one copy of this
+ * rule: findDefaultBase and the worktree listing both apply it.
+ */
+export function pickDefaultBase(counted: readonly MainlineCount[]): DefaultBase | null {
+  // Remote names are unique, so the last comparison never ties.
+  const best = [...counted].sort(
+    (a, b) =>
+      a.ahead - b.ahead || tieRank(a.remote) - tieRank(b.remote) || (a.remote < b.remote ? -1 : 1)
+  )[0];
+  return best ? { branch: best.ref.slice(REMOTE_REF_PREFIX.length), ahead: best.ahead } : null;
+}
+
 /**
  * The default compare base: the remote mainline the branch forked from,
- * whatever the remotes are called. That is the mainline with the fewest
- * commits between it and HEAD. A fork's main that stopped moving years
- * ago counts every commit the real mainline gained since, so it loses to
- * the mainline the branch was cut from. A tie goes to `upstream`, then
- * `origin`, then the remote name.
+ * whatever the remotes are called (see pickDefaultBase).
  *
  * Depends on HEAD, so it is per worktree, not per repo family.
  */
 export async function findDefaultBase(repoPath: string): Promise<DefaultBase | null> {
-  const git = createGit(repoPath);
   try {
+    const mainlines = await remoteMainlines(repoPath);
     const counted = await Promise.all(
-      (await remoteMainlines(git)).map(async ({ remote, ref }) => ({
+      mainlines.map(async ({ remote, ref }) => ({
         remote,
-        branch: ref.slice(REMOTE_REF_PREFIX.length),
-        ahead: parseInt((await git.raw(['rev-list', '--count', `${ref}..HEAD`])).trim(), 10),
+        ref,
+        ahead: await countAhead(repoPath, ref),
       }))
     );
-    // Remote names are unique, so the last comparison never ties.
-    counted.sort(
-      (a, b) =>
-        a.ahead - b.ahead ||
-        tieRank(a.remote) - tieRank(b.remote) ||
-        (a.remote < b.remote ? -1 : 1)
-    );
-    const best = counted[0];
-    return best ? { branch: best.branch, ahead: best.ahead } : null;
+    return pickDefaultBase(counted);
   } catch (err) {
     // No default then — and the compare view says "no base branch",
     // which reads as a repo without remotes unless the log says otherwise.

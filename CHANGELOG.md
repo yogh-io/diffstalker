@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Switching repos is much faster.** On a follow-mode switch to a repo
+  the daemon already had open, the new repo's changes are now on screen
+  in about 100 ms instead of 250, and a first open of a big repo takes
+  about 0.5 s instead of 1 to 1.4 s. What changed:
+  - The follow hook file is read on the first write instead of after a
+    100 ms debounce. A burst of writes still ends on the newest target.
+  - A repo released by every client stays warm for 10 minutes (at most
+    4 at once), so switching back to it is not a cold open. Clients see
+    it close and reopen exactly as before.
+  - The whole-tree diffs a switch asks for come from the last refresh
+    instead of running `git diff` again.
+  - The working-tree watcher's first crawl of a big repo costs about half
+    as much, and finding nested `.gitignore` files no longer walks
+    ignored directories like `node_modules`.
+  - The worktree list no longer freezes the daemon. On a repo with 50
+    worktrees it started about 300 git processes at once on every switch,
+    blocking every other answer for about half a second. Commits-ahead
+    counts are now cached until a HEAD or a remote mainline moves, so a
+    typical listing runs 3 git processes, and a cold one runs at most 8
+    at a time.
+  - The web UI asks for the new repo's diffs before re-reading the
+    daemon-wide state, so they no longer wait for a free connection.
+
 ## [0.13.10] - 2026-10-20
 
 ### Added

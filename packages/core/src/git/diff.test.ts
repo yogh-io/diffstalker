@@ -29,6 +29,7 @@ import {
   WHOLE_FILE_CONTEXT,
   commitExists,
   resolveEffectiveBaseBranch,
+  remoteMainlines,
   NoCommonHistoryError,
 } from './diff.js';
 import { stageHunk, unstageHunk } from './status.js';
@@ -1113,5 +1114,16 @@ describe('findDefaultBase picks the remote mainline the branch forked from (fixt
     expect(await findDefaultBase(repoPath)).toBeNull();
     // The picker still offers its branches.
     expect(await getCandidateBaseBranches(repoPath)).toEqual(['origin/feature-x']);
+  });
+
+  it('remoteMainlines names each mainline with the commit it points at', async () => {
+    addRemote('origin', { main: main[3], develop: main[2] }, 'develop');
+    addRemote('fork', { master: main[1] });
+    addRemote('empty', { 'feature-x': main[0] });
+
+    expect(await remoteMainlines(repoPath)).toEqual([
+      { remote: 'fork', ref: 'refs/remotes/fork/master', commit: main[1] },
+      { remote: 'origin', ref: 'refs/remotes/origin/develop', commit: main[2] },
+    ]);
   });
 });
