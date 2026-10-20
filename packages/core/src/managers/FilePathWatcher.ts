@@ -14,6 +14,9 @@ type FilePathWatcherEventMap = {
   'path-change': [WatcherState];
 };
 
+/** Cooldown after a read; events inside it collapse into one trailing read. */
+export const FILE_EVENT_COOLDOWN_MS = 100;
+
 /**
  * FilePathWatcher watches a target file and emits events when the path it contains changes.
  * It supports append-only files by reading only the last non-empty line.
@@ -21,7 +24,8 @@ type FilePathWatcherEventMap = {
 export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
   private targetFile: string;
   private watcher: FSWatcher | null = null;
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private cooldownTimer: ReturnType<typeof setTimeout> | null = null;
+  private eventDuringCooldown = false;
   private lastReadPath: string | null = null;
 
   private _state: WatcherState = {
@@ -29,7 +33,10 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
     rawContent: null,
   };
 
-  constructor(targetFile: string) {
+  constructor(
+    targetFile: string,
+    private cooldownMs: number = FILE_EVENT_COOLDOWN_MS
+  ) {
     super();
     this.targetFile = targetFile;
   }
@@ -50,14 +57,31 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
     return path.isAbsolute(expanded) ? expanded : path.resolve(expanded);
   }
 
-  private readTargetDebounced(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
+  /**
+   * A change to the file. The first event after a quiet period reads at
+   * once; the cooldown that follows ends with one more read, so a burst
+   * of writes ends on the newest target without opening every
+   * intermediate one. That trailing read is unconditional because
+   * chokidar drops (not delays) a change that lands within a few ms of
+   * the previous one; the cooldown chains only while events keep coming.
+   */
+  onFileEvent(): void {
+    if (this.cooldownTimer) {
+      this.eventDuringCooldown = true;
+      return;
     }
+    this.readTarget();
+    this.startCooldown();
+  }
 
-    this.debounceTimer = setTimeout(() => {
+  private startCooldown(): void {
+    this.cooldownTimer = setTimeout(() => {
+      this.cooldownTimer = null;
+      const again = this.eventDuringCooldown;
+      this.eventDuringCooldown = false;
       this.readTarget();
-    }, 100);
+      if (again) this.startCooldown();
+    }, this.cooldownMs);
   }
 
   private readTarget(): void {
@@ -94,7 +118,7 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
       fs.writeFileSync(this.targetFile, '');
     }
 
-    // Read initial value immediately (no debounce for first read)
+    // Read the initial value; it is state, not an event (no emit).
     try {
       const raw = fs.readFileSync(this.targetFile, 'utf-8');
       const content = getLastNonEmptyLine(raw);
@@ -120,8 +144,8 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
       ignoreInitial: true,
     });
 
-    this.watcher.on('change', () => this.readTargetDebounced());
-    this.watcher.on('add', () => this.readTargetDebounced());
+    this.watcher.on('change', () => this.onFileEvent());
+    this.watcher.on('add', () => this.onFileEvent());
     // An EventEmitter 'error' with no listener takes the daemon down. The
     // other watchers surface theirs into state; this one has no error slot,
     // so it is logged.
@@ -134,10 +158,11 @@ export class FilePathWatcher extends EventEmitter<FilePathWatcherEventMap> {
    * Stop watching and clean up resources.
    */
   stop(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
+    if (this.cooldownTimer) {
+      clearTimeout(this.cooldownTimer);
+      this.cooldownTimer = null;
     }
+    this.eventDuringCooldown = false;
     if (this.watcher) {
       // close() is async; a rejection here would otherwise be unhandled.
       this.watcher.close().catch((err: unknown) => {

@@ -5,9 +5,9 @@
  * Two daemons: one without follow (the /events repo-opened/repo-closed
  * lifecycle and the disabled GET /follow shape), one following a temp hook
  * file under /tmp (never the real ~/.cache default). Watcher timing is
- * asynchronous (chokidar + a 100ms debounce), so event assertions collect
- * from the stream under a generous deadline instead of expecting a fixed
- * sequence.
+ * asynchronous (chokidar, then a read throttle), so event assertions
+ * collect from the stream under a generous deadline instead of expecting
+ * a fixed sequence.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
@@ -124,7 +124,7 @@ describe('daemon-scope /events channel (no follow)', () => {
       });
       await requestOn(SOCKET, `/repos/${openedBody.id}`, { method: 'DELETE' });
 
-      // Dropping the LAST ref disposes the repo and announces repo-closed.
+      // Dropping the LAST ref closes the repo and announces repo-closed.
       // The SSE connection itself holds no repo ref.
       await requestOn(SOCKET, `/repos/${openedBody.id}`, { method: 'DELETE' });
       const closed = await sse.next(5000);
@@ -276,7 +276,7 @@ describe('follow mode', () => {
       fs.appendFileSync(FOLLOW_FILE, '/definitely/not/a/repo\n');
 
       // No follow-change may arrive for the bogus path; wait past the
-      // watcher debounce, then confirm silence and unchanged state.
+      // watcher cooldown, then confirm silence and unchanged state.
       await expect(sse.next(1500)).rejects.toThrow('Timed out');
 
       const after = (await (await requestOn(SOCKET, '/follow')).json()) as WireFollow;
