@@ -31,6 +31,7 @@ const VERSION_STATE = {
   latest: '0.9.0',
   status: 'outdated',
   install: { method: 'npm', package: 'diffstalkerd', command: 'npm install -g diffstalkerd' },
+  restart: null,
 };
 
 let fake: FakeFetch;

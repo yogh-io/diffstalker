@@ -40,9 +40,11 @@ const deletions = computed(
  * one (the title line carries the detail).
  *
  * `command` is the daemon's own update command for the way it was actually
- * installed, and clicking copies it. It is null for an install nothing
- * owns (a source checkout, a link), and the indicator is then exactly what
- * it always was: text saying what is running.
+ * installed, and clicking copies it. When systemd runs the daemon, the
+ * restart follows it (`&&`, so a failed update restarts nothing): an
+ * update alone leaves the old code running. It is null for an install
+ * nothing owns (a source checkout, a link), and the indicator is then
+ * exactly what it always was: text saying what is running.
  */
 const version = computed(() => {
   const state = daemon.version;
@@ -70,7 +72,9 @@ const version = computed(() => {
     ahead: `ahead of npm (latest published: ${state.latest})`,
     unknown: 'npm version unknown — could not check',
   };
-  const command = state.install?.command ?? null;
+  const update = state.install?.command ?? null;
+  const restart = state.restart ?? null;
+  const command = update && restart ? `${update} && ${restart}` : update;
 
   return {
     status: state.status,

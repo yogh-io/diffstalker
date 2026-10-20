@@ -200,6 +200,7 @@ packages/daemon/src/
 ├── blobSemaphore.ts        # Bounded concurrency for the byte routes (/blob, /media)
 ├── install.ts              # How this daemon was installed (npm/bun/pnpm/yarn/pacman) and the update command
 ├── version.ts              # Running version vs npm's latest (cached lookup), for GET /version
+├── restart.ts              # The systemd restart command, only when systemd started this process
 ├── symbols/
 │   ├── resolveArtifacts.ts # Finds the grammars (--grammars, the opt-in package) and verifies checksums
 │   ├── pool.ts             # Owns the symbol worker: wall-clock deadline, respawn after a poisoned parse

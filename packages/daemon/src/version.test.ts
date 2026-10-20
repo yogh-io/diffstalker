@@ -55,12 +55,13 @@ describe('readCurrentVersion', () => {
 
 describe('createVersionService', () => {
   test('reports the running version against the published one', async () => {
-    const service = createVersionService(() => Promise.resolve('0.9.0'), '0.8.1', stubInstall());
+    const service = createVersionService(() => Promise.resolve('0.9.0'), '0.8.1', stubInstall(), null);
     expect(await service.state()).toEqual({
       current: '0.8.1',
       latest: '0.9.0',
       status: 'outdated',
       install: UNKNOWN_INSTALL,
+      restart: null,
     });
   });
 
@@ -74,6 +75,16 @@ describe('createVersionService', () => {
         }),
     });
     expect((await service.state()).install.command).toBe('yay -S diffstalker-git');
+  });
+
+  test('carries the restart command, so a client can chain it after the update', async () => {
+    const service = createVersionService(
+      () => Promise.resolve('0.9.0'),
+      '0.8.1',
+      stubInstall(),
+      'systemctl --user restart diffstalkerd'
+    );
+    expect((await service.state()).restart).toBe('systemctl --user restart diffstalkerd');
   });
 
   test('caches the lookup: repeated calls hit the registry once', async () => {
@@ -102,22 +113,24 @@ describe('createVersionService', () => {
   });
 
   test('a failed lookup leaves the latest unknown instead of throwing', async () => {
-    const service = createVersionService(() => Promise.reject(new Error('offline')), '0.8.1', stubInstall());
+    const service = createVersionService(() => Promise.reject(new Error('offline')), '0.8.1', stubInstall(), null);
     expect(await service.state()).toEqual({
       current: '0.8.1',
       latest: null,
       status: 'unknown',
       install: UNKNOWN_INSTALL,
+      restart: null,
     });
   });
 
   test('an unreadable running version is unknown, never a crash', async () => {
-    const service = createVersionService(() => Promise.resolve('0.9.0'), null, stubInstall());
+    const service = createVersionService(() => Promise.resolve('0.9.0'), null, stubInstall(), null);
     expect(await service.state()).toEqual({
       current: null,
       latest: '0.9.0',
       status: 'unknown',
       install: UNKNOWN_INSTALL,
+      restart: null,
     });
   });
 });

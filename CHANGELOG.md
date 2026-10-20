@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The update command restarts a systemd-run daemon too.** Clicking the
+  version in the web UI's status bar copied only the update command, and
+  the daemon kept running the old code until restarted by hand. When
+  systemd runs the daemon, the copied command now ends with the restart:
+  `yay -S diffstalker-git && systemctl --user restart diffstalkerd`. The
+  daemon offers it only when systemd started this very process and its
+  cgroup names the unit, so it never guesses a unit name. A daemon started
+  any other way copies the update alone, as before. `GET /version` carries
+  it as `restart`.
+
 ### Fixed
 
 - **Compare's include toggles stay set.** The staged, unstaged and

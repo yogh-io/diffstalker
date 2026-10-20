@@ -20,9 +20,13 @@ const NPM_INSTALL: InstallInfo = {
   command: 'npm install -g diffstalkerd',
 };
 
-/** A version state with the install half defaulted to an unnamed install. */
-function state(partial: Omit<VersionState, 'install'>, install = UNKNOWN_INSTALL): VersionState {
-  return { ...partial, install };
+/** A version state with an unnamed install and no restart unless given. */
+function state(
+  partial: Omit<VersionState, 'install' | 'restart'>,
+  install = UNKNOWN_INSTALL,
+  restart: string | null = null
+): VersionState {
+  return { ...partial, install, restart };
 }
 
 function mountBar(version: VersionState | null): VueWrapper {
@@ -115,6 +119,40 @@ describe('copying the update command', () => {
     await el.trigger('click');
 
     expect(writeText).toHaveBeenCalledWith('yay -S diffstalker-git');
+  });
+
+  test('under systemd the restart follows the update, only if it succeeded', async () => {
+    const writeText = stubClipboard(() => Promise.resolve());
+    const el = indicator(
+      mountBar(
+        state(
+          { current: '0.8.1', latest: '0.8.1', status: 'current' },
+          { method: 'pacman', package: 'diffstalker-git', command: 'yay -S diffstalker-git' },
+          'systemctl --user restart diffstalkerd'
+        )
+      )
+    );
+
+    await el.trigger('click');
+
+    expect(writeText).toHaveBeenCalledWith(
+      'yay -S diffstalker-git && systemctl --user restart diffstalkerd'
+    );
+  });
+
+  test('a restart alone is not offered: there is nothing to reinstall', () => {
+    const el = indicator(
+      mountBar(
+        state(
+          { current: '0.8.1', latest: '0.9.0', status: 'outdated' },
+          UNKNOWN_INSTALL,
+          'systemctl --user restart diffstalkerd'
+        )
+      )
+    );
+
+    expect(el.classes()).not.toContain('copyable');
+    expect(el.attributes('title')).not.toContain('systemctl');
   });
 
   test('the command is named in the hover title and the chip is a button', () => {

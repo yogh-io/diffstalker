@@ -143,6 +143,8 @@ export interface VersionState {
   latest: string | null;
   status: VersionStatus;
   install: InstallInfo;
+  /** The command that restarts the daemon. Null unless systemd runs it. */
+  restart: string | null;
 }
 
 /** A repo as identified by the daemon (POST /repos, SSE repo-opened). */

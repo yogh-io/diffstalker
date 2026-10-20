@@ -9,7 +9,8 @@
  * GET /version) and cached, so an open web UI costs at most one registry
  * request per TTL. The update command comes from install detection (see
  * install.ts), which is what makes the indicator actionable rather than
- * merely informative.
+ * merely informative; the restart command, when systemd runs the daemon,
+ * from restart.ts.
  *
  * Any of these can be unknown (unreadable manifest, offline, opt-out, an
  * install nothing owns); the state says so with nulls and status 'unknown'
@@ -20,6 +21,7 @@
 import * as fs from 'node:fs';
 import { debug as logDebug, warn as logWarn } from '@diffstalker/core/utils/logger';
 import { createInstallService, type InstallInfo, type InstallService } from './install.js';
+import { detectRestartCommand } from './restart.js';
 
 /** How the running version relates to the latest published one. */
 export type VersionStatus = 'current' | 'outdated' | 'ahead' | 'unknown';
@@ -32,6 +34,8 @@ export interface VersionState {
   status: VersionStatus;
   /** How this daemon was installed, and the command that updates it. */
   install: InstallInfo;
+  /** The command that restarts this daemon. Null unless systemd runs it. */
+  restart: string | null;
 }
 
 /** Reads the latest published version, or null when it cannot be known. */
@@ -103,7 +107,8 @@ export function compareVersions(current: string | null, latest: string | null): 
 /**
  * Build the /version service. `fetchLatest` is the seam tests replace (and
  * that --no-update-check stubs out); `current` is the running version;
- * `install` names the package manager this daemon came from.
+ * `install` names the package manager this daemon came from; `restart` is
+ * the command that restarts it.
  *
  * Caching is per daemon instance: a hit inside the TTL never touches the
  * network, and concurrent misses share one in-flight request. Install
@@ -112,7 +117,8 @@ export function compareVersions(current: string | null, latest: string | null): 
 export function createVersionService(
   fetchLatest: LatestVersionFetcher = fetchLatestFromNpm,
   current: string | null = readCurrentVersion(),
-  install: InstallService = createInstallService()
+  install: InstallService = createInstallService(),
+  restart: string | null = detectRestartCommand()
 ): VersionService {
   let cached: { value: string | null; expiresAt: number } | null = null;
   let pending: Promise<string | null> | null = null;
@@ -140,7 +146,13 @@ export function createVersionService(
   return {
     async state(): Promise<VersionState> {
       const [latest, installed] = await Promise.all([loadLatest(), install.info()]);
-      return { current, latest, status: compareVersions(current, latest), install: installed };
+      return {
+        current,
+        latest,
+        status: compareVersions(current, latest),
+        install: installed,
+        restart,
+      };
     },
   };
 }

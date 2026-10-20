@@ -1186,6 +1186,13 @@ git operations.
   update command either fails or, with npm's prefix on Arch, plants unowned
   files over a packaged install. A daemon that outran the page (`stale-bundle`)
   offers nothing to copy either; reloading is the fix there, not an update.
+  When systemd runs the daemon, the copied command also restarts it:
+  `yay -S diffstalker-git && systemctl --user restart diffstalkerd`. An update
+  alone leaves the old daemon running. The daemon offers the restart only
+  when systemd started this very process (`$SYSTEMD_EXEC_PID` is its own pid)
+  and its cgroup names the unit, so a user unit gets `systemctl --user`, a
+  system unit `sudo systemctl`, and a daemon started any other way gets the
+  update alone. `&&` means a failed update restarts nothing.
 - **Auto mode** (header toggle or `a`, persisted): read-only auto-following of
   the newest change — the web port of the CLI's auto mode. When a file's
   content changes on disk, it is auto-selected and its row flashes briefly;
