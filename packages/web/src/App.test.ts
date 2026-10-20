@@ -743,6 +743,26 @@ describe('Back through stack layers', () => {
     expect(here()).toBe('/compare/repo');
     wrapper.unmount();
   });
+
+  test('Back keeps the include toggles: the re-pull carries them', async () => {
+    fake = makeFakeFetch((call) =>
+      /^\/repos\/[^/]+\/compare\/stack/.test(call.url) ? { body: STACK } : routes(call)
+    );
+    vi.stubGlobal('fetch', fake.fn);
+    const wrapper = await mountWithRepos([REPO_ONE]);
+    const repo = useRepoStore();
+    const compares = () => fake.calls.filter((c) => /\/compare\?/.test(c.url)).map((c) => c.url);
+
+    useUiStore().setActiveView('compare');
+    await flushPromises();
+    await repo.setCompareUncommitted({ staged: true, unstaged: false, untracked: true });
+    await repo.setSelectedStackHead('feature/a');
+    await flushPromises();
+
+    await popTo('/compare/repo');
+    expect(compares().at(-1)).toBe('/repos/r1/compare?staged=true&unstaged=false&untracked=true');
+    wrapper.unmount();
+  });
 });
 
 describe('deep link on a cold load', () => {

@@ -29,6 +29,7 @@ import type { FileEntry, FileStatus } from '@diffstalker/core/git/status';
 import type { JournalHunkEntry } from '@diffstalker/core/types/journal';
 import { parseDiffWithLineNumbers, rawFromLines } from '@diffstalker/core/git/diffParse';
 import type { WorkingDiffEntry } from './repo';
+import { loadPrefs, savePrefs } from '../prefs';
 import type { CompareStack, StackLayer } from '@diffstalker/core/types/stack';
 
 /**
@@ -212,6 +213,7 @@ function diffCalls(): string[] {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   setActivePinia(createPinia());
   onRequest = null;
   fake = makeFakeFetch((call) => onRequest?.(call) ?? defaultRoutes(call));
@@ -1544,7 +1546,7 @@ describe('compare', () => {
 
   test('compare is re-pulled on state-change once loaded, keeping the categories', async () => {
     const { store, source } = await openStore();
-    await store.refreshCompare({ staged: true, unstaged: true, untracked: true });
+    await store.setCompareUncommitted({ staged: true, unstaged: true, untracked: true });
     // '/compare?' and not '/compare': the standalone count endpoint shares
     // the prefix, and these assertions are about the diff pulls only.
     expect(fake.callsTo('/compare?')[0].url).toBe('/repos/r1/compare?staged=true&unstaged=true&untracked=true');
@@ -1563,8 +1565,8 @@ describe('compare', () => {
     onRequest = (call) =>
       call.url === '/repos/r1/compare?staged=true&unstaged=true&untracked=true' ? slow.promise : undefined;
 
-    const first = store.refreshCompare({ staged: true, unstaged: true, untracked: true });
-    const second = store.refreshCompare({ staged: false, unstaged: false, untracked: false });
+    const first = store.setCompareUncommitted({ staged: true, unstaged: true, untracked: true });
+    const second = store.setCompareUncommitted({ staged: false, unstaged: false, untracked: false });
     await second;
     await flush();
     expect(store.compare.compareDiff!.baseBranch).toBe('origin/main');
@@ -1584,8 +1586,8 @@ describe('compare', () => {
     onRequest = (call) =>
       call.url === '/repos/r1/compare?staged=true&unstaged=true&untracked=true' ? slow.promise : undefined;
 
-    const first = store.refreshCompare({ staged: true, unstaged: true, untracked: true });
-    await store.refreshCompare({ staged: false, unstaged: false, untracked: false });
+    const first = store.setCompareUncommitted({ staged: true, unstaged: true, untracked: true });
+    await store.setCompareUncommitted({ staged: false, unstaged: false, untracked: false });
     slow.resolve({ status: 500, body: { error: 'git exploded' } });
     await first;
     await flush();
@@ -1634,15 +1636,31 @@ describe('compare', () => {
     expect(store.compare.selection).toEqual({ type: null, index: 0, diff: null });
   });
 
-  test('getLastUncommitted remembers the last requested categories', async () => {
+  test('the categories are kept in prefs', async () => {
     const { store } = await openStore();
-    expect(store.getLastUncommitted()).toEqual({ staged: false, unstaged: false, untracked: false });
-    await store.refreshCompare({ staged: false, unstaged: true, untracked: false });
-    expect(store.getLastUncommitted()).toEqual({
-      staged: false,
-      unstaged: true,
-      untracked: false,
+    expect(store.compareUncommitted).toEqual({ staged: false, unstaged: false, untracked: false });
+    await store.setCompareUncommitted({ staged: true, unstaged: false, untracked: true });
+    expect(loadPrefs().compareUncommitted).toEqual({
+      staged: true,
+      unstaged: false,
+      untracked: true,
     });
+  });
+
+  test('a fresh store (a reload) pulls with the stored categories', async () => {
+    savePrefs({ compareUncommitted: { staged: true, unstaged: false, untracked: true } });
+    const { store } = await openStore();
+    await store.refreshCompare();
+    expect(fake.callsTo('/compare?')[0].url).toBe(
+      '/repos/r1/compare?staged=true&unstaged=false&untracked=true'
+    );
+  });
+
+  test('a repo switch keeps the categories', async () => {
+    const { store } = await openStore();
+    await store.setCompareUncommitted({ staged: true, unstaged: true, untracked: false });
+    await store.open('/other');
+    expect(store.compareUncommitted).toEqual({ staged: true, unstaged: true, untracked: false });
   });
 
   test('setSelectedCompareBase reads with ?base= and issues NO PUT', async () => {
@@ -1671,7 +1689,8 @@ describe('compare', () => {
 
   test('the picked base rides every later refresh, including the state-change re-pull', async () => {
     const { store, source } = await openStore();
-    await store.setSelectedCompareBase('origin/dev', { staged: true, unstaged: true, untracked: true });
+    store.compareUncommitted = { staged: true, unstaged: true, untracked: true };
+    await store.setSelectedCompareBase('origin/dev');
 
     source.emit('state-change', wireState());
     await flush();
@@ -1749,7 +1768,8 @@ describe('stacked compare', () => {
   test('a middle layer asks for the layer below as base and itself as head, with no uncommitted parts', async () => {
     withStack();
     const { store } = await openStore();
-    await store.setSelectedStackHead('feature/b', { staged: true, unstaged: true, untracked: true });
+    store.compareUncommitted = { staged: true, unstaged: true, untracked: true };
+    await store.setSelectedStackHead('feature/b');
     expect(compareUrls()).toEqual(['/repos/r1/compare?base=feature%2Fa&head=feature%2Fb']);
     expect(store.comparePair).toEqual({ base: 'feature/a', head: 'feature/b' });
     expect(store.pickedLayer).toEqual(layer('feature/b', 1));
@@ -1757,7 +1777,7 @@ describe('stacked compare', () => {
     expect(store.compare.compareDiff!.baseBranch).toBe('feature/a');
     expect(store.compare.baseBranch).toBe('origin/main');
     // The categories are remembered for when the pick returns to HEAD.
-    expect(store.getLastUncommitted()).toEqual({ staged: true, unstaged: true, untracked: true });
+    expect(store.compareUncommitted).toEqual({ staged: true, unstaged: true, untracked: true });
   });
 
   test('the bottom layer sits on the trunk', async () => {
@@ -1771,7 +1791,8 @@ describe('stacked compare', () => {
   test('the layer at HEAD sends no head, so the uncommitted categories still apply', async () => {
     withStack();
     const { store } = await openStore();
-    await store.setSelectedStackHead('feature/c', { staged: true, unstaged: false, untracked: false });
+    store.compareUncommitted = { staged: true, unstaged: false, untracked: false };
+    await store.setSelectedStackHead('feature/c');
     expect(compareUrls()).toEqual([
       '/repos/r1/compare?base=feature%2Fb&staged=true&unstaged=false&untracked=false',
     ]);
@@ -1939,7 +1960,7 @@ describe('stacked compare', () => {
   test('the loaded pair follows the diff on screen, not the pick', async () => {
     withStack();
     const { store } = await openStore();
-    await store.refreshCompare({ staged: true, unstaged: false, untracked: false });
+    await store.setCompareUncommitted({ staged: true, unstaged: false, untracked: false });
     expect(store.compare.pair).toEqual({
       base: 'origin/main',
       head: null,
@@ -1954,7 +1975,7 @@ describe('stacked compare', () => {
       call.url === '/repos/r1/compare?base=feature%2Fa&head=feature%2Fb'
         ? slow.promise
         : stacked?.(call);
-    const pick = store.setSelectedStackHead('feature/b', { staged: true, unstaged: false, untracked: false });
+    const pick = store.setSelectedStackHead('feature/b');
     await flush();
     expect(store.selectedStackHead).toBe('feature/b');
     expect(store.comparePair).toEqual({ base: 'origin/main', head: null });
@@ -1982,7 +2003,8 @@ describe('stacked compare', () => {
   test('a state-change re-pull under a non-HEAD pick still sends no uncommitted parts', async () => {
     withStack();
     const { store, source } = await openStore();
-    await store.setSelectedStackHead('feature/b', { staged: true, unstaged: true, untracked: true });
+    store.compareUncommitted = { staged: true, unstaged: true, untracked: true };
+    await store.setSelectedStackHead('feature/b');
     source.emit('state-change', wireState());
     await flush();
     expect(compareUrls()).toEqual([

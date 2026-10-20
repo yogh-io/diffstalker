@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Compare's include toggles stay set.** The staged, unstaged and
+  untracked toggles went back to off on Back/Forward, on a link that named
+  a base or a stack layer, on a repo switch and on a reload. They are now
+  saved with the browser's other preferences.
+
 ## [0.13.9] - 2026-10-16
 
 ### Fixed

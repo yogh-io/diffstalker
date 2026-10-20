@@ -109,6 +109,7 @@ function mountView(compareDiff: CompareDiff | null = makeCompareDiff()): {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   pinia = createPinia();
   setActivePinia(pinia);
 });
@@ -121,9 +122,10 @@ describe('activation', () => {
   test('refreshes the compare diff on mount (every category off by default)', () => {
     const repo = useRepoStore();
     const spy = vi.spyOn(repo, 'refreshCompare').mockResolvedValue(undefined);
-    mount(CompareView, { global: { plugins: [pinia] } });
+    const wrapper = mount(CompareView, { global: { plugins: [pinia] } });
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith({ staged: false, unstaged: false, untracked: false });
+    const boxes = wrapper.findAll<HTMLInputElement>('[data-testid^="uncommitted-toggle-"]');
+    expect(boxes.map((box) => box.element.checked)).toEqual([false, false, false]);
   });
 });
 
@@ -139,7 +141,7 @@ describe('top bar', () => {
     expect((select.element as HTMLSelectElement).value).toBe('origin/main');
   });
 
-  test('picking a base calls the read-only setSelectedCompareBase with branch + categories', async () => {
+  test('picking a base calls the read-only setSelectedCompareBase with the branch', async () => {
     const repo = useRepoStore();
     vi.spyOn(repo, 'getCandidateBaseBranches').mockResolvedValue(['origin/main', 'origin/dev']);
     const setBase = vi.spyOn(repo, 'setSelectedCompareBase').mockResolvedValue(undefined);
@@ -148,11 +150,7 @@ describe('top bar', () => {
 
     await wrapper.find('[data-testid="base-select"]').setValue('origin/dev');
     expect(setBase).toHaveBeenCalledTimes(1);
-    expect(setBase).toHaveBeenCalledWith('origin/dev', {
-      staged: false,
-      unstaged: false,
-      untracked: false,
-    });
+    expect(setBase).toHaveBeenCalledWith('origin/dev');
   });
 
   test('the base pick stays client-side: a GET with ?base=…, never a PUT', async () => {
@@ -218,59 +216,52 @@ describe('top bar', () => {
     // Unstaged edits sit on top of staged ones: no tree holds only them,
     // so the daemon refuses unstaged without staged.
     const { wrapper, repo } = mountView();
-    const spy = vi.spyOn(repo, 'refreshCompare').mockResolvedValue(undefined);
     const toggle = (key: string) => wrapper.find(`[data-testid="uncommitted-toggle-${key}"]`);
 
     await toggle('unstaged').setValue(true);
-    expect(spy).toHaveBeenLastCalledWith({ staged: true, unstaged: true, untracked: false });
+    expect(repo.compareUncommitted).toEqual({ staged: true, unstaged: true, untracked: false });
     expect((toggle('staged').element as HTMLInputElement).checked).toBe(true);
     expect(toggle('staged').attributes('disabled')).toBeDefined();
 
     await toggle('untracked').setValue(true);
-    expect(spy).toHaveBeenLastCalledWith({ staged: true, unstaged: true, untracked: true });
+    expect(repo.compareUncommitted).toEqual({ staged: true, unstaged: true, untracked: true });
 
     await toggle('unstaged').setValue(false);
-    expect(spy).toHaveBeenLastCalledWith({ staged: true, unstaged: false, untracked: true });
+    expect(repo.compareUncommitted).toEqual({ staged: true, unstaged: false, untracked: true });
     expect(toggle('staged').attributes('disabled')).toBeUndefined();
 
     // Staged and untracked each still go on and off alone.
     await toggle('staged').setValue(false);
-    expect(spy).toHaveBeenLastCalledWith({ staged: false, unstaged: false, untracked: true });
+    expect(repo.compareUncommitted).toEqual({ staged: false, unstaged: false, untracked: true });
   });
 
-  test('a category ON, then a base change: setSelectedCompareBase gets the categories', async () => {
-    const repo = useRepoStore();
-    vi.spyOn(repo, 'getCandidateBaseBranches').mockResolvedValue(['origin/main', 'origin/dev']);
-    const setBase = vi.spyOn(repo, 'setSelectedCompareBase').mockResolvedValue(undefined);
-    const { wrapper } = mountView();
-    await flushPromises();
-
-    await wrapper.find('[data-testid="uncommitted-toggle-staged"]').setValue(true);
-    await wrapper.find('[data-testid="base-select"]').setValue('origin/dev');
-    expect(setBase).toHaveBeenCalledWith('origin/dev', {
-      staged: true,
-      unstaged: false,
-      untracked: false,
-    });
-  });
+  function checkedBoxes(wrapper: VueWrapper): boolean[] {
+    return ['staged', 'unstaged', 'untracked'].map(
+      (key) =>
+        (wrapper.find(`[data-testid="uncommitted-toggle-${key}"]`).element as HTMLInputElement)
+          .checked
+    );
+  }
 
   test('the category choices survive a tab re-entry (remount)', async () => {
-    const { wrapper, repo } = mountView();
-    // The REAL refreshCompare runs (repoId null → no fetch) and records
-    // the categories; the remounted component must seed its state from it.
+    const { wrapper } = mountView();
+    // The real refreshCompare runs (repoId null, so no fetch).
     await wrapper.find('[data-testid="uncommitted-toggle-untracked"]').setValue(true);
     wrapper.unmount();
 
-    const spy = vi.spyOn(repo, 'refreshCompare').mockResolvedValue(undefined);
     const second = mount(CompareView, { global: { plugins: [pinia] } });
-    const boxes = ['staged', 'unstaged', 'untracked'].map(
-      (key) =>
-        (second.find(`[data-testid="uncommitted-toggle-${key}"]`).element as HTMLInputElement)
-          .checked
-    );
-    expect(boxes).toEqual([false, false, true]);
-    // And the activation refresh re-queries WITH untracked.
-    expect(spy).toHaveBeenCalledWith({ staged: false, unstaged: false, untracked: true });
+    expect(checkedBoxes(second)).toEqual([false, false, true]);
+  });
+
+  test('the category choices survive a reload (a fresh store reads prefs)', async () => {
+    const { wrapper } = mountView();
+    await wrapper.find('[data-testid="uncommitted-toggle-unstaged"]').setValue(true);
+    wrapper.unmount();
+
+    pinia = createPinia();
+    setActivePinia(pinia);
+    const reloaded = mount(CompareView, { global: { plugins: [pinia] } });
+    expect(checkedBoxes(reloaded)).toEqual([true, true, false]);
   });
 
   test('shows the diff-colored stats line', () => {
@@ -314,17 +305,12 @@ describe('stack strip', () => {
     expect(strip.findAll('[data-testid="stack-layer"]')).toHaveLength(3);
   });
 
-  test('picking a layer calls setSelectedStackHead with the name + the categories', async () => {
+  test('picking a layer calls setSelectedStackHead with the name', async () => {
     const { wrapper, repo } = mountWithStack(STACK);
     const pick = vi.spyOn(repo, 'setSelectedStackHead').mockResolvedValue(undefined);
-    await wrapper.find('[data-testid="uncommitted-toggle-staged"]').setValue(true);
 
     await wrapper.findAll('[data-testid="stack-layer"]')[1].trigger('click');
-    expect(pick).toHaveBeenCalledWith('feature/b', {
-      staged: true,
-      unstaged: false,
-      untracked: false,
-    });
+    expect(pick).toHaveBeenCalledWith('feature/b');
 
     // Re-picking the current layer is a no-op; `all` picks null.
     repo.selectedStackHead = 'feature/b';
@@ -332,7 +318,7 @@ describe('stack strip', () => {
     await wrapper.findAll('[data-testid="stack-layer"]')[1].trigger('click');
     expect(pick).toHaveBeenCalledTimes(1);
     await wrapper.find('[data-testid="stack-all"]').trigger('click');
-    expect(pick).toHaveBeenLastCalledWith(null, { staged: true, unstaged: false, untracked: false });
+    expect(pick).toHaveBeenLastCalledWith(null);
   });
 
   test('the uncommitted toggles go away under a layer that is not HEAD, and stay under HEAD', async () => {

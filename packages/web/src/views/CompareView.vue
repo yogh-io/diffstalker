@@ -42,16 +42,13 @@ import StackStrip from '../components/StackStrip.vue';
 
 const repo = useRepoStore();
 const ui = useUiStore();
-const { compare, compareStack, selectedStackHead, pickedLayer, comparePair } = storeToRefs(repo);
+const { compare, compareStack, selectedStackHead, pickedLayer, comparePair, compareUncommitted } =
+  storeToRefs(repo);
 
-// Seeded from the store so the choice survives a tab switch (the ref
-// itself is component-local and would otherwise reset to all-off).
-//
 // Three categories, not one "uncommitted" switch: staged alone reads the
 // branch as it would be if you committed what is staged, staged plus
 // unstaged as it would be if you committed everything you touched, and
 // untracked adds the new files. Unstaged needs staged (see stagedLocked).
-const uncommitted = reactive<UncommittedParts>(repo.getLastUncommitted());
 const UNCOMMITTED_LABELS: ReadonlyArray<{ key: keyof UncommittedParts; label: string }> = [
   { key: 'staged', label: 'staged' },
   { key: 'unstaged', label: 'unstaged' },
@@ -70,7 +67,7 @@ onMounted(() => {
 });
 
 async function refreshNow(): Promise<void> {
-  await repo.refreshCompare({ ...uncommitted });
+  await repo.refreshCompare();
 }
 
 async function loadCandidates(): Promise<void> {
@@ -109,7 +106,7 @@ async function onBaseChange(event: Event): Promise<void> {
   beginUserNav({ view: 'compare' });
   // Read-only: the pick rides the next GET /compare as ?base=… —
   // nothing is persisted daemon-side.
-  await repo.setSelectedCompareBase(branch, { ...uncommitted });
+  await repo.setSelectedCompareBase(branch);
 }
 
 /**
@@ -122,7 +119,7 @@ async function onPickLayer(name: string | null): Promise<void> {
   if (name === selectedStackHead.value) return;
   // Like a base change: it re-pulls the comparison, so it gets an entry.
   beginUserNav({ view: 'compare' });
-  await repo.setSelectedStackHead(name, { ...uncommitted });
+  await repo.setSelectedStackHead(name);
 }
 
 /**
@@ -139,7 +136,7 @@ const uncommittedHidden = computed(
  * and no tree holds only the unstaged ones. So ticking unstaged ticks
  * staged too, and staged stays ticked until unstaged is off again.
  */
-const stagedLocked = computed(() => uncommitted.unstaged);
+const stagedLocked = computed(() => compareUncommitted.value.unstaged);
 
 /**
  * Explicit :checked/@change instead of v-model: with v-model the extra
@@ -147,9 +144,9 @@ const stagedLocked = computed(() => uncommitted.unstaged);
  * the stale flag.
  */
 async function onUncommittedToggle(key: keyof UncommittedParts, event: Event): Promise<void> {
-  uncommitted[key] = (event.target as HTMLInputElement).checked;
-  if (uncommitted.unstaged) uncommitted.staged = true;
-  await repo.refreshCompare({ ...uncommitted });
+  const next = { ...compareUncommitted.value, [key]: (event.target as HTMLInputElement).checked };
+  if (next.unstaged) next.staged = true;
+  await repo.setCompareUncommitted(next);
 }
 
 function relTime(commit: CommitInfo): string {
@@ -374,7 +371,7 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
           <input
             type="checkbox"
             :data-testid="`uncommitted-toggle-${part.key}`"
-            :checked="uncommitted[part.key]"
+            :checked="compareUncommitted[part.key]"
             :disabled="part.key === 'staged' && stagedLocked"
             :title="
               part.key === 'staged' && stagedLocked

@@ -784,7 +784,9 @@ git operations.
   both, and a commit an uncommitted edit undoes leaves no row. Ticking
   unstaged ticks staged too, and staged stays on until unstaged is off:
   unstaged edits sit on top of staged ones, and no tree holds only them.
-  Untracked adds each untracked file as a new file. A row that holds
+  Untracked adds each untracked file as a new file. The toggles are saved
+  in the browser's prefs, so they stay set across view switches, reloads
+  and repo switches. A row that holds
   uncommitted work is tagged with which (`[staged]`, `[unstaged]`,
   `[untracked]`, or `[uncommitted]` for staged and unstaged edits). The one
   path listed twice is a file the branch deleted that is back on disk,

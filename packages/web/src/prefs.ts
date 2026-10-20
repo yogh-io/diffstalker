@@ -9,6 +9,7 @@ import { isThemeName } from './theme/themes';
 import type { ThemeName } from './theme/themes';
 import { isViewName } from '@diffstalker/core/view/urlGrammar';
 import type { ViewName } from '@diffstalker/core/view/urlGrammar';
+import { NO_UNCOMMITTED, type UncommittedParts } from '@diffstalker/core/types/compare';
 
 export const PREFS_KEY = 'diffstalker:prefs';
 
@@ -81,6 +82,11 @@ export interface Prefs {
   historyTop: number | null;
   compareTop: number | null;
   explorerTop: number | null;
+  /**
+   * The Compare view's include toggles: which uncommitted work the
+   * compare folds in. Global, not per repo.
+   */
+  compareUncommitted: UncommittedParts;
 }
 
 /** The prefs fields that store a split fraction (number | null). */
@@ -116,6 +122,7 @@ function defaults(): Prefs {
     historyTop: null,
     compareTop: null,
     explorerTop: null,
+    compareUncommitted: { ...NO_UNCOMMITTED },
   };
 }
 
@@ -123,6 +130,24 @@ function defaults(): Prefs {
 function readFraction(value: unknown, min: number, max: number): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return value >= min && value <= max ? value : null;
+}
+
+/**
+ * Believed only when all three are booleans and unstaged comes with
+ * staged: the daemon refuses unstaged alone.
+ */
+function readUncommitted(value: unknown): UncommittedParts {
+  if (typeof value !== 'object' || value === null) return { ...NO_UNCOMMITTED };
+  const { staged, unstaged, untracked } = value as Record<string, unknown>;
+  if (
+    typeof staged !== 'boolean' ||
+    typeof unstaged !== 'boolean' ||
+    typeof untracked !== 'boolean' ||
+    (unstaged && !staged)
+  ) {
+    return { ...NO_UNCOMMITTED };
+  }
+  return { staged, unstaged, untracked };
 }
 
 const TOP_KEYS = ['changesTop', 'historyTop', 'compareTop', 'explorerTop'] as const;
@@ -147,6 +172,7 @@ function sanitize(raw: unknown): Prefs {
   for (const key of TOP_KEYS) {
     prefs[key] = readFraction(record[key], TOP_MIN, TOP_MAX);
   }
+  prefs.compareUncommitted = readUncommitted(record.compareUncommitted);
   return prefs;
 }
 

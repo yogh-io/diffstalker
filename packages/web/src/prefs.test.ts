@@ -27,6 +27,7 @@ describe('loadPrefs', () => {
       historyTop: null,
       compareTop: null,
       explorerTop: null,
+      compareUncommitted: { staged: false, unstaged: false, untracked: false },
     });
   });
 
@@ -46,6 +47,7 @@ describe('loadPrefs', () => {
       historyTop: null,
       compareTop: null,
       explorerTop: null,
+      compareUncommitted: { staged: false, unstaged: false, untracked: false },
     });
   });
 
@@ -65,6 +67,7 @@ describe('loadPrefs', () => {
       historyTop: null,
       compareTop: null,
       explorerTop: null,
+      compareUncommitted: { staged: false, unstaged: false, untracked: false },
     });
   });
 
@@ -91,6 +94,7 @@ describe('loadPrefs', () => {
       historyTop: null,
       compareTop: null,
       explorerTop: null,
+      compareUncommitted: { staged: false, unstaged: false, untracked: false },
     });
   });
 
@@ -152,6 +156,34 @@ describe('loadPrefs', () => {
     expect(loadPrefs().imageDiffMode).toBe('side-by-side');
   });
 
+  test('compareUncommitted: keeps three booleans, drops anything else', () => {
+    const none = { staged: false, unstaged: false, untracked: false };
+    const kept = { staged: true, unstaged: true, untracked: false };
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ compareUncommitted: kept }));
+    expect(loadPrefs().compareUncommitted).toEqual(kept);
+
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ compareUncommitted: { staged: true, unstaged: 'yes', untracked: false } })
+    );
+    expect(loadPrefs().compareUncommitted).toEqual(none);
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ compareUncommitted: true }));
+    expect(loadPrefs().compareUncommitted).toEqual(none);
+  });
+
+  test('compareUncommitted: drops unstaged without staged (the daemon refuses it)', () => {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ compareUncommitted: { staged: false, unstaged: true, untracked: true } })
+    );
+    expect(loadPrefs().compareUncommitted).toEqual({
+      staged: false,
+      unstaged: false,
+      untracked: false,
+    });
+  });
+
   test('wrapEnabled: persists a stored boolean, drops anything else', () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ wrapEnabled: true }));
     expect(loadPrefs().wrapEnabled).toBe(true);
@@ -184,6 +216,7 @@ describe('loadPrefs', () => {
       historyTop: null,
       compareTop: null,
       explorerTop: null,
+      compareUncommitted: { staged: false, unstaged: false, untracked: false },
     });
     // Writes are swallowed too — prefs just don't persist.
     expect(() => savePrefs({ activeView: 'history' })).not.toThrow();
@@ -208,12 +241,22 @@ describe('savePrefs', () => {
       historyTop: null,
       compareTop: null,
       explorerTop: null,
+      compareUncommitted: { staged: false, unstaged: false, untracked: false },
     });
   });
 
   test('roundtrips recent repos', () => {
     savePrefs({ recentRepos: ['/x', '/y'] });
     expect(loadPrefs().recentRepos).toEqual(['/x', '/y']);
+  });
+
+  test('roundtrips compareUncommitted', () => {
+    savePrefs({ compareUncommitted: { staged: true, unstaged: false, untracked: true } });
+    expect(loadPrefs().compareUncommitted).toEqual({
+      staged: true,
+      unstaged: false,
+      untracked: true,
+    });
   });
 
   test('roundtrips autoMode', () => {

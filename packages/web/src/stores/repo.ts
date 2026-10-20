@@ -98,6 +98,7 @@ import { isLargeFileDiff } from '@diffstalker/core/git/diffParse';
 import { diffModel } from '../utils/diffRows';
 import type { DiffModel } from '../utils/diffRows';
 import { useDaemonStore } from './daemon';
+import { loadPrefs, savePrefs } from '../prefs';
 import type {
   JournalAppendEvent,
   JournalResponse,
@@ -368,6 +369,12 @@ export const useRepoStore = defineStore('repo', () => {
    */
   const selectedStackHead = shallowRef<string | null>(null);
   /**
+   * Which uncommitted work every compare pull folds in: the Compare
+   * view's include toggles. Kept in prefs, so it survives a view switch,
+   * a reload and a repo switch.
+   */
+  const compareUncommitted = shallowRef<UncommittedParts>(loadPrefs().compareUncommitted);
+  /**
    * The stack the last compare pull came with (GET /compare/stack for the
    * same trunk). Null until pulled, and when the daemon had none to give.
    * The strip draws from it, and a picked layer resolves against it.
@@ -465,8 +472,6 @@ export const useRepoStore = defineStore('repo', () => {
    * would reopen the very hole the epoch check exists to close).
    */
   let epochResetBuffer: JournalAppendEvent[] = [];
-  /** Which uncommitted categories the last compare pull folded in. */
-  let lastUncommitted: UncommittedParts = { ...NO_UNCOMMITTED };
   let historyCount = 100;
   /**
    * Monotonic refreshCompare sequence: each request captures the counter
@@ -555,7 +560,6 @@ export const useRepoStore = defineStore('repo', () => {
     journalSyncedTo = 0;
     preloadAppendEpoch = null;
     epochResetBuffer = [];
-    lastUncommitted = { ...NO_UNCOMMITTED };
     historyCount = 100;
 
     workingDiffsActive = false;
@@ -905,7 +909,7 @@ export const useRepoStore = defineStore('repo', () => {
     // coming back is exactly the kind of move this handler is for.
     const compareOpen = compare.value.compareDiff !== null || compare.value.error !== null;
     if (compareOpen && !compare.value.loading) {
-      void refreshCompare(lastUncommitted);
+      void refreshCompare();
     } else {
       // Compare is not open: still keep the rail's commit count current,
       // which costs one rev-list rather than a whole CompareDiff. (When it
@@ -1923,10 +1927,11 @@ export const useRepoStore = defineStore('repo', () => {
 
   // --- Compare ---
 
-  /** The uncommitted categories of the most recent compare pull — lets
-   * the view's toggles survive a tab switch (the refs are component-local). */
-  function getLastUncommitted(): UncommittedParts {
-    return { ...lastUncommitted };
+  /** Set the include toggles, remember them, and re-pull with them. */
+  async function setCompareUncommitted(parts: UncommittedParts): Promise<void> {
+    compareUncommitted.value = { ...parts };
+    savePrefs({ compareUncommitted: compareUncommitted.value });
+    await refreshCompare();
   }
 
   /**
@@ -2072,10 +2077,8 @@ export const useRepoStore = defineStore('repo', () => {
     return { stack, diff, head: pick.head, uncommitted: atHead ? uncommitted : NO_UNCOMMITTED };
   }
 
-  async function refreshCompare(
-    uncommitted: UncommittedParts = NO_UNCOMMITTED
-  ): Promise<void> {
-    lastUncommitted = { ...uncommitted };
+  async function refreshCompare(): Promise<void> {
+    const uncommitted = compareUncommitted.value;
     const id = repoId.value;
     if (id === null) return;
     const gen = generation;
@@ -2186,19 +2189,13 @@ export const useRepoStore = defineStore('repo', () => {
    * one clears the picked layer: the old layer names a place in the old
    * stack.
    */
-  function setSelectedCompareBase(
-    branch: string,
-    uncommitted: UncommittedParts = NO_UNCOMMITTED
-  ): Promise<void> {
-    return setComparePick({ base: branch, head: null }, uncommitted);
+  function setSelectedCompareBase(branch: string): Promise<void> {
+    return setComparePick({ base: branch, head: null });
   }
 
   /** Pick a stack layer (null is `all`, the whole stack) and re-pull. */
-  function setSelectedStackHead(
-    head: string | null,
-    uncommitted: UncommittedParts = NO_UNCOMMITTED
-  ): Promise<void> {
-    return setComparePick({ head }, uncommitted);
+  function setSelectedStackHead(head: string | null): Promise<void> {
+    return setComparePick({ head });
   }
 
   /**
@@ -2206,13 +2203,10 @@ export const useRepoStore = defineStore('repo', () => {
    * base and head land together and setting them one after the other
    * would pull the comparison twice. `base` left out keeps the current one.
    */
-  async function setComparePick(
-    pick: { base?: string; head: string | null },
-    uncommitted: UncommittedParts = NO_UNCOMMITTED
-  ): Promise<void> {
+  async function setComparePick(pick: { base?: string; head: string | null }): Promise<void> {
     if (pick.base !== undefined) selectedCompareBase.value = pick.base;
     selectedStackHead.value = pick.head;
-    await refreshCompare(uncommitted);
+    await refreshCompare();
   }
 
   /** The picked layer resolved against the cached stack, or null. */
@@ -2272,6 +2266,7 @@ export const useRepoStore = defineStore('repo', () => {
     compare,
     selectedCompareBase,
     selectedStackHead,
+    compareUncommitted,
     compareStack,
     pickedLayer,
     comparePair,
@@ -2299,7 +2294,7 @@ export const useRepoStore = defineStore('repo', () => {
     // compare
     refreshCompare,
     refreshCompareCount,
-    getLastUncommitted,
+    setCompareUncommitted,
     getCandidateBaseBranches,
     setSelectedCompareBase,
     setSelectedStackHead,
