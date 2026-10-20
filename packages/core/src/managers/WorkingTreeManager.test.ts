@@ -106,6 +106,83 @@ describe('WorkingTreeManager', () => {
       resetRepo();
     });
 
+    test('serves the stamped whole-tree diffs of the last full refresh', async () => {
+      writeFixtureFile(repoPath, 'tracked.txt', 'staged change\n');
+      gitExec(repoPath, 'add tracked.txt');
+      writeFixtureFile(repoPath, 'other.txt', 'unstaged change\n');
+
+      await manager.refresh();
+      const diffs = (await manager.wholeTreeDiffs())!;
+      expect(rawFromLines(diffs.unstaged.lines)).toContain('+unstaged change');
+      expect(rawFromLines(diffs.staged.lines)).toContain('+staged change');
+      const hunk = diffs.unstaged.lines.find((l) => l.type === 'hunk')!;
+      expect(typeof hunk.editedAt).toBe('number');
+
+      // Stamping again writes the same times: serving them repeatedly
+      // answers the same bytes.
+      const before = JSON.stringify(diffs);
+      manager.stampDiff(diffs.unstaged);
+      manager.stampDiff(diffs.staged);
+      expect(JSON.stringify(diffs)).toBe(before);
+
+      // A change the manager has not refreshed for is not in them.
+      writeFixtureFile(repoPath, 'other.txt', 'second change\n');
+      expect(await manager.wholeTreeDiffs()).toBe(diffs);
+      await manager.refresh();
+      const next = (await manager.wholeTreeDiffs())!;
+      expect(next).not.toBe(diffs);
+      expect(rawFromLines(next.unstaged.lines)).toContain('+second change');
+
+      resetRepo();
+    });
+
+    test('with no diffs yet, waiting joins the running refresh instead of queueing another', async () => {
+      writeFixtureFile(repoPath, 'other.txt', 'unstaged change\n');
+      let fullRefreshes = 0;
+      manager.on('state-change', (state) => {
+        if (state.isLoading) fullRefreshes++;
+      });
+
+      const running = manager.refresh();
+      const [first, second] = await Promise.all([manager.wholeTreeDiffs(), manager.wholeTreeDiffs()]);
+      await running;
+
+      expect(first).not.toBeNull();
+      expect(second).toBe(first);
+      expect(fullRefreshes).toBe(1);
+
+      resetRepo();
+    });
+
+    test('with nothing running, waiting starts the full refresh itself', async () => {
+      writeFixtureFile(repoPath, 'other.txt', 'unstaged change\n');
+      const diffs = await manager.wholeTreeDiffs();
+      expect(rawFromLines(diffs!.unstaged.lines)).toContain('+unstaged change');
+
+      resetRepo();
+    });
+
+    test('a status-only refresh makes them stale, so the next wait gets a full refresh', async () => {
+      writeFixtureFile(repoPath, 'other.txt', 'unstaged change\n');
+      await manager.refresh();
+      const before = (await manager.wholeTreeDiffs())!;
+
+      writeFixtureFile(repoPath, 'other.txt', 'second change\n');
+      const statusDone = new Promise<void>((resolve) => {
+        manager.on('state-change', (state) => {
+          if (!state.isLoading) resolve();
+        });
+      });
+      manager.scheduleStatusRefresh();
+      await statusDone;
+
+      const after = (await manager.wholeTreeDiffs())!;
+      expect(after).not.toBe(before);
+      expect(rawFromLines(after.unstaged.lines)).toContain('+second change');
+
+      resetRepo();
+    });
+
     test('emits one journal-observation with HEAD oid, HEAD diff, and untracked sections', async () => {
       writeFixtureFile(repoPath, 'tracked.txt', 'staged change\n');
       gitExec(repoPath, 'add tracked.txt');

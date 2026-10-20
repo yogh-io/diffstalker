@@ -56,35 +56,43 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
 
   router.get('/repos/:id/diff', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
+    const workingTree = handle.manager.workingTree;
     const filePath = query.get('path') ?? undefined;
     const staged = parseBoolParam(query, 'staged', false);
     const context = parseWholeParam(query, filePath);
 
+    if (!filePath) {
+      // The refresh that produced these already read and stamped them;
+      // this is the same diff every refresh computes for its hunk counts,
+      // so no git runs here and nothing is stamped again.
+      const diffs = await workingTree.wholeTreeDiffs();
+      if (!diffs) {
+        // The refresh it waited for may be the one that found the repo gone.
+        const reason = workingTree.unavailable;
+        throw new HttpError(reason ? 410 : 500, reason ?? 'Repository diff unavailable');
+      }
+      sendJson(res, 200, staged ? diffs.staged : diffs.unstaged);
+      return;
+    }
+
     // Stateless: never touches the manager's per-client selection.
-    let diff;
+    const status = await ensureStatus(workingTree);
+    const isUntracked = status.files.some((f) => f.path === filePath && f.status === 'untracked');
+    if (isUntracked && staged) {
+      throw new HttpError(
+        400,
+        `staged=true is meaningless for untracked file: ${filePath} (untracked files have no staged diff)`
+      );
+    }
     // Whether the response actually carries wide context — which is what
     // decides stamping below, and is NOT the same as `whole` being asked
-    // for: an untracked file ignores it (see below).
-    let widened = false;
-    if (filePath) {
-      const status = await ensureStatus(handle.manager.workingTree);
-      const isUntracked = status.files.some((f) => f.path === filePath && f.status === 'untracked');
-      if (isUntracked && staged) {
-        throw new HttpError(
-          400,
-          `staged=true is meaningless for untracked file: ${filePath} (untracked files have no staged diff)`
-        );
-      }
-      // An untracked file is already whole — its "diff" is the file read
-      // in full — so `whole` has nothing to widen, and the response must
-      // be byte-identical with and without it, stamping included.
-      widened = context !== undefined && !isUntracked;
-      diff = isUntracked
-        ? await getDiffForUntracked(handle.path, filePath)
-        : await getDiff(handle.path, filePath, staged, { context });
-    } else {
-      diff = await getDiff(handle.path, undefined, staged);
-    }
+    // for: an untracked file is already whole — its "diff" is the file
+    // read in full — so `whole` has nothing to widen, and the response
+    // must be byte-identical with and without it, stamping included.
+    const widened = context !== undefined && !isUntracked;
+    const diff = isUntracked
+      ? await getDiffForUntracked(handle.path, filePath)
+      : await getDiff(handle.path, filePath, staged, { context });
     // Annotate hunks with edit times, same as diffs served to the TUI —
     // but NEVER for a widened diff. stampDiff WRITES into the repo's
     // shared hunk-time map, keyed by a hash of the hunk's +/- body. A
@@ -94,7 +102,7 @@ export function registerWorkingTreeRoutes(router: Router, deps: RouteDeps): void
     // reason. Whole-file mode therefore has no edit times; toggling back
     // restores them, since the U3 body is a separate read.
     if (!widened) {
-      handle.manager.workingTree.stampDiff(diff);
+      workingTree.stampDiff(diff);
     }
     sendJson(res, 200, diff);
   });

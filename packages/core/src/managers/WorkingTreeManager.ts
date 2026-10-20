@@ -64,6 +64,12 @@ export interface GitState {
   mtimes: Map<string, number> | null;
 }
 
+/** Both whole-tree diffs of one refresh, hunk edit times stamped. */
+export interface WholeTreeDiffs {
+  unstaged: DiffResult;
+  staged: DiffResult;
+}
+
 type WorkingTreeEventMap = {
   'state-change': [GitState];
   'journal-observation': [JournalObservation];
@@ -94,12 +100,6 @@ interface JournalGuardSnapshot {
  */
 const ROUTINE_WATCH_ERRNOS = new Set(['EACCES', 'EPERM', 'ENOENT']);
 
-function isRoutineWatchError(err: unknown): boolean {
-  const code = (err as NodeJS.ErrnoException | null)?.code;
-  return typeof code === 'string' && ROUTINE_WATCH_ERRNOS.has(code);
-}
-
-/** The status of a directory git does not recognize (or that is gone). */
 const SLASH = '/'.charCodeAt(0);
 
 /** A repo-relative path relative to an ignorer's directory, or null when it is not below it. */
@@ -111,6 +111,12 @@ function relativeToDir(rel: string, dir: string): string | null {
   return null;
 }
 
+function isRoutineWatchError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return typeof code === 'string' && ROUTINE_WATCH_ERRNOS.has(code);
+}
+
+/** The status of a directory git does not recognize (or that is gone). */
 function noRepoStatus(): GitStatus {
   return { files: [], branch: { current: '', ahead: 0, behind: 0 }, isRepo: false };
 }
@@ -155,6 +161,41 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
   get state(): GitState {
     return this._state;
+  }
+
+  /**
+   * The whole-tree diffs of the last full refresh, the ones its hunk
+   * counts were taken from. Replaced as a whole and never written to
+   * afterwards, so a consumer can serve them as they are. Null before the
+   * first full refresh, and after a status-only refresh made them stale.
+   */
+  private _wholeTreeDiffs: WholeTreeDiffs | null = null;
+  private fullRefreshRunning = false;
+  /** Callers of wholeTreeDiffs() waiting for the next full refresh to end. */
+  private diffWaiters: Array<() => void> = [];
+
+  /**
+   * The whole-tree diffs that match the current status. When there are
+   * none, waits for the next full refresh, joining one that is already
+   * running rather than queueing another behind it. Null when that
+   * refresh produced none (it failed, or the repo is gone).
+   */
+  async wholeTreeDiffs(): Promise<WholeTreeDiffs | null> {
+    if (this._wholeTreeDiffs) return this._wholeTreeDiffs;
+    const settled = new Promise<void>((resolve) => this.diffWaiters.push(resolve));
+    if (!this.fullRefreshRunning) {
+      this.refresh().catch((err: unknown) => {
+        logger.error('Refresh for whole-tree diffs threw', err, { repo: this.repoPath });
+      });
+    }
+    await settled;
+    return this._wholeTreeDiffs;
+  }
+
+  private settleDiffWaiters(): void {
+    const waiters = this.diffWaiters;
+    this.diffWaiters = [];
+    for (const resolve of waiters) resolve();
   }
 
   /**
@@ -227,6 +268,9 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     ignorers.set('', rootIg);
 
     try {
+      // --exclude-standard skips ignored directories (git reads no
+      // .gitignore there). It also skips an untracked .gitignore that a
+      // rule ignores; missing its rules only costs extra refreshes.
       const output = execFileSync(
         'git',
         ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '**/.gitignore'],
@@ -268,9 +312,6 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   }
 
   // --- File watching ---
-      // --exclude-standard skips ignored directories (git reads no
-      // .gitignore there). It also skips an untracked .gitignore that a
-      // rule ignores; missing its rules only costs extra refreshes.
 
   startWatching(): void {
     // Resolve the REAL git dirs, not `<repo>/.git`: for a linked worktree
@@ -336,6 +377,35 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     });
   }
 
+  /**
+   * Whether a .gitignore rule excludes a path the working-dir watcher
+   * met. Runs once per entry of the initial crawl, so it is string work
+   * only. Each ignorer judges the paths below its own directory,
+   * relative to it.
+   */
+  private isIgnored(filePath: string): boolean {
+    const rel = this.relativeToRoot(filePath);
+    if (rel === '') return false;
+    for (const [dir, ig] of this.ignorers) {
+      const relToDir = relativeToDir(rel, dir);
+      if (relToDir !== null && ig.ignores(relToDir)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * A path chokidar hands over, relative to the repo root; '' for the
+   * root itself. chokidar only reports absolute paths under the root it
+   * watches, so this is the part after the root, less a trailing slash.
+   */
+  private relativeToRoot(filePath: string): string {
+    let rootEnd = this.repoPath.length;
+    if (this.repoPath.charCodeAt(rootEnd - 1) === SLASH) rootEnd--;
+    let end = filePath.length;
+    if (filePath.charCodeAt(end - 1) === SLASH) end--;
+    return end <= rootEnd ? '' : filePath.slice(rootEnd + 1, end);
+  }
+
   private logWatchError(message: string, err: unknown): void {
     if (isRoutineWatchError(err)) logger.debug(message, err, { repo: this.repoPath });
     else logger.warn(message, err, { repo: this.repoPath });
@@ -347,6 +417,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       logger.warn(`Failed to close the ${name} watcher`, err, { repo: this.repoPath });
     this.gitWatcher?.close().catch(closing('git dir'));
     this.workingDirWatcher?.close().catch(closing('working dir'));
+    this.settleDiffWaiters();
   }
 
   /**
@@ -377,35 +448,6 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
    * the edit into the journal's commit boundary. A full request UPGRADES
    * a pending status-only slot; a status request never downgrades a full.
    */
-  /**
-   * Whether a .gitignore rule excludes a path the working-dir watcher
-   * met. Runs once per entry of the initial crawl, so it is string work
-   * only. Each ignorer judges the paths below its own directory,
-   * relative to it.
-   */
-  private isIgnored(filePath: string): boolean {
-    const rel = this.relativeToRoot(filePath);
-    if (rel === '') return false;
-    for (const [dir, ig] of this.ignorers) {
-      const relToDir = relativeToDir(rel, dir);
-      if (relToDir !== null && ig.ignores(relToDir)) return true;
-    }
-    return false;
-  }
-
-  /**
-   * A path chokidar hands over, relative to the repo root; '' for the
-   * root itself. chokidar only reports absolute paths under the root it
-   * watches, so this is the part after the root, less a trailing slash.
-   */
-  private relativeToRoot(filePath: string): string {
-    let rootEnd = this.repoPath.length;
-    if (this.repoPath.charCodeAt(rootEnd - 1) === SLASH) rootEnd--;
-    let end = filePath.length;
-    if (filePath.charCodeAt(end - 1) === SLASH) end--;
-    return end <= rootEnd ? '' : filePath.slice(rootEnd + 1, end);
-  }
-
   private pendingRefreshKind: 'full' | 'status' | null = null;
 
   scheduleRefresh(): void {
@@ -450,6 +492,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       logger.warn(`${reason} (was open as one)`, undefined, { repo: this.repoPath });
     }
     this.unavailableReason = reason;
+    this._wholeTreeDiffs = null;
     this.updateState({ status, isLoading: false, error: reason });
   }
 
@@ -479,6 +522,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         this.notARepo(newStatus, 'Not a git repository');
         return;
       }
+      this._wholeTreeDiffs = null;
       this.updateState({
         status: newStatus,
         mtimes: this.statMtimes(newStatus),
@@ -494,6 +538,16 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   }
 
   private async doRefresh(): Promise<void> {
+    this.fullRefreshRunning = true;
+    try {
+      await this.readFullState();
+    } finally {
+      this.fullRefreshRunning = false;
+      this.settleDiffWaiters();
+    }
+  }
+
+  private async readFullState(): Promise<void> {
     this.updateState({ isLoading: true, error: null });
 
     // Gather-start for the journal's write-during-window guard: any
@@ -556,6 +610,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
       const mtimes = this.statMtimes(newStatus);
 
+      this._wholeTreeDiffs = { unstaged: allUnstagedDiff, staged: allStagedDiff };
       this.updateState({
         status: newStatus,
         hunkCounts,
