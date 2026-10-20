@@ -5,14 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.13.11] - 2026-10-20
 
 ### Changed
 
 - **Switching repos is much faster.** On a follow-mode switch to a repo
-  the daemon already had open, the new repo's changes are now on screen
-  in about 100 ms instead of 250, and a first open of a big repo takes
-  about 0.5 s instead of 1 to 1.4 s. What changed:
+  the daemon already had open, the new repo's changes now show up in 90
+  to 140 ms instead of about 150 to 170, and a first open of a big repo
+  shows them in about 0.4 s instead of 1 to 1.4 s. What changed:
   - The follow hook file is read on the first write instead of after a
     100 ms debounce. A burst of writes still ends on the newest target.
   - A repo released by every client stays warm for 10 minutes (at most
