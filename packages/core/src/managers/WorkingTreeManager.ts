@@ -100,6 +100,17 @@ function isRoutineWatchError(err: unknown): boolean {
 }
 
 /** The status of a directory git does not recognize (or that is gone). */
+const SLASH = '/'.charCodeAt(0);
+
+/** A repo-relative path relative to an ignorer's directory, or null when it is not below it. */
+function relativeToDir(rel: string, dir: string): string | null {
+  if (dir === '') return rel;
+  if (rel.startsWith(dir) && rel.charCodeAt(dir.length) === SLASH) {
+    return rel.slice(dir.length + 1);
+  }
+  return null;
+}
+
 function noRepoStatus(): GitStatus {
   return { files: [], branch: { current: '', ahead: 0, behind: 0 }, isRepo: false };
 }
@@ -218,7 +229,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     try {
       const output = execFileSync(
         'git',
-        ['ls-files', '-z', '--cached', '--others', '**/.gitignore'],
+        ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '**/.gitignore'],
         {
           cwd: this.repoPath,
           encoding: 'utf-8',
@@ -257,6 +268,9 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   }
 
   // --- File watching ---
+      // --exclude-standard skips ignored directories (git reads no
+      // .gitignore there). It also skips an untracked .gitignore that a
+      // rule ignores; missing its rules only costs extra refreshes.
 
   startWatching(): void {
     // Resolve the REAL git dirs, not `<repo>/.git`: for a linked worktree
@@ -287,21 +301,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.workingDirWatcher = watch(this.repoPath, {
       persistent: true,
       ignoreInitial: true,
-      ignored: (filePath: string) => {
-        const relativePath = path.relative(this.repoPath, filePath);
-        if (!relativePath) return false;
-
-        const parts = relativePath.split('/');
-        for (let depth = 0; depth < parts.length; depth++) {
-          const dir = depth === 0 ? '' : parts.slice(0, depth).join('/');
-          const ig = this.ignorers.get(dir);
-          if (ig) {
-            const relToDir = depth === 0 ? relativePath : parts.slice(depth).join('/');
-            if (ig.ignores(relToDir)) return true;
-          }
-        }
-        return false;
-      },
+      ignored: (filePath: string) => this.isIgnored(filePath),
       awaitWriteFinish: {
         stabilityThreshold: 100,
         pollInterval: 50,
@@ -377,6 +377,35 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
    * the edit into the journal's commit boundary. A full request UPGRADES
    * a pending status-only slot; a status request never downgrades a full.
    */
+  /**
+   * Whether a .gitignore rule excludes a path the working-dir watcher
+   * met. Runs once per entry of the initial crawl, so it is string work
+   * only. Each ignorer judges the paths below its own directory,
+   * relative to it.
+   */
+  private isIgnored(filePath: string): boolean {
+    const rel = this.relativeToRoot(filePath);
+    if (rel === '') return false;
+    for (const [dir, ig] of this.ignorers) {
+      const relToDir = relativeToDir(rel, dir);
+      if (relToDir !== null && ig.ignores(relToDir)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * A path chokidar hands over, relative to the repo root; '' for the
+   * root itself. chokidar only reports absolute paths under the root it
+   * watches, so this is the part after the root, less a trailing slash.
+   */
+  private relativeToRoot(filePath: string): string {
+    let rootEnd = this.repoPath.length;
+    if (this.repoPath.charCodeAt(rootEnd - 1) === SLASH) rootEnd--;
+    let end = filePath.length;
+    if (filePath.charCodeAt(end - 1) === SLASH) end--;
+    return end <= rootEnd ? '' : filePath.slice(rootEnd + 1, end);
+  }
+
   private pendingRefreshKind: 'full' | 'status' | null = null;
 
   scheduleRefresh(): void {

@@ -44,6 +44,7 @@ const CHILD_TIMEOUT_MS = 20_000;
 const SCENARIOS = [
   'a FIFO created in the working tree does not freeze the process',
   'a FIFO beside ordinary files and symlinks does not stop the watcher',
+  'root and nested .gitignore rules decide what the watcher reports',
 ] as const;
 
 /** Resolves once the event loop has turned `ms` later. A frozen loop never settles it. */
@@ -168,6 +169,40 @@ if (process.env[SCENARIO_ENV] === '1') {
         fs.unlinkSync(linkPath);
         fs.unlinkSync(realPath);
       }
+    });
+
+    test(SCENARIOS[2], async () => {
+      // A root rule, an ignored directory, and a nested .gitignore whose
+      // rules apply below its own directory only. The nested file is
+      // committed so `git ls-files` lists it; the ignored directory
+      // exists before the watcher starts so the crawl meets it.
+      writeFixtureFile(repoPath, '.gitignore', '*.log\nbuild\n');
+      writeFixtureFile(repoPath, 'sub/.gitignore', 'tmp/\n*.cache\n');
+      fs.mkdirSync(path.join(repoPath, 'build'), { recursive: true });
+      fs.mkdirSync(path.join(repoPath, 'sub/tmp'), { recursive: true });
+      fs.mkdirSync(path.join(repoPath, 'sub/deep'), { recursive: true });
+      gitExec(repoPath, 'add .gitignore sub/.gitignore');
+      gitExec(repoPath, 'commit -m "ignore rules"');
+
+      const manager = startManager();
+      await tick(300);
+      const changes: string[] = [];
+      manager.on('state-change', () => changes.push('change'));
+
+      const ignored = ['root.log', 'build/x.txt', 'sub/a.cache', 'sub/tmp/b.txt', 'sub/deep/c.cache'];
+      for (const file of ignored) writeFixtureFile(repoPath, file, 'ignored\n');
+      await tick(700);
+      expect(changes.length).toBe(0);
+
+      // The nested rule does not reach above its directory, and a plain
+      // file under it is still watched.
+      writeFixtureFile(repoPath, 'root.cache', 'watched\n');
+      await tick(700);
+      expect(changes.length).toBeGreaterThan(0);
+      changes.length = 0;
+      writeFixtureFile(repoPath, 'sub/kept.txt', 'watched\n');
+      await tick(700);
+      expect(changes.length).toBeGreaterThan(0);
     });
   });
 } else {
