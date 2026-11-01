@@ -284,13 +284,25 @@ export interface ClassifiedHunk {
 }
 
 /**
+ * A copy that shares no memory with the string it came from. V8 makes a
+ * substring of 13+ chars a view of its parent, so one kept line would hold a
+ * whole `git diff` output alive. Node keeps an output that big in malloc
+ * memory, which V8's heap limit does not cap and the byte budget here does
+ * not see. Every string the store keeps goes through this.
+ */
+function ownedString(text: string): string {
+  return Buffer.from(text, 'utf8').toString('utf8');
+}
+
+/**
  * The body to store for an observed hunk: null for an oversize-untracked
  * stand-in section (its headers are not a snapshot) and for snapshots
  * past the raw-size cap.
  */
 function snapshotFor(h: ObservedHunk): DiffResult | null {
   if (h.oversize === true) return null;
-  return diffByteSize(h.diff.lines) > MAX_SNAPSHOT_BYTES ? null : h.diff;
+  if (diffByteSize(h.diff.lines) > MAX_SNAPSHOT_BYTES) return null;
+  return { lines: h.diff.lines.map((line) => ({ ...line, content: ownedString(line.content) })) };
 }
 
 function deriveKind(ins: number, del: number, predSize: number): JournalHunkKind {
@@ -872,7 +884,7 @@ export class JournalManager extends EventEmitter<JournalEventMap> {
   private parseObservation(obs: JournalObservation): ParsedObservation {
     const files = new Map<string, FileHunks>();
     for (const [path, fileDiff] of splitDiffByFile(obs.headDiff)) {
-      files.set(path, extractFileHunks(fileDiff));
+      files.set(ownedString(path), extractFileHunks(fileDiff));
     }
     const deferred = new Set<string>();
     for (const file of obs.status.files) {
@@ -887,7 +899,14 @@ export class JournalManager extends EventEmitter<JournalEventMap> {
     resolves: number[],
     at: number
   ): JournalBoundaryEntry {
-    return { type: 'boundary', seq: this.store.nextSeq++, ts: at, kind, label, resolves };
+    return {
+      type: 'boundary',
+      seq: this.store.nextSeq++,
+      ts: at,
+      kind,
+      label: ownedString(label),
+      resolves,
+    };
   }
 
   /** ts = min(file mtime, observation time): mtime-honest, never future. */

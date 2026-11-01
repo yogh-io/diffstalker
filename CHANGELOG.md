@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The daemon no longer grows without limit on a busy repo.** A journal
+  entry keeps a few diff lines, but those lines held the whole `git diff`
+  output they were cut from in memory: one full output per change, unseen
+  by the journal's size limit. On a repo with 5,000 changed files that was
+  about 120 MiB a minute, and one daemon reached 19.7 GiB in 4.6 days. The
+  journal now keeps its own copies.
+
 ## [0.13.11] - 2026-10-20
 
 ### Changed
