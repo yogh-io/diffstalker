@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.13.12] - 2026-11-01
 
 ### Fixed
 
@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the limit off for good. Old entries now go whatever sits in front of
   them. Live entries stay and no longer count toward the limit, so a repo
   with thousands of changed files keeps its history.
+- **Hunk edit times no longer pile up.** The daemon kept a time for every
+  version of a hunk for as long as its file stayed dirty. It now keeps only
+  the hunks in the current diff. A change that is undone and then made
+  again now counts as a new edit.
+- **Deleted worktrees no longer fill the daemon log.** Git lists a worktree
+  whose folder was deleted until it is pruned, and every listing tried to
+  count its commits and logged a warning. They are now skipped, and still
+  listed.
+- **The terminal UI only remembers repos it opened.** A failed open, such
+  as a folder that is not a repo, went into the recent repos list.
 
 ## [0.13.11] - 2026-10-20
 
