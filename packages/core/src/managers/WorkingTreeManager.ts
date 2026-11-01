@@ -603,10 +603,8 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       };
 
       // Observe every hunk so first-seen stamps are locked in as soon as a
-      // change appears, then drop stamps for files that no longer have changes
-      this.hunkTimes.stamp(allUnstagedDiff);
-      this.hunkTimes.stamp(allStagedDiff);
-      this.hunkTimes.prune(new Set(newStatus.files.map((f) => f.path)));
+      // change appears, then drop stamps for hunks that are gone
+      this.hunkTimes.stampTree([allUnstagedDiff, allStagedDiff]);
 
       const mtimes = this.statMtimes(newStatus);
 

@@ -104,15 +104,18 @@ describe('HunkTimeTracker', () => {
     expect(shifted.lines[1].editedAt).toBe(original);
   });
 
-  it('prunes stamps for files that no longer have changes', () => {
+  it('forgets a rewritten hunk while its file stays dirty', () => {
     const tracker = new HunkTimeTracker(repoPath);
     const first = makeDiff('a.txt', [{ header: '@@ -1,2 +1,3 @@', body: [['addition', '+x']] }]);
-    tracker.stamp(first);
+    tracker.stampTree([first]);
     const original = first.lines[1].editedAt;
 
-    tracker.prune(new Set());
+    const rewritten = makeDiff('a.txt', [
+      { header: '@@ -1,2 +1,3 @@', body: [['addition', '+y']] },
+    ]);
+    tracker.stampTree([rewritten]);
 
-    // Re-observing after prune re-stamps from mtime (moved forward here to prove it)
+    // Re-observing a forgotten hunk stamps from mtime (moved forward here to prove it)
     const target = path.join(repoPath, 'a.txt');
     const future = new Date(Date.now() + 10_000);
     fs.utimesSync(target, future, future);
@@ -120,6 +123,22 @@ describe('HunkTimeTracker', () => {
     const again = makeDiff('a.txt', [{ header: '@@ -1,2 +1,3 @@', body: [['addition', '+x']] }]);
     tracker.stamp(again);
     expect(again.lines[1].editedAt).not.toBe(original);
+  });
+
+  it('keeps the stamp when a hunk moves from the unstaged diff to the staged one', () => {
+    const tracker = new HunkTimeTracker(repoPath);
+    const nothing = makeDiff('b.txt', []);
+    const unstaged = makeDiff('a.txt', [{ header: '@@ -1,2 +1,3 @@', body: [['addition', '+x']] }]);
+    tracker.stampTree([unstaged, nothing]);
+    const original = unstaged.lines[1].editedAt;
+
+    const target = path.join(repoPath, 'a.txt');
+    const future = new Date(Date.now() + 20_000);
+    fs.utimesSync(target, future, future);
+
+    const staged = makeDiff('a.txt', [{ header: '@@ -1,2 +1,3 @@', body: [['addition', '+x']] }]);
+    tracker.stampTree([nothing, staged]);
+    expect(staged.lines[1].editedAt).toBe(original);
   });
 
   it('falls back to now for unreadable files', () => {

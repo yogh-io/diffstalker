@@ -85,10 +85,26 @@ export class HunkTimeTracker {
    * lines with `editedAt` in place.
    */
   stamp(diff: DiffResult | null | undefined): void {
-    if (!diff) return;
+    if (diff) this.stampHunks(collectHunks(diff));
+  }
 
+  /**
+   * Stamp a refresh's whole-tree diffs and forget every other hunk. Each
+   * rewrite of a hunk makes a new key, so in a file that stays dirty the
+   * old keys would otherwise pile up.
+   */
+  stampTree(diffs: DiffResult[]): void {
+    const refs = diffs.flatMap((diff) => collectHunks(diff));
+    this.stampHunks(refs);
+    const live = new Set(refs.map((ref) => ref.key));
+    for (const key of this.stamps.keys()) {
+      if (!live.has(key)) this.stamps.delete(key);
+    }
+  }
+
+  private stampHunks(refs: HunkRef[]): void {
     const mtimes = new Map<string, number>();
-    for (const ref of collectHunks(diff)) {
+    for (const ref of refs) {
       let at = this.stamps.get(ref.key);
       if (at === undefined) {
         let mtime = mtimes.get(ref.file);
@@ -100,16 +116,6 @@ export class HunkTimeTracker {
         this.stamps.set(ref.key, at);
       }
       ref.headerLine.editedAt = at;
-    }
-  }
-
-  /** Drop stamps for files that no longer have changes. */
-  prune(activeFiles: ReadonlySet<string>): void {
-    for (const key of this.stamps.keys()) {
-      const file = key.slice(0, key.indexOf('\0'));
-      if (!activeFiles.has(file)) {
-        this.stamps.delete(key);
-      }
     }
   }
 
