@@ -56,10 +56,10 @@ export const MAX_SNAPSHOT_BYTES = 256 * 1024;
 
 /**
  * Pruning (design decision 8): the store is a bounded ring, enforced
- * after every append. Total-entry cap per store; past it the oldest
- * evictable entries are evicted entirely (a contiguous prefix, so the
- * daemon's derived prunedBefore — entries[0].seq - 1 — stays the highest
- * evicted seq). A LIVE entry's identity is never evicted.
+ * after every append. This caps the entries that are no longer live; past
+ * it the oldest of them are evicted entirely. A LIVE entry's identity is
+ * never evicted and does not count, so the store holds at most this many
+ * entries plus the working tree's current hunks.
  */
 export const MAX_JOURNAL_ENTRIES = 500;
 
@@ -529,6 +529,7 @@ export function createJournalStore(): JournalStore {
     entries: [],
     epoch: `${Date.now().toString(36)}-${randomBytes(4).toString('hex')}`,
     nextSeq: 1,
+    prunedBefore: 0,
     live: new Map(),
     lastHeadOid: null,
     lastBranch: null,
@@ -605,12 +606,11 @@ export class JournalManager extends EventEmitter<JournalEventMap> {
   /**
    * Enforce the store bounds (design decision 8) after an append: null
    * the oldest OUTDATED bodies past the byte budget, then evict the
-   * oldest entries entirely past the count cap. Identity eviction is a
-   * contiguous prefix and never removes a LIVE entry, so seqs stay
-   * contiguous and the daemon's derived prunedBefore (entries[0].seq - 1)
-   * remains the highest evicted seq. Lineage pointers of retained
-   * entries may name evicted seqs — that is exactly the pruned-baseline
-   * gap prunedBefore exposes honestly to clients.
+   * oldest entries entirely past the count cap. A LIVE entry is never
+   * removed, so retained seqs can have holes behind an old live entry.
+   * Lineage pointers of retained entries may name evicted seqs — that is
+   * exactly the pruned-baseline gap prunedBefore exposes honestly to
+   * clients.
    */
   private pruneStore(): void {
     const liveSeqs = new Set<number>();
@@ -636,21 +636,23 @@ export class JournalManager extends EventEmitter<JournalEventMap> {
   }
 
   /**
-   * Evict a contiguous oldest prefix past the count cap. Eviction stops
-   * at the first live entry: a live identity is never evicted, even if
-   * that leaves the store above the cap (bounded in practice — live
-   * entries are at most the working tree's current hunks).
+   * Evict the oldest non-live entries past the count cap, stepping over
+   * live ones: one old uncommitted hunk must not switch the cap off for
+   * everything after it. Oldest-first means an outdated entry always goes
+   * before the newer entry that superseded it, so nothing retained can
+   * read as live by mistake.
    */
   private pruneEntries(liveSeqs: Set<number>): void {
     const entries = this.store.entries;
-    let drop = 0;
-    while (
-      entries.length - drop > MAX_JOURNAL_ENTRIES &&
-      (entries[drop].type === 'boundary' || !liveSeqs.has(entries[drop].seq))
-    ) {
-      drop++;
-    }
-    if (drop > 0) entries.splice(0, drop);
+    let excess = -MAX_JOURNAL_ENTRIES;
+    for (const e of entries) if (!liveSeqs.has(e.seq)) excess++;
+    if (excess <= 0) return;
+    this.store.entries = entries.filter((e) => {
+      if (excess === 0 || liveSeqs.has(e.seq)) return true;
+      excess--;
+      this.store.prunedBefore = e.seq;
+      return false;
+    });
   }
 
   /**

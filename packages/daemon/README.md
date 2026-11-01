@@ -349,9 +349,9 @@ as `/diff` responses.
 - `epoch` — opaque string minted per journal store. A mismatch with a
   client's cached epoch means the store was reset (daemon restart, LRU
   eviction): discard the cache and refetch from scratch.
-- `prunedBefore` — highest pruned seq, 0 when nothing is pruned. A value
-  above a client's last seen seq is a gap `?since` can never fill: full
-  refetch.
+- `prunedBefore` — highest pruned seq, 0 when nothing is pruned. Entries
+  up to it are gone unless they are still live. A value above a client's
+  last seen seq is a gap `?since` can never fill: full refetch.
 
 New entries stream as `journal-append {entries}` on the per-repo
 `GET /repos/:id/events` channel (and on a combined `GET /events?repo=`

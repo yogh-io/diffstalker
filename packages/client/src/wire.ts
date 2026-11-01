@@ -288,7 +288,7 @@ export interface CompareCount {
 export interface JournalResponse {
   /** Opaque store identity, minted per JournalStore; compare with equality only. */
   epoch: string;
-  /** Ring-buffer eviction watermark: entries below it are gone. */
+  /** Ring-buffer eviction watermark: entries up to it are gone unless still live. */
   prunedBefore: number;
   entries: JournalEntry[];
 }

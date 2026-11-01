@@ -115,6 +115,8 @@ export interface JournalStore {
   epoch: string;
   /** Next seq to assign; starts at 1. */
   nextSeq: number;
+  /** Highest evicted seq, 0 when nothing was evicted. */
+  prunedBefore: number;
   live: Map<string, LiveHunk[]>;
   /** null until the store's first (seeding) observation. */
   lastHeadOid: string | null;

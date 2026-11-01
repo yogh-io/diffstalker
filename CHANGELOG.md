@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by the journal's size limit. On a repo with 5,000 changed files that was
   about 120 MiB a minute, and one daemon reached 19.7 GiB in 4.6 days. The
   journal now keeps its own copies.
+- **The journal's limit of 500 entries now holds.** Eviction stopped at the
+  oldest entry that was still live, so one old uncommitted change turned
+  the limit off for good. Old entries now go whatever sits in front of
+  them. Live entries stay and no longer count toward the limit, so a repo
+  with thousands of changed files keeps its history.
 
 ## [0.13.11] - 2026-10-20
 

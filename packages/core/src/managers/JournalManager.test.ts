@@ -1024,7 +1024,7 @@ function pushOutdated(store: JournalStore, count: number, bodySize = 1): number[
 describe('JournalManager pruning', () => {
   const EDITED_A = fileSection('a.ts', [H('@@ -2,1 +2,1 @@', ['-old a', '+edited a'])]);
 
-  test('count cap: a contiguous oldest prefix is evicted, the derived prunedBefore advances, the live tail survives', () => {
+  test('count cap: the oldest non-live entries are evicted, prunedBefore advances, the live tail survives', () => {
     const { manager } = mkManager();
     manager.observe(mkObs({ diff: A_SECTION, files: [{ path: 'a.ts', status: 'modified' }] }));
     const store = manager.journalStore;
@@ -1033,18 +1033,17 @@ describe('JournalManager pruning', () => {
     // The edit supersedes the seeded a.ts entry; the append triggers pruning.
     manager.observe(mkObs({ diff: EDITED_A, files: [{ path: 'a.ts', status: 'modified' }] }));
 
-    expect(store.entries).toHaveLength(MAX_JOURNAL_ENTRIES);
+    // The cap counts what is no longer live; the edit is live on top of it.
+    expect(store.entries).toHaveLength(MAX_JOURNAL_ENTRIES + 1);
     const last = store.entries[store.entries.length - 1] as JournalHunkEntry;
     expect(last.path).toBe('a.ts');
     expect(last.kind).toBe('edited');
-    // Contiguous prefix eviction keeps entries[0].seq - 1 (the daemon's
-    // derived prunedBefore) equal to the highest evicted seq.
-    expect(store.entries[0].seq).toBe(last.seq - MAX_JOURNAL_ENTRIES + 1);
+    expect(store.prunedBefore).toBe(store.entries[0].seq - 1);
     // The live map still points at a retained entry.
     expect(store.live.get('a.ts')![0].seq).toBe(last.seq);
   });
 
-  test('a live identity is never evicted: eviction stops at the oldest live entry', () => {
+  test('an old live entry is never evicted and does not stop eviction behind it', () => {
     const { manager } = mkManager();
     manager.observe(mkObs({ diff: A_SECTION, files: [{ path: 'a.ts', status: 'modified' }] }));
     const store = manager.journalStore;
@@ -1062,11 +1061,15 @@ describe('JournalManager pruning', () => {
       })
     );
 
-    // Only the boundary ahead of the live entry could go; the store stays
-    // over the cap rather than losing a live identity.
+    // Both live entries survive and the outdated ones behind the old one
+    // are evicted down to the cap, which leaves a hole in the seqs.
     expect(store.entries[0].seq).toBe(liveSeq);
-    expect(store.entries.length).toBeGreaterThan(MAX_JOURNAL_ENTRIES);
+    expect(store.entries).toHaveLength(MAX_JOURNAL_ENTRIES + 2);
     expect(store.live.get('a.ts')![0].seq).toBe(liveSeq);
+    const afterHole = store.entries[1].seq;
+    expect(afterHole).toBeGreaterThan(liveSeq + 1);
+    // A client that last saw a seq inside the hole must refetch.
+    expect(store.prunedBefore).toBe(afterHole - 1);
   });
 
   test('byte budget: the oldest OUTDATED bodies are nulled first; live bodies and the newest outdated survive', () => {
