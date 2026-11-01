@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
-import { afterEach, beforeEach, describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   clearDefaultBaseCache,
   listWorktrees,
@@ -419,6 +419,19 @@ describe('listWorktrees aheadOfBase (fixture)', () => {
       });
     } finally {
       fs.rmSync(orphanPath, { recursive: true, force: true });
+    }
+  });
+
+  it('a deleted worktree stays listed, with no count and no warning', async () => {
+    fs.rmSync(linkedPath, { recursive: true, force: true });
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      const ahead = await aheadByBranch();
+      expect(ahead.get('on-fork')).toBeNull();
+      expect(ahead.get('feature')).toBe(1);
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
     }
   });
 });

@@ -325,6 +325,9 @@ async function chosenBaseAhead(worktreePath: string, chosen: string): Promise<nu
  * default base, which depends on each worktree's HEAD. Same rule as
  * resolveEffectiveBaseBranch.
  *
+ * Git lists a deleted worktree until it is pruned. It has no count, and
+ * trying for one on every listing only fills the log.
+ *
  * The mainlines are read once for the whole family: every worktree shares
  * the refs. When that read fails, no worktree gets a default-base count
  * (the persisted choices still do), and nothing is cached.
@@ -342,7 +345,7 @@ async function aheadOfBaseCounts(
   }
   const entries = await Promise.all(
     worktrees
-      .filter((wt) => !wt.isBare)
+      .filter((wt) => !wt.isBare && isExistingDirectory(wt.path))
       .map(async (wt): Promise<[string, number] | null> => {
         const chosen = getCachedBaseBranch(wt.path);
         let ahead: number | null = null;
