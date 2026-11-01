@@ -517,8 +517,8 @@ export class App {
     // Initialize explorer manager for the new repo
     this.initExplorerManager();
 
-    // Record this repo in recent repos list
-    this.recordCurrentRepo();
+    // A failed open shows its error here, but is not a repo to offer again
+    if (next.isRepo) this.recordCurrentRepo();
 
     if (old) {
       this.resetRepoSpecificState();
