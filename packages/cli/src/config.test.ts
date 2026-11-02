@@ -13,6 +13,23 @@ import {
   type Config,
 } from './config.js';
 
+const savedConfigHome = process.env.XDG_CONFIG_HOME;
+let configHome: string;
+let configPath: string;
+
+beforeEach(() => {
+  configHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-config-test-'));
+  process.env.XDG_CONFIG_HOME = configHome;
+  configPath = path.join(configHome, 'diffstalker', 'config.json');
+  fs.mkdirSync(path.dirname(configPath));
+});
+
+afterEach(() => {
+  fs.rmSync(configHome, { recursive: true, force: true });
+  if (savedConfigHome === undefined) delete process.env.XDG_CONFIG_HOME;
+  else process.env.XDG_CONFIG_HOME = savedConfigHome;
+});
+
 describe('isValidTheme', () => {
   it('returns true for dark theme', () => {
     expect(isValidTheme('dark')).toBe(true);
@@ -63,40 +80,7 @@ describe('isValidTheme', () => {
   });
 });
 
-/**
- * Tests for loadConfig/saveConfig toggle persistence.
- * Uses a real temp directory to avoid fs mocking issues with bun test.
- */
 describe('loadConfig/saveConfig toggle fields', () => {
-  const configDir = path.join(os.homedir(), '.config', 'diffstalker');
-  const configPath = path.join(configDir, 'config.json');
-  let originalContent: string | null = null;
-
-  beforeEach(() => {
-    // Ensure config directory exists (may not exist in CI)
-    fs.mkdirSync(configDir, { recursive: true });
-    // Back up existing config if present
-    try {
-      originalContent = fs.readFileSync(configPath, 'utf-8');
-    } catch {
-      originalContent = null;
-    }
-  });
-
-  afterEach(() => {
-    // Restore original config
-    if (originalContent !== null) {
-      fs.writeFileSync(configPath, originalContent);
-    } else {
-      // Remove config file if it didn't exist before
-      try {
-        fs.unlinkSync(configPath);
-      } catch {
-        // Ignore if already gone
-      }
-    }
-  });
-
   it('reads boolean toggle values from config file', () => {
     fs.writeFileSync(
       configPath,
@@ -164,31 +148,6 @@ describe('loadConfig/saveConfig toggle fields', () => {
 });
 
 describe('back-compat: pre-0.5 config load', () => {
-  const configDir = path.join(os.homedir(), '.config', 'diffstalker');
-  const configPath = path.join(configDir, 'config.json');
-  let originalContent: string | null = null;
-
-  beforeEach(() => {
-    fs.mkdirSync(configDir, { recursive: true });
-    try {
-      originalContent = fs.readFileSync(configPath, 'utf-8');
-    } catch {
-      originalContent = null;
-    }
-  });
-
-  afterEach(() => {
-    if (originalContent !== null) {
-      fs.writeFileSync(configPath, originalContent);
-    } else {
-      try {
-        fs.unlinkSync(configPath);
-      } catch {
-        // Ignore if already gone
-      }
-    }
-  });
-
   it('loads a full pre-0.5 config without error and honors every field', () => {
     fs.writeFileSync(
       configPath,
@@ -254,32 +213,6 @@ describe('resolveFollowFile (watcherEnabled -> follow-file mapping)', () => {
 });
 
 describe('recentRepos config', () => {
-  const configDir = path.join(os.homedir(), '.config', 'diffstalker');
-  const configPath = path.join(configDir, 'config.json');
-  let originalContent: string | null = null;
-
-  beforeEach(() => {
-    // Ensure config directory exists (may not exist in CI)
-    fs.mkdirSync(configDir, { recursive: true });
-    try {
-      originalContent = fs.readFileSync(configPath, 'utf-8');
-    } catch {
-      originalContent = null;
-    }
-  });
-
-  afterEach(() => {
-    if (originalContent !== null) {
-      fs.writeFileSync(configPath, originalContent);
-    } else {
-      try {
-        fs.unlinkSync(configPath);
-      } catch {
-        // Ignore if already gone
-      }
-    }
-  });
-
   it('loadConfig reads recentRepos as string array', () => {
     fs.writeFileSync(
       configPath,

@@ -24,7 +24,9 @@ export const defaultConfig: Config = {
   theme: 'dark',
 };
 
-const CONFIG_PATH = path.join(configDir(), 'config.json');
+function configPath(): string {
+  return path.join(configDir(), 'config.json');
+}
 
 export const VALID_THEMES: ThemeName[] = [
   'dark',
@@ -43,9 +45,9 @@ export function loadConfig(): Config {
   const config = { ...defaultConfig };
 
   // Try to load from config file
-  if (fs.existsSync(CONFIG_PATH)) {
+  if (fs.existsSync(configPath())) {
     try {
-      const fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      const fileConfig = JSON.parse(fs.readFileSync(configPath(), 'utf-8'));
       if (fileConfig.targetFile) config.targetFile = fileConfig.targetFile;
       // Back-compat: a pre-0.5 config persisted watcherEnabled/debug. Keep
       // honoring them so an existing config that turned follow on still does.
@@ -109,16 +111,13 @@ export function saveConfig(
   >
 ): void {
   // Ensure config directory exists
-  const configDir = path.dirname(CONFIG_PATH);
-  if (!fs.existsSync(configDir)) {
-    fs.mkdirSync(configDir, { recursive: true });
-  }
+  fs.mkdirSync(configDir(), { recursive: true });
 
   // Load existing config or start fresh
   let fileConfig: Record<string, unknown> = {};
-  if (fs.existsSync(CONFIG_PATH)) {
+  if (fs.existsSync(configPath())) {
     try {
-      fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      fileConfig = JSON.parse(fs.readFileSync(configPath(), 'utf-8'));
     } catch {
       // Start fresh if file is corrupted
     }
@@ -128,7 +127,7 @@ export function saveConfig(
   Object.assign(fileConfig, updates);
 
   // Write back
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(fileConfig, null, 2) + '\n');
+  fs.writeFileSync(configPath(), JSON.stringify(fileConfig, null, 2) + '\n');
 }
 
 /**
@@ -165,9 +164,9 @@ function normalizeRepoPath(p: string): string {
 export function addRecentRepo(repoPath: string, maxRecentRepos: number = 10): void {
   const normalized = normalizeRepoPath(repoPath);
   let existing: string[] = [];
-  if (fs.existsSync(CONFIG_PATH)) {
+  if (fs.existsSync(configPath())) {
     try {
-      const fileConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      const fileConfig = JSON.parse(fs.readFileSync(configPath(), 'utf-8'));
       if (Array.isArray(fileConfig.recentRepos)) existing = fileConfig.recentRepos;
     } catch {
       // start fresh
