@@ -44,10 +44,13 @@ export function getCachedBaseBranch(repoPath: string): string | undefined {
 }
 
 /**
- * Save the selected base branch for a repository to the cache.
+ * Save the selected base branch for a repository to the cache, and forget
+ * repos that are gone: worktrees come and go, and nothing else prunes this.
  */
 export function setCachedBaseBranch(repoPath: string, baseBranch: string): void {
-  const cache = loadCache();
+  const cache = Object.fromEntries(
+    Object.entries(loadCache()).filter(([repo]) => fs.existsSync(repo))
+  );
   const normalizedPath = path.resolve(repoPath);
   cache[normalizedPath] = baseBranch;
   saveCache(cache);
