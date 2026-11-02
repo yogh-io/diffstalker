@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.13] - 2026-11-02
+
+### Fixed
+
+- **Recent repos that no longer exist drop off the terminal UI's list.**
+  A repo deleted since it was opened stayed in the picker as a dead row,
+  and pushed live repos off the list.
+- **Base branch choices for deleted repos are forgotten.** Saving a choice
+  now clears the entries for repos that are gone.
+- **The test suite no longer touches your real config and cache.** Each
+  run added a dead path to `base-branches.json`, and `config.json` was
+  rewritten and restored around each test, so a killed run could damage
+  it. Test runs now get their own folders.
+
 ## [0.13.12] - 2026-11-01
 
 ### Fixed
