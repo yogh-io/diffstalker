@@ -434,8 +434,9 @@ Claude can run and interact with the terminal UI headlessly using tmux. This ena
 ### How Claude Tests
 
 ```bash
-# Start the app in a detached tmux session
-tmux new-session -d -s difftest -x 100 -y 24 'bun run dev'
+# Start the app in a detached tmux session, with its own config so test repos
+# stay out of the real recent repos list
+tmux new-session -d -s difftest -x 100 -y 24 'XDG_CONFIG_HOME=/tmp/difftest-config bun run dev'
 
 # Wait for startup, then capture the screen
 sleep 2 && tmux capture-pane -t difftest -p

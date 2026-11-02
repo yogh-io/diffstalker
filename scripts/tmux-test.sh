@@ -15,12 +15,14 @@ set -e
 SESSION="difftest"
 WIDTH=100
 HEIGHT=24
+# Its own config, so test repos stay out of the real recent repos list.
+CONFIG_HOME="${TMPDIR:-/tmp}/difftest-config"
 
 run_cmd() {
   case "$1" in
     start)
       tmux kill-session -t "$SESSION" 2>/dev/null || true
-      tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" 'bun run dev'
+      tmux new-session -d -s "$SESSION" -x "$WIDTH" -y "$HEIGHT" "XDG_CONFIG_HOME='$CONFIG_HOME' bun run dev"
       sleep 2
       ;;
     keys)
