@@ -78,7 +78,7 @@ export function loadConfig(): Config {
         Array.isArray(fileConfig.recentRepos) &&
         fileConfig.recentRepos.every((r: unknown) => typeof r === 'string')
       ) {
-        config.recentRepos = fileConfig.recentRepos;
+        config.recentRepos = openableRepos(fileConfig.recentRepos);
       }
       if (
         typeof fileConfig.maxRecentRepos === 'number' &&
@@ -157,6 +157,11 @@ export function abbreviateHomePath(fullPath: string): string {
   return fullPath;
 }
 
+/** Recent repos that can still be opened: one deleted since is only a dead row. */
+function openableRepos(repos: string[]): string[] {
+  return repos.filter((repo) => path.isAbsolute(repo) && fs.existsSync(repo));
+}
+
 function normalizeRepoPath(p: string): string {
   return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p;
 }
@@ -167,7 +172,7 @@ export function addRecentRepo(repoPath: string, maxRecentRepos: number = 10): vo
   if (fs.existsSync(configPath())) {
     try {
       const fileConfig = JSON.parse(fs.readFileSync(configPath(), 'utf-8'));
-      if (Array.isArray(fileConfig.recentRepos)) existing = fileConfig.recentRepos;
+      if (Array.isArray(fileConfig.recentRepos)) existing = openableRepos(fileConfig.recentRepos);
     } catch {
       // start fresh
     }

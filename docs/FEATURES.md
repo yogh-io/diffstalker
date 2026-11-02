@@ -701,6 +701,7 @@ An unrecognized option (anything else starting with `-`) exits 2 with
 - Navigate with j/k, select with Enter, cancel with Esc/q/r
 - Selecting a different repo switches to it (stops follow mode if active)
 - Recent repos stored in `~/.config/diffstalker/config.json` (max configurable via `maxRecentRepos`, default 10)
+- Only repos that opened are recorded, and a repo that no longer exists drops off the list
 
 ---
 

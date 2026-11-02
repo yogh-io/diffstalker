@@ -30,6 +30,15 @@ afterEach(() => {
   else process.env.XDG_CONFIG_HOME = savedConfigHome;
 });
 
+/** Real directories: recent repos that do not exist are dropped. */
+function makeRepos(...names: string[]): string[] {
+  return names.map((name) => {
+    const dir = path.join(configHome, name);
+    fs.mkdirSync(dir);
+    return dir;
+  });
+}
+
 describe('isValidTheme', () => {
   it('returns true for dark theme', () => {
     expect(isValidTheme('dark')).toBe(true);
@@ -149,6 +158,7 @@ describe('loadConfig/saveConfig toggle fields', () => {
 
 describe('back-compat: pre-0.5 config load', () => {
   it('loads a full pre-0.5 config without error and honors every field', () => {
+    const [repoA] = makeRepos('repoA');
     fs.writeFileSync(
       configPath,
       JSON.stringify({
@@ -159,7 +169,7 @@ describe('back-compat: pre-0.5 config load', () => {
         autoTabEnabled: true,
         wrapMode: false,
         mouseEnabled: true,
-        recentRepos: ['/home/user/repoA'],
+        recentRepos: [repoA],
         maxRecentRepos: 15,
         debug: true,
       })
@@ -173,7 +183,7 @@ describe('back-compat: pre-0.5 config load', () => {
     expect(config.autoTabEnabled).toBe(true);
     expect(config.wrapMode).toBe(false);
     expect(config.mouseEnabled).toBe(true);
-    expect(config.recentRepos).toEqual(['/home/user/repoA']);
+    expect(config.recentRepos).toEqual([repoA]);
     expect(config.maxRecentRepos).toBe(15);
     expect(config.debug).toBe(true);
   });
@@ -214,13 +224,20 @@ describe('resolveFollowFile (watcherEnabled -> follow-file mapping)', () => {
 
 describe('recentRepos config', () => {
   it('loadConfig reads recentRepos as string array', () => {
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({ recentRepos: ['/home/user/repoA', '/home/user/repoB'] })
-    );
+    const recentRepos = makeRepos('repoA', 'repoB');
+    fs.writeFileSync(configPath, JSON.stringify({ recentRepos }));
 
     const config = loadConfig();
-    expect(config.recentRepos).toEqual(['/home/user/repoA', '/home/user/repoB']);
+    expect(config.recentRepos).toEqual(recentRepos);
+  });
+
+  it('loadConfig drops recent repos that are gone or not absolute', () => {
+    const [kept] = makeRepos('kept');
+    const gone = path.join(configHome, 'gone');
+    // `src` exists under the test's working directory, and is still no repo path.
+    fs.writeFileSync(configPath, JSON.stringify({ recentRepos: ['link', 'src', gone, kept] }));
+
+    expect(loadConfig().recentRepos).toEqual([kept]);
   });
 
   it('loadConfig rejects non-array recentRepos', () => {
@@ -256,21 +273,34 @@ describe('recentRepos config', () => {
   });
 
   it('addRecentRepo prepends and deduplicates', () => {
-    fs.writeFileSync(configPath, JSON.stringify({ recentRepos: ['/repoA', '/repoB', '/repoC'] }));
+    const [repoA, repoB, repoC] = makeRepos('repoA', 'repoB', 'repoC');
+    fs.writeFileSync(configPath, JSON.stringify({ recentRepos: [repoA, repoB, repoC] }));
 
-    addRecentRepo('/repoB');
+    addRecentRepo(repoB);
 
     const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    expect(written.recentRepos).toEqual(['/repoB', '/repoA', '/repoC']);
+    expect(written.recentRepos).toEqual([repoB, repoA, repoC]);
   });
 
   it('addRecentRepo caps at max', () => {
-    fs.writeFileSync(configPath, JSON.stringify({ recentRepos: ['/r1', '/r2', '/r3'] }));
+    const [r1, r2, r3, r4] = makeRepos('r1', 'r2', 'r3', 'r4');
+    fs.writeFileSync(configPath, JSON.stringify({ recentRepos: [r1, r2, r3] }));
 
-    addRecentRepo('/r4', 3);
+    addRecentRepo(r4, 3);
 
     const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    expect(written.recentRepos).toEqual(['/r4', '/r1', '/r2']);
+    expect(written.recentRepos).toEqual([r4, r1, r2]);
+  });
+
+  it('addRecentRepo removes dead entries, so they stop pushing live ones out', () => {
+    const [live, opened] = makeRepos('live', 'opened');
+    const gone = path.join(configHome, 'gone');
+    fs.writeFileSync(configPath, JSON.stringify({ recentRepos: [gone, 'link', live] }));
+
+    addRecentRepo(opened, 2);
+
+    const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(written.recentRepos).toEqual([opened, live]);
   });
 
   it('addRecentRepo works with no existing config', () => {
