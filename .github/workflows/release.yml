@@ -221,12 +221,12 @@ jobs:
           SMOKE
           chmod +x "$RUNNER_TEMP/smoke.sh"
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '20.19.0'
       - run: bash "$RUNNER_TEMP/smoke.sh"
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - run: bash "$RUNNER_TEMP/smoke.sh"
