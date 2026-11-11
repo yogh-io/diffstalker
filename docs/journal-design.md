@@ -6,7 +6,7 @@ Build a **file-level, append-only journal of HEAD-axis diff snapshots, owned by 
 
 ## 2. Daemon machinery
 
-**Observation point.** `WorkingTreeManager.doRefresh()` (`packages/core/src/managers/WorkingTreeManager.ts:313`) is already the single serialized funnel: chokidar → `GitOperationQueue.scheduleRefresh` → `doRefresh`, one body at a time per repo. The journal piggybacks there; it never watches anything itself.
+**Observation point.** `WorkingTreeManager.doRefresh()` (`packages/core/src/managers/WorkingTreeManager.ts:313`) is already the single serialized funnel: the repo's watchers → `GitOperationQueue.scheduleRefresh` → `doRefresh`, one body at a time per repo. The journal piggybacks there; it never watches anything itself.
 
 Inside `doRefresh`'s existing `Promise.all` (line 332, already running both whole-tree diffs), add the journal inputs:
 
@@ -26,7 +26,7 @@ The journal inputs are gathered under their own try/catch: if any throws, `doRef
 
 **Store outlives the manager.** The entries array, `epoch`, `nextSeq`, `live` map, and `lastHeadOid` live in a `JournalStore` object held by the daemon in a `Map<repoId, JournalStore>` (repoId = sha256 prefix of the worktree root, `repoRegistry.ts:24` — stable across restarts). `repoRegistry.openRepo` injects the existing store into the fresh `JournalManager`; `closeRepo` at refcount zero disposes the manager but keeps the store (LRU-capped daemon-wide). On re-open, the first observation reconciles: if `headOid !== store.lastHeadOid`, emit one boundary + silent rebaseline; otherwise classify normally (edits made while unobserved appear as ordinary mtime-stamped entries). Epoch is minted per **store**, so clients keep their cache across F5.
 
-**Coalescing:** none beyond what exists. chokidar `awaitWriteFinish` (100ms) + `scheduleRefresh` dedup already collapse save bursts to one observation. One observation → at most one entry per file. No journal-own debounce to get wrong; the fold window stays a later knob (see Decisions §5).
+**Coalescing:** none beyond what exists. The watcher's 100 ms settle, the refresh spacing (`changeRefreshDelay`) and `scheduleRefresh` dedup already collapse save bursts to one observation. A repo no client views makes no observations at all; its next refresh observes everything since in one. One observation → at most one entry per file. No journal-own debounce to get wrong; the fold window stays a later knob (see Decisions §5).
 
 **Timestamps:** `ts = min(file mtime, observation time)` — mtime-honest (the `HunkTimeTracker.mtimeOf` convention) so seeded and late-observed edits carry truthful times, clamped so clock skew can't stamp the future. **`seq` is the only ordering axis; `ts` is a display label.**
 
@@ -105,7 +105,7 @@ interface JournalBoundaryEntry {
 - **B2 revert then re-edit to identical content:** the live map keys off *latest* state, not any-hash-ever; the chain is edited → reverted → created, three honest entries.
 - **B3 edit, commit, re-edit identical:** the commit boundary clears the live entry; the byte-identical re-edit correctly appends fresh (commit is a hard barrier by rule order).
 - **B4 two files, one tick:** one observation, per-file entries with distinct seqs assigned under queue serialization, batched in one SSE event; seq orders, equal `ts` is fine.
-- **B5 write-then-truncate:** mostly hidden by `awaitWriteFinish`; a git-watcher-triggered mid-write observation can still journal a giant delete + re-add ~200ms later. Accepted noise in v1 (two honest-if-ugly entries), flagged as the candidate for a fold-away suspicion window later.
+- **B5 write-then-truncate:** mostly hidden by the 100 ms settle; a git-watcher-triggered mid-write observation can still journal a giant delete + re-add ~200ms later. Accepted noise in v1 (two honest-if-ugly entries), flagged as the candidate for a fold-away suspicion window later.
 - **B6 binary flip:** the entry stores whatever `DiffResult` git gave (binary = no hunks); `DiffView` already renders the no-hunk case; no word-diff attempted on it.
 - **B7 rename:** `renamed` entry at the new path superseding the old path's entry; a detect/no-detect flip-flop across refreshes degrades to delete+create — tolerated, never crashes classification.
 - **B8 reconnect mid-burst past eviction:** `?since=seq` + `prunedBefore` gap detection → full refetch, no silent hole.

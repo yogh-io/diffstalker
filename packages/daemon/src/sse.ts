@@ -8,7 +8,9 @@
  * (the epoch lets clients drop a batch that raced a store reset instead of
  * splicing entries from two seq spaces together). The channel is
  * created lazily on the first subscriber and torn down (listeners removed,
- * keep-alive cleared) when the last subscriber disconnects.
+ * keep-alive cleared) when the last subscriber disconnects. A repo with a
+ * channel is a viewed repo: its file changes refresh it. Without one they
+ * only mark it stale (see WorkingTreeManager.setViewed).
  *
  * DaemonEventHub is the single daemon-scope channel (GET /events): named
  * events about the daemon itself — repo-opened, repo-closed, follow-change,
@@ -182,6 +184,9 @@ export class SseHub {
 
     const snapshot = JSON.stringify(serializeSharedState(manager.workingTree.state));
     writeEvent(res, opts.owned ? 'snapshot' : 'repo-snapshot', snapshot);
+    // After the snapshot, so a refresh this starts reaches the subscriber
+    // as state-change events that follow it.
+    manager.workingTree.setViewed(true);
   }
 
   private unsubscribe(repoId: string, res: ServerResponse): void {
@@ -195,6 +200,7 @@ export class SseHub {
   }
 
   private teardown(repoId: string, channel: Channel): void {
+    channel.manager.workingTree.setViewed(false);
     channel.manager.workingTree.off('state-change', channel.listener);
     channel.manager.journal.off('append', channel.journalListener);
     clearInterval(channel.keepAlive);

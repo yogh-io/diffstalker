@@ -39,7 +39,7 @@ re-covered from scratch.
   `WorkingTreeManager.watch.test.ts` pins this (see Gotchas). Node `>=20.19` at runtime.
 - **Node `http`** for the daemon (REST + SSE over `@diffstalker/core`, no framework)
 - **simple-git** for git operations — **core/daemon only** (no client runs git in-process). `git grep` and blob reads spawn git directly (`execFile` with a byte budget) because simple-git decodes stdout as UTF-8.
-- **chokidar** for file watching (follow hook file, git dir, working tree, watch-directory roots) — **core/daemon only**
+- **fs.watch** (our own `TreeWatcher`: one inotify watch per directory, none per file) for a repo's working tree and git dirs; **chokidar** for the follow hook file and the watch-directory roots — **core/daemon only**
 - **web-tree-sitter** for symbol outlines — loaded only inside the daemon's symbol worker thread; the grammars come from the opt-in `diffstalkerd-grammars` package
 - **Vue 3 + Pinia + Vite** for the web UI (`vitest` for its tests), **highlight.js** for its syntax highlighting
 - **neo-blessed** for terminal rendering (CLI; patched at runtime for 24-bit RGB, see `packages/cli/src/utils/blessedRgbPatch.ts`)
@@ -133,10 +133,12 @@ packages/core/src/
 │   ├── hunkTimes.ts        # Per-hunk edit timestamps
 │   ├── discoverRepos.ts    # Watch-directory scan: git repos under a dir (fs only, no git)
 │   ├── worktree.ts         # Worktree/bare-repo resolution and listing
-│   └── ignoreUtils.ts      # Gitignore checking
+│   ├── ignoreUtils.ts      # Gitignore checking (git check-ignore, for status)
+│   └── ignoreRules.ts      # The watcher's ignore rules: all .gitignore files, info/exclude, core.excludesFile, git's precedence
 ├── managers/               # EventEmitter-based state managers (daemon-side only)
 │   ├── GitStateManager.ts  # Thin coordinator: workingTree + remote + journal per repo
-│   ├── WorkingTreeManager.ts # Status+diff state, git/working-dir watchers ('state-change', 'journal-observation')
+│   ├── WorkingTreeManager.ts # Status+diff state, git/working-dir watchers, viewed/stale ('state-change', 'journal-observation')
+│   ├── TreeWatcher.ts      # Recursive fs.watch per directory; one lstat per created/removed entry, no directory re-reads
 │   ├── RemoteOperationManager.ts # push/fetch/pull/stash/branch ops ('remote-state-change')
 │   ├── JournalManager.ts   # Append-only hunk-granular edit journal from observations ('append')
 │   ├── GitOperationQueue.ts # Serializes git operations per repo, refresh scheduling
@@ -292,6 +294,8 @@ The web UI does the same job with Pinia stores (`stores/daemon.ts` owns the conn
 
 ### Daemon-side managers and events
 
+A repo works in the background only while a client **views** it (has an SSE subscriber; `SseHub` calls `WorkingTreeManager.setViewed`). Then a file change refreshes it, spaced by `changeRefreshDelay` (100 ms settle, then at least 1 s or 4× the last refresh's duration after it). Unviewed (followed with no client, or lingering) a change only marks it `stale`; the first subscriber, or a route that serves its state (through `WorkingTreeManager.catchUp()`: `ensureStatus`, `wholeTreeDiffs`, the journal route), refreshes it, joining a refresh already queued. `GET /repos` reads an unviewed repo's branch from its HEAD file. Explicit actions refresh at once. Do not add work that runs for an unviewed repo.
+
 Inside the daemon, `@diffstalker/core` keeps the EventEmitter managers: `GitStateManager` coordinates `WorkingTreeManager` (status+diff, git/working-dir watchers, `state-change`), `RemoteOperationManager` (push/fetch/pull/stash/branch, `remote-state-change`) and `JournalManager` per repo. The working tree emits a `journal-observation` per refresh; `GitStateManager` wires it into `JournalManager.observe`, which appends entries and emits `append`; the per-repo SSE hub fans `state-change` and `journal-append` out to clients. The journal store is injected and lives in the registry's LRU cache, so it outlives a close + reopen. History, compare, explorer and search have **no** managers — they are served statelessly from plain git fns. Never emit unsubscribed `'error'` events — an EventEmitter `'error'` without a listener crashes the process.
 
 ### Git Operations
@@ -367,7 +371,7 @@ Web keys live in `composables/useGlobalKeys.ts` (and `usePortraitKeys.ts`); the 
 - Mouse coordinates from terminals are 1-indexed
 - `simple-git` status may include gitignored files in some cases; we filter with `git check-ignore` (core/daemon)
 - neo-blessed truecolor only works because of the runtime patch (`applyBlessedRgbPatch()` runs before screen creation); content SGR `38;2;R;G;B` codes are otherwise downsampled (CLI)
-- Core manager tests must not create real chokidar watchers: construct `WorkingTreeManager` without calling `startWatching()`. The **one exception** is `packages/core/src/managers/WorkingTreeManager.watch.test.ts`, where the watcher is the thing under test: it calls `startWatching()` on purpose, runs each scenario in a child `bun test` process and SIGKILLs it after a hard timeout, because a process frozen in `open(2)` fires no timer and would hang the suite forever. Do not add a second such test; add scenarios there.
+- Core manager tests must not create real watchers: construct `WorkingTreeManager` without calling `startWatching()`. The **one exception** is `packages/core/src/managers/WorkingTreeManager.watch.test.ts`, where the watcher is the thing under test: it calls `startWatching()` on purpose, runs each scenario in a child `bun test` process and SIGKILLs it after a hard timeout, because a process frozen in `open(2)` fires no timer and would hang the suite forever. Do not add a second such test; add scenarios there.
 - Daemon tests are self-contained: each file creates its own daemon on a temp unix socket (or ephemeral TCP port) and its own fixture repo, with follow disabled unless follow is under test — then `--follow-file` points at a temp path, never the real default. Client tests spin up no watchers.
 - Every `bun test` run gets its own XDG dirs: `scripts/test-env.ts`, preloaded by the `bunfig.toml` in the root and in each bun-tested package, points config, cache and state at a temp dir, so no test can reach the real ones. A new bun-tested package needs its own `bunfig.toml`. To look for leaks, run the suite with `HOME` set to an empty dir and see what lands there.
 - CLI tests must not hit a real daemon: `RepoSession`/`App` tests drive a fake `DiffstalkerClient`, and `DaemonLifecycle` tests inject their deps (bin resolution, log file) and spawn nothing. If you ever need to stop a daemon you started for a manual test, target its socket or pid — never `pkill diffstalkerd`, which kills the user's live daemon.

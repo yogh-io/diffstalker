@@ -1,7 +1,9 @@
 /** Repo lifecycle: list, open (refcounted), close, resolve, worktrees. */
 
 import * as fs from 'node:fs';
-import { listWorktrees, resolveRepoRoot } from '@diffstalker/core/git/worktree';
+import { listWorktrees, resolveGitDirs, resolveRepoRoot } from '@diffstalker/core/git/worktree';
+import { branchFromHead } from '@diffstalker/core/git/discoverRepos';
+import type { WorkingTreeManager } from '@diffstalker/core/managers/WorkingTreeManager';
 import { Router, HttpError, sendJson } from '../router.js';
 import { openAndWarm, RepoOpenRefused } from '../repoRegistry.js';
 import { requirePathParam, requireRepo, requireRepoHandle, requireStringField, type RouteDeps } from './shared.js';
@@ -25,15 +27,29 @@ function refusedOpenError(err: RepoOpenRefused): HttpError {
   return new HttpError(400, err.message, { cause: err });
 }
 
+/**
+ * A repo's branch for the open-repo list. A repo no client views may have
+ * an old status or none yet; its HEAD file is read instead, which runs no
+ * git and needs no refresh.
+ */
+async function currentBranch(repoPath: string, workingTree: WorkingTreeManager): Promise<string | null> {
+  const status = workingTree.state.status;
+  if (status && !workingTree.stale) return status.branch.current;
+  const dirs = resolveGitDirs(repoPath);
+  return dirs === null ? null : branchFromHead(dirs.gitDir);
+}
+
 export function registerRepoRoutes(router: Router, deps: RouteDeps): void {
   const { registry } = deps;
 
-  router.get('/repos', ({ res }) => {
-    const repos = registry.listRepos().map((handle) => ({
-      id: handle.id,
-      path: handle.path,
-      branch: handle.manager.workingTree.state.status?.branch.current ?? null,
-    }));
+  router.get('/repos', async ({ res }) => {
+    const repos = await Promise.all(
+      registry.listRepos().map(async (handle) => ({
+        id: handle.id,
+        path: handle.path,
+        branch: await currentBranch(handle.path, handle.manager.workingTree),
+      }))
+    );
     sendJson(res, 200, repos);
   });
 

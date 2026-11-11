@@ -128,7 +128,7 @@ async function resolveGitDir(repoPath: string): Promise<string | null> {
 }
 
 /** The branch (or short sha) HEAD names, read straight from the file. */
-async function branchFromHead(gitDir: string): Promise<string | null> {
+export async function branchFromHead(gitDir: string): Promise<string | null> {
   let head: string;
   try {
     head = (await fs.readFile(path.join(gitDir, 'HEAD'), 'utf-8')).trim();

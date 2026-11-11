@@ -2,7 +2,7 @@
  * Unit tests for WorkingTreeManager.
  *
  * The manager is constructed against a fixture repo without calling
- * startWatching(), so no chokidar watchers or timers are created.
+ * startWatching(), so no watchers or timers are created.
  */
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
@@ -10,10 +10,11 @@ import { rawFromLines } from '../git/diffParse.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { WorkingTreeManager, GitState } from './WorkingTreeManager.js';
+import { WorkingTreeManager, GitState, changeRefreshDelay } from './WorkingTreeManager.js';
 import { GitOperationQueue } from './GitOperationQueue.js';
 import { JournalManager, createJournalStore } from './JournalManager.js';
 import { FileEntry, GitStatus, InProgressOperation } from '../git/status.js';
+import * as diffModule from '../git/diff.js';
 import type { DiffResult } from '../git/diff.js';
 import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
 import type { JournalEntry, JournalHunkEntry, JournalObservation } from '../types/journal.js';
@@ -222,15 +223,16 @@ describe('WorkingTreeManager', () => {
       operation: InProgressOperation | null;
       stashList: { index: number; message: string }[];
       mtimes: Map<string, number>;
+      index: string | null;
     }
 
     /**
      * Reach the private journal gather with the oidBefore and gatherStart
      * doRefresh now captures BEFORE the status read — the torn-window
      * contract under test — and the "before" guard snapshot doRefresh
-     * starts alongside the diff reads.
+     * takes before reading any diff.
      */
-    function gatherWith(
+    async function gatherWith(
       m: WorkingTreeManager,
       status: GitStatus,
       oidBefore: string | null,
@@ -242,14 +244,13 @@ describe('WorkingTreeManager', () => {
           status: GitStatus,
           oidBefore: string | null,
           gatherStart: number,
-          guardBefore: Promise<GuardSnap>
+          guardBefore: GuardSnap,
+          readHeadDiff: (oid: string) => Promise<DiffResult>
         ): Promise<GatheredInputs | null>;
       };
-      return target.gatherJournalInputs(
-        status,
-        oidBefore,
-        gatherStart,
-        target.snapshotJournalGuard(status)
+      const guardBefore = await target.snapshotJournalGuard(status);
+      return target.gatherJournalInputs(status, oidBefore, gatherStart, guardBefore, (oid) =>
+        diffModule.getDiffAgainstHead(repoPath, oid)
       );
     }
 
@@ -273,6 +274,74 @@ describe('WorkingTreeManager', () => {
         return snap;
       };
     }
+
+    test('with nothing staged one read serves the journal; with something staged HEAD is read apart', async () => {
+      const headReads = spyOn(diffModule, 'getDiffAgainstHead');
+      const observations: JournalObservation[] = [];
+      manager.on('journal-observation', (obs) => observations.push(obs));
+      try {
+        writeFixtureFile(repoPath, 'tracked.txt', 'unstaged only\n');
+        await manager.refresh();
+        expect(headReads).not.toHaveBeenCalled();
+        expect(observations).toHaveLength(1);
+        const unstaged = (await manager.wholeTreeDiffs())!.unstaged;
+        expect(rawFromLines(observations[0].headDiff.lines)).toBe(rawFromLines(unstaged.lines));
+
+        gitExec(repoPath, 'add tracked.txt');
+        writeFixtureFile(repoPath, 'other.txt', 'unstaged too\n');
+        await manager.refresh();
+        expect(headReads).toHaveBeenCalledTimes(1);
+        const headText = rawFromLines(observations[1].headDiff.lines);
+        expect(headText).toContain('+unstaged only');
+        expect(headText).toContain('+unstaged too');
+      } finally {
+        headReads.mockRestore();
+        resetRepo();
+      }
+    });
+
+    test('a conflict outside any operation reads the HEAD diff apart', async () => {
+      // A stash pop that conflicts leaves unmerged entries and no
+      // MERGE_HEAD: `--cached` prints only a note, and `git diff` is a
+      // combined diff that is no stand-in for the diff against HEAD.
+      writeFixtureFile(repoPath, 'tracked.txt', 'stashed side\n');
+      gitExec(repoPath, 'stash');
+      writeFixtureFile(repoPath, 'tracked.txt', 'committed side\n');
+      gitExec(repoPath, 'commit -am "other side"');
+      try {
+        gitExec(repoPath, 'stash pop');
+      } catch {
+        // the conflict is the point
+      }
+      const headReads = spyOn(diffModule, 'getDiffAgainstHead');
+      try {
+        await manager.refresh();
+        expect(manager.state.status!.files.some((f) => f.status === 'conflicted')).toBe(true);
+        expect(headReads).toHaveBeenCalledTimes(1);
+      } finally {
+        headReads.mockRestore();
+        gitExec(repoPath, 'checkout HEAD -- tracked.txt');
+        gitExec(repoPath, 'stash drop');
+        gitExec(repoPath, 'reset --hard HEAD~1');
+        resetRepo();
+      }
+    });
+
+    test('the journal stores what git said, without the hunk edit times a refresh stamps', async () => {
+      const journal = new JournalManager(createJournalStore());
+      manager.on('journal-observation', (obs) => journal.observe(obs));
+      await manager.refresh(); // seeds the journal
+      writeFixtureFile(repoPath, 'tracked.txt', 'stamped by the refresh\n');
+      await manager.refresh();
+      const stamped = (await manager.wholeTreeDiffs())!.unstaged.lines.filter((l) => l.editedAt);
+      expect(stamped.length).toBeGreaterThan(0);
+      const stored = journal.journalStore.entries.flatMap((e) =>
+        e.type === 'hunk' && e.diff ? e.diff.lines : []
+      );
+      expect(stored.length).toBeGreaterThan(0);
+      expect(stored.some((l) => 'editedAt' in l)).toBe(false);
+      resetRepo();
+    });
 
     test('journal torn window: HEAD moving after the pre-status oid capture discards the observation', async () => {
       writeFixtureFile(repoPath, 'tracked.txt', 'torn window edit\n');
@@ -321,6 +390,11 @@ describe('WorkingTreeManager', () => {
         (snap) => {
           // a tracked file was rewritten mid-window (slow external checkout)
           snap.mtimes.set('tracked.txt', (snap.mtimes.get('tracked.txt') ?? 0) - 1000);
+        },
+        (snap) => {
+          // the index was written mid-window (an external `git add`), so an
+          // unstaged diff read then may no longer match the diff against HEAD
+          snap.index = 'written mid-window';
         },
       ];
       for (const mutate of tears) {
@@ -563,6 +637,108 @@ describe('WorkingTreeManager', () => {
 
       expect(observations).toHaveLength(1); // the full refresh still ran
       resetRepo();
+    });
+  });
+
+  describe('viewing and staleness', () => {
+    test('a manager starts stale and a full refresh makes it current', async () => {
+      expect(manager.stale).toBe(true);
+      await manager.refresh();
+      expect(manager.stale).toBe(false);
+    });
+
+    test('viewing a stale repo refreshes it; viewing a current one does not', async () => {
+      const events: GitState[] = [];
+      manager.on('state-change', (state) => events.push(state));
+      manager.setViewed(true);
+      await drainQueue();
+      expect(events.length).toBeGreaterThan(0);
+      expect(manager.stale).toBe(false);
+
+      events.length = 0;
+      manager.setViewed(false);
+      manager.setViewed(true);
+      await drainQueue();
+      expect(events).toHaveLength(0);
+    });
+
+    test('reads of a stale repo join one queued full refresh', async () => {
+      let fullRefreshes = 0;
+      manager.on('journal-observation', () => fullRefreshes++);
+      let release!: () => void;
+      const blocked = queue.enqueue(() => new Promise<void>((resolve) => (release = resolve)));
+      manager.setViewed(true); // queues a full refresh behind the held queue
+      const reads = Promise.all([manager.catchUp(), manager.wholeTreeDiffs(), manager.catchUp()]);
+      release();
+      await blocked;
+      await reads;
+      await drainQueue();
+      expect(fullRefreshes).toBe(1);
+      expect(manager.stale).toBe(false);
+    });
+
+    test('a change during a mutation is refreshed after it', async () => {
+      manager.setViewed(true);
+      await drainQueue();
+      const observations: JournalObservation[] = [];
+      manager.on('journal-observation', (obs) => observations.push(obs));
+      let release!: () => void;
+      const mutation = queue.enqueueMutation(() => new Promise<void>((resolve) => (release = resolve)));
+      writeFixtureFile(repoPath, 'tracked.txt', 'written during a mutation\n');
+      (manager as unknown as { onRepoChange(): void }).onRepoChange();
+      await new Promise((resolve) => setTimeout(resolve, 1300));
+      expect(observations).toHaveLength(0);
+      release();
+      await mutation;
+      manager.scheduleStatusRefresh(); // what stage() does after its mutation
+      const deadline = Date.now() + 3000;
+      while (observations.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(observations).toHaveLength(1);
+      manager.dispose();
+      resetRepo();
+    });
+
+    test('a tracked file git cannot read leaves the diffs empty but the status current', async () => {
+      writeFixtureFile(repoPath, 'tracked.txt', 'unreadable now\n');
+      writeFixtureFile(repoPath, 'fresh.txt', 'still listed\n');
+      const tracked = path.join(repoPath, 'tracked.txt');
+      fs.chmodSync(tracked, 0o000);
+      try {
+        await manager.refresh();
+        const state = manager.state;
+        expect(state.status!.files.map((f) => f.path)).toContain('fresh.txt');
+        expect(state.error).not.toBeNull();
+        expect(state.hunkCounts!.unstaged.size).toBe(0);
+      } finally {
+        fs.chmodSync(tracked, 0o600);
+        resetRepo();
+      }
+    });
+
+    test('marking stale drops the whole-tree diffs, so the next read refreshes', async () => {
+      await manager.refresh();
+      writeFixtureFile(repoPath, 'tracked.txt', 'changed while unviewed\n');
+      manager.markStale();
+      const diffs = await manager.wholeTreeDiffs();
+      expect(rawFromLines(diffs!.unstaged.lines)).toContain('+changed while unviewed');
+      expect(manager.stale).toBe(false);
+      resetRepo();
+    });
+  });
+
+  describe('changeRefreshDelay', () => {
+    test('a change long after the last refresh waits only for the burst to settle', () => {
+      expect(changeRefreshDelay(60_000, 1_000, 80)).toBe(100);
+    });
+
+    test('a change right after a cheap refresh waits out the one-second gap', () => {
+      expect(changeRefreshDelay(10_200, 10_000, 50)).toBe(800);
+    });
+
+    test('an expensive refresh is followed by four times its cost in quiet', () => {
+      expect(changeRefreshDelay(20_000, 20_000, 3_000)).toBe(12_000);
     });
   });
 

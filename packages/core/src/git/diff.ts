@@ -122,9 +122,10 @@ function warnEmptyDiff(what: string, repoPath: string, err: unknown): void {
   warn(`${what} failed in ${repoPath}, answering an empty diff: ${errorText(err)}`);
 }
 
+/** One file's diff: index to worktree, or HEAD to index when staged. */
 export async function getDiff(
   repoPath: string,
-  file?: string,
+  file: string,
   staged: boolean = false,
   opts: { context?: number } = {}
 ): Promise<DiffResult> {
@@ -135,17 +136,28 @@ export async function getDiff(
     if (staged) {
       args.push('--cached');
     }
-    if (file) {
-      args.push('--', file);
-    }
+    args.push('--', file);
 
     const raw = capLargeFileDiffs(await git.diff(args));
     return { lines: parseDiffWithLineNumbers(raw) };
   } catch (err) {
-    const scope = file === undefined ? '' : ` -- ${file}`;
-    warnEmptyDiff(`git diff${staged ? ' --cached' : ''}${scope}`, repoPath, err);
+    warnEmptyDiff(`git diff${staged ? ' --cached' : ''} -- ${file}`, repoPath, err);
     return { lines: [] };
   }
+}
+
+/**
+ * The whole tree's diff: index to worktree, or HEAD to index when staged.
+ * Unlike getDiff it THROWS when git fails. A refresh reads its hunk counts
+ * from this, and with nothing staged hands the unstaged diff to the
+ * journal as the diff against HEAD, so an empty result must mean "no
+ * changes" and nothing else.
+ */
+export async function getWholeTreeDiff(repoPath: string, staged: boolean): Promise<DiffResult> {
+  const git = createGit(repoPath);
+  const args = [`-U${DIFF_CONTEXT_LINES}`];
+  if (staged) args.push('--cached');
+  return { lines: parseDiffWithLineNumbers(capLargeFileDiffs(await git.diff(args))) };
 }
 
 /** The well-known oid of git's empty tree — the diff base for an unborn HEAD. */

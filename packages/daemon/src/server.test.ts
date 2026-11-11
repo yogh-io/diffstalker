@@ -365,6 +365,60 @@ describe('daemon over unix socket', () => {
     }
   }, 15000);
 
+  test('a repo nobody subscribes to only goes stale; a read or a subscriber brings it current', async () => {
+    const ownPath = createFixtureRepo(`${FIXTURE}-unviewed`);
+    writeFixtureFile(ownPath, 'a.txt', 'a\n');
+    gitExec(ownPath, 'add .');
+    gitExec(ownPath, 'commit -m "init"');
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    async function until(pred: () => boolean): Promise<void> {
+      const deadline = Date.now() + 5000;
+      while (!pred()) {
+        if (Date.now() > deadline) throw new Error('timed out');
+        await sleep(50);
+      }
+    }
+    try {
+      const opened = (await (await postJson('/repos', { path: ownPath })).json()) as { id: string };
+      const workingTree = daemon.getRepo(opened.id)!.manager.workingTree;
+      await pollStatus(opened.id, (wire) => wire.status !== null);
+      await sleep(300); // the watcher's crawl
+      const baseline = workingTree.listenerCount('state-change');
+      let changes = 0;
+      const count = () => changes++;
+      workingTree.on('state-change', count);
+
+      writeFixtureFile(ownPath, 'unseen.txt', 'nobody is looking\n');
+      await until(() => workingTree.stale);
+      await sleep(1500);
+      expect(changes).toBe(0);
+      await pollStatus(opened.id, (wire) => wire.status!.files.some((f) => f.path === 'unseen.txt'));
+      expect(workingTree.stale).toBe(false);
+
+      const controller = new AbortController();
+      const sse = new SseReader(
+        (await request(`/repos/${opened.id}/events`, { signal: controller.signal })).body!
+      );
+      expect((await sse.next(3000)).event).toBe('snapshot');
+      writeFixtureFile(ownPath, 'seen.txt', 'pushed\n');
+      for (;;) {
+        const evt = await sse.next(5000);
+        if (evt.event !== 'state-change') continue;
+        const state = JSON.parse(evt.data) as WireStatus;
+        if ((state.status?.files ?? []).some((f) => f.path === 'seen.txt')) break;
+      }
+      controller.abort();
+      await until(() => workingTree.listenerCount('state-change') === baseline + 1);
+
+      writeFixtureFile(ownPath, 'after.txt', 'nobody again\n');
+      await until(() => workingTree.stale);
+      workingTree.off('state-change', count);
+      await request(`/repos/${opened.id}`, { method: 'DELETE' });
+    } finally {
+      removeFixtureRepo(`${FIXTURE}-unviewed`);
+    }
+  }, 30000);
+
   test('DELETE /repos/:id refcounts down, then removes', async () => {
     // Opened twice above: first delete only decrements.
     const first = await request(`/repos/${repoId}`, { method: 'DELETE' });

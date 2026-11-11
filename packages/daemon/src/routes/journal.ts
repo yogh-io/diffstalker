@@ -33,9 +33,12 @@ function parseSinceParam(query: URLSearchParams): number {
 export function registerJournalRoutes(router: Router, deps: RouteDeps): void {
   const { registry } = deps;
 
-  router.get('/repos/:id/journal', ({ params, query, res }) => {
+  router.get('/repos/:id/journal', async ({ params, query, res }) => {
     const handle = requireRepo(registry, params.id);
     const since = parseSinceParam(query);
+    // Only refreshes observe, and an unviewed repo does not refresh on its
+    // own: bring a stale one up to date before answering.
+    await handle.manager.workingTree.catchUp();
     sendJson(res, 200, serializeJournal(handle.manager.journal.journalStore, since));
   });
 }

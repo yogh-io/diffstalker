@@ -24,7 +24,7 @@
 
 import { FilePathWatcher, WatcherState } from '@diffstalker/core/managers/FilePathWatcher';
 import { debug as logDebug, error as logError } from '@diffstalker/core/utils/logger';
-import { warmUp, type RepoRegistry, type OpenResult } from './repoRegistry.js';
+import type { RepoRegistry, OpenResult } from './repoRegistry.js';
 import type { DaemonEventHub } from './sse.js';
 
 export interface FollowState {
@@ -112,7 +112,8 @@ export class FollowController {
       this.registry.closeRepo(opened.handle.id);
       return;
     }
-    if (opened.created) warmUp(opened.handle);
+    // No warm-up: the repo refreshes when a client views it, and with no
+    // client attached that refresh would be work for nobody.
 
     if (opened.handle.id === this.followedRepoId) {
       // Same repo (possibly a different file inside it): the open above

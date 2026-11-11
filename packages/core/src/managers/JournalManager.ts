@@ -302,7 +302,19 @@ function ownedString(text: string): string {
 function snapshotFor(h: ObservedHunk): DiffResult | null {
   if (h.oversize === true) return null;
   if (diffByteSize(h.diff.lines) > MAX_SNAPSHOT_BYTES) return null;
-  return { lines: h.diff.lines.map((line) => ({ ...line, content: ownedString(line.content) })) };
+  return { lines: h.diff.lines.map(snapshotLine) };
+}
+
+/**
+ * A stored copy of an observed line: what git said, and nothing a view
+ * added. The observed lines can be the ones a refresh also serves, with a
+ * live hunk edit time (`editedAt`) stamped on them.
+ */
+function snapshotLine(line: DiffLine): DiffLine {
+  const copy: DiffLine = { type: line.type, content: ownedString(line.content) };
+  if (line.oldLineNum !== undefined) copy.oldLineNum = line.oldLineNum;
+  if (line.newLineNum !== undefined) copy.newLineNum = line.newLineNum;
+  return copy;
 }
 
 function deriveKind(ins: number, del: number, predSize: number): JournalHunkKind {

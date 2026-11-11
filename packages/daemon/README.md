@@ -173,6 +173,29 @@ An always-warm service answers the probe immediately. The daemon also has no
 idle timeout — it holds watchers on open repos and is meant to stay warm for
 the session — so lazy activation buys little here.
 
+### Background work
+
+Staying warm must not mean staying busy. An open repo costs one inotify
+watch per directory git does not ignore (`.gitignore` files, the repo's
+`info/exclude` and the user's `core.excludesFile` all count), and none per
+file. Git's own writes (index, HEAD, refs, packed-refs) are seen through
+watches on the git dirs, not by polling, and the daemon's git runs with
+`GIT_OPTIONAL_LOCKS=0`, so a refresh never rewrites the index behind the
+user's back.
+
+A file change refreshes a repo only while a client **views** it: while it
+has at least one SSE subscriber (`GET /repos/:id/events` or
+`GET /events?repo=`). A repo nobody views — one kept open by follow mode
+with no client attached, or one lingering after its release — only marks
+itself stale. Its first new subscriber, and any read that serves its state
+(`GET /status`, the whole-tree `GET /diff`, `GET /journal`), refreshes it
+first; `GET /repos` reads its branch from the HEAD file instead. Change-driven refreshes of a viewed repo are spaced out: a burst
+settles for 100 ms, and the next one starts no sooner than 1 s, or four
+times the last refresh's duration, after the last one ended. A repo with a
+huge diff and a process writing into it all day therefore spends at most a
+fifth of its time refreshing. Explicit actions (stage, commit, fetch, …)
+refresh at once.
+
 ## API
 
 Current surface. All bodies are JSON; errors are non-2xx with `{"error": "..."}`.
@@ -205,7 +228,7 @@ with a 400 so they can never be parsed as git flags.
 | GET    | `/version`                 | `{current, latest, status, install, restart}` — the running version against npm's `latest` dist-tag (`current` \| `outdated` \| `ahead` \| `unknown`). The npm lookup is cached (6h, 5min after a failure) and only ever runs when this endpoint is called; `--no-update-check` skips it, leaving `latest: null`. `install` is `{method, package, command}` — how this daemon was installed (`npm` \| `bun` \| `pnpm` \| `yarn` \| `pacman` \| `unknown`) and the one command that updates it, detected once from where the daemon's own files live. An install nothing owns reports `unknown` with a null command rather than a guess. `restart` is the command that restarts this daemon (`systemctl --user restart diffstalkerd`, or `sudo systemctl restart …` for a system unit), set only when systemd started this very process (`$SYSTEMD_EXEC_PID` is its pid) and `/proc/self/cgroup` names a plain `.service` unit; otherwise null |
 | GET    | `/repos`                   | List open repos (`id`, `path`, `branch`)         |
 | POST   | `/repos`                   | Open a repo: `{"path": "/abs/path"}` → `{id, path}` (201 created, 200 already open or still kept warm after its release). 400 for a relative path or a directory that is not a git repository, 404 when the path does not exist. One missing last segment under a repo still opens the repo above it (`<repo>/nope` opens `<repo>`); a path missing more than one level deep (`<repo>/nope/deeper`) is a 404 |
-| DELETE | `/repos/:id`               | Close a repo (refcounted per open). At zero it is closed for every client at once (`repo-closed`, gone from `GET /repos`), but the daemon keeps its git state live for 10 minutes (up to 4 such repos) so a reopen in that window is warm |
+| DELETE | `/repos/:id`               | Close a repo (refcounted per open). At zero it is closed for every client at once (`repo-closed`, gone from `GET /repos`), but the daemon keeps its watchers and last state for 10 minutes (up to 4 such repos) so a reopen in that window is warm; it refreshes only once a client views it again |
 | GET    | `/repos/:id/worktrees`     | Registered worktrees (`path`, `branch`, `head`, `isBare`, `lastActivity`, `aheadOfBase`): main worktree, linked worktrees, and the bare entry in a bare-worktree layout |
 | GET    | `/worktrees?path=`         | Same as above, but for a raw filesystem path instead of an already-opened repo id (e.g. a recently-visited repo a client hasn't opened on this daemon) |
 | GET    | `/resolve?path=`           | `{openable, root}` — can this exact path be opened, and as which worktree, without opening it. Same resolver as `POST /repos`, but the path must EXIST (git resolves a missing path to its parent worktree, which would make a typo look openable). A relative path is a 400; not-a-repo is a 200 answer |
@@ -270,9 +293,11 @@ returns the repo to its pre-operation state — no shell required. The
 failing mutation refreshes the shared state before it answers, so the
 `state-change` event carries the wedge too, and `/status` serves that same
 cached state rather than re-reading the git dir. For an operation started
-from a shell the value lags by the watcher's debounce plus one refresh
-(roughly 150–250 ms after HEAD or the index changes): a `/status` read in
-that window still shows the previous value. A failed git operation's
+from a shell the value of a viewed repo lags by the watcher's settle time
+plus one refresh (roughly 150–250 ms after HEAD or the index changes, up to
+about a second when another refresh just ended): a `/status` read in that
+window still shows the previous value. An unviewed repo refreshes for the
+read itself. A failed git operation's
 `{error}` is git's own message (a rejected push, a patch that does not
 apply); the daemon log records the same text.
 
@@ -361,7 +386,9 @@ clients apply them atomically.
 The journal store lives above the repo's manager lifecycle: closing a
 repo's last client (a browser F5) keeps the store, so a reopen resumes the
 same chronology under the same epoch, even after the lingering manager is
-disposed. While the manager lingers it keeps journaling edits as usual.
+disposed. A repo journals while a client views it. Unviewed (lingering, or
+followed with no client attached) it observes nothing, and the next refresh
+records everything that changed meanwhile in one observation.
 Stores are LRU-capped daemon-wide; the store of an open or lingering repo
 is never evicted.
 

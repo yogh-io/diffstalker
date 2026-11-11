@@ -13,6 +13,7 @@ import {
   extractHunkPatch,
   getDiff,
   getDiffAgainstHead,
+  getWholeTreeDiff,
   getDiffForUntracked,
   getHeadOid,
   UNBORN_HEAD_OID,
@@ -667,8 +668,12 @@ describe('getDiffAgainstHead / getHeadOid (fixture)', () => {
     const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
     try {
       await expect(getDiffAgainstHead(nonRepo)).rejects.toThrow();
-      // Contrast: the sibling swallows the same failure.
-      const swallowed = await getDiff(nonRepo);
+      // The whole-tree read a refresh makes throws too: with nothing
+      // staged its unstaged diff doubles as the journal's HEAD diff.
+      await expect(getWholeTreeDiff(nonRepo, false)).rejects.toThrow();
+      await expect(getWholeTreeDiff(nonRepo, true)).rejects.toThrow();
+      // Contrast: the one-file read swallows the same failure.
+      const swallowed = await getDiff(nonRepo, 'file.txt');
       expect(swallowed).toEqual({ lines: [] });
     } finally {
       fs.rmSync(nonRepo, { recursive: true, force: true });

@@ -279,9 +279,13 @@ describe('GET /events?repo= (combined stream)', () => {
       expect(manager.workingTree.listenerCount('state-change')).toBe(baseline + 1);
 
       // Last ref gone. The owned stream ends; the attached one stays up
-      // and hears repo-missing first, then the daemon's repo-closed.
+      // and hears repo-missing first, then the daemon's repo-closed. The
+      // owned one may first carry state-changes of the refresh its viewing
+      // started, but nothing that is not the repo's.
       await request(`/repos/${id}`, { method: 'DELETE' });
-      await expect(owned.next(3000)).rejects.toThrow('SSE stream ended unexpectedly');
+      await expect(
+        collectUntil(owned, (evt) => evt.event !== 'state-change', 3000)
+      ).rejects.toThrow('SSE stream ended unexpectedly');
       const seen = await collectUntil(attached, (evt) => evt.event === 'repo-closed', 5000);
       const names = seen.map((evt) => evt.event);
       expect(names.indexOf('repo-missing')).toBeLessThan(names.indexOf('repo-closed'));

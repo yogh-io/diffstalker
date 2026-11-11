@@ -76,11 +76,12 @@ describe('RepoRegistry linger', () => {
     expect(dispose).not.toHaveBeenCalled();
   });
 
-  test('a revived repo is refreshed in the background, for what its watchers missed', async () => {
+  test('a revived repo goes stale, so its first viewer refreshes it for what its watchers missed', async () => {
     const handle = await openAndRelease(repoA);
-    const refresh = spyOn(handle.manager.workingTree, 'scheduleRefresh');
+    await handle.manager.workingTree.refresh();
+    expect(handle.manager.workingTree.stale).toBe(false);
     await registry.openRepo(repoA);
-    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(handle.manager.workingTree.stale).toBe(true);
   });
 
   test('a revived repo is refcounted from one again', async () => {

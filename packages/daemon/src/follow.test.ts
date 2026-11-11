@@ -211,6 +211,16 @@ describe('follow mode', () => {
       // The followed repo is genuinely open (held by the follow-ref).
       const repos = (await (await requestOn(SOCKET, '/repos')).json()) as Array<{ id: string }>;
       expect(repos.map((r) => r.id)).toContain(change.repoId);
+      // No client views it yet, so following it has run no refresh, and
+      // the list reads its branch from HEAD instead.
+      const followed = daemon.getRepo(change.repoId)!.manager.workingTree;
+      expect(followed.state.status).toBeNull();
+      expect(followed.stale).toBe(true);
+      const listed = (await (await requestOn(SOCKET, '/repos')).json()) as Array<{
+        id: string;
+        branch: string | null;
+      }>;
+      expect(listed.find((r) => r.id === change.repoId)?.branch).toBe('main');
 
       // GET /follow reflects the hook file and the followed repo.
       const follow = (await (await requestOn(SOCKET, '/follow')).json()) as WireFollow;

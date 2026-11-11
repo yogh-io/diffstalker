@@ -190,9 +190,10 @@ export class RepoRegistry {
       this.byId.set(revived.id, revived);
       this.byPath.set(root, revived);
       this.journalStores.acquire(revived.id);
-      // Served warm at once; the refresh catches anything its watchers
-      // could not see while it lingered (a directory replaced, a watch lost).
-      revived.manager.workingTree.scheduleRefresh();
+      // Served warm at once. Stale, so its first viewer refreshes it, for
+      // anything its watchers could not see while it lingered (a directory
+      // replaced, a watch lost).
+      revived.manager.workingTree.markStale();
       this.events.onOpened?.(revived);
       return { handle: revived, created: false };
     }
@@ -308,7 +309,7 @@ export class RepoRegistry {
  * rejection here is the refresh path itself breaking — logged, never
  * dropped.
  */
-export function warmUp(handle: RepoHandle): void {
+function warmUp(handle: RepoHandle): void {
   handle.manager.workingTree.refresh().catch((err: unknown) => {
     logError('First refresh threw', err, { repo: handle.path });
   });

@@ -1,12 +1,10 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
-import { watch, FSWatcher } from 'chokidar';
 import { EventEmitter } from 'node:events';
-import ignore, { Ignore } from 'ignore';
 import * as logger from '../utils/logger.js';
 import { GitOperationQueue } from './GitOperationQueue.js';
-import { gitEnv } from '../git/gitClient.js';
+import { TreeWatcher } from './TreeWatcher.js';
+import { loadIgnoreRules, type IgnoreRules } from '../git/ignoreRules.js';
 import {
   getStatus,
   stageFile,
@@ -26,7 +24,7 @@ import {
   InProgressOperation,
 } from '../git/status.js';
 import {
-  getDiff,
+  getWholeTreeDiff,
   getDiffAgainstHead,
   getDiffForUntracked,
   getHeadOid,
@@ -37,7 +35,7 @@ import {
 } from '../git/diff.js';
 import { HunkTimeTracker } from '../git/hunkTimes.js';
 import { quoteGitPath, rawFromLines } from '../git/diffParse.js';
-import { resolveGitDirs } from '../git/worktree.js';
+import { resolveGitDirs, type GitDirs } from '../git/worktree.js';
 import { splitDiffByFile } from '../view/splitDiffByFile.js';
 import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
 import type { JournalObservation } from '../types/journal.js';
@@ -90,25 +88,57 @@ interface JournalGuardSnapshot {
   stashList: StashEntry[];
   /** Working mtimes of the status snapshot's changed files. */
   mtimes: Map<string, number>;
+  /**
+   * The index file's identity (inode, size, mtime); null when there is
+   * none. With nothing staged the unstaged diff stands in for the diff
+   * against HEAD, which holds only while the index stands still.
+   */
+  index: string | null;
 }
 
 /**
- * errno codes chokidar reports for paths a normal tree may hold and that
- * cannot be watched: a directory the user cannot read, a path that went
- * away between listing and watching. Routine, so debug. Everything else
- * (ENOSPC: the inotify limit) is a real problem and stays at warn.
+ * errno codes a watch meets in a normal tree: a directory the user cannot
+ * read, a path that went away or turned into a file between listing and
+ * watching. Routine, so debug. Everything else (ENOSPC: the inotify
+ * limit) is a real problem and stays at warn.
  */
-const ROUTINE_WATCH_ERRNOS = new Set(['EACCES', 'EPERM', 'ENOENT']);
+const ROUTINE_WATCH_ERRNOS = new Set(['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR']);
 
-const SLASH = '/'.charCodeAt(0);
+/** Entries of a git dir whose change changes what a refresh reads. */
+const GIT_DIR_ENTRIES = new Set([
+  'index',
+  'HEAD',
+  'MERGE_HEAD',
+  'CHERRY_PICK_HEAD',
+  'REVERT_HEAD',
+  'rebase-merge',
+  'rebase-apply',
+]);
 
-/** A repo-relative path relative to an ignorer's directory, or null when it is not below it. */
-function relativeToDir(rel: string, dir: string): string | null {
-  if (dir === '') return rel;
-  if (rel.startsWith(dir) && rel.charCodeAt(dir.length) === SLASH) {
-    return rel.slice(dir.length + 1);
-  }
-  return null;
+/** How long a burst of file changes may settle before it refreshes. */
+const CHANGE_SETTLE_MS = 100;
+/** The least time between the end of one change-driven refresh and the start of the next. */
+const MIN_REFRESH_GAP_MS = 1000;
+/** Quiet after a refresh, as a multiple of how long it took. */
+const REFRESH_SPACING = 4;
+
+/**
+ * How long to wait before a refresh for a file change. A burst settles
+ * first, and a refresh that took D ms is followed by at least 4·D ms of
+ * quiet: under a constant stream of writes a repo spends at most a fifth
+ * of its time refreshing, however large its diff.
+ */
+export function changeRefreshDelay(now: number, lastEnd: number, lastCostMs: number): number {
+  return Math.max(CHANGE_SETTLE_MS, refreshGapLeft(now, lastEnd, lastCostMs));
+}
+
+/** How much of the quiet owed after the last refresh is still to come. */
+function refreshGapLeft(now: number, lastEnd: number, lastCostMs: number): number {
+  return lastEnd + Math.max(MIN_REFRESH_GAP_MS, REFRESH_SPACING * lastCostMs) - now;
+}
+
+function isGitDirName(rel: string): boolean {
+  return rel === '.git' || rel.endsWith('/.git');
 }
 
 function isRoutineWatchError(err: unknown): boolean {
@@ -138,9 +168,28 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   private repoPath: string;
   private queue: GitOperationQueue;
   private hunkTimes: HunkTimeTracker;
-  private gitWatcher: FSWatcher | null = null;
-  private workingDirWatcher: FSWatcher | null = null;
-  private ignorers: Map<string, Ignore> = new Map();
+  private watchers: TreeWatcher[] = [];
+  private treeWatcher: TreeWatcher | null = null;
+  /** Bumped by each startWatching, so a slow start that was superseded stands down. */
+  private watchGeneration = 0;
+  private ignoreRules: IgnoreRules | null = null;
+  private reloadingRules = false;
+  private reloadRulesAgain = false;
+  private disposed = false;
+
+  /**
+   * Whether a client is looking at this repo (in the daemon: it has an SSE
+   * subscriber). A file change refreshes a viewed repo. An unviewed one
+   * only goes stale, and refreshes when a client next views or reads it.
+   */
+  private viewed = false;
+  private _stale = true;
+
+  private changeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** A change landed while a full refresh or a mutation ran: it gets a refresh after. */
+  private changedDuringRefresh = false;
+  private lastFullRefreshEnd = 0;
+  private lastFullRefreshMs = 0;
 
   private _state: GitState = {
     status: null,
@@ -171,31 +220,59 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
    */
   private _wholeTreeDiffs: WholeTreeDiffs | null = null;
   private fullRefreshRunning = false;
-  /** Callers of wholeTreeDiffs() waiting for the next full refresh to end. */
-  private diffWaiters: Array<() => void> = [];
+  /** Full refreshes begun so far; each is numbered by this count. */
+  private fullRefreshesBegun = 0;
+  /** Readers waiting for a full refresh numbered above `after` to end. */
+  private refreshWaiters: Array<{ after: number; resolve: () => void }> = [];
 
   /**
    * The whole-tree diffs that match the current status. When there are
-   * none, waits for the next full refresh, joining one that is already
-   * running rather than queueing another behind it. Null when that
-   * refresh produced none (it failed, or the repo is gone).
+   * none, waits for a full refresh, joining one that is queued or running
+   * rather than queueing another behind it. Null when that refresh
+   * produced none (it failed, or the repo is gone).
    */
   async wholeTreeDiffs(): Promise<WholeTreeDiffs | null> {
+    await this.catchUp();
     if (this._wholeTreeDiffs) return this._wholeTreeDiffs;
-    const settled = new Promise<void>((resolve) => this.diffWaiters.push(resolve));
-    if (!this.fullRefreshRunning) {
-      this.refresh().catch((err: unknown) => {
-        logger.error('Refresh for whole-tree diffs threw', err, { repo: this.repoPath });
-      });
-    }
-    await settled;
+    if (this.fullRefreshRunning) await this.fullRefreshEnding(this.fullRefreshesBegun - 1);
+    else await this.freshFullRefresh();
     return this._wholeTreeDiffs;
   }
 
-  private settleDiffWaiters(): void {
-    const waiters = this.diffWaiters;
-    this.diffWaiters = [];
-    for (const resolve of waiters) resolve();
+  /**
+   * Bring the state up to date for a client about to read it: refresh when
+   * it went stale, or wait out a first refresh that is still running.
+   */
+  async catchUp(): Promise<void> {
+    if (this._stale) await this.freshFullRefresh();
+    else if (this._state.status === null && this.fullRefreshRunning) {
+      await this.fullRefreshEnding(this.fullRefreshesBegun - 1);
+    }
+  }
+
+  /** Waits for a full refresh that begins after now: the queued one, else a new one. */
+  private freshFullRefresh(): Promise<void> {
+    const ended = this.fullRefreshEnding(this.fullRefreshesBegun);
+    if (this.pendingRefreshKind !== 'full') {
+      this.refresh().catch((err: unknown) => {
+        logger.error('Refresh for a read threw', err, { repo: this.repoPath });
+      });
+    }
+    return ended;
+  }
+
+  private fullRefreshEnding(after: number): Promise<void> {
+    return new Promise((resolve) => this.refreshWaiters.push({ after, resolve }));
+  }
+
+  /** Release the readers a full refresh numbered `ended` satisfies; all of them when null. */
+  private settleRefreshWaiters(ended: number | null): void {
+    const waiting = this.refreshWaiters;
+    this.refreshWaiters = [];
+    for (const waiter of waiting) {
+      if (ended === null || ended > waiter.after) waiter.resolve();
+      else this.refreshWaiters.push(waiter);
+    }
   }
 
   /**
@@ -247,177 +324,231 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.hunkTimes.stamp(diff);
   }
 
-  // --- Gitignore loading ---
-
-  private loadGitignores(): Map<string, Ignore> {
-    const ignorers = new Map<string, Ignore>();
-
-    const rootIg = ignore();
-    rootIg.add('.git');
-
-    const rootGitignorePath = path.join(this.repoPath, '.gitignore');
-    if (fs.existsSync(rootGitignorePath)) {
-      rootIg.add(fs.readFileSync(rootGitignorePath, 'utf-8'));
-    }
-
-    const excludePath = path.join(this.repoPath, '.git', 'info', 'exclude');
-    if (fs.existsSync(excludePath)) {
-      rootIg.add(fs.readFileSync(excludePath, 'utf-8'));
-    }
-
-    ignorers.set('', rootIg);
-
-    try {
-      // --exclude-standard skips ignored directories (git reads no
-      // .gitignore there). It also skips an untracked .gitignore that a
-      // rule ignores; missing its rules only costs extra refreshes.
-      const output = execFileSync(
-        'git',
-        ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '**/.gitignore'],
-        {
-          cwd: this.repoPath,
-          encoding: 'utf-8',
-          env: gitEnv(),
-          // Piped, not inherited: git's stderr then lands in the thrown
-          // error (and so in the log line) instead of raw on our stderr.
-          stdio: ['ignore', 'pipe', 'pipe'],
-        }
-      );
-
-      for (const entry of output.split('\0')) {
-        if (!entry || entry === '.gitignore') continue;
-        if (!entry.endsWith('.gitignore')) continue;
-
-        const dir = path.dirname(entry);
-        const absPath = path.join(this.repoPath, entry);
-
-        try {
-          const content = fs.readFileSync(absPath, 'utf-8');
-          const ig = ignore();
-          ig.add(content);
-          ignorers.set(dir, ig);
-        } catch (err) {
-          logger.warn(`Failed to read ${absPath}`, err, { repo: this.repoPath });
-        }
-      }
-    } catch (err) {
-      // The root ignorer still applies, but nested .gitignore files are
-      // not known: the watcher then fires on paths they exclude.
-      logger.warn('git ls-files failed; nested .gitignore files are not applied', err, {
-        repo: this.repoPath,
-      });
-    }
-
-    return ignorers;
-  }
-
   // --- File watching ---
 
+  /**
+   * Watch the repo: the working tree, one watch per directory git does not
+   * ignore, and the git dirs for index, HEAD, refs and in-progress
+   * operations. Returns at once; the working tree is crawled in the
+   * background once its ignore rules are read.
+   */
   startWatching(): void {
     // Resolve the REAL git dirs, not `<repo>/.git`: for a linked worktree
     // (bare-repo layout) `.git` is a pointer file — HEAD/index live in the
-    // per-worktree dir and refs are shared in the common dir. Watching
-    // `<repo>/.git/{HEAD,index,refs}` there watches paths that never exist,
-    // so a commit/rebase/fetch would fire nothing and the view would go
-    // stale. `commonDir` picks up `packed-refs` (git fetch / pack-refs) for
-    // plain repos too.
+    // per-worktree dir and refs are shared in the common dir.
     const dirs = resolveGitDirs(this.repoPath);
     if (dirs === null) return;
-
-    const indexFile = path.join(dirs.gitDir, 'index');
-    const headFile = path.join(dirs.gitDir, 'HEAD');
-    const refsDir = path.join(dirs.commonDir, 'refs');
-    const packedRefs = path.join(dirs.commonDir, 'packed-refs');
-    const gitignorePath = path.join(this.repoPath, '.gitignore');
-
-    this.gitWatcher = watch([indexFile, headFile, refsDir, packedRefs, gitignorePath], {
-      persistent: true,
-      ignoreInitial: true,
-      usePolling: true,
-      interval: 100,
+    const generation = ++this.watchGeneration;
+    this.watchGitDirs(dirs);
+    this.watchWorkingTree(dirs, generation).catch((err: unknown) => {
+      logger.error('Starting the working tree watcher threw', err, { repo: this.repoPath });
     });
+  }
 
-    this.ignorers = this.loadGitignores();
+  /**
+   * A watcher whose root went away watches nothing from then on. When a
+   * refresh finds the repo whole again (a worktree removed and added back
+   * while it was open), start watching afresh.
+   */
+  private reviveWatchers(): void {
+    if (this.disposed || !this.watchers.some((watcher) => watcher.rootGone)) return;
+    logger.debug('Watching again: a watched root came back', undefined, { repo: this.repoPath });
+    for (const watcher of this.watchers) watcher.close();
+    this.watchers = [];
+    this.treeWatcher = null;
+    this.gitDirs = undefined;
+    this.startWatching();
+  }
 
-    this.workingDirWatcher = watch(this.repoPath, {
-      persistent: true,
-      ignoreInitial: true,
-      ignored: (filePath: string) => this.isIgnored(filePath),
-      awaitWriteFinish: {
-        stabilityThreshold: 100,
-        pollInterval: 50,
-      },
-    });
-
-    const scheduleRefresh = () => this.scheduleRefresh();
-
-    this.gitWatcher.on('change', (filePath) => {
-      if (filePath === gitignorePath) {
-        this.ignorers = this.loadGitignores();
+  /**
+   * Git writes a file as `<name>.lock` and renames it into place, so a
+   * watch on the directory sees every write; the lock files themselves
+   * are noise.
+   */
+  private watchGitDirs(dirs: GitDirs): void {
+    const onCommonEntry = (rel: string): void => {
+      if (rel.endsWith('.lock')) return;
+      if (rel === 'info/exclude' || rel === 'info') {
+        void this.reloadIgnoreRules();
+        this.onRepoChange();
+      } else if (rel === 'packed-refs' || rel === 'refs' || rel.startsWith('refs/')) {
+        this.onRepoChange();
       }
-      scheduleRefresh();
-    });
-    this.gitWatcher.on('add', scheduleRefresh);
-    this.gitWatcher.on('unlink', scheduleRefresh);
-    // Watcher errors go to the header (cleared by the next refresh) AND
-    // the log: a header line the user did not catch is gone for good.
-    this.gitWatcher.on('error', (err: unknown) => {
-      this.logWatchError('Git dir watcher error', err);
-      this.setError(`Git watcher error: ${err instanceof Error ? err.message : String(err)}`);
-    });
+    };
+    const onGitDirEntry = (rel: string): void => {
+      if (GIT_DIR_ENTRIES.has(rel)) this.onRepoChange();
+    };
+    const onError = (err: unknown): void => this.onWatchError('Git dir watcher error', err);
 
-    this.workingDirWatcher.on('change', scheduleRefresh);
-    this.workingDirWatcher.on('add', scheduleRefresh);
-    this.workingDirWatcher.on('unlink', scheduleRefresh);
-    this.workingDirWatcher.on('error', (err: unknown) => {
-      this.logWatchError('Working dir watcher error', err);
-      this.setError(
-        `Working dir watcher error: ${err instanceof Error ? err.message : String(err)}`
+    this.watchers.push(
+      new TreeWatcher(dirs.commonDir, {
+        skipDir: (rel) => !(rel === 'info' || rel === 'refs' || rel.startsWith('refs/')),
+        onChange: (rel) => {
+          onCommonEntry(rel);
+          if (dirs.gitDir === dirs.commonDir) onGitDirEntry(rel);
+        },
+        onError,
+      })
+    );
+    if (dirs.gitDir !== dirs.commonDir) {
+      this.watchers.push(
+        new TreeWatcher(dirs.gitDir, { skipDir: () => true, onChange: onGitDirEntry, onError })
       );
-    });
-  }
-
-  /**
-   * Whether a .gitignore rule excludes a path the working-dir watcher
-   * met. Runs once per entry of the initial crawl, so it is string work
-   * only. Each ignorer judges the paths below its own directory,
-   * relative to it.
-   */
-  private isIgnored(filePath: string): boolean {
-    const rel = this.relativeToRoot(filePath);
-    if (rel === '') return false;
-    for (const [dir, ig] of this.ignorers) {
-      const relToDir = relativeToDir(rel, dir);
-      if (relToDir !== null && ig.ignores(relToDir)) return true;
     }
-    return false;
+    for (const watcher of this.watchers) {
+      watcher.start().catch((err: unknown) => {
+        logger.error('Starting a git dir watcher threw', err, { repo: this.repoPath });
+      });
+    }
+  }
+
+  private async watchWorkingTree(dirs: GitDirs, generation: number): Promise<void> {
+    const rules = await loadIgnoreRules(this.repoPath, dirs.commonDir);
+    if (this.disposed || generation !== this.watchGeneration) return;
+    this.ignoreRules = rules;
+    const watcher = new TreeWatcher(this.repoPath, {
+      skipDir: (rel) => isGitDirName(rel) || this.ignored(rel, true),
+      onChange: (rel, isDir) => this.onWorkingTreeEntry(rel, isDir),
+      onError: (err) => this.onWatchError('Working dir watcher error', err),
+    });
+    this.treeWatcher = watcher;
+    this.watchers.push(watcher);
+    await watcher.start();
+  }
+
+  private ignored(rel: string, isDir: boolean): boolean {
+    return this.ignoreRules?.ignores(rel, isDir) ?? false;
+  }
+
+  private onWorkingTreeEntry(rel: string, isDir: boolean): void {
+    if (rel === '') {
+      this.onRepoChange();
+      return;
+    }
+    if (isGitDirName(rel)) return;
+    if (rel === '.gitignore' || rel.endsWith('/.gitignore')) void this.reloadIgnoreRules();
+    else if (this.ignored(rel, isDir)) return;
+    this.onRepoChange();
+  }
+
+  /** Read the ignore rules again and re-decide which directories to watch. */
+  private async reloadIgnoreRules(): Promise<void> {
+    if (this.reloadingRules) {
+      this.reloadRulesAgain = true;
+      return;
+    }
+    const dirs = resolveGitDirs(this.repoPath);
+    if (dirs === null || this.treeWatcher === null) return;
+    this.reloadingRules = true;
+    try {
+      do {
+        this.reloadRulesAgain = false;
+        this.ignoreRules = await loadIgnoreRules(this.repoPath, dirs.commonDir);
+        if (this.disposed) return;
+        await this.treeWatcher.resync();
+      } while (this.reloadRulesAgain && !this.disposed);
+    } catch (err) {
+      logger.error('Reloading the ignore rules threw', err, { repo: this.repoPath });
+    } finally {
+      this.reloadingRules = false;
+    }
   }
 
   /**
-   * A path chokidar hands over, relative to the repo root; '' for the
-   * root itself. chokidar only reports absolute paths under the root it
-   * watches, so this is the part after the root, less a trailing slash.
+   * Watcher errors go to the log, and the ones that are not routine also
+   * to the header (cleared by the next refresh): a header line the user
+   * did not catch is gone for good.
    */
-  private relativeToRoot(filePath: string): string {
-    let rootEnd = this.repoPath.length;
-    if (this.repoPath.charCodeAt(rootEnd - 1) === SLASH) rootEnd--;
-    let end = filePath.length;
-    if (filePath.charCodeAt(end - 1) === SLASH) end--;
-    return end <= rootEnd ? '' : filePath.slice(rootEnd + 1, end);
-  }
-
-  private logWatchError(message: string, err: unknown): void {
-    if (isRoutineWatchError(err)) logger.debug(message, err, { repo: this.repoPath });
-    else logger.warn(message, err, { repo: this.repoPath });
+  private onWatchError(what: string, err: unknown): void {
+    if (isRoutineWatchError(err)) {
+      logger.debug(what, err, { repo: this.repoPath });
+      return;
+    }
+    logger.warn(what, err, { repo: this.repoPath });
+    this.setError(`${what}: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   dispose(): void {
-    // close() is async; a rejection here would otherwise be unhandled.
-    const closing = (name: string) => (err: unknown) =>
-      logger.warn(`Failed to close the ${name} watcher`, err, { repo: this.repoPath });
-    this.gitWatcher?.close().catch(closing('git dir'));
-    this.workingDirWatcher?.close().catch(closing('working dir'));
-    this.settleDiffWaiters();
+    this.disposed = true;
+    for (const watcher of this.watchers) watcher.close();
+    this.watchers = [];
+    this.treeWatcher = null;
+    if (this.changeTimer !== null) clearTimeout(this.changeTimer);
+    this.changeTimer = null;
+    this.settleRefreshWaiters(null);
+  }
+
+  // --- Viewing and staleness ---
+
+  /** Changed on disk since the last full refresh began, while nobody looked; or never read. */
+  get stale(): boolean {
+    return this._stale;
+  }
+
+  /** Mark the state out of date; the next view or read refreshes it. */
+  markStale(): void {
+    this._stale = true;
+    this._wholeTreeDiffs = null;
+  }
+
+  /** A client started or stopped looking at this repo. Starting brings a stale state up to date. */
+  setViewed(viewed: boolean): void {
+    this.viewed = viewed;
+    if (viewed && this._stale) this.requestRefresh('full');
+  }
+
+  /** The working tree or the repo's git state changed on disk. */
+  private onRepoChange(): void {
+    if (this.disposed) return;
+    if (!this.viewed) {
+      this.markStale();
+      return;
+    }
+    this.scheduleChangeRefresh();
+  }
+
+  private scheduleChangeRefresh(): void {
+    if (this.changeTimer !== null) return;
+    this.armChangeTimer(
+      changeRefreshDelay(performance.now(), this.lastFullRefreshEnd, this.lastFullRefreshMs)
+    );
+  }
+
+  private armChangeTimer(delay: number): void {
+    this.changeTimer = setTimeout(() => {
+      this.changeTimer = null;
+      this.runChangeRefresh();
+    }, delay);
+  }
+
+  private runChangeRefresh(): void {
+    if (this.disposed) return;
+    if (!this.viewed) {
+      this.markStale();
+      return;
+    }
+    // A queued full refresh has not read anything yet, so it covers this.
+    if (this.pendingRefreshKind === 'full') return;
+    // A running refresh may have read the file already, and a mutation's
+    // own refresh may be status-only: either way this one waits for it.
+    if (this.fullRefreshRunning || this.queue.hasPendingMutations()) {
+      this.changedDuringRefresh = true;
+      return;
+    }
+    // A refresh may have ended since the timer was set: keep the spacing.
+    const left = refreshGapLeft(performance.now(), this.lastFullRefreshEnd, this.lastFullRefreshMs);
+    if (left > 0) {
+      this.armChangeTimer(left);
+      return;
+    }
+    this.requestRefresh('full');
+  }
+
+  /** A change that waited for the refresh that just ended gets its own. */
+  private resumeDeferredChange(): void {
+    if (!this.changedDuringRefresh) return;
+    this.changedDuringRefresh = false;
+    this.scheduleChangeRefresh();
   }
 
   /**
@@ -530,6 +661,8 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       });
     } catch (err) {
       this.refreshFailed('Status refresh failed', err);
+    } finally {
+      this.resumeDeferredChange();
     }
   }
 
@@ -539,11 +672,18 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
   private async doRefresh(): Promise<void> {
     this.fullRefreshRunning = true;
+    const number = ++this.fullRefreshesBegun;
+    // What happens on disk from here on gets its own event.
+    this._stale = false;
+    const started = performance.now();
     try {
       await this.readFullState();
     } finally {
       this.fullRefreshRunning = false;
-      this.settleDiffWaiters();
+      this.lastFullRefreshEnd = performance.now();
+      this.lastFullRefreshMs = this.lastFullRefreshEnd - started;
+      this.settleRefreshWaiters(number);
+      this.resumeDeferredChange();
     }
   }
 
@@ -578,24 +718,59 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         this.notARepo(newStatus, 'Not a git repository');
         return;
       }
+      this.reviveWatchers();
 
       // Stash list and in-progress operation are shared repo state (they
       // cross the daemon wire), so a full refresh recomputes them too.
       // They are read once, as the journal guard's "before" snapshot,
-      // which is taken at this same instant; the state and the guard
-      // used to spawn the same two git processes twice. Plain git
-      // functions, not loadStashList: this already runs inside the
-      // queue, so re-enqueueing would deadlock.
+      // taken before any diff is read so the window it opens covers them
+      // all; the state and the guard used to spawn the same two git
+      // processes twice. Plain git functions, not loadStashList: this
+      // already runs inside the queue, so re-enqueueing would deadlock.
+      const guardBefore = await this.snapshotJournalGuard(newStatus);
+      const { stashList, operation } = guardBefore;
+
+      // A whole-tree diff git cannot make (a tracked file it cannot read,
+      // a FIFO in a file's place) leaves the diffs empty and says why in
+      // the header; the status still updates.
+      let diffFailure: string | null = null;
+      const readWholeTree = (staged: boolean): Promise<DiffResult | null> =>
+        getWholeTreeDiff(this.repoPath, staged).catch((err: unknown) => {
+          logger.warn(`Whole-tree diff${staged ? ' --cached' : ''} failed`, err, {
+            repo: this.repoPath,
+          });
+          diffFailure ??= err instanceof Error ? err.message : String(err);
+          return null;
+        });
+
+      // Staged first. With nothing staged the index matches HEAD, so the
+      // unstaged diff (index to worktree) IS the diff against HEAD the
+      // journal needs, byte for byte, and one read serves both: on a
+      // tree with a large diff that is a third of the refresh. "Nothing
+      // staged" takes the status too: a conflict outside an operation (a
+      // stash pop) leaves `--cached` printing only a note. The guard's
+      // index leg discards the observation if the index moved.
+      const stagedRead = await readWholeTree(true);
+      const unstagedRead = readWholeTree(false);
+      const nothingStaged =
+        stagedRead !== null &&
+        stagedRead.lines.length === 0 &&
+        newStatus.files.every((f) => !f.staged && f.status !== 'conflicted');
+      const readHeadDiff = nothingStaged
+        ? async (): Promise<DiffResult> => {
+            const unstaged = await unstagedRead;
+            if (unstaged === null) throw new Error('the unstaged diff failed');
+            return unstaged;
+          }
+        : (oid: string) => getDiffAgainstHead(this.repoPath, oid);
       // The journal inputs ride along in the same queue slot; their
       // gather never throws (null = skip this tick's observation).
-      const guardBefore = this.snapshotJournalGuard(newStatus);
-      const [allUnstagedDiff, allStagedDiff, { stashList, operation }, journalInputs] =
-        await Promise.all([
-          getDiff(this.repoPath, undefined, false),
-          getDiff(this.repoPath, undefined, true),
-          guardBefore,
-          this.gatherJournalInputs(newStatus, oidBefore, gatherStart, guardBefore),
-        ]);
+      const [unstagedResult, journalInputs] = await Promise.all([
+        unstagedRead,
+        this.gatherJournalInputs(newStatus, oidBefore, gatherStart, guardBefore, readHeadDiff),
+      ]);
+      const allUnstagedDiff = unstagedResult ?? { lines: [] };
+      const allStagedDiff = stagedRead ?? { lines: [] };
 
       const hunkCounts: FileHunkCounts = {
         unstaged: countHunksPerFile(rawFromLines(allUnstagedDiff.lines)),
@@ -616,6 +791,7 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         operationInProgress: operation,
         mtimes,
         isLoading: false,
+        error: diffFailure,
       });
 
       if (journalInputs !== null) {
@@ -651,11 +827,26 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
       getInProgressOperation(this.repoPath),
       gitGetStashList(this.repoPath),
     ]);
-    return { operation, stashList, mtimes: this.statMtimes(status) };
+    return { operation, stashList, mtimes: this.statMtimes(status), index: this.indexIdentity() };
+  }
+
+  private gitDirs: GitDirs | null | undefined;
+
+  private indexIdentity(): string | null {
+    if (this.gitDirs === undefined) this.gitDirs = resolveGitDirs(this.repoPath);
+    if (this.gitDirs === null) return null;
+    try {
+      const stat = fs.statSync(path.join(this.gitDirs.gitDir, 'index'));
+      return `${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+    } catch {
+      // No index yet: a repo nothing was ever added to.
+      return null;
+    }
   }
 
   private static journalGuardMoved(a: JournalGuardSnapshot, b: JournalGuardSnapshot): boolean {
     if (a.operation !== b.operation || a.stashList.length !== b.stashList.length) return true;
+    if (a.index !== b.index) return true;
     if (a.mtimes.size !== b.mtimes.size) return true;
     for (const [p, t] of a.mtimes) {
       if (b.mtimes.get(p) !== t) return true;
@@ -706,24 +897,26 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
    * Gather the journal's observation inputs, inside the same queue slot as
    * the refresh. Returns null — no observation this tick — on ANY failure
    * or when the window was TORN: HEAD moved between the two oid reads, or
-   * an operation started/ended, the stash count changed, or a changed
-   * file's mtime moved between the two guard snapshots, or any section
+   * an operation started/ended, the stash count changed, the index was
+   * written, or a changed file's mtime moved between the two guard
+   * snapshots, or any section
    * path of the just-read diff was WRITTEN during the read window. The
    * oid double-read alone is not enough — a slow external `git checkout`/
    * `stash`/`merge` rewrites the worktree over seconds while HEAD moves
    * last, and would otherwise classify a half-updated tree as hundreds of
    * phantom entries. A skipped tick is always safe: the next observation
    * re-derives everything from scratch. Note the diff read
-   * (getDiffAgainstHead) THROWS on failure by design — a swallowed empty
-   * diff would read as a phantom mass revert.
+   * (readHeadDiff: getDiffAgainstHead, or the unstaged getWholeTreeDiff
+   * when nothing is staged) THROWS on failure by design — a swallowed
+   * empty diff would read as a phantom mass revert.
    *
    * oidBefore is captured by doRefresh at the TOP of the refresh, BEFORE
    * the status read, so the status snapshot itself sits inside the guarded
    * window; null means that capture failed and this tick is skipped.
    * gatherStart is captured there too — the write-during-window guard's
    * floor (see sectionWrittenDuringGather). guardBefore is the "before"
-   * snapshot doRefresh started alongside the diff reads; it is awaited
-   * here first, so the window still opens before the HEAD diff is read.
+   * snapshot doRefresh took before reading any diff, so the window opens
+   * before the HEAD diff is read.
    *
    * Untracked files are invisible to `git diff HEAD`, so their synthetic
    * sections (getDiffForUntracked) are appended here. That read catches to
@@ -734,13 +927,12 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     status: GitStatus,
     oidBefore: string | null,
     gatherStart: number,
-    guardBeforePromise: Promise<JournalGuardSnapshot>
+    guardBefore: JournalGuardSnapshot,
+    readHeadDiff: (oid: string) => Promise<DiffResult>
   ): Promise<JournalInputs | null> {
     if (oidBefore === null) return null;
     try {
-      const guardBefore = await guardBeforePromise;
-
-      const headDiff = await getDiffAgainstHead(this.repoPath, oidBefore);
+      const headDiff = await readHeadDiff(oidBefore);
       const present = new Set(splitDiffByFile(headDiff).keys());
       const lines = [...headDiff.lines];
       await this.appendUntrackedSections(status, present, lines);

@@ -30,7 +30,8 @@
  * live, while a refetch fired at creation races the subscribe and can
  * miss an append that lands in between. The daemon-side repo ref is
  * kept the whole time (see App.vue's pagehide note): only the stream
- * pauses, the watchers keep running.
+ * pauses. With no stream the daemon stops refreshing the repo and marks
+ * it stale; the reopened stream's subscribe brings it up to date.
  *
  * The browser CANNOT spawn a daemon (the page is served by one). On
  * connection loss this store only surfaces `connection: 'disconnected'`

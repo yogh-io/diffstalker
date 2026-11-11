@@ -272,9 +272,11 @@ export function parsePositiveIntParam(
 }
 
 /**
- * Current status, refreshing first when the manager has never loaded one.
+ * Current status, refreshing first when the manager has none or it went
+ * stale while no client viewed the repo.
  */
 export async function ensureStatus(workingTree: WorkingTreeManager): Promise<GitStatus> {
+  await workingTree.catchUp();
   if (!workingTree.state.status) {
     await workingTree.refresh();
   }

@@ -13,9 +13,14 @@ import { attributesFilePath } from './diffAttributes.js';
 
 const execFileAsync = promisify(execFile);
 
-/** Environment for every git child process: inherit, but force locale C. */
+/**
+ * Environment for every git child process: inherit, but force locale C,
+ * and no optional locks. Without them `git status` never rewrites the
+ * index as a side effect, so a background refresh neither wakes the
+ * daemon's own index watch nor makes the user's git meet an index.lock.
+ */
 export function gitEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, LC_ALL: 'C', LANG: 'C' };
+  return { ...process.env, LC_ALL: 'C', LANG: 'C', GIT_OPTIONAL_LOCKS: '0' };
 }
 
 /**
@@ -124,7 +129,11 @@ export function createGit(repoPath: string, options: CreateGitOptions = {}): Sim
   // git from running. See diffAttributes.ts, including which languages
   // this does NOT help.
   const attributesFile = attributesFilePath();
-  const config = attributesFile === null ? [] : [`core.attributesFile=${attributesFile}`];
+  // The parsers read `a/` and `b/` path prefixes, and a refresh relies on
+  // `git diff` and `git diff HEAD` naming paths alike; a user's
+  // diff.mnemonicPrefix or diff.noprefix would change both.
+  const config = ['diff.mnemonicPrefix=false', 'diff.noprefix=false'];
+  if (attributesFile !== null) config.push(`core.attributesFile=${attributesFile}`);
 
   const env = gitEnv();
   return simpleGit({

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The daemon no longer works for repos nobody is looking at.** A repo
+  kept open by follow mode, or kept for ten minutes after its last tab
+  closed, refreshed on every file change with no one to see it. With a
+  large uncommitted diff and a process writing into the repo, that cost
+  about a third of a CPU core around the clock. Such a repo now only notes
+  that it changed, and catches up when a client opens it or asks for it.
+- **Watching a repo costs one watch per folder, not per file.** The
+  watcher put an inotify watch on every file and re-read a whole folder,
+  every entry, on each change in it: a folder of 7,500 files written to
+  every few seconds cost over a second of CPU per write. Folders git
+  ignores are no longer watched at all, now including `build/`-style
+  rules, the global ignore file and a worktree's `info/exclude`.
+- **Git's own writes are watched, not polled.** The index, HEAD and refs
+  of every open repo were checked ten times a second. A background status
+  also no longer rewrites the index, so it cannot make a git command in
+  your terminal fail on `index.lock`.
+- **Refreshes are spaced out under constant writes.** A repo that keeps
+  changing refreshes at most once a second, and spends at most a fifth of
+  its time refreshing however large its diff.
+- **A large diff is read once per refresh, not twice,** when nothing is
+  staged.
+
 ## [0.13.13] - 2026-11-02
 
 ### Fixed
