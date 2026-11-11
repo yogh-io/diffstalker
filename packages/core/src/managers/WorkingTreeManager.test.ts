@@ -8,6 +8,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 import { rawFromLines } from '../git/diffParse.js';
 import * as fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { WorkingTreeManager, GitState, changeRefreshDelay } from './WorkingTreeManager.js';
@@ -700,19 +701,22 @@ describe('WorkingTreeManager', () => {
       resetRepo();
     });
 
-    test('a tracked file git cannot read leaves the diffs empty but the status current', async () => {
-      writeFixtureFile(repoPath, 'tracked.txt', 'unreadable now\n');
-      writeFixtureFile(repoPath, 'fresh.txt', 'still listed\n');
+    test('a tracked file git cannot hash leaves the diffs empty but the status current', async () => {
+      // A FIFO in a tracked file's place: `git status` lists it, every
+      // whole-tree `git diff` fails with "cannot hash". (A file without
+      // read permission does the same, except for root, as in CI's act.)
       const tracked = path.join(repoPath, 'tracked.txt');
-      fs.chmodSync(tracked, 0o000);
+      fs.rmSync(tracked);
+      execFileSync('mkfifo', [tracked]);
+      writeFixtureFile(repoPath, 'fresh.txt', 'still listed\n');
       try {
         await manager.refresh();
         const state = manager.state;
         expect(state.status!.files.map((f) => f.path)).toContain('fresh.txt');
-        expect(state.error).not.toBeNull();
+        expect(state.error).toContain('cannot hash');
         expect(state.hunkCounts!.unstaged.size).toBe(0);
       } finally {
-        fs.chmodSync(tracked, 0o600);
+        fs.rmSync(tracked);
         resetRepo();
       }
     });
