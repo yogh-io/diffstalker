@@ -1119,9 +1119,10 @@ git operations.
 - **Search is the browser's, and the app keeps it working.** Ctrl+F (find in
   page) is the in-diff search — that is why windowed virtualization was
   rejected: it would forfeit find-in-page and text selection. The one thing
-  the DOM withholds is a file past 1500 changed lines, which starts behind a
-  "Load diff" gate. `e` mounts every gated body at once, after which Ctrl+F
-  reaches the whole changeset. Ctrl+H and Ctrl+O are deliberately not bound:
+  the DOM withholds is a file behind the "Load diff" gate: one past 1500
+  changed lines, or one past the first 20,000 diff rows of the page, so a
+  changeset of thousands of files stays usable. `e` mounts every gated body
+  at once, after which Ctrl+F reaches the whole changeset. Ctrl+H and Ctrl+O are deliberately not bound:
   they are browser History and the file picker, and ⌘+H is macOS "hide
   application", which a page cannot intercept at all.
   Both the OPEN and RECENT sections of the repo picker group a repo's

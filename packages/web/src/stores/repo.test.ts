@@ -1557,6 +1557,39 @@ describe('compare', () => {
     expect(fake.callsTo('/compare?')[1].url).toBe('/repos/r1/compare?staged=true&unstaged=true&untracked=true');
   });
 
+  test('a re-pull keeps the DiffResult of every file whose diff did not change', async () => {
+    const { store, source } = await openStore();
+    await store.refreshCompare();
+    const before = store.compare.compareDiff!.files[0].diff;
+
+    const body = compareBody() as { files: Array<Record<string, unknown>> };
+    body.files.push({ path: 'b.ts', status: 'added', additions: 1, deletions: 0, diff: diffBody('+b') });
+    onRequest = (call) => (call.url.split('?')[0] === '/repos/r1/compare' ? { body } : undefined);
+    source.emit('state-change', wireState());
+    await flush();
+
+    const files = store.compare.compareDiff!.files;
+    expect(files.map((f) => f.path)).toEqual(['a.ts', 'b.ts']);
+    // Same object: the stack skips the section instead of re-rendering it.
+    expect(files[0].diff).toBe(before);
+  });
+
+  test('a re-pull takes the new DiffResult of a file whose diff changed', async () => {
+    const { store, source } = await openStore();
+    await store.refreshCompare();
+    const before = store.compare.compareDiff!.files[0].diff;
+
+    const body = compareBody() as { files: Array<Record<string, unknown>> };
+    body.files[0].diff = diffBody('changed');
+    onRequest = (call) => (call.url.split('?')[0] === '/repos/r1/compare' ? { body } : undefined);
+    source.emit('state-change', wireState());
+    await flush();
+
+    const after = store.compare.compareDiff!.files[0].diff;
+    expect(after).not.toBe(before);
+    expect(after.lines).toEqual(diffBody('changed').lines);
+  });
+
   test('out-of-order refreshCompare responses apply only the latest request', async () => {
     const { store } = await openStore();
 

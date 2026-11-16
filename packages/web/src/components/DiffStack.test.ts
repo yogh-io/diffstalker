@@ -462,6 +462,15 @@ describe('section offsets across every body shape', () => {
   });
 });
 
+async function mountFiles(files: StackFile[]): Promise<VueWrapper> {
+  const wrapper = mount(DiffStack, {
+    props: { files, mediaKeys: new Set<string>() },
+    attachTo: document.body,
+  });
+  await nextTick();
+  return wrapper;
+}
+
 /**
  * The "Load diff" gate and the bulk escape hatch. The gate is the only
  * content the DOM withholds from browser find-in-page (virtualization was
@@ -474,17 +483,8 @@ describe('expandAllGated', () => {
     return { ...stackFile(path, TEXT_DIFF), stats: { insertions: 900, deletions: 900 } };
   }
 
-  async function mountGated(files: StackFile[]): Promise<VueWrapper> {
-    const wrapper = mount(DiffStack, {
-      props: { files, mediaKeys: new Set<string>() },
-      attachTo: document.body,
-    });
-    await nextTick();
-    return wrapper;
-  }
-
   test('mounts every gated body and reports how many', async () => {
-    const wrapper = await mountGated([hugeFile('big-a.ts'), hugeFile('big-b.ts')]);
+    const wrapper = await mountFiles([hugeFile('big-a.ts'), hugeFile('big-b.ts')]);
     expect(wrapper.findAll('[data-testid="load-diff"]').length).toBe(2);
 
     const expanded = (wrapper.vm as unknown as { expandAllGated(): number }).expandAllGated();
@@ -496,7 +496,7 @@ describe('expandAllGated', () => {
   });
 
   test('leaves small files alone and is a no-op when nothing is gated', async () => {
-    const wrapper = await mountGated([stackFile('small.ts', TEXT_DIFF)]);
+    const wrapper = await mountFiles([stackFile('small.ts', TEXT_DIFF)]);
     expect(wrapper.findAll('[data-testid="load-diff"]').length).toBe(0);
 
     const expanded = (wrapper.vm as unknown as { expandAllGated(): number }).expandAllGated();
@@ -505,11 +505,25 @@ describe('expandAllGated', () => {
   });
 
   test('a second call expands nothing more', async () => {
-    const wrapper = await mountGated([hugeFile('big-a.ts')]);
+    const wrapper = await mountFiles([hugeFile('big-a.ts')]);
     const vm = wrapper.vm as unknown as { expandAllGated(): number };
     expect(vm.expandAllGated()).toBe(1);
     await nextTick();
     expect(vm.expandAllGated()).toBe(0);
+    wrapper.unmount();
+  });
+
+  test('loads the files gated by the row budget too', async () => {
+    const files = Array.from({ length: 30 }, (_, i) => budgetFile(`f${i}.ts`));
+    const wrapper = await mountFiles(files);
+    const gatedBefore = wrapper.findAll('[data-testid="load-diff"]').length;
+    expect(gatedBefore).toBeGreaterThan(0);
+
+    const expanded = (wrapper.vm as unknown as { expandAllGated(): number }).expandAllGated();
+    await nextTick();
+
+    expect(expanded).toBe(gatedBefore);
+    expect(wrapper.findAll('[data-testid="load-diff"]').length).toBe(0);
     wrapper.unmount();
   });
 
@@ -518,9 +532,63 @@ describe('expandAllGated', () => {
       ...stackFile('big.gml', LARGE_DIFF),
       stats: { insertions: 900, deletions: 900 },
     };
-    const wrapper = await mountGated([withheld]);
+    const wrapper = await mountFiles([withheld]);
     const expanded = (wrapper.vm as unknown as { expandAllGated(): number }).expandAllGated();
     expect(expanded).toBe(0);
+    wrapper.unmount();
+  });
+});
+
+/**
+ * Under the per-file cap, but with no diff yet: a cheap placeholder body
+ * whose rows are estimated from stats, so 30 of them overrun
+ * STACK_ROW_BUDGET without building 30 real diffs.
+ */
+function budgetFile(path: string): StackFile {
+  return { ...stackFile(path, TEXT_DIFF), diff: null, stats: { insertions: 1000, deletions: 0 } };
+}
+
+/** Per section in list order: is it behind "Load diff"? */
+function gatedFlags(wrapper: VueWrapper): boolean[] {
+  return wrapper
+    .findAll('[data-testid="file-diff"]')
+    .map((section) => section.find('[data-testid="load-diff"]').exists());
+}
+
+/**
+ * The stack-wide row budget. 15k small files each pass the per-file cap,
+ * and mounting all of them built 7.5M DOM nodes.
+ */
+describe('row budget', () => {
+  test('files mount in list order until the budget is spent; the rest start gated', async () => {
+    const wrapper = await mountFiles(Array.from({ length: 30 }, (_, i) => budgetFile(`f${i}.ts`)));
+    const flags = gatedFlags(wrapper);
+    const firstGated = flags.indexOf(true);
+    expect(firstGated).toBeGreaterThan(0);
+    // A head that mounted and a tail that did not, never a gap between.
+    expect(flags.slice(firstGated).every(Boolean)).toBe(true);
+    wrapper.unmount();
+  });
+
+  test('a mounted body stays mounted when files past the budget arrive', async () => {
+    const wrapper = await mountFiles([budgetFile('z-last.ts')]);
+    expect(gatedFlags(wrapper)).toEqual([false]);
+
+    const arrivals = Array.from({ length: 30 }, (_, i) => budgetFile(`a${i}.ts`));
+    await wrapper.setProps({ files: [...arrivals, budgetFile('z-last.ts')] });
+    await nextTick();
+
+    const flags = gatedFlags(wrapper);
+    expect(flags[flags.length - 1]).toBe(false);
+    expect(flags[0]).toBe(false); // the budget left over still mounts the head
+    expect(flags.slice(0, -1).some(Boolean)).toBe(true);
+    wrapper.unmount();
+  });
+
+  test('a huge file spends none of the budget', async () => {
+    const huge: StackFile = { ...stackFile('big.ts', TEXT_DIFF), stats: { insertions: 1600, deletions: 0 } };
+    const wrapper = await mountFiles([huge, stackFile('small.ts', TEXT_DIFF)]);
+    expect(gatedFlags(wrapper)).toEqual([true, false]);
     wrapper.unmount();
   });
 });

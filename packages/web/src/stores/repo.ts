@@ -172,6 +172,21 @@ function sameDiff(a: DiffResult, b: DiffResult): boolean {
   return true;
 }
 
+/**
+ * The fresh compare, with every file whose diff did not change keeping
+ * its old DiffResult. A pull re-sends every file, and a new object for
+ * each one makes the whole stack rebuild its models and re-render.
+ */
+function keepUnchangedCompareDiffs(prev: CompareDiff | null, next: CompareDiff): CompareDiff {
+  if (prev === null) return next;
+  const before = new Map(prev.files.map((file) => [compareFileKey(file), file.diff]));
+  const files = next.files.map((file) => {
+    const old = before.get(compareFileKey(file));
+    return old !== undefined && sameDiff(old, file.diff) ? { ...file, diff: old } : file;
+  });
+  return { ...next, files };
+}
+
 /** The working-diff cache: entries keyed by file-list row key. */
 export interface WorkingDiffsState {
   byKey: Map<string, WorkingDiffEntry>;
@@ -2101,7 +2116,7 @@ export const useRepoStore = defineStore('repo', () => {
       compareStack.value = stack;
       compare.value = {
         ...compare.value,
-        compareDiff: diff,
+        compareDiff: keepUnchangedCompareDiffs(compare.value.compareDiff, diff),
         pair: { base: diff.baseBranch, head: pull.head ?? null, uncommitted: pull.uncommitted },
         // With a layer picked the diff's own base is the layer below; the
         // picker keeps showing the trunk, which is what the user picked.

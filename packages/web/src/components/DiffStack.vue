@@ -149,6 +149,13 @@ const PROBE_FIRST_HUNK_ROWS = 2;
  * cap: their DiffView is not even mounted until the user asks for it.
  */
 export const HUGE_FILE_CHANGED_LINES = 1500;
+
+/**
+ * Rows the stack mounts on its own. Files mount in list order while their
+ * rows fit; every file after that starts behind "Load diff" too. The
+ * per-file cap alone let 15k small files mount 7.5M DOM nodes (6 GiB).
+ */
+export const STACK_ROW_BUDGET = 20_000;
 </script>
 
 <script setup lang="ts">
@@ -201,12 +208,12 @@ export const HUGE_FILE_CHANGED_LINES = 1500;
  * optimistically on programmatic jumps, and from the composable's
  * binary-search scroll-spy as the user scrolls.
  *
- * Huge files: a StackFile that FIRST APPEARS past
- * HUGE_FILE_CHANGED_LINES changed lines starts collapsed behind a
- * "Load diff" affordance; its DiffView mounts only after that explicit
- * click — the ONLY path that mounts a huge body. The gate latches: a
- * file already rendered small whose stats later grow past the cap
- * keeps its body (never unmounted mid-view). Manual (parent-owned)
+ * The "Load diff" gate: a StackFile that FIRST APPEARS past
+ * HUGE_FILE_CHANGED_LINES changed lines, or once the stack has spent
+ * STACK_ROW_BUDGET, starts collapsed behind a "Load diff" affordance;
+ * its DiffView mounts only after that explicit click (or `e`). The gate
+ * latches: a file that got a body keeps it, even when its stats later
+ * grow past the cap (never unmounted mid-view). Manual (parent-owned)
  * collapse is unchanged.
  *
  * Binary files never get a diff body and never get the huge gate. They
@@ -345,29 +352,67 @@ function isMediaSection(item: StackFile): boolean {
   return notShownFor(item)?.kind === 'binary' && (props.mediaKeys?.has(item.key) ?? false);
 }
 
-// --- Huge files: "Load diff" gate ---
+// --- The "Load diff" gate ---
 
-/** Huge files the user explicitly loaded (per-key, view lifetime). */
-const loadedHugeKeys = reactive(new Set<string>());
+/** Gated files the user explicitly loaded (per-key, view lifetime). */
+const loadedKeys = reactive(new Set<string>());
+
+const ROW_PX = DIFF_ROW_PX;
+const CONTEXT_ROWS_PER_HUNK = 7; // 1 hunk-header row + ~6 context lines
+const CHANGED_LINES_PER_HUNK = 10; // rough hunk-count guess
+const MIN_PX = 48;
 
 /**
- * Keys that have appeared BELOW the threshold (the latch): a file
- * already rendered whose stats later grow past the cap keeps its body
- * — unmounting content mid-view would yank it from under the reader.
- * Only files that FIRST APPEAR past the threshold are gated. A plain
- * Set: it only grows alongside props.files changes (latched in the
- * pre-flush watcher, before the re-render that reads it).
+ * Rows a body renders. With a diff in hand, COUNT them (diffModel is
+ * memoized per DiffResult, and a mounted body builds it anyway). Without
+ * one (a placeholder) or for an empty model, guess from stats: changed
+ * lines plus a header row and context per hunk.
  */
-const renderedSmallKeys = new Set<string>();
+function bodyRowCount(item: StackFile): number {
+  if (item.diff) {
+    const rows = diffModel(item.diff, item.staged ?? false).rowCount;
+    if (rows > 0) return rows;
+  }
+  const changed = item.stats.insertions + item.stats.deletions;
+  const hunks = Math.max(1, Math.ceil(changed / CHANGED_LINES_PER_HUNK));
+  return changed + hunks * CONTEXT_ROWS_PER_HUNK;
+}
 
-function latchSmallKeys(files: StackFile[]): void {
+/**
+ * Keys allowed to mount a body on their own (the latch). A file that got
+ * a body keeps it even when its stats later grow past the cap or the
+ * budget fills up — unmounting content mid-view would yank it from under
+ * the reader. A plain Set: it only grows alongside props.files changes
+ * (latched in the pre-flush watcher, before the re-render that reads it).
+ */
+const mountedKeys = new Set<string>();
+
+/**
+ * Latch the files that may mount: in list order, while their rows fit in
+ * what the mounted bodies leave of STACK_ROW_BUDGET. A huge file never
+ * latches and spends nothing. Stops at the first file that does not fit,
+ * so no model is ever built for a file past the budget. Returns the keys
+ * it latched: their bodies mount in the coming render.
+ */
+function latchMounted(files: StackFile[]): Set<string> {
+  let rows = 0;
   for (const item of files) {
-    if (item.stats.insertions + item.stats.deletions <= HUGE_FILE_CHANGED_LINES) {
-      renderedSmallKeys.add(item.key);
+    if ((mountedKeys.has(item.key) || loadedKeys.has(item.key)) && notShownFor(item) === null) {
+      rows += bodyRowCount(item);
     }
   }
+  const latched = new Set<string>();
+  for (const item of files) {
+    if (mountedKeys.has(item.key) || loadedKeys.has(item.key)) continue;
+    if (notShownFor(item) !== null || isHuge(item)) continue;
+    rows += bodyRowCount(item);
+    if (rows > STACK_ROW_BUDGET) break;
+    mountedKeys.add(item.key);
+    latched.add(item.key);
+  }
+  return latched;
 }
-latchSmallKeys(props.files);
+latchMounted(props.files);
 
 function isHuge(item: StackFile): boolean {
   return item.stats.insertions + item.stats.deletions > HUGE_FILE_CHANGED_LINES;
@@ -384,7 +429,7 @@ function isHuge(item: StackFile): boolean {
  *
  * Deliberately NOT gated on isHuge. The huge-file threshold reads stats,
  * which context does not move, so a whole-file body can never trip it;
- * and the latch in renderedSmallKeys already keeps a file the reader is
+ * and the latch in mountedKeys already keeps a file the reader is
  * looking at from being yanked behind "Load diff". The payload itself is
  * bounded by the daemon's per-file diff cap, not by this gate.
  */
@@ -411,27 +456,24 @@ function wholeDisabledReason(item: StackFile): string | null {
   return null;
 }
 
-/** True while a huge file's body is gated behind "Load diff". */
+/** True while a file's body is gated behind "Load diff". */
 function isUnloaded(item: StackFile): boolean {
   return (
-    isHuge(item) &&
-    notShownFor(item) === null &&
-    !loadedHugeKeys.has(item.key) &&
-    !renderedSmallKeys.has(item.key)
+    notShownFor(item) === null && !loadedKeys.has(item.key) && !mountedKeys.has(item.key)
   );
 }
 
 /**
- * The EFFECTIVE collapse: the parent's manual collapse OR the unloaded
- * huge-file gate. Everything geometric (anchors, surviving keys, the
- * height assert) reads this, never item.collapsed directly.
+ * The EFFECTIVE collapse: the parent's manual collapse OR the "Load
+ * diff" gate. Everything geometric (anchors, surviving keys, the height
+ * assert) reads this, never item.collapsed directly.
  */
 function isCollapsed(item: StackFile): boolean {
   return !!item.collapsed || isUnloaded(item);
 }
 
-function loadHugeDiff(key: string): void {
-  loadedHugeKeys.add(key);
+function loadDiff(key: string): void {
+  loadedKeys.add(key);
   // The body mounts below the click point; offsets below it moved.
   void nextTick(() => stackScroll.invalidateOffsets());
 }
@@ -447,7 +489,7 @@ function loadHugeDiff(key: string): void {
  */
 function expandAllGated(): number {
   const gated = props.files.filter((item) => isUnloaded(item));
-  for (const item of gated) loadedHugeKeys.add(item.key);
+  for (const item of gated) loadedKeys.add(item.key);
   if (gated.length > 0) void nextTick(() => stackScroll.invalidateOffsets());
   return gated.length;
 }
@@ -532,30 +574,14 @@ function measureProbe(): void {
 
 /**
  * Height estimate for a body without a computable exact height: the
- * placeholder branch (no diff yet) and empty/binary diffs. Changed
- * lines at DiffView's row height, plus what stats don't count — a
- * header row per hunk and the surrounding context lines.
+ * placeholder branch (no diff yet) and empty/binary diffs. Rows are
+ * counted when the diff is in hand, not guessed from stats: the stats
+ * guess assumes ~3 lines of context per hunk, so it under-sizes a
+ * whole-file diff by roughly twenty times, and the stack's arithmetic
+ * offsets are built on this number.
  */
-const ROW_PX = DIFF_ROW_PX;
-const CONTEXT_ROWS_PER_HUNK = 7; // 1 hunk-header row + ~6 context lines
-const CHANGED_LINES_PER_HUNK = 10; // rough hunk-count guess
-const MIN_PX = 48;
-
 function estimateBodyHeight(item: StackFile): number {
-  // With a diff in hand, COUNT the rows instead of guessing from stats.
-  // The stats guess assumes ~3 lines of context per hunk, which is true
-  // only of a -U3 body: a whole-file diff carries every unchanged line
-  // too, so the guess under-sizes it by roughly twenty times, and the
-  // stack's arithmetic offsets are built on this number. Counting is
-  // also strictly better for the ordinary path — diffModel is memoized
-  // per DiffResult, and every caller here already builds it.
-  if (item.diff) {
-    const rows = diffModel(item.diff, item.staged ?? false).rowCount;
-    if (rows > 0) return Math.max(rows * ROW_PX, MIN_PX);
-  }
-  const changed = item.stats.insertions + item.stats.deletions;
-  const hunks = Math.max(1, Math.ceil(changed / CHANGED_LINES_PER_HUNK));
-  return Math.max((changed + hunks * CONTEXT_ROWS_PER_HUNK) * ROW_PX, MIN_PX);
+  return Math.max(bodyRowCount(item) * ROW_PX, MIN_PX);
 }
 
 /**
@@ -923,9 +949,14 @@ function survivingKeys(next: StackFile[]): Set<string> {
  * unchanged files keep the same DiffResult object (the store's identity
  * preservation), so Compare's static recomputes yield an empty set and
  * the whole sandwich stays inert. `null` = a section entering the model
- * (no old element to measure).
+ * (no old element to measure). `latched` are the keys whose body mounts
+ * in this commit: the gate reads the latch, which already holds them, so
+ * isCollapsed alone cannot see that flip.
  */
-function diffChanges(next: StackFile[]): {
+function diffChanges(
+  next: StackFile[],
+  latched: Set<string>
+): {
   els: (HTMLElement | null)[];
   changedKeys: string[];
 } {
@@ -941,9 +972,11 @@ function diffChanges(next: StackFile[]): {
     if (!prev) {
       els.push(null);
       changedKeys.push(item.key);
-    } else if (prev.diff !== item.diff || isCollapsed(prev) !== isCollapsed(item)) {
-      // Effective collapse: also catches a stats change flipping a file
-      // across the huge-file gate (its body mounts/unmounts).
+    } else if (
+      prev.diff !== item.diff ||
+      isCollapsed(prev) !== isCollapsed(item) ||
+      latched.has(item.key)
+    ) {
       els.push(sectionEls.get(item.key) ?? null);
       changedKeys.push(item.key);
     }
@@ -962,17 +995,17 @@ function diffChanges(next: StackFile[]): {
 /** Changed keys of the in-flight commit, for the post-flush recache. */
 let pendingChangedKeys: string[] = [];
 
-// Pre-flush: DOM still old — pick and measure the anchor, then latch
-// the gate for the coming render. Latching LAST keeps the effective
-// collapse honest inside diffChanges: a gated file whose stats drop
-// below the cap must still read as a collapse flip (its body mounts).
+// Pre-flush: DOM still old — latch the gate for the coming render, then
+// pick and measure the anchor. Latching FIRST makes survivingKeys see
+// the bodies that are about to mount; diffChanges gets the latched keys
+// to report those bodies as changed.
 watch(
   () => props.files,
   (next) => {
-    const changes = diffChanges(next);
+    const latched = latchMounted(next);
+    const changes = diffChanges(next, latched);
     pendingChangedKeys = changes.changedKeys;
     anchor.prepare({ survivingKeys: survivingKeys(next), changedEls: changes.els });
-    latchSmallKeys(next);
   },
   { flush: 'pre' }
 );
@@ -1352,13 +1385,13 @@ defineExpose({
       tabindex="-1"
     >
       <header class="file-diff-header" :class="{ uncommitted: item.uncommitted }">
-        <!-- Unloaded huge file: the chevron becomes the load trigger
+        <!-- Unloaded file: the chevron becomes the load trigger
              (same slot, so the header never jumps when it flips). -->
         <button
           class="collapse-btn mono"
           :aria-expanded="!isCollapsed(item)"
           :aria-label="`${isCollapsed(item) ? 'Expand' : 'Collapse'} ${item.path}`"
-          @click="isUnloaded(item) ? loadHugeDiff(item.key) : emit('toggle-collapse', item.key)"
+          @click="isUnloaded(item) ? loadDiff(item.key) : emit('toggle-collapse', item.key)"
         >
           {{ isCollapsed(item) ? '▸' : '▾' }}
         </button>
@@ -1420,11 +1453,11 @@ defineExpose({
       >
         {{ notShownFor(item)?.note }}
       </div>
-      <!-- Unloaded huge file: the worst-case DOM cap — nothing below
-           the header mounts until the user asks. A distinct affordance
-           from the collapse chevron on purpose. -->
+      <!-- Unloaded file (huge, or past the row budget): the DOM cap —
+           nothing below the header mounts until the user asks. A
+           distinct affordance from the collapse chevron on purpose. -->
       <div v-else-if="isUnloaded(item)" v-show="!item.collapsed" class="load-diff">
-        <button class="load-diff-btn mono chrome-chip" data-testid="load-diff" @click="loadHugeDiff(item.key)">
+        <button class="load-diff-btn mono chrome-chip" data-testid="load-diff" @click="loadDiff(item.key)">
           Load diff
           <span class="load-diff-size"
             >({{ item.stats.insertions + item.stats.deletions }} changed lines)</span
