@@ -155,7 +155,7 @@ export const EVENT_LABELS: Record<PrEventKind, string> = {
 export const ACTIVITY_LABELS: Record<WorkActivityKind, string> = {
   ...EVENT_LABELS,
   edited: 'files edited',
-  git: 'commit, stage or checkout',
+  git: 'commit or checkout',
   'head-commit': 'new commit on the PR',
   draft: 'draft edited',
   merged: 'merged',

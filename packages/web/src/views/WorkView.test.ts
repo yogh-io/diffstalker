@@ -236,7 +236,7 @@ describe('sections', () => {
     // Its worktree moved after the merge, so that is the newest activity.
     expect(done[0].find('[data-testid="work-status"]').text()).toBe('merged');
     expect(done[0].find('[data-testid="work-when"]').attributes('data-tip')).toContain(
-      'commit, stage or checkout'
+      'commit or checkout'
     );
     expect(done[0].find('.when').text()).toBe('just now');
   });
@@ -620,7 +620,7 @@ describe('the fold-out', () => {
     const row = rowsOf(wrapper, 'candidates')[0];
     await expand(row);
     const detail = row.find('[data-testid="work-detail"]');
-    expect(detail.text()).toContain('commit, stage or checkout');
+    expect(detail.text()).toContain('commit or checkout');
     expect(detail.text()).toContain('/w/calc-nginx');
     expect(detail.text()).toContain('3 uncommitted, 2 unpushed');
     await expand(row);
