@@ -1010,7 +1010,9 @@ change it makes on GitHub.
   **By repository** (on by default) and **By time** (`Last day`, `Last
   week`, `Last month`, `Older`, each with its count); with both on the repo
   headings sit inside each time heading, with both off it is one list. The
-  browser remembers both. A click on a row opens its
+  browser remembers both. Beside them **All / Last day / Last week / Last
+  month** (with counts) keeps only what moved in that window; it is not
+  remembered. A click on a row opens its
   fold-out: the recent activity with times, the facts behind the icons,
   **Open in Compare**, **Open #N on GitHub**, **Dismiss**, and the PR draft
   panel for that branch. The compare button on the row opens Compare in

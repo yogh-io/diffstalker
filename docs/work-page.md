@@ -528,8 +528,13 @@ Two toggles in the header group the rows, in every section:
 
 With both on, the repo headings sit inside each time heading; with both
 off the section is one plain list. Both are reader preferences in
-`prefs.ts` (localStorage). They replaced a first "last day" filter: the
-`Last day` heading is that filter's list, at the top.
+`prefs.ts` (localStorage).
+
+Beside them, a filter: `All`, `Last day`, `Last week`, `Last month`, each
+with how many items it keeps. It uses the same windows as the time
+headings and keeps only items with activity in that window, in every
+section, with either grouping. It is not stored, so a filter left on
+cannot hide work the next time the page opens.
 
 A sort heading's tooltip says what it sorts by and in which order.
 
