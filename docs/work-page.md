@@ -576,7 +576,8 @@ refresh button.
 ### 5.5 The fold-out
 
 - **Activity**: the PR's events (§4.1), its merge or close, and the local
-  times (files edited, committed or staged, draft edited), newest first, at
+  times (files edited, commit, stage or checkout, draft edited), the PR's
+  head commit, newest first, at
   most 8, each with how long ago (the date and time on hover). Someone
   else's in full colour.
 - **Facts**: stage, base, stack, review (decision, reviewers asked, open
