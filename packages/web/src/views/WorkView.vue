@@ -30,7 +30,15 @@ import { useWorkStore } from '../stores/work';
 import { useRepoOpen } from '../composables/useRepoOpen';
 import { beginUserNav } from '../composables/useUrlSync';
 import { basename } from '../utils/format';
-import { TIME_BUCKETS, activeWithin, checkedLine, ghNotice, layoutWork } from '../utils/workFormat';
+import {
+  TIME_BUCKETS,
+  activeWithin,
+  checkedAgoLine,
+  formatAgo,
+  formatFull,
+  ghNotice,
+  layoutWork,
+} from '../utils/workFormat';
 import type { WorkSort, WorkSortKey } from '../utils/workFormat';
 import WorkRow from '../components/WorkRow.vue';
 import type { WorkClassification, WorkItem, WorkMarkAction } from '@diffstalker/core/types/work';
@@ -48,12 +56,23 @@ const CLOCK_TICK_MS = 30_000;
 const clock = ref(Date.now());
 let ticker: ReturnType<typeof setInterval> | null = null;
 
+/** The page is in view again: bring what is old up to date (store catchUp). */
+function onShown(): void {
+  if (document.visibilityState !== 'visible') return;
+  clock.value = Date.now();
+  void work.catchUp();
+}
+
 onMounted(() => {
   ticker = setInterval(() => (clock.value = Date.now()), CLOCK_TICK_MS);
+  document.addEventListener('visibilitychange', onShown);
+  window.addEventListener('focus', onShown);
 });
 
 onUnmounted(() => {
   if (ticker !== null) clearInterval(ticker);
+  document.removeEventListener('visibilitychange', onShown);
+  window.removeEventListener('focus', onShown);
 });
 
 onMounted(() => {
@@ -168,23 +187,31 @@ function olderSummary(count: number): string {
 
 const busy = computed(() => work.scan.running || work.prsLoading);
 
-/** The `gh` line: when the PR list was read, or why it could not be. */
-const ghLine = computed<{ text: string; failed: boolean } | null>(() => {
+/** The `gh` line: how long ago the PR list was read, or why it could not be. */
+const ghLine = computed<{ text: string; failed: boolean; tip?: string } | null>(() => {
   const snapshot = work.prs;
   if (snapshot === null) return work.prsLoading ? { text: 'checking PRs…', failed: false } : null;
   const checked =
-    snapshot.checkedAt === null ? null : checkedLine(snapshot.checkedAt, snapshot.viewer, work.now);
+    snapshot.checkedAt === null
+      ? null
+      : checkedAgoLine(snapshot.checkedAt, snapshot.viewer, clock.value);
+  const tip = snapshot.checkedAt === null ? undefined : formatFull(snapshot.checkedAt);
   const notice = ghNotice(snapshot.status, snapshot.message);
   // A failed refresh keeps the last list; say how old it is.
   if (notice !== null)
-    return { text: checked === null ? notice : `${notice} · ${checked}`, failed: true };
+    return { text: checked === null ? notice : `${notice} · ${checked}`, failed: true, tip };
   if (checked === null) return work.prsLoading ? { text: 'checking PRs…', failed: false } : null;
-  return { text: snapshot.capped ? `${checked} · more PRs than listed` : checked, failed: false };
+  const text = snapshot.capped ? `${checked} · more PRs than listed` : checked;
+  return { text: work.prsLoading ? `${text} · checking…` : text, failed: false, tip };
 });
 
-const scanLine = computed(() =>
-  work.scan.running ? `scanned ${work.scan.done} of ${work.scan.total} repos` : null
-);
+/** How far a running scan is, or how long ago the last one finished. */
+const scanLine = computed<{ text: string; tip?: string } | null>(() => {
+  if (work.scan.running) return { text: `scanned ${work.scan.done} of ${work.scan.total} repos` };
+  const at = work.scannedAt;
+  if (at === null) return null;
+  return { text: `Repos scanned ${formatAgo(at, clock.value)}`, tip: formatFull(at) };
+});
 
 const nothingToScan = computed(
   () =>
@@ -230,11 +257,14 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
           v-if="ghLine"
           class="gh-line mono"
           :class="{ failed: ghLine.failed }"
+          :data-tip="ghLine.tip"
           data-testid="gh-line"
         >
           {{ ghLine.text }}
         </p>
-        <p v-if="scanLine" class="scan-line mono" data-testid="scan-line">{{ scanLine }}</p>
+        <p v-if="scanLine" class="scan-line mono" :data-tip="scanLine.tip" data-testid="scan-line">
+          {{ scanLine.text }}
+        </p>
       </div>
       <div class="filters" role="group" aria-label="Show">
         <button

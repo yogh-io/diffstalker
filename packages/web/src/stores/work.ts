@@ -3,8 +3,11 @@
  * serves facts per repo, the PR snapshot and the marks; core's
  * classifyWork decides where each item goes, here in the browser.
  *
- * The page scans when it opens and when the refresh button is pressed,
- * never on a timer. A scan lists the discovered repos (phase 1) and then
+ * The page scans when it opens, when it is shown again (catchUp: the tab
+ * becomes visible or the window gets focus) and when the refresh button
+ * is pressed, never on a timer. Shown again, it asks only for what is
+ * older than its minimum age: the repos after LOCAL_MAX_AGE_MS, GitHub
+ * after GITHUB_MAX_AGE_MS. A scan lists the discovered repos (phase 1) and then
  * the open repos that phase 1 did not already cover as a worktree
  * (phase 2), at most WORK_SCAN_CONCURRENCY requests at a time, and shows
  * each answer as it lands. A newer scan drops an older one.
@@ -29,6 +32,11 @@ import type {
   WorkMarks,
   WorkRepoFacts,
 } from '@diffstalker/core/types/work';
+
+/** Shown again, the repos are scanned again when the last scan ended longer ago than this. */
+export const LOCAL_MAX_AGE_MS = 60 * 1000;
+/** Opened or shown again, GitHub is asked again when the PR list is older than this. */
+export const GITHUB_MAX_AGE_MS = 5 * 60 * 1000;
 
 /** The snapshot before the daemon was asked. */
 export const NEVER_CHECKED: PrSnapshot = {
@@ -107,8 +115,10 @@ export const useWorkStore = defineStore('work', () => {
   const marks = shallowRef<WorkMarks>({ tracked: {}, dismissed: {} });
   /** One line for a request the page itself could not make. */
   const error = shallowRef<string | null>(null);
-  /** The clock classifyWork judges the 7-day window by; moves on load and refresh only. */
+  /** The clock classifyWork judges the 7-day window by; moves whenever a scan or check starts. */
   const now = shallowRef(Date.now());
+  /** When the last scan finished, epoch ms; null before the first. */
+  const scannedAt = shallowRef<number | null>(null);
 
   let generation = 0;
 
@@ -139,13 +149,20 @@ export const useWorkStore = defineStore('work', () => {
     }
   }
 
-  /** The cached snapshot; GitHub is asked only when the daemon never did (doc §4.2). */
+  /** The PR list is missing or older than GITHUB_MAX_AGE_MS. */
+  function prsStale(snapshot: PrSnapshot | null): boolean {
+    if (snapshot === null || snapshot.status === 'never' || snapshot.checkedAt === null)
+      return true;
+    return Date.now() - snapshot.checkedAt > GITHUB_MAX_AGE_MS;
+  }
+
+  /** The cached snapshot; GitHub is asked only when it is missing or old (doc §4.2). */
   async function loadPrs(): Promise<void> {
     prsLoading.value = true;
     try {
       const cached = await client.workPrs();
       prs.value = cached;
-      if (cached.status === 'never') prs.value = await client.refreshWorkPrs();
+      if (prsStale(cached)) prs.value = await client.refreshWorkPrs();
     } catch (err) {
       fail('load PRs', err, 'Could not load PRs');
     } finally {
@@ -232,6 +249,7 @@ export const useWorkStore = defineStore('work', () => {
     repos.value = [...found.values()];
     scan.value = { ...scan.value, running: false };
     scanFinished.value = true;
+    scannedAt.value = Date.now();
   }
 
   /** The page opened. */
@@ -239,6 +257,20 @@ export const useWorkStore = defineStore('work', () => {
     now.value = Date.now();
     error.value = null;
     await Promise.all([loadMarks(), loadPrs(), runScan()]);
+  }
+
+  /**
+   * The page was shown again: scan the repos and ask GitHub, each only
+   * when it is older than its minimum age and not already running.
+   */
+  async function catchUp(): Promise<void> {
+    const at = Date.now();
+    const local =
+      !scan.value.running && (scannedAt.value === null || at - scannedAt.value > LOCAL_MAX_AGE_MS);
+    const github = !prsLoading.value && prsStale(prs.value);
+    if (!local && !github) return;
+    now.value = at;
+    await Promise.all([github ? refreshPrs() : null, local ? runScan() : null]);
   }
 
   /** The refresh button: GitHub and every repo again. */
@@ -272,9 +304,11 @@ export const useWorkStore = defineStore('work', () => {
     marks,
     error,
     now,
+    scannedAt,
     complete,
     classification,
     load,
+    catchUp,
     refresh,
     runScan,
     mark,

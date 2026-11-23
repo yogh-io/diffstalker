@@ -15,6 +15,7 @@ import { formatFull } from '../utils/workFormat';
 import { useUiStore } from '../stores/ui';
 import { useRepoStore } from '../stores/repo';
 import { useDaemonStore } from '../stores/daemon';
+import { useWorkStore } from '../stores/work';
 import { makeFakeFetch } from '../testing/fakes';
 import type { FakeFetch, FakeResponse, FetchCall } from '../testing/fakes';
 import type { PrInfo, PrSnapshot, WorkMarks, WorkRepoFacts } from '@diffstalker/core/types/work';
@@ -552,9 +553,11 @@ describe('grouping', () => {
 });
 
 describe('the gh line', () => {
-  test('ok: when and as whom, as a clock time', async () => {
+  test('ok: how long ago and as whom, the time on hover', async () => {
     const wrapper = await mountPage();
-    expect(wrapper.find('[data-testid="gh-line"]').text()).toBe('PRs checked 14:02 as JornC');
+    const line = wrapper.find('[data-testid="gh-line"]');
+    expect(line.text()).toBe('PRs checked 58 minutes ago as JornC');
+    expect(line.attributes('data-tip')).toBe(formatFull(CHECKED));
   });
 
   test.each([
@@ -571,8 +574,23 @@ describe('the gh line', () => {
     prsAnswer = snapshot({ status: 'error', message: 'timeout' });
     const wrapper = await mountPage();
     expect(wrapper.find('[data-testid="gh-line"]').text()).toBe(
-      'could not reach GitHub: timeout · PRs checked 14:02 as JornC'
+      'could not reach GitHub: timeout · PRs checked 58 minutes ago as JornC'
     );
+  });
+
+  test('the scan line says how long ago the repos were scanned', async () => {
+    const wrapper = await mountPage();
+    expect(wrapper.find('[data-testid="scan-line"]').text()).toBe('Repos scanned just now');
+  });
+
+  test('shown again, the page catches up', async () => {
+    const wrapper = await mountPage();
+    const catchUp = vi.spyOn(useWorkStore(), 'catchUp').mockResolvedValue();
+    window.dispatchEvent(new Event('focus'));
+    expect(catchUp).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+    window.dispatchEvent(new Event('focus'));
+    expect(catchUp).toHaveBeenCalledTimes(1);
   });
 
   test('never asked: the page asks once on open', async () => {

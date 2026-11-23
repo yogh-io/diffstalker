@@ -575,6 +575,12 @@ export function ghNotice(status: PrSnapshotStatus, message: string | null): stri
   }
 }
 
+/** `PRs checked 6 minutes ago as JornC`: the Work page's line, which keeps counting. */
+export function checkedAgoLine(checkedAt: number, viewer: string | null, now: number): string {
+  const who = viewer === null ? '' : ` as ${viewer}`;
+  return `PRs checked ${formatAgo(checkedAt, now)}${who}`;
+}
+
 /** `PRs checked 14:02 as JornC`. */
 export function checkedLine(checkedAt: number, viewer: string | null, now: number): string {
   const who = viewer === null ? '' : ` as ${viewer}`;

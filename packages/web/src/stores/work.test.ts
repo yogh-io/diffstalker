@@ -8,7 +8,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
-import { useWorkStore } from './work';
+import { GITHUB_MAX_AGE_MS, LOCAL_MAX_AGE_MS, useWorkStore } from './work';
 import { Deferred, makeFakeFetch } from '../testing/fakes';
 import type { FakeFetch, FakeResponse, FetchCall } from '../testing/fakes';
 import type { PrSnapshot, WorkMarks, WorkRepoFacts } from '@diffstalker/core/types/work';
@@ -44,7 +44,7 @@ function snapshot(over: Partial<PrSnapshot> = {}): PrSnapshot {
   return {
     status: 'ok',
     message: null,
-    checkedAt: 1000,
+    checkedAt: Date.now(),
     viewer: 'JornC',
     prs: [],
     capped: false,
@@ -96,7 +96,12 @@ beforeEach(() => {
       return { body: open.map((path, i) => ({ id: `r${i}`, path, branch: null })) };
     if (call.url === '/work/repo' && call.method === 'POST') return onRepo(pathOf(call), call);
     if (call.url === '/work/prs') return { body: prsAnswer };
-    if (call.url === '/work/prs/refresh') return { body: snapshot() };
+    // Like the daemon: a refresh gives a real status; a failed one keeps the old time.
+    if (call.url === '/work/prs/refresh') {
+      if (prsAnswer.status === 'never') return { body: snapshot() };
+      if (prsAnswer.status !== 'ok') return { body: prsAnswer };
+      return { body: { ...prsAnswer, checkedAt: Date.now() } };
+    }
     if (call.url === '/work/marks' && call.method === 'GET') return { body: EMPTY_MARKS };
     if (call.url === '/work/marks' && call.method === 'PUT') return { body: EMPTY_MARKS };
     return { status: 404, body: { error: 'no route' } };
@@ -105,6 +110,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -208,11 +214,16 @@ describe('scan', () => {
 });
 
 describe('GitHub', () => {
-  test('on open the cached snapshot is read, and refreshed only when never asked', async () => {
+  test('on open the cached snapshot is read, and refreshed only when never asked or old', async () => {
     const store = useWorkStore();
     await store.load();
     expect(fake.callsTo('/work/prs/refresh')).toHaveLength(0);
     expect(store.prs?.status).toBe('ok');
+
+    prsAnswer = snapshot({ checkedAt: Date.now() - GITHUB_MAX_AGE_MS - 1 });
+    await store.load();
+    expect(fake.callsTo('/work/prs/refresh')).toHaveLength(1);
+    fake.calls.length = 0;
 
     prsAnswer = snapshot({ status: 'never', checkedAt: null, viewer: null });
     await store.load();
@@ -220,6 +231,30 @@ describe('GitHub', () => {
     expect(refreshes).toHaveLength(1);
     expect(refreshes[0].method).toBe('POST');
     expect(store.prs?.status).toBe('ok');
+  });
+
+  test('shown again: only what is past its minimum age is asked for', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 10, 23, 15, 0));
+    prsAnswer = snapshot();
+    discovered = ['/w/a'];
+    const store = useWorkStore();
+    await store.load();
+    fake.calls.length = 0;
+
+    await store.catchUp();
+    expect(fake.callsTo('/work/prs/refresh')).toHaveLength(0);
+    expect(fake.callsTo('/work/repo')).toHaveLength(0);
+
+    vi.setSystemTime(Date.now() + LOCAL_MAX_AGE_MS + 1);
+    await store.catchUp();
+    expect(fake.callsTo('/work/repo')).toHaveLength(1);
+    expect(fake.callsTo('/work/prs/refresh')).toHaveLength(0);
+
+    vi.setSystemTime(Date.now() + GITHUB_MAX_AGE_MS);
+    await store.catchUp();
+    expect(fake.callsTo('/work/prs/refresh')).toHaveLength(1);
+    expect(store.scannedAt).toBe(Date.now());
   });
 
   test('the refresh button asks GitHub and rescans', async () => {
