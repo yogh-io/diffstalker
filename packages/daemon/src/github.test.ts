@@ -258,13 +258,23 @@ describe('progress', () => {
           { isResolved: false, comments: { nodes: [] } },
         ],
       },
-      commits: { nodes: [{ commit: { statusCheckRollup: { state: 'ERROR' } } }] },
+      commits: {
+        nodes: [
+          {
+            commit: {
+              committedDate: '2026-11-13T20:40:00Z',
+              statusCheckRollup: { state: 'ERROR' },
+            },
+          },
+        ],
+      },
     });
     expect(progress).toMatchObject({
       decision: 'changes-requested',
       unresolvedThreads: 2,
       pendingReviewers: 2,
       checks: 'failure',
+      headCommittedAt: '2026-11-13T20:40:00Z',
       conflicting: true,
     });
   });
@@ -272,7 +282,7 @@ describe('progress', () => {
   test('no checks and an unknown decision read as null', async () => {
     const progress = await progressOf({
       reviewDecision: 'SOMETHING_NEW',
-      commits: { nodes: [{ commit: { statusCheckRollup: null } }] },
+      commits: { nodes: [{ commit: { committedDate: null, statusCheckRollup: null } }] },
     });
     expect(progress).toMatchObject({ decision: null, checks: null });
   });
@@ -518,6 +528,7 @@ describe('refresh', () => {
         requestedReviewers: [],
         changesRequestedBy: [],
         checks: null,
+        headCommittedAt: null,
         conflicting: false,
         events: [],
       },

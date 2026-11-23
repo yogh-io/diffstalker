@@ -685,6 +685,7 @@ function progress(over: Partial<PrProgress> = {}): PrProgress {
     requestedReviewers: [],
     changesRequestedBy: [],
     checks: null,
+    headCommittedAt: null,
     conflicting: false,
     events: [],
     ...over,
@@ -723,6 +724,35 @@ describe('activity from GitHub', () => {
     const merged = pr(9, 'x', { state: 'merged', mergedAt, closedAt: mergedAt });
     const item = only(classifyWork([], snapshot([merged]), NO_MARKS, NOW).done);
     expect(item.lastActivity).toMatchObject({ kind: 'merged', at: Date.parse(mergedAt) });
+  });
+
+  test('an open PR whose only comments are from bots: its head commit is the activity', () => {
+    const headCommittedAt = '2026-11-13T20:40:00Z';
+    const item = only(
+      classifyWork(
+        [],
+        snapshot([pr(9, 'x', { progress: progress({ headCommittedAt }) })]),
+        NO_MARKS,
+        NOW
+      ).work
+    );
+    expect(item.lastActivity).toEqual({
+      at: Date.parse(headCommittedAt),
+      kind: 'head-commit',
+      author: 'JornC',
+      other: false,
+    });
+  });
+
+  test("a new commit on a PR the author is asked to review is someone else's", () => {
+    const headCommittedAt = '2026-11-13T20:40:00Z';
+    const theirs = pr(9, 'x', {
+      author: 'SerhatG',
+      reviewRequested: true,
+      progress: progress({ headCommittedAt }),
+    });
+    const item = only(classifyWork([], snapshot([theirs]), NO_MARKS, NOW).candidates);
+    expect(item.lastActivity?.other).toBe(true);
   });
 
   test('a PR with no events has no activity', () => {

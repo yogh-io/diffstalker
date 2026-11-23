@@ -198,6 +198,15 @@ function activityOf(
   local(times.edited, 'edited');
   local(times.git, 'git');
   local(times.draft, 'draft');
+  const headAt = pr?.state === 'open' ? parsedTime(pr.progress?.headCommittedAt ?? '') : null;
+  if (pr !== null && headAt !== null) {
+    options.push({
+      at: headAt,
+      kind: 'head-commit',
+      author: pr.author,
+      other: viewer !== null && pr.author !== null && pr.author !== viewer,
+    });
+  }
   const event = pr?.progress?.events[0];
   const eventAt = event === undefined ? null : parsedTime(event.at);
   if (event !== undefined && eventAt !== null) {

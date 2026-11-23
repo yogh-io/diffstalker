@@ -122,6 +122,11 @@ export interface PrProgress {
   changesRequestedBy: string[];
   /** null: no checks ran. */
   checks: PrChecks | null;
+  /**
+   * When the head commit was made, ISO. The newest commit on the PR, so the
+   * author's own work on it shows as activity even when only bots comment.
+   */
+  headCommittedAt: string | null;
   /** GitHub says the PR has merge conflicts. */
   conflicting: boolean;
   /** Reviews and comments by people, newest first, at most PR_EVENTS_MAX. Bots are left out. */
@@ -353,15 +358,7 @@ export interface WorkItemTarget {
  * then merged or closed. `gone`: the branch was deleted.
  */
 export type WorkStage =
-  | 'local'
-  | 'pushed'
-  | 'draft'
-  | 'review'
-  | 'changes'
-  | 'approved'
-  | 'merged'
-  | 'closed'
-  | 'gone';
+  'local' | 'pushed' | 'draft' | 'review' | 'changes' | 'approved' | 'merged' | 'closed' | 'gone';
 
 /** An open PR whose base is another open PR's head, or that is such a base. */
 export interface WorkStack {
@@ -374,7 +371,8 @@ export interface WorkStack {
 }
 
 /** What `WorkActivity` describes. */
-export type WorkActivityKind = 'edited' | 'git' | 'draft' | PrEventKind | 'merged' | 'closed';
+export type WorkActivityKind =
+  'edited' | 'git' | 'draft' | 'head-commit' | PrEventKind | 'merged' | 'closed';
 
 /**
  * Why an item wants the author now. `changes-requested`: a reviewer asked
@@ -390,7 +388,8 @@ export interface WorkActivity {
   /**
    * `edited`: a file in the worktree changed. `git`: the index or HEAD
    * moved (a commit, a stage, a checkout). `draft`: a draft file changed.
-   * The rest come from GitHub.
+   * `head-commit`: the open PR's newest commit was made. The rest come
+   * from GitHub's reviews, comments, merge or close.
    */
   kind: WorkActivityKind;
   /** The GitHub login for a PR event; null for local work. */

@@ -226,7 +226,8 @@ the last 20 reviews and 20 comments, the first 100 review threads
 (resolved or not, and each one's last comment), and the head commit's
 `statusCheckRollup`. From those it keeps the open-thread count and the
 newest 10 events by people: a review (`approved`, `changes requested`,
-`reviewed`) or a comment. Bots (`__typename` `Bot`: SonarCloud, Amplify)
+`reviewed`) or a comment. The head commit's `committedDate` comes with its
+checks. Bots (`__typename` `Bot`: SonarCloud, Amplify)
 and deleted accounts are left out; a review and its inline comments in the
 same minute count once per kind.
 
@@ -371,7 +372,9 @@ the same Track and Dismiss buttons. Nothing is dropped. On the author's
 machine 290 candidates came out of 87 repos, and only 12 of them were
 under a week old. Activity (`WorkActivity`) is the newest of: the
 worktree's `changedAt` (§5.1, "files edited"), its index or HEAD mtime
-("committed or staged"), the draft's mtime, the newest event by a person on
+("commit, stage or checkout"), the draft's mtime, the open PR's head
+commit (`committedDate`: the author's last commit on it, so a PR whose only
+comments are from bots still has a time), the newest event by a person on
 its PR (§4.1), and the PR's merge or close. The PR's `updatedAt` does not
 count: bots comment on every push and kept moving it.
 

@@ -135,7 +135,7 @@ const OPEN_FIELDS = `${CLOSED_FIELDS}
       reviews(last: 20) { nodes { ${AUTHOR} state submittedAt } }
       comments(last: 20) { nodes { ${AUTHOR} createdAt } }
       reviewThreads(first: 100) { nodes { isResolved comments(last: 1) { nodes { ${AUTHOR} createdAt } } } }
-      commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`;
+      commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }`;
 
 function pageFields(fields: string): string {
   return `pageInfo { hasNextPage endCursor }
@@ -352,12 +352,15 @@ const CHECKS: Record<string, PrChecks> = {
   EXPECTED: 'pending',
 };
 
-function checksOf(rec: Json): PrChecks | null {
+/** The head commit: when it was made, and its combined checks. */
+function headOf(rec: Json): { committedAt: string | null; checks: PrChecks | null } {
   const last = nodesOf(rec, 'commits')[0];
-  if (last === undefined) return null;
-  const rollup = record(record(last, 'commit node').commit, 'commit').statusCheckRollup;
-  if (rollup === null) return null;
-  return CHECKS[text(record(rollup, 'statusCheckRollup'), 'state')] ?? null;
+  if (last === undefined) return { committedAt: null, checks: null };
+  const commit = record(record(last, 'commit node').commit, 'commit');
+  const rollup = commit.statusCheckRollup;
+  const checks =
+    rollup === null ? null : (CHECKS[text(record(rollup, 'statusCheckRollup'), 'state')] ?? null);
+  return { committedAt: textOrNull(commit, 'committedDate'), checks };
 }
 
 /** A requested reviewer: a login, `team:<slug>`, or null for a kind GitHub may add. */
@@ -383,6 +386,7 @@ function changesRequestedBy(rec: Json): string[] {
 
 function parseProgress(rec: Json): PrProgress {
   const decision = textOrNull(rec, 'reviewDecision');
+  const head = headOf(rec);
   const threads = threadFacts(rec);
   const requests = record(rec.reviewRequests, 'reviewRequests');
   const pending = requests.totalCount;
@@ -399,7 +403,8 @@ function parseProgress(rec: Json): PrProgress {
     pendingReviewers: pending,
     requestedReviewers: requested,
     changesRequestedBy: changesRequestedBy(rec),
-    checks: checksOf(rec),
+    checks: head.checks,
+    headCommittedAt: head.committedAt,
     conflicting: text(rec, 'mergeable') === 'CONFLICTING',
     events: newestEvents([...reviewEvents(rec), ...comments, ...threads.events]),
   };

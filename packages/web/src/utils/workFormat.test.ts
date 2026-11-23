@@ -212,6 +212,7 @@ describe('itemEvents', () => {
             requestedReviewers: [],
             changesRequestedBy: [],
             checks: null,
+            headCommittedAt: null,
             conflicting: false,
             events: [
               { kind: 'approved', author: 'Bert', at: '2026-11-21T10:00:00Z' },
@@ -286,6 +287,7 @@ describe('attention and the session brief', () => {
       requestedReviewers: ['Hil'],
       changesRequestedBy: ['Bert', 'Hil'],
       checks: null,
+      headCommittedAt: null,
       conflicting: false,
       events: [],
     },
@@ -402,6 +404,7 @@ describe('workStatus', () => {
     requestedReviewers: [],
     changesRequestedBy: [],
     checks: 'success',
+    headCommittedAt: null,
     conflicting: false,
     events: [],
     ...over,

@@ -315,6 +315,7 @@ describe('cells', () => {
             requestedReviewers: [],
             changesRequestedBy: [],
             checks: 'failure',
+            headCommittedAt: null,
             conflicting: true,
             events: [],
           },
@@ -362,6 +363,7 @@ describe('cells', () => {
             requestedReviewers: [],
             changesRequestedBy: [],
             checks: null,
+            headCommittedAt: null,
             conflicting: false,
             events: [{ kind: 'approved', author: 'Bert', at }],
           },
@@ -391,6 +393,7 @@ describe('who waits on the author', () => {
             requestedReviewers: [],
             changesRequestedBy: ['Bert'],
             checks: null,
+            headCommittedAt: null,
             conflicting: false,
             events: [],
           },
@@ -473,6 +476,32 @@ describe('the time filter', () => {
     await wrapper.find('[data-testid="work-within-all"]').trigger('click');
     expect(branchesOf(wrapper, 'work')).toEqual(['with-pr', 'nowhere-local']);
     expect(branchesOf(wrapper, 'older')).toEqual(['stale']);
+  });
+
+  test('a PR with no local branch and only bot comments counts its head commit', async () => {
+    prsAnswer = snapshot({
+      prs: [
+        pr(9087, 'with-pr'),
+        pr(55, 'nowhere-local', {
+          progress: {
+            decision: null,
+            unresolvedThreads: 0,
+            pendingReviewers: 0,
+            requestedReviewers: [],
+            changesRequestedBy: [],
+            checks: 'success',
+            headCommittedAt: new Date(NOW - 3 * DAY).toISOString(),
+            conflicting: false,
+            events: [],
+          },
+        }),
+      ],
+    });
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="work-within-week"]').trigger('click');
+    expect(branchesOf(wrapper, 'work')).toEqual(['with-pr', 'nowhere-local']);
+    await wrapper.find('[data-testid="work-within-day"]').trigger('click');
+    expect(branchesOf(wrapper, 'work')).toEqual(['with-pr']);
   });
 
   test('a window with nothing in it says so, not "nothing open"', async () => {

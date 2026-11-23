@@ -156,6 +156,7 @@ export const ACTIVITY_LABELS: Record<WorkActivityKind, string> = {
   ...EVENT_LABELS,
   edited: 'files edited',
   git: 'commit, stage or checkout',
+  'head-commit': 'new commit on the PR',
   draft: 'draft edited',
   merged: 'merged',
   closed: 'closed',
@@ -188,6 +189,10 @@ export function itemEvents(item: WorkItem, viewer: string | null): ItemEvent[] {
     });
   }
   const pr = item.pr;
+  const headAt = pr?.state === 'open' ? Date.parse(pr.progress?.headCommittedAt ?? '') : NaN;
+  if (!Number.isNaN(headAt)) {
+    events.push({ at: headAt, text: ACTIVITY_LABELS['head-commit'], other: false });
+  }
   if (pr !== null && pr.state !== 'open') {
     const at = Date.parse(pr.mergedAt ?? pr.closedAt ?? '');
     if (!Number.isNaN(at)) events.push({ at, text: pr.state, other: false });
