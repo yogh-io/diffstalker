@@ -30,7 +30,7 @@ import { useWorkStore } from '../stores/work';
 import { useRepoOpen } from '../composables/useRepoOpen';
 import { beginUserNav } from '../composables/useUrlSync';
 import { basename } from '../utils/format';
-import { checkedLine, ghNotice, layoutWork } from '../utils/workFormat';
+import { TIME_BUCKETS, activeWithin, checkedLine, ghNotice, layoutWork } from '../utils/workFormat';
 import type { WorkSort, WorkSortKey } from '../utils/workFormat';
 import WorkRow from '../components/WorkRow.vue';
 import type { WorkClassification, WorkItem, WorkMarkAction } from '@diffstalker/core/types/work';
@@ -130,9 +130,28 @@ function ariaSort(key: WorkSortKey | null): 'ascending' | 'descending' | undefin
 
 const classification = computed<WorkClassification>(() => work.classification);
 
+/** The filter: every item, or only those with activity in the last day, week or month. Not stored. */
+const WINDOWS = TIME_BUCKETS.filter((bucket) => bucket.within !== Infinity);
+const within = ref<string | null>(null);
+
+function windowOf(key: string | null): number | null {
+  return WINDOWS.find((window) => window.key === key)?.within ?? null;
+}
+
+function shown(items: WorkItem[], key: string | null): WorkItem[] {
+  const ms = windowOf(key);
+  return ms === null ? items : items.filter((item) => activeWithin(item, clock.value, ms));
+}
+
+/** Per filter, how many items it keeps across every section. */
+const windowCounts = computed(() => {
+  const all = BLOCKS.flatMap((block) => classification.value[block.name]);
+  return Object.fromEntries(WINDOWS.map((window) => [window.key, shown(all, window.key).length]));
+});
+
 const blocks = computed(() =>
   BLOCKS.map((block) => {
-    const items = classification.value[block.name];
+    const items = shown(classification.value[block.name], within.value);
     const lines = layoutWork(items, {
       byRepo: ui.workByRepo,
       byTime: ui.workByTime,
@@ -179,7 +198,7 @@ const allClear = computed(
   () =>
     work.scanFinished &&
     !nothingToScan.value &&
-    blocks.value.length === 0 &&
+    BLOCKS.every((block) => classification.value[block.name].length === 0) &&
     classification.value.dismissed.length === 0
 );
 
@@ -216,6 +235,29 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
           {{ ghLine.text }}
         </p>
         <p v-if="scanLine" class="scan-line mono" data-testid="scan-line">{{ scanLine }}</p>
+      </div>
+      <div class="filters" role="group" aria-label="Show">
+        <button
+          class="filter chrome-chip"
+          :class="{ on: within === null }"
+          :aria-pressed="within === null"
+          data-testid="work-within-all"
+          @click="within = null"
+        >
+          All
+        </button>
+        <button
+          v-for="window in WINDOWS"
+          :key="window.key"
+          class="filter chrome-chip"
+          :class="{ on: within === window.key }"
+          :aria-pressed="within === window.key"
+          :data-testid="`work-within-${window.key}`"
+          :data-tip="`Only what moved in the ${window.label.toLowerCase()}`"
+          @click="within = window.key"
+        >
+          {{ window.label }} <span class="filter-count">{{ windowCounts[window.key] }}</span>
+        </button>
       </div>
       <div class="filters" role="group" aria-label="Group">
         <button
@@ -282,6 +324,13 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
     <p v-else-if="allClear" class="panel-note" data-testid="work-clear">
       Nothing open. A worktree with changes, a branch ahead of its base, or an open PR shows up
       here.
+    </p>
+    <p
+      v-else-if="within !== null && blocks.length === 0 && work.scanFinished"
+      class="panel-note"
+      data-testid="work-within-empty"
+    >
+      Nothing moved in the {{ WINDOWS.find((w) => w.key === within)?.label.toLowerCase() }}.
     </p>
 
     <div v-if="blocks.length > 0" class="col-heads" data-testid="work-col-heads">
@@ -369,9 +418,14 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
 
 .work-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
-  gap: 1rem;
+  gap: 0.5rem 1rem;
   margin-bottom: 1rem;
+}
+
+.filter-count {
+  color: var(--text-dim);
 }
 
 .head-text {

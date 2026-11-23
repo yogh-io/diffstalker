@@ -99,7 +99,12 @@ export function formatFull(ms: number): string {
 
 /** Something happened to the item in the last LAST_DAY_MS. */
 export function activeLastDay(item: WorkItem, now: number): boolean {
-  return item.activity !== null && now - item.activity <= LAST_DAY_MS;
+  return activeWithin(item, now, LAST_DAY_MS);
+}
+
+/** Something happened to the item at most `ms` ago. Unknown activity is never within. */
+export function activeWithin(item: WorkItem, now: number, ms: number): boolean {
+  return item.activity !== null && now - item.activity <= ms;
 }
 
 export const STAGE_LABELS: Record<WorkStage, string> = {

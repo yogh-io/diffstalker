@@ -458,6 +458,35 @@ describe('sorting by a column', () => {
   });
 });
 
+describe('the time filter', () => {
+  test('keeps only what moved in the window, in every section; All brings the rest back', async () => {
+    const wrapper = await mountPage();
+    expect(wrapper.find('[data-testid="work-within-day"]').text()).toBe('Last day 3');
+    expect(wrapper.find('[data-testid="work-within-month"]').text()).toBe('Last month 3');
+    await wrapper.find('[data-testid="work-within-day"]').trigger('click');
+    expect(branchesOf(wrapper, 'work')).toEqual(['with-pr']);
+    expect(branchesOf(wrapper, 'candidates')).toEqual(['nginx']);
+    expect(branchesOf(wrapper, 'done')).toEqual(['old']);
+    expect(wrapper.find('[data-testid="work-section-older"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="work-within-day"]').attributes('aria-pressed')).toBe('true');
+
+    await wrapper.find('[data-testid="work-within-all"]').trigger('click');
+    expect(branchesOf(wrapper, 'work')).toEqual(['with-pr', 'nowhere-local']);
+    expect(branchesOf(wrapper, 'older')).toEqual(['stale']);
+  });
+
+  test('a window with nothing in it says so, not "nothing open"', async () => {
+    vi.setSystemTime(NOW + 400 * DAY);
+    const wrapper = await mountPage();
+    expect(wrapper.find('[data-testid="work-within-month"]').text()).toBe('Last month 0');
+    await wrapper.find('[data-testid="work-within-month"]').trigger('click');
+    expect(wrapper.find('[data-testid="work-within-empty"]').text()).toBe(
+      'Nothing moved in the last month.'
+    );
+    expect(wrapper.find('[data-testid="work-clear"]').exists()).toBe(false);
+  });
+});
+
 describe('grouping', () => {
   test('by repository off: one plain list; by time on: last day, last week and older', async () => {
     const wrapper = await mountPage();
