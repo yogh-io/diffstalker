@@ -13,7 +13,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { BranchPr, PrSnapshot, WorkMarks, WorkRepoFacts } from '@diffstalker/core/types/work';
 import { createDaemon, type Daemon } from './server.js';
-import { createWorkScanner } from './routes/work.js';
+import { createWorkScanner, repoFamily } from './routes/work.js';
 import { OPEN_SEARCH, type GhRunner } from './github.js';
 import { createFixtureRepo, gitExec, removeFixtureRepo, writeFixtureFile } from './test-helpers.js';
 
@@ -342,6 +342,120 @@ describe('createWorkScanner', () => {
     await expect(again).rejects.toThrow('git failed');
     void scanWork('/a');
     expect(fake.calls).toHaveLength(4);
+  });
+});
+
+describe('one scan per repo family', () => {
+  const family = (p: string) => (p.startsWith('/repo') ? '/repo/.git' : null);
+
+  function facts(p: string): WorkRepoFacts {
+    return {
+      path: p,
+      root: '/repo',
+      name: 'repo',
+      worktrees: [],
+      branches: [],
+      branchesCapped: false,
+      identities: [],
+      drafts: [],
+    };
+  }
+
+  function fakeScan() {
+    const calls: string[] = [];
+    const waiting: Array<{ resolve: (v: WorkRepoFacts) => void; reject: (e: Error) => void }> = [];
+    const scan = (repoPath: string) => {
+      calls.push(repoPath);
+      return new Promise<WorkRepoFacts>((resolve, reject) => waiting.push({ resolve, reject }));
+    };
+    return { calls, waiting, scan };
+  }
+
+  test('two paths of one repo share its scan, each answer with its own path', async () => {
+    const fake = fakeScan();
+    const scanWork = createWorkScanner(fake.scan, family, 1000);
+    const main = scanWork('/repo');
+    const linked = scanWork('/repo-linked');
+    expect(fake.calls).toEqual(['/repo']);
+    fake.waiting[0].resolve(facts('/repo'));
+    expect(await main).toEqual(facts('/repo'));
+    expect(await linked).toEqual(facts('/repo-linked'));
+
+    // Finished, and this path was not answered yet: the same page scan, so it shares.
+    expect(await scanWork('/repo-other')).toEqual(facts('/repo-other'));
+    expect(fake.calls).toEqual(['/repo']);
+  });
+
+  test('asking again for a path the scan answered is a new refresh, which scans', async () => {
+    const fake = fakeScan();
+    const scanWork = createWorkScanner(fake.scan, family, 1000);
+    const first = scanWork('/repo');
+    fake.waiting[0].resolve(facts('/repo'));
+    await first;
+
+    const again = scanWork('/repo');
+    const linked = scanWork('/repo-linked');
+    expect(fake.calls).toEqual(['/repo', '/repo']);
+    fake.waiting[1].resolve(facts('/repo'));
+    expect(await again).toEqual(facts('/repo'));
+    expect(await linked).toEqual(facts('/repo-linked'));
+    expect(fake.calls).toHaveLength(2);
+  });
+
+  test('a finished scan is not shared once the window is over', async () => {
+    const fake = fakeScan();
+    const scanWork = createWorkScanner(fake.scan, family, 20);
+    const main = scanWork('/repo');
+    fake.waiting[0].resolve(facts('/repo'));
+    await main;
+    await Bun.sleep(60);
+    void scanWork('/repo-linked');
+    expect(fake.calls).toEqual(['/repo', '/repo-linked']);
+  });
+
+  test('a failed scan is not shared', async () => {
+    const fake = fakeScan();
+    const scanWork = createWorkScanner(fake.scan, family, 1000);
+    const main = scanWork('/repo');
+    fake.waiting[0].reject(new Error('git failed'));
+    await expect(main).rejects.toThrow('git failed');
+    void scanWork('/repo-linked');
+    expect(fake.calls).toEqual(['/repo', '/repo-linked']);
+  });
+
+  test('a repo and its linked worktree are one family; a plain directory has none', () => {
+    const linked = path.join(tmpDir, 'family-linked');
+    gitExec(repoPath, `worktree add -q "${linked}" feature`);
+    try {
+      expect(repoFamily(repoPath)).toBe(fs.realpathSync(path.join(repoPath, '.git')));
+      expect(repoFamily(linked)).toBe(repoFamily(repoPath));
+      expect(repoFamily(tmpDir)).toBeNull();
+    } finally {
+      gitExec(repoPath, `worktree remove --force "${linked}"`);
+    }
+  });
+
+  test('a discovered worktree of a discovered repo answers with its own path', async () => {
+    const familyRoot = path.join(tmpDir, 'family');
+    const main = path.join(familyRoot, 'main');
+    const linked = path.join(familyRoot, 'main-linked');
+    fs.mkdirSync(main, { recursive: true });
+    gitExec(main, 'init -q --initial-branch=main');
+    gitExec(main, 'config user.email t@t.t');
+    gitExec(main, 'config user.name t');
+    gitExec(main, 'commit -q --allow-empty -m initial');
+    gitExec(main, `worktree add -q -b side "${linked}"`);
+    const saved = await send('PUT', '/settings', { watchRoots: [watchRoot, familyRoot] });
+    expect(saved.status).toBe(200);
+
+    const [fromMain, fromLinked] = await Promise.all([workRepo(main), workRepo(linked)]);
+    expect([fromMain.status, fromLinked.status]).toEqual([200, 200]);
+    const mainFacts = (await fromMain.json()) as WorkRepoFacts;
+    const linkedFacts = (await fromLinked.json()) as WorkRepoFacts;
+    expect(mainFacts.path).toBe(main);
+    expect(linkedFacts.path).toBe(linked);
+    expect({ ...linkedFacts, path: main }).toEqual(mainFacts);
+    expect(mainFacts.worktrees.map((wt) => wt.branch)).toEqual(['main', 'side']);
   });
 });
 
