@@ -19,7 +19,7 @@ import { describe, test, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { apiPaths } from '../vite.config';
+import { apiPaths, proxyKey } from '../vite.config';
 
 const routesDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -57,5 +57,23 @@ describe('vite dev proxy', () => {
     const served = daemonTopLevelPaths();
     const stale = apiPaths.filter((p) => !served.has(p)).sort();
     expect(stale).toEqual([]);
+  });
+});
+
+describe('the /work key', () => {
+  // Vite treats a key that starts with ^ as a regex, anything else as a prefix.
+  function proxies(key: string, url: string): boolean {
+    return key.startsWith('^') ? new RegExp(key).test(url) : url.startsWith(key);
+  }
+
+  test('sends /work/… to the daemon and leaves the page /work to the SPA', () => {
+    const key = proxyKey('/work');
+    expect(proxies(key, '/work')).toBe(false);
+    expect(proxies(key, '/work/prs')).toBe(true);
+    expect(proxies(key, '/work/repo')).toBe(true);
+  });
+
+  test('every other path keeps its plain prefix key', () => {
+    expect(proxyKey('/repos')).toBe('/repos');
   });
 });

@@ -120,6 +120,7 @@ import type {
 } from './types';
 import { NO_UNCOMMITTED, type UncommittedParts } from '@diffstalker/core/types/compare';
 import type { CompareStack, StackLayer } from '@diffstalker/core/types/stack';
+import type { DraftChangeEvent } from '@diffstalker/core/types/work';
 
 /** How long changed-file refetches coalesce into one per-file batch. */
 const DIFF_DEBOUNCE_MS = 20;
@@ -395,6 +396,18 @@ export const useRepoStore = defineStore('repo', () => {
    * The strip draws from it, and a picked layer resolves against it.
    */
   const compareStack = shallowRef<CompareStack | null>(null);
+  /**
+   * The last `draft-change` from the stream, with a counter so a repeat
+   * is a new value. The draft store watches it; this store must not
+   * import that one (no-circular).
+   */
+  const lastDraftChange = shallowRef<{ event: DraftChangeEvent; seq: number } | null>(null);
+  let draftChangeSeq = 0;
+  /**
+   * Bumps when open() starts, a full round trip before it releases the
+   * old repo. The draft store saves on it while the old id still routes.
+   */
+  const switchStarts = shallowRef(0);
 
   /**
    * Whole-file mode: the one file currently drawn in full instead of as
@@ -601,6 +614,7 @@ export const useRepoStore = defineStore('repo', () => {
     selectedCompareBase.value = null;
     selectedStackHead.value = null;
     compareStack.value = null;
+    lastDraftChange.value = null;
     // Repo B must not inherit repo A's whole-file key: it would name a
     // file that may not exist here, and the first URL write would carry
     // `whole=1` into the new repo's address.
@@ -635,6 +649,7 @@ export const useRepoStore = defineStore('repo', () => {
    * the user asked for, not the one they were leaving.
    */
   async function open(path: string): Promise<RepoRef | null> {
+    switchStarts.value += 1;
     const gen = ++generation;
     // Adopt a directly-assigned repoId (tests) into the held tracking.
     heldRepoId ??= repoId.value;
@@ -702,6 +717,10 @@ export const useRepoStore = defineStore('repo', () => {
       onSnapshot: (state) => applyWireState(state),
       onStateChange: (state) => applyWireState(state),
       onJournalAppend: (event: JournalAppendEvent) => applyJournalAppend(event),
+      onDraftChange: (event) => {
+        draftChangeSeq += 1;
+        lastDraftChange.value = { event, seq: draftChangeSeq };
+      },
       // The stream was paused while the tab was hidden and is back: the
       // daemon resent the snapshot (applied through onSnapshot just
       // before this fires), but journal appends sent during the pause
@@ -2009,17 +2028,19 @@ export const useRepoStore = defineStore('repo', () => {
 
   /**
    * The base + head pair the picked layer stands for, resolved against
-   * the cached stack; today's `?base=` alone when no layer is picked.
-   * Null when a layer is picked that the stack does not hold.
+   * the cached stack; today's `?base=` alone when no layer is picked. A
+   * head that is not a layer but loaded (a branch the Work page opened)
+   * is asked against the trunk. Null when the head is not known to work.
    */
   function pickedRequest(): { base: string | undefined; head: string | undefined } | null {
     const head = selectedStackHead.value;
-    if (head === null) return { base: selectedCompareBase.value ?? undefined, head: undefined };
+    const trunk = selectedCompareBase.value ?? undefined;
+    if (head === null) return { base: trunk, head: undefined };
     const stack = compareStack.value;
     if (stack === null) return null;
     const pick = resolveLayerPick(stack, head);
-    if (pick === null) return null;
-    return { base: pick.base, head: pick.head };
+    if (pick !== null) return { base: pick.base, head: pick.head };
+    return compare.value.pair?.head === head ? { base: trunk, head } : null;
   }
 
   /**
@@ -2064,8 +2085,10 @@ export const useRepoStore = defineStore('repo', () => {
   /**
    * A layer picked: the layer decides what to ask for, so the stack comes
    * first — and a stack the daemon refuses fails the compare like any
-   * other refusal would. Null when the request was superseded meanwhile,
-   * or the name is not a layer (reported here, the caller is done).
+   * other refusal would. A head that is not a layer is asked against the
+   * trunk (docs/work-page.md §5.4). Null when the request was superseded
+   * meanwhile, or the daemon does not know the head (reported here, the
+   * caller is done).
    */
   async function pullLayer(
     id: string,
@@ -2077,10 +2100,7 @@ export const useRepoStore = defineStore('repo', () => {
     const stack = await client.compareStack(id, { base: trunk });
     if (isStale()) return null;
     const pick = resolveLayerPick(stack, head);
-    if (pick === null) {
-      applyUnknownLayer(head, stack);
-      return null;
-    }
+    if (pick === null) return pullOffStack(id, trunk, head, stack, isStale);
     // Uncommitted work only exists against HEAD: the categories go only
     // with the layer at HEAD's tip, which sends no head.
     const atHead = pick.head === undefined;
@@ -2090,6 +2110,25 @@ export const useRepoStore = defineStore('repo', () => {
       ...(atHead ? uncommitted : {}),
     });
     return { stack, diff, head: pick.head, uncommitted: atHead ? uncommitted : NO_UNCOMMITTED };
+  }
+
+  /** A head that is no layer of the stack: the trunk against it, or the old line when it does not resolve. */
+  async function pullOffStack(
+    id: string,
+    trunk: string | undefined,
+    head: string,
+    stack: CompareStack,
+    isStale: () => boolean
+  ): Promise<ComparePull | null> {
+    try {
+      const diff = await client.compare(id, { base: trunk, head });
+      return { stack, diff, head, uncommitted: NO_UNCOMMITTED };
+    } catch (err) {
+      if (isStale()) return null;
+      if (!(err instanceof DaemonError && err.status === 400)) throw err;
+      applyUnknownLayer(head, stack);
+      return null;
+    }
   }
 
   async function refreshCompare(): Promise<void> {
@@ -2285,6 +2324,8 @@ export const useRepoStore = defineStore('repo', () => {
     compareStack,
     pickedLayer,
     comparePair,
+    lastDraftChange,
+    switchStarts,
     // lifecycle
     open,
     dispose,

@@ -27,10 +27,18 @@
  *
  * Do NOT cite `whole` as precedent for putting a preference here. It is in
  * the URL because it is per-anchor and per-visit; a preference is neither.
- * See docs/whole-file-mode.md §8.2.
+ * See docs/whole-file-mode.md §8.2. Compare's PR draft panel fails the same
+ * way: shown or hidden is the reader's, so it lives in prefs.
+ *
+ * THE WORK PAGE is `/work`: a place of its own, not a view, naming no repo
+ * (docs/work-page.md §5). Opening or closing it is an entry. A gesture that
+ * leaves it (beginUserNav closes the page) writes nothing until it lands,
+ * so a row click is one entry. While it is open nothing under it is
+ * written: follow mode moving the repo underneath leaves `/work` alone.
  *
  *   /<view>/<repo-segments…>[?base=…][&head=…][&whole=<path>][&at=…]
  *   /                                                  (no repo open)
+ *   /work                                              (the Work page)
  *   /changes/~/w/diffstalker?at=u:packages/web/src/App.vue
  *   /changes/~/w/diffstalker?whole=src/App.vue&at=u:src/App.vue
  *   /history/~/w/diffstalker?whole=src/App.vue&at=4d1c44a
@@ -132,6 +140,7 @@ import { basename } from '../utils/format';
 import {
   EMPTY_URL_STATE,
   HOME_SENTINEL,
+  WORK_PATH,
   buildUrlPath,
   parseUrl,
 } from '@diffstalker/core/view/urlGrammar';
@@ -181,10 +190,12 @@ let intent: NavIntent | null = null;
  * the state changes: the write it causes — however many flushes later, and
  * whatever async work happens in between — becomes the one history entry
  * for this gesture. A gesture that forgets to call this still works; its
- * move just replaces instead of pushing.
+ * move just replaces instead of pushing. Every gesture goes to a view, so
+ * it also closes the Work page.
  */
 export function beginUserNav(target: NavTarget = {}): void {
   intent = { ...target, expires: Date.now() + NAV_INTENT_MS, used: false };
+  useUiStore().closeWork();
 }
 
 /** Test seam: drop any open gesture. */
@@ -204,6 +215,8 @@ interface Place {
   head: string | null;
   /** Path of the file drawn whole, or null. */
   whole: string | null;
+  /** The Work page; every other field but `view` is empty then. */
+  work: boolean;
 }
 
 export interface RestoreContext {
@@ -339,6 +352,18 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
   function derive(): Place {
     const abs = urlRepoPath.value;
     const view = ui.activeView;
+    if (ui.workOpen) {
+      return {
+        url: WORK_PATH,
+        repoPath: null,
+        view,
+        at: null,
+        base: null,
+        head: null,
+        whole: null,
+        work: true,
+      };
+    }
     const at = abs === null ? null : currentAnchor();
     const base = abs !== null && view === 'compare' ? repo.selectedCompareBase : null;
     const head = abs !== null && view === 'compare' ? repo.selectedStackHead : null;
@@ -356,7 +381,16 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     const wholePath = repo.wholeFile?.path ?? null;
     const whole = wholeWritable(view, at, wholePath) ? wholePath : null;
     if (abs === null)
-      return { url: '/', repoPath: null, view, at: null, base: null, head: null, whole: null };
+      return {
+        url: '/',
+        repoPath: null,
+        view,
+        at: null,
+        base: null,
+        head: null,
+        whole: null,
+        work: false,
+      };
     return {
       url: buildUrlPath({ view, repoPath: abs, home: home.value, at, base, head, whole }),
       repoPath: abs,
@@ -365,11 +399,13 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       base,
       head,
       whole,
+      work: false,
     };
   }
 
   /** `<anchor> — <view> — <repo>`, so a deep Back menu is readable. */
   function titleFor(place: Place): string {
+    if (place.work) return 'work — diffstalker';
     const parts: string[] = [];
     // The mode is part of the name: two Back entries for the same file,
     // one whole and one in hunks, must not read identically in the menu.
@@ -417,7 +453,8 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       // WITHOUT this, toggling whole-file looks like plain anchor movement:
       // it would be deferred into the 400ms throttle and always flushed as
       // 'replace', so the toggle could never mint a Back entry.
-      written.whole === next.whole
+      written.whole === next.whole &&
+      written.work === next.work
     );
   }
 
@@ -429,7 +466,19 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     if (written === null || restoring) return 'replace';
 
     const candidate = openIntent();
-    if (candidate !== null && matchesIntent(candidate, next)) {
+    const matched = candidate !== null && matchesIntent(candidate, next);
+
+    // The Work page opening or closing is always an entry. A gesture that
+    // closed it is spent here, so its later writes replace.
+    if (written.work !== next.work) {
+      if (matched) {
+        candidate.used = true;
+        userPlace = { repoPath: next.repoPath, view: next.view };
+      }
+      return 'push';
+    }
+
+    if (matched) {
       if (candidate.used) return 'replace'; // same gesture, later write
       candidate.used = true;
       userPlace = { repoPath: next.repoPath, view: next.view };
@@ -455,12 +504,20 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     }
   }
 
+  /** A gesture is leaving the Work page and has not reached where it goes. */
+  function leavingWork(next: Place): boolean {
+    if (written?.work !== true || next.work) return false;
+    const candidate = openIntent();
+    return candidate !== null && !candidate.used && !matchesIntent(candidate, next);
+  }
+
   function writeUrl(): void {
     if (typeof window === 'undefined') return;
     // GATE: the repo identity is unsettled (a switch is in flight, or a
     // failed open left the two disagreeing). Nothing about the current
     // state is worth recording, and every flicker lives in this window.
-    if (repo.repoId !== daemon.activeRepoId) return;
+    // The Work page names no repo, so it is never held back by one.
+    if (!ui.workOpen && repo.repoId !== daemon.activeRepoId) return;
 
     const next = derive();
     // The title tracks the place, not the write: a restore that lands
@@ -478,7 +535,10 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
     // came with — and a reload while the daemon is slow (or down) would
     // then lose it for good. Nothing was written yet, so nothing is left
     // untruthful by holding back; the title still moved above.
-    if (next.repoPath === null && written === null) return;
+    if (next.repoPath === null && !next.work && written === null) return;
+    // Leaving `/work` for a place still loading: the place it lands on is
+    // the one entry, not the repo that was open under the page.
+    if (leavingWork(next)) return;
 
     const verdict = decide(next);
     if (verdict === 'defer') {
@@ -535,6 +595,7 @@ export function useUrlSync(options: UrlSyncOptions = {}): {
       () => repo.compare.selection,
       () => repo.history.selectedCommit,
       () => explorer.selectedPath,
+      () => ui.workOpen,
     ],
     writeUrl,
     { flush: 'post' }

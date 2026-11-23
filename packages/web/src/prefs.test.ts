@@ -28,6 +28,9 @@ describe('loadPrefs', () => {
       compareTop: null,
       explorerTop: null,
       compareUncommitted: { staged: false, unstaged: false, untracked: false },
+      prDraftOpen: false,
+      workByRepo: true,
+      workByTime: false,
     });
   });
 
@@ -48,6 +51,9 @@ describe('loadPrefs', () => {
       compareTop: null,
       explorerTop: null,
       compareUncommitted: { staged: false, unstaged: false, untracked: false },
+      prDraftOpen: false,
+      workByRepo: true,
+      workByTime: false,
     });
   });
 
@@ -68,6 +74,9 @@ describe('loadPrefs', () => {
       compareTop: null,
       explorerTop: null,
       compareUncommitted: { staged: false, unstaged: false, untracked: false },
+      prDraftOpen: false,
+      workByRepo: true,
+      workByTime: false,
     });
   });
 
@@ -95,6 +104,9 @@ describe('loadPrefs', () => {
       compareTop: null,
       explorerTop: null,
       compareUncommitted: { staged: false, unstaged: false, untracked: false },
+      prDraftOpen: false,
+      workByRepo: true,
+      workByTime: false,
     });
   });
 
@@ -192,6 +204,21 @@ describe('loadPrefs', () => {
     expect(loadPrefs().wrapEnabled).toBe(false);
   });
 
+  test('the Work page groupings: stored booleans, by repository on and by time off by default', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ workByRepo: false, workByTime: true }));
+    expect(loadPrefs()).toMatchObject({ workByRepo: false, workByTime: true });
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ workByRepo: 'no', workByTime: 1 }));
+    expect(loadPrefs()).toMatchObject({ workByRepo: true, workByTime: false });
+  });
+
+  test('prDraftOpen: persists a stored boolean, drops anything else', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ prDraftOpen: true }));
+    expect(loadPrefs().prDraftOpen).toBe(true);
+
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ prDraftOpen: 1 }));
+    expect(loadPrefs().prDraftOpen).toBe(false);
+  });
+
   test('degrades to defaults when localStorage throws (private mode / quota)', () => {
     vi.stubGlobal('localStorage', {
       getItem(): string | null {
@@ -217,6 +244,9 @@ describe('loadPrefs', () => {
       compareTop: null,
       explorerTop: null,
       compareUncommitted: { staged: false, unstaged: false, untracked: false },
+      prDraftOpen: false,
+      workByRepo: true,
+      workByTime: false,
     });
     // Writes are swallowed too — prefs just don't persist.
     expect(() => savePrefs({ activeView: 'history' })).not.toThrow();
@@ -242,6 +272,9 @@ describe('savePrefs', () => {
       compareTop: null,
       explorerTop: null,
       compareUncommitted: { staged: false, unstaged: false, untracked: false },
+      prDraftOpen: false,
+      workByRepo: true,
+      workByTime: false,
     });
   });
 
@@ -273,7 +306,12 @@ describe('portrait top fractions', () => {
   test('keeps a sane fraction for every view field', () => {
     localStorage.setItem(
       PREFS_KEY,
-      JSON.stringify({ changesTop: 0.3, historyTop: TOP_MIN, compareTop: TOP_MAX, explorerTop: 0.34 })
+      JSON.stringify({
+        changesTop: 0.3,
+        historyTop: TOP_MIN,
+        compareTop: TOP_MAX,
+        explorerTop: 0.34,
+      })
     );
     const prefs = loadPrefs();
     expect(prefs.changesTop).toBe(0.3);

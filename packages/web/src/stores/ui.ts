@@ -8,6 +8,8 @@
  * mode persist through prefs (localStorage); the theme lands on
  * <html data-theme="..."> so the CSS custom-property sets select.
  * Overlay, flash, and stack-key state are session-only — never persisted.
+ * So is whether the Work page is open: the URL (`/work`) says that. The
+ * Compare PR draft panel is a reader preference and is stored.
  *
  * The initial theme honors prefers-color-scheme when no explicit choice
  * is stored (dark unless the browser asks for light).
@@ -83,6 +85,16 @@ export const useUiStore = defineStore('ui', () => {
    * stack's scroll-spy; the file list styles its active row from it.
    */
   const activeStackKey = shallowRef<string | null>(null);
+  /**
+   * The Work page covers the workspace (docs/work-page.md §5). Not a view:
+   * the active view stays what it was underneath it.
+   */
+  const workOpen = shallowRef(false);
+  /** The PR draft panel in Compare. */
+  const prDraftOpen = shallowRef<boolean>(stored.prDraftOpen);
+  /** How the Work page groups its rows; reader preferences. */
+  const workByRepo = shallowRef<boolean>(stored.workByRepo);
+  const workByTime = shallowRef<boolean>(stored.workByTime);
 
   /** Stamp the current theme onto <html>. Called once at app setup. */
   function init(): void {
@@ -102,10 +114,7 @@ export const useUiStore = defineStore('ui', () => {
 
   /** Remember an opened repo path: most recent first, deduped, capped. */
   function addRecentRepo(path: string): void {
-    const next = [path, ...recentRepos.value.filter((p) => p !== path)].slice(
-      0,
-      MAX_RECENT_REPOS
-    );
+    const next = [path, ...recentRepos.value.filter((p) => p !== path)].slice(0, MAX_RECENT_REPOS);
     recentRepos.value = next;
     savePrefs({ recentRepos: next });
   }
@@ -146,6 +155,33 @@ export const useUiStore = defineStore('ui', () => {
       flashedFile.value = null;
       flashTimer = null;
     }, FLASH_MS);
+  }
+
+  function setWorkOpen(open: boolean): void {
+    workOpen.value = open;
+  }
+
+  function openWork(): void {
+    workOpen.value = true;
+  }
+
+  function closeWork(): void {
+    workOpen.value = false;
+  }
+
+  function togglePrDraft(): void {
+    prDraftOpen.value = !prDraftOpen.value;
+    savePrefs({ prDraftOpen: prDraftOpen.value });
+  }
+
+  function toggleWorkByRepo(): void {
+    workByRepo.value = !workByRepo.value;
+    savePrefs({ workByRepo: workByRepo.value });
+  }
+
+  function toggleWorkByTime(): void {
+    workByTime.value = !workByTime.value;
+    savePrefs({ workByTime: workByTime.value });
   }
 
   function setActiveStackKey(key: string | null): void {
@@ -242,6 +278,10 @@ export const useUiStore = defineStore('ui', () => {
     wrapEnabled,
     flashedFile,
     activeStackKey,
+    workOpen,
+    prDraftOpen,
+    workByRepo,
+    workByTime,
     stackScrollRequest,
     expandGatedRequest,
     outlineRequest,
@@ -258,6 +298,12 @@ export const useUiStore = defineStore('ui', () => {
     toggleWrap,
     flashFile,
     setActiveStackKey,
+    setWorkOpen,
+    openWork,
+    closeWork,
+    togglePrDraft,
+    toggleWorkByRepo,
+    toggleWorkByTime,
     requestStackScroll,
     requestExpandGated,
     requestOutline,

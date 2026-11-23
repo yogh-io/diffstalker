@@ -478,3 +478,37 @@ describe('file outline (o)', () => {
     expect(ui.outlineRequest).toBe(0);
   });
 });
+
+describe('the Work page covers the view', () => {
+  test('a view key still switches, and closes the page', () => {
+    const ui = useUiStore();
+    ui.openWork();
+    press('3');
+    expect(ui.activeView).toBe('history');
+    expect(ui.workOpen).toBe(false);
+  });
+
+  test('the display toggles and the list filter do not reach the hidden view', () => {
+    const ui = useUiStore();
+    const filter = useFilterStore();
+    ui.openWork();
+    press('a');
+    press('s');
+    press('d');
+    press('/');
+    expect(ui.autoModeEnabled).toBe(false);
+    expect(ui.diffSyntaxEnabled).toBe(false);
+    expect(ui.diffMode).toBe('unified');
+    expect(filter.open).toBe(false);
+  });
+
+  test('the overlays still open', () => {
+    const ui = useUiStore();
+    ui.openWork();
+    press('?');
+    expect(ui.activeOverlay).toBe('help');
+    press('Escape');
+    press(',');
+    expect(ui.activeOverlay).toBe('settings');
+  });
+});

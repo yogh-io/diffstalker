@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
- * Global header: wordmark, repo switcher, branch + tracking + ahead/behind
+ * Global header: wordmark (a link to the Work page, /work), repo switcher,
+ * branch + tracking + ahead/behind
  * (mono, diff-colored counts — read-only text), one calm error line, the
  * search trigger, settings. No git controls: the web UI is a viewer.
  * The theme picker lives in the settings panel only — it is a set-once
@@ -78,25 +79,44 @@ const trackingLabel = computed(() => {
 const errorLine = computed(() =>
   daemon.activeRepoId !== null ? repo.shared.error : (daemon.error ?? repo.shared.error)
 );
+
+/**
+ * The wordmark opens the Work page, and closes it again. A real link, so
+ * a middle click opens /work in a new tab; a plain click stays in the app.
+ */
+function onBrandClick(event: MouseEvent): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+    return;
+  event.preventDefault();
+  ui.setWorkOpen(!ui.workOpen);
+}
 </script>
 
 <template>
   <header class="app-header">
     <div class="header-identity">
-      <div class="brand" aria-hidden="true">
-        <span class="mark">
+      <a
+        class="brand"
+        href="/work"
+        data-testid="brand-work"
+        title="Work"
+        :class="{ on: ui.workOpen }"
+        :aria-current="ui.workOpen ? 'page' : undefined"
+        @click="onBrandClick"
+      >
+        <span class="mark" aria-hidden="true">
           <span class="cell add"></span>
           <span class="cell del"></span>
         </span>
         <span class="brand-name mono">diffstalker</span>
-      </div>
+      </a>
 
       <RepoSwitcher />
 
-      <WorktreeSwitcher />
+      <WorktreeSwitcher v-if="!ui.workOpen" />
 
       <div
-        v-if="branch"
+        v-if="branch && !ui.workOpen"
         class="branch mono"
         data-testid="branch-info"
         :title="branch.tracking ? `${branch.current} → ${branch.tracking}` : branch.current"
@@ -190,6 +210,21 @@ const errorLine = computed(() =>
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 4px;
+}
+
+/* Lit like the rail's active tab while the Work page is up. */
+.brand.on .brand-name {
+  color: var(--add);
+}
+
+.brand:hover .brand-name {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 3px;
 }
 
 /* The identity mark: a two-cell diff gutter — one add, one del. */

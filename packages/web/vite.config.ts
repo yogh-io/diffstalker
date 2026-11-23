@@ -61,7 +61,17 @@ export const apiPaths = [
   '/settings',
   '/discovered',
   '/browse',
+  '/work',
 ];
+
+/**
+ * The proxy key for one API path. `/work` is shared: the SPA owns the page
+ * `/work` and the daemon owns `/work/…`, so only the sub-paths go to the
+ * daemon (a regex key). Every other path is a plain prefix.
+ */
+export function proxyKey(path: string): string {
+  return path === '/work' ? '^/work/' : path;
+}
 
 export default defineConfig({
   plugins: [vue(), noNodeBuiltins()],
@@ -72,7 +82,7 @@ export default defineConfig({
   server: {
     proxy: Object.fromEntries(
       apiPaths.map((path) => [
-        path,
+        proxyKey(path),
         // SSE (/events, /repos/:id/events) streams through the same proxy.
         { target: daemonUrl, changeOrigin: true },
       ])

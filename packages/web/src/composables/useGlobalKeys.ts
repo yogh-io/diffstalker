@@ -30,6 +30,10 @@
  * the file picker, and ⌘+H is macOS "hide application", which cannot be
  * intercepted at all.
  *
+ * While the Work page is up the view under it is hidden, so only the
+ * overlay keys and the view switch act: a stage or filter key there would
+ * change something the reader cannot see.
+ *
  * Bare keys (digits, ?) never fire while the user is typing in an
  * input/textarea/select/contenteditable (the finder's input included)
  * or while a modifier is held; the view switch is also inert while an
@@ -168,6 +172,19 @@ export function useGlobalKeys(): void {
     return false;
   }
 
+  /**
+   * The keys that act on the view: search, the list filter, the display
+   * toggles. While the Work page hides the view only bare F (the search
+   * overlay) is left. Returns true when it claimed the key.
+   */
+  function handleViewKeys(event: KeyboardEvent): boolean {
+    if (ui.workOpen) return event.key === 'F' && handleBareSurface(event);
+    // The bare-key surfaces: search, and the list filter.
+    if (handleBareSurface(event)) return true;
+    // Display toggles on the home row (a s d f).
+    return handleDisplayToggle(event.key);
+  }
+
   function onKeydown(event: KeyboardEvent): void {
     if (event.defaultPrevented) return;
 
@@ -201,11 +218,7 @@ export function useGlobalKeys(): void {
 
     if (ui.activeOverlay !== null) return; // overlays are modal
 
-    // The bare-key surfaces: search, and the list filter.
-    if (handleBareSurface(event)) return;
-
-    // Display toggles on the home row (a s d f).
-    if (handleDisplayToggle(event.key)) return;
+    if (handleViewKeys(event)) return;
 
     const view = VIEW_KEYS[event.key];
     if (view !== undefined) {

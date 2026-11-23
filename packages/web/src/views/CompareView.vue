@@ -8,7 +8,10 @@
  *   nothing is persisted daemon-side), the stack strip when the branch
  *   sits in a stack of two or more layers (picking one narrows the
  *   compare to that layer's own diff, docs/stacked-compare.md), the
- *   include-uncommitted toggles, and the diff-colored stats line.
+ *   include-uncommitted toggles, the diff-colored stats line, and the
+ *   PR draft toggle.
+ * - PR draft panel (docs/work-page.md §6): beside the diffs when toggled
+ *   on (above them in portrait). Shown or hidden is a reader preference.
  * - Commits section: collapsible, collapsed by default.
  * - PR body: file tree (left, core/view/fileTree — same collapsing tree
  *   the CLI renders) and stacked per-file diffs (right, the shared
@@ -39,6 +42,7 @@ import DiffStack, { type StackFile } from '../components/DiffStack.vue';
 import SplitResizer from '../components/SplitResizer.vue';
 import ChangedFileTree, { inTreeOrder } from '../components/ChangedFileTree.vue';
 import StackStrip from '../components/StackStrip.vue';
+import PrDraftPanel from '../components/PrDraftPanel.vue';
 
 const repo = useRepoStore();
 const ui = useUiStore();
@@ -123,12 +127,13 @@ async function onPickLayer(name: string | null): Promise<void> {
 }
 
 /**
- * Uncommitted work only exists against HEAD. With another layer picked
- * the toggles would ask for a diff the daemon refuses, so they are not
+ * Uncommitted work only exists against HEAD. With another layer picked —
+ * or a branch that is no layer at all, opened from the Work page — the
+ * toggles would ask for a diff the daemon refuses, so they are not
  * offered; their state is kept for when the pick returns to HEAD.
  */
 const uncommittedHidden = computed(
-  () => pickedLayer.value !== null && !pickedLayer.value.isHead
+  () => selectedStackHead.value !== null && pickedLayer.value?.isHead !== true
 );
 
 /**
@@ -401,103 +406,119 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
         data-testid="compare-busy"
         >Loading…</span
       >
+
+      <button
+        class="draft-toggle mono"
+        data-testid="pr-draft-toggle"
+        :class="{ on: ui.prDraftOpen }"
+        :aria-pressed="ui.prDraftOpen"
+        title="The PR description for this branch: your words, an agent's, and the body as sent"
+        @click="ui.togglePrDraft()"
+      >
+        <span class="dot" aria-hidden="true"></span>PR draft
+      </button>
     </header>
 
-    <!-- A transient refresh error must not blank a loaded compare: the
-         store keeps compareDiff, so keep rendering it under a banner. -->
-    <p
-      v-if="compare.error && compareDiff"
-      class="view-error error-banner"
-      data-testid="compare-error-banner"
-    >
-      {{ compare.error }}
-    </p>
+    <div class="compare-main" :class="{ 'with-draft': ui.prDraftOpen }">
+      <div class="compare-body">
+        <!-- A transient refresh error must not blank a loaded compare: the
+             store keeps compareDiff, so keep rendering it under a banner. -->
+        <p
+          v-if="compare.error && compareDiff"
+          class="view-error error-banner"
+          data-testid="compare-error-banner"
+        >
+          {{ compare.error }}
+        </p>
 
-    <!-- Body states -->
-    <p v-if="compare.error && !compareDiff" class="panel-note view-error" data-testid="compare-error">
-      {{ compare.error }}
-    </p>
-    <div v-else-if="compare.noBaseBranch" class="state-block" data-testid="no-base-branch">
-      <p class="state-title">No base branch detected.</p>
-      <p class="state-hint">
-        Base detection uses remote refs (like origin/main) — this repo has none that qualify.
-        Pick a base branch above to compare against.
-      </p>
-    </div>
-    <p v-else-if="compare.loading && !compareDiff" class="panel-note" data-testid="compare-loading">
-      Loading compare…
-    </p>
-    <p
-      v-else-if="compareDiff && files.length === 0"
-      class="panel-note"
-      data-testid="compare-clean"
-    >
-      No changes{{ headLabel ? ` on ${headLabel}` : '' }} compared to
-      {{ comparePair.base }}.
-    </p>
+        <!-- Body states -->
+        <p v-if="compare.error && !compareDiff" class="panel-note view-error" data-testid="compare-error">
+          {{ compare.error }}
+        </p>
+        <div v-else-if="compare.noBaseBranch" class="state-block" data-testid="no-base-branch">
+          <p class="state-title">No base branch detected.</p>
+          <p class="state-hint">
+            Base detection uses remote refs (like origin/main) — this repo has none that qualify.
+            Pick a base branch above to compare against.
+          </p>
+        </div>
+        <p v-else-if="compare.loading && !compareDiff" class="panel-note" data-testid="compare-loading">
+          Loading compare…
+        </p>
+        <p
+          v-else-if="compareDiff && files.length === 0"
+          class="panel-note"
+          data-testid="compare-clean"
+        >
+          No changes{{ headLabel ? ` on ${headLabel}` : '' }} compared to
+          {{ comparePair.base }}.
+        </p>
 
-    <template v-else-if="compareDiff">
-      <!-- Commits section: collapsible, collapsed by default. In
-           portrait the toggle lifts into the tab band's toolbar slot;
-           the list itself stays here when open. -->
-      <section v-if="compareDiff.commits.length > 0" class="commits-section">
-        <Teleport defer to="#view-toolbar-slot" :disabled="!isPortrait">
-          <button
-            class="commits-toggle eyebrow"
-            data-testid="commits-toggle"
-            :aria-expanded="commitsOpen"
-            @click="commitsOpen = !commitsOpen"
-          >
-            <span class="chevron">{{ commitsOpen ? '▾' : '▸' }}</span>
-            Commits <span class="commits-count">{{ compareDiff.commits.length }}</span>
-          </button>
-        </Teleport>
-        <ul v-if="commitsOpen" class="commit-list mono" data-testid="compare-commits">
-          <li v-for="commit in compareDiff.commits" :key="commit.hash" class="commit-row">
-            <span class="hash">{{ commit.shortHash }}</span>
-            <span class="message" :title="commit.message">{{ commit.message }}</span>
-            <span class="meta"
-              ><span class="author">{{ commit.author }}</span>
-              <span class="date">{{ relTime(commit) }}</span></span
-            >
-          </li>
-        </ul>
-      </section>
+        <template v-else-if="compareDiff">
+          <!-- Commits section: collapsible, collapsed by default. In
+               portrait the toggle lifts into the tab band's toolbar slot;
+               the list itself stays here when open. -->
+          <section v-if="compareDiff.commits.length > 0" class="commits-section">
+            <Teleport defer to="#view-toolbar-slot" :disabled="!isPortrait">
+              <button
+                class="commits-toggle eyebrow"
+                data-testid="commits-toggle"
+                :aria-expanded="commitsOpen"
+                @click="commitsOpen = !commitsOpen"
+              >
+                <span class="chevron">{{ commitsOpen ? '▾' : '▸' }}</span>
+                Commits <span class="commits-count">{{ compareDiff.commits.length }}</span>
+              </button>
+            </Teleport>
+            <ul v-if="commitsOpen" class="commit-list mono" data-testid="compare-commits">
+              <li v-for="commit in compareDiff.commits" :key="commit.hash" class="commit-row">
+                <span class="hash">{{ commit.shortHash }}</span>
+                <span class="message" :title="commit.message">{{ commit.message }}</span>
+                <span class="meta"
+                  ><span class="author">{{ commit.author }}</span>
+                  <span class="date">{{ relTime(commit) }}</span></span
+                >
+              </li>
+            </ul>
+          </section>
 
-      <!-- PR body: file tree | stacked per-file diffs (portrait: file
-           band above as a jump-index, full-width diffs below). -->
-      <div ref="prBodyEl" class="pr-body" :aria-busy="compare.loading && !!compareDiff">
-        <ChangedFileTree
-          data-testid="compare-files"
-          :files="files"
-          :selected-index="selectedFileIndex"
-          :portrait="isPortrait"
-          @activate="activateFile"
-          @select="selectFile"
-        />
+          <!-- PR body: file tree | stacked per-file diffs (portrait: file
+               band above as a jump-index, full-width diffs below). -->
+          <div ref="prBodyEl" class="pr-body" :aria-busy="compare.loading && !!compareDiff">
+            <ChangedFileTree
+              data-testid="compare-files"
+              :files="files"
+              :selected-index="selectedFileIndex"
+              :portrait="isPortrait"
+              @activate="activateFile"
+              @select="selectFile"
+            />
 
-        <SplitResizer v-if="isPortrait" :split="split" label="Resize file list" />
+            <SplitResizer v-if="isPortrait" :split="split" label="Resize file list" />
 
-        <DiffStack
-          ref="stackEl"
-          class="diffs-col"
-          data-testid="compare-diffs"
-          :files="stackFiles"
-          :active-key="activeStackKey"
-          :syntax="ui.diffSyntaxEnabled"
-          :mode="ui.diffMode"
-          :wrap="ui.wrapEnabled"
-          show-whole-toggle
-          :whole-key="repo.wholeFile?.key ?? null"
-          :whole-loading="repo.wholeFileLoading"
-          :whole-refusal="repo.wholeFileRefusal"
-          v-bind="payloadAttrs"
-          @active-file="onActiveFile"
-          @toggle-collapse="toggleFileCollapsed"
-          @toggle-whole="toggleWholeFile"
-        />
+            <DiffStack
+              ref="stackEl"
+              class="diffs-col"
+              data-testid="compare-diffs"
+              :files="stackFiles"
+              :active-key="activeStackKey"
+              :syntax="ui.diffSyntaxEnabled"
+              :mode="ui.diffMode"
+              :wrap="ui.wrapEnabled"
+              show-whole-toggle
+              :whole-key="repo.wholeFile?.key ?? null"
+              :whole-loading="repo.wholeFileLoading"
+              :whole-refusal="repo.wholeFileRefusal"
+              v-bind="payloadAttrs"
+              @active-file="onActiveFile"
+              @toggle-collapse="toggleFileCollapsed"
+              @toggle-whole="toggleWholeFile"
+            />
+          </div>
+        </template>
       </div>
-    </template>
+      <PrDraftPanel v-if="ui.prDraftOpen" class="draft-col" />
+    </div>
   </div>
 </template>
 
@@ -605,6 +626,81 @@ const payloadAttrs = portraitPayloadAttrs(isPortrait, diffsEl, 'File diffs', { s
 
 .files-changed {
   color: var(--text);
+}
+
+/* The PR draft toggle: the header toggles' pill, lit when the panel is up.
+   Pushed to the row's end; after the stats it just follows them. */
+.draft-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  height: 1.5rem;
+  margin-left: auto;
+  padding: 0 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: var(--fs-small);
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.topbar .stats ~ .draft-toggle {
+  margin-left: 0;
+}
+
+.draft-toggle .dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.draft-toggle:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.draft-toggle.on {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--add) 60%, var(--border));
+  background: color-mix(in srgb, var(--add) 18%, var(--surface));
+}
+
+.draft-toggle.on .dot {
+  background: var(--add);
+}
+
+/* --- Body and the draft panel beside it --- */
+
+.compare-main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.compare-main.with-draft {
+  grid-template-columns: minmax(0, 1fr) clamp(18rem, 32%, 30rem);
+}
+
+/* What used to fill .compare directly: banners, states, commits, PR body. */
+.compare-body {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Portrait: the panel goes above the diffs, in a band of its own. */
+:root[data-split='stacked'] .compare-main.with-draft {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 45%) minmax(0, 1fr);
+}
+
+:root[data-split='stacked'] .draft-col {
+  order: -1;
+  border-left: none;
+  border-bottom: 1px solid var(--border);
 }
 
 /* --- Body states --- */

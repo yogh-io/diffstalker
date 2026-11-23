@@ -76,6 +76,10 @@ const ICON_PATHS: Record<ViewName, string> = {
   explorer: 'M2 4h4l1.5 1.5H14V13H2Z',
 };
 
+function isActive(name: ViewName): boolean {
+  return ui.activeView === name;
+}
+
 /** A tab click is a navigation: it gets its own history entry. */
 function chooseView(view: ViewName): void {
   beginUserNav({ view });
@@ -93,8 +97,8 @@ function chooseView(view: ViewName): void {
       v-for="view in VIEWS"
       :key="view.name"
       class="rail-item"
-      :class="{ active: ui.activeView === view.name }"
-      :aria-current="ui.activeView === view.name ? 'page' : undefined"
+      :class="{ active: isActive(view.name) }"
+      :aria-current="isActive(view.name) ? 'page' : undefined"
       :title="titleFor(view.name, view.label)"
       :aria-label="titleFor(view.name, view.label)"
       @click="chooseView(view.name)"

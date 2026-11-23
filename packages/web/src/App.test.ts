@@ -628,9 +628,7 @@ describe('live readouts', () => {
     await flushPromises();
     // One sentence for one dropped connection: the status bar reuses the
     // header's CONNECTION_LOST_MESSAGE rather than phrasing it a second way.
-    expect(wrapper.find('[data-testid="connection"]').text()).toContain(
-      'daemon connection lost'
-    );
+    expect(wrapper.find('[data-testid="connection"]').text()).toContain('daemon connection lost');
     wrapper.unmount();
   });
 
@@ -987,7 +985,11 @@ describe('deep link on a cold load', () => {
   });
 
   test('a parked anchor is dropped when the user picks another repo before it lands', async () => {
-    window.history.replaceState(null, '', '/changes/~/gitRepos/calculator/pr-8858-wt?at=u:src/a.ts');
+    window.history.replaceState(
+      null,
+      '',
+      '/changes/~/gitRepos/calculator/pr-8858-wt?at=u:src/a.ts'
+    );
     const wrapper = mountApp();
     await flushPromises();
     health.resolve({ body: { ok: true, ready: true, home: HOME } });
@@ -1020,5 +1022,62 @@ describe('deep link on a cold load', () => {
     expect(repo.selection.file).toBeNull();
     expect(useUiStore().activeStackKey).toBeNull();
     wrapper.unmount();
+  });
+});
+
+describe('the Work page', () => {
+  function workRoutes(call: FetchCall): FakeResponse {
+    if (call.url === '/work/prs') {
+      return {
+        body: {
+          status: 'ok',
+          message: null,
+          checkedAt: 1,
+          viewer: 'JornC',
+          prs: [],
+          capped: false,
+        },
+      };
+    }
+    if (call.url === '/work/marks') return { body: { tracked: {}, dismissed: {} } };
+    return routes(call);
+  }
+
+  beforeEach(() => {
+    fake = makeFakeFetch(workRoutes);
+    vi.stubGlobal('fetch', fake.fn);
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, '', '/');
+  });
+
+  test('a cold load of /work shows the page over the open repo; Back to / closes it', async () => {
+    window.history.replaceState(null, '', '/work');
+    const wrapper = await mountWithRepos([REPO_ONE]);
+    expect(wrapper.find('[data-testid="work-page"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(false);
+    expect(wrapper.findAll('button.rail-item')).toHaveLength(0);
+    expect(window.location.pathname).toBe('/work');
+
+    window.history.replaceState(null, '', '/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await flushPromises();
+    expect(useUiStore().workOpen).toBe(false);
+    expect(wrapper.find('[data-testid="work-page"]').exists()).toBe(false);
+  });
+
+  test('the wordmark opens the page without the view tabs, and closes it again', async () => {
+    const wrapper = await mountWithRepos([REPO_ONE]);
+    await wrapper.find('[data-testid="brand-work"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="work-page"]').exists()).toBe(true);
+    expect(wrapper.findAll('button.rail-item')).toHaveLength(0);
+    expect(window.location.pathname).toBe('/work');
+
+    await wrapper.find('[data-testid="brand-work"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-testid="work-page"]').exists()).toBe(false);
+    expect(wrapper.findAll('button.rail-item').length).toBeGreaterThan(0);
   });
 });

@@ -87,15 +87,20 @@ export interface Prefs {
    * compare folds in. Global, not per repo.
    */
   compareUncommitted: UncommittedParts;
+  /**
+   * The PR draft panel in Compare is shown. A reader preference, so it
+   * lives here and not in the URL (docs/work-page.md §6).
+   */
+  prDraftOpen: boolean;
+  /** The Work page groups rows under a heading per repo. */
+  workByRepo: boolean;
+  /** The Work page groups rows under last day / week / month / older. */
+  workByTime: boolean;
 }
 
 /** The prefs fields that store a split fraction (number | null). */
 export type SplitPrefKey =
-  | 'changesSplit'
-  | 'changesTop'
-  | 'historyTop'
-  | 'compareTop'
-  | 'explorerTop';
+  'changesSplit' | 'changesTop' | 'historyTop' | 'compareTop' | 'explorerTop';
 
 export const MAX_RECENT_REPOS = 8;
 
@@ -123,6 +128,9 @@ function defaults(): Prefs {
     compareTop: null,
     explorerTop: null,
     compareUncommitted: { ...NO_UNCOMMITTED },
+    prDraftOpen: false,
+    workByRepo: true,
+    workByTime: false,
   };
 }
 
@@ -173,6 +181,9 @@ function sanitize(raw: unknown): Prefs {
     prefs[key] = readFraction(record[key], TOP_MIN, TOP_MAX);
   }
   prefs.compareUncommitted = readUncommitted(record.compareUncommitted);
+  if (typeof record.prDraftOpen === 'boolean') prefs.prDraftOpen = record.prDraftOpen;
+  if (typeof record.workByRepo === 'boolean') prefs.workByRepo = record.workByRepo;
+  if (typeof record.workByTime === 'boolean') prefs.workByTime = record.workByTime;
   return prefs;
 }
 

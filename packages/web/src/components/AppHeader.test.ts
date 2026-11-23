@@ -6,6 +6,7 @@
  * covered by HeaderToggles.test.ts.
  */
 
+import { nextTick } from 'vue';
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
@@ -153,5 +154,44 @@ describe('branch breadcrumb', () => {
     expect(wrapper.find('[data-testid="branch-info"] .tracking').text()).toBe(
       'upstream/release-2025.1'
     );
+  });
+
+  test('on the Work page the repo picker names no repo, and the worktree and branch are gone', async () => {
+    const wrapper = await primeWorktree('main', 'aer-4569', 'origin/aer-4569');
+    expect(wrapper.find('[data-testid="branch-info"]').exists()).toBe(true);
+    useUiStore().setWorkOpen(true);
+    await nextTick();
+    expect(wrapper.find('.repo-label').text()).toBe('repo');
+    expect(wrapper.find('[data-testid="branch-info"]').exists()).toBe(false);
+    expect(wrapper.findComponent({ name: 'WorktreeSwitcher' }).exists()).toBe(false);
+  });
+});
+
+describe('wordmark', () => {
+  test('is a link to /work that opens and closes the Work page in place', async () => {
+    const ui = useUiStore();
+    const wrapper = mountHeader();
+    const brand = wrapper.find('[data-testid="brand-work"]');
+    expect(brand.element.tagName).toBe('A');
+    expect(brand.attributes('href')).toBe('/work');
+    expect(brand.attributes('title')).toBe('Work');
+    expect(brand.attributes('aria-hidden')).toBeUndefined();
+
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    brand.element.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(ui.workOpen).toBe(true);
+
+    await brand.trigger('click');
+    expect(ui.workOpen).toBe(false);
+  });
+
+  test('a modified click is left to the browser (new tab)', () => {
+    const ui = useUiStore();
+    const wrapper = mountHeader();
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true });
+    wrapper.find('[data-testid="brand-work"]').element.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(false);
+    expect(ui.workOpen).toBe(false);
   });
 });

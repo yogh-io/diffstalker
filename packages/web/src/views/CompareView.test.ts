@@ -334,6 +334,11 @@ describe('stack strip', () => {
     expect(wrapper.find('[data-testid="uncommitted-toggles"]').exists()).toBe(true);
   });
 
+  test('a branch that is no layer at all hides the uncommitted toggles too', async () => {
+    const { wrapper } = mountWithStack(STACK, 'side');
+    expect(wrapper.find('[data-testid="uncommitted-toggles"]').exists()).toBe(false);
+  });
+
   test('the file headers name the LOADED pair: the layer below…the layer', async () => {
     const { wrapper, repo } = mountWithStack(STACK);
     const labels = () =>
@@ -967,5 +972,24 @@ describe('portrait layout', () => {
     const diffs = wrapper.find('[data-testid="compare-diffs"]');
     expect(diffs.attributes('tabindex')).toBe('0');
     expect(diffs.attributes('role')).toBe('region');
+  });
+});
+
+describe('PR draft toggle', () => {
+  test('shows and hides the draft panel, and remembers the choice', async () => {
+    vi.stubGlobal('fetch', makeFakeFetch(() => ({ status: 404, body: {} })).fn);
+    const { wrapper } = mountView();
+    const toggle = wrapper.find('[data-testid="pr-draft-toggle"]');
+    expect(toggle.attributes('aria-pressed')).toBe('false');
+    expect(wrapper.find('[data-testid="pr-draft-panel"]').exists()).toBe(false);
+
+    await toggle.trigger('click');
+    expect(wrapper.find('[data-testid="pr-draft-panel"]').exists()).toBe(true);
+    expect(toggle.attributes('aria-pressed')).toBe('true');
+    expect(loadPrefs().prDraftOpen).toBe(true);
+
+    await toggle.trigger('click');
+    expect(wrapper.find('[data-testid="pr-draft-panel"]').exists()).toBe(false);
+    vi.unstubAllGlobals();
   });
 });

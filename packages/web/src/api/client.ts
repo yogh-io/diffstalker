@@ -51,6 +51,18 @@ import type { SymbolOutcome } from '@diffstalker/core/symbols/types';
 import type { WorktreeInfo } from '@diffstalker/core/git/worktree';
 import type { UncommittedParts, UncommittedSide } from '@diffstalker/core/types/compare';
 import type { CompareStack } from '@diffstalker/core/types/stack';
+import type { LocalBranch } from '@diffstalker/core/git/status';
+import type {
+  AdoptDraftRequest,
+  BranchPr,
+  DraftChangeEvent,
+  PrDraft,
+  PrSnapshot,
+  PutDraftRequest,
+  WorkMarkRequest,
+  WorkMarks,
+  WorkRepoFacts,
+} from '@diffstalker/core/types/work';
 
 /**
  * A file read that may carry an outline. `symbols` is absent when it was
@@ -81,7 +93,13 @@ const DAEMON_EVENTS = [
   'discovery-change',
 ] as const;
 
-const REPO_EVENTS = ['repo-snapshot', 'state-change', 'journal-append', 'repo-missing'] as const;
+const REPO_EVENTS = [
+  'repo-snapshot',
+  'state-change',
+  'journal-append',
+  'repo-missing',
+  'draft-change',
+] as const;
 
 type RepoEvent = (typeof REPO_EVENTS)[number];
 
@@ -137,6 +155,8 @@ export interface RepoStreamHandlers {
    * side has to re-open the repo and re-attach.
    */
   onMissing: (event: RepoMissingEvent) => void;
+  /** A PR draft of this repo changed on disk (docs/work-page.md §6). */
+  onDraftChange?: (event: DraftChangeEvent) => void;
   /** The stream dropped — the same signal the daemon handlers get. */
   onError?: () => void;
 }
@@ -300,7 +320,10 @@ export class DiffstalkerClient {
   /** One commit by hash — a link to a commit outside the loaded log. */
   async getCommit(id: string, hash: string): Promise<CommitInfo> {
     return reviveCommit(
-      await request<WireCommitInfo>('GET', this.repoPath(id, `/commits/${encodeURIComponent(hash)}`))
+      await request<WireCommitInfo>(
+        'GET',
+        this.repoPath(id, `/commits/${encodeURIComponent(hash)}`)
+      )
     );
   }
 
@@ -445,10 +468,7 @@ export class DiffstalkerClient {
    * those stories are already told by the flags.
    */
   file(id: string, path: string, opts: { symbols?: boolean } = {}): Promise<FileWithSymbols> {
-    return request(
-      'GET',
-      this.repoPath(id, '/file') + toQuery({ path, symbols: opts.symbols })
-    );
+    return request('GET', this.repoPath(id, '/file') + toQuery({ path, symbols: opts.symbols }));
   }
 
   files(id: string): Promise<string[]> {
@@ -467,6 +487,76 @@ export class DiffstalkerClient {
    */
   search(id: string, query: string): Promise<GrepResult> {
     return request('POST', this.repoPath(id, '/search'), { query });
+  }
+
+  // --- Work page (docs/work-page.md §5) ---
+
+  /**
+   * One repo's facts. The path must be a discovered or open repo. POST: it
+   * runs a git scan, so it sits behind the CSRF check.
+   */
+  workRepo(path: string): Promise<WorkRepoFacts> {
+    return request('POST', '/work/repo', { path });
+  }
+
+  /** The cached PR snapshot. Never runs `gh`. */
+  workPrs(): Promise<PrSnapshot> {
+    return request('GET', '/work/prs');
+  }
+
+  /** Ask GitHub again. POST: it spends the author's token, so it sits behind the CSRF check. */
+  refreshWorkPrs(): Promise<PrSnapshot> {
+    return request('POST', '/work/prs/refresh');
+  }
+
+  workMarks(): Promise<WorkMarks> {
+    return request('GET', '/work/marks');
+  }
+
+  putWorkMark(markRequest: WorkMarkRequest): Promise<WorkMarks> {
+    return request('PUT', '/work/marks', markRequest);
+  }
+
+  // --- PR drafts (docs/work-page.md §3, §6) ---
+
+  draft(id: string, branch: string): Promise<PrDraft> {
+    return request('GET', this.repoPath(id, '/draft') + toQuery({ branch }));
+  }
+
+  /** Save top.md. A version that is not the file's any more is a 409. */
+  putDraft(id: string, draftRequest: PutDraftRequest): Promise<PrDraft> {
+    return request('PUT', this.repoPath(id, '/draft'), draftRequest);
+  }
+
+  /** "start from this": copy the agent's suggestion into top.md. */
+  adoptDraft(id: string, adoptRequest: AdoptDraftRequest): Promise<PrDraft> {
+    return request('POST', this.repoPath(id, '/draft/adopt'), adoptRequest);
+  }
+
+  /** The cached PR for one branch. Never runs `gh`. */
+  branchPr(id: string, branch: string): Promise<BranchPr> {
+    return request('GET', this.repoPath(id, '/pr') + toQuery({ branch }));
+  }
+
+  /** Read the branch's PR fresh from GitHub; the daemon's list keeps the new copy. */
+  checkBranchPr(id: string, branch: string): Promise<BranchPr> {
+    return request('POST', this.repoPath(id, '/pr/check'), { branch });
+  }
+
+  /**
+   * Write top.md into the PR's top zone on GitHub, keeping the rest of the
+   * body. `expectedTop` is GitHub's top zone as the author saw it; the
+   * daemon refuses (409) when GitHub's has changed since.
+   */
+  setPrTopZone(
+    id: string,
+    body: { branch: string; version: string; expectedTop: string }
+  ): Promise<BranchPr> {
+    return request('POST', this.repoPath(id, '/pr/top'), body);
+  }
+
+  localBranches(id: string): Promise<LocalBranch[]> {
+    return request('GET', this.repoPath(id, '/branches'));
   }
 
   // --- Media ---
@@ -500,7 +590,7 @@ export class DiffstalkerClient {
    *
    * With a repo: GET /events?repo=<id> — the same, plus that repo's
    * events routed to its handlers: `repo-snapshot` after the daemon
-   * snapshot, then `state-change` and `journal-append`; or one
+   * snapshot, then `state-change`, `journal-append` and `draft-change`; or one
    * `repo-missing` when the daemon does not have the repo open.
    */
   subscribeEvents(handlers: DaemonStreamHandlers, repo?: RepoAttachment): SseHandle {
@@ -523,7 +613,11 @@ export class DiffstalkerClient {
 
   // --- Internals ---
 
-  private dispatchRepoEvent(event: RepoEvent, payload: unknown, handlers: RepoStreamHandlers): void {
+  private dispatchRepoEvent(
+    event: RepoEvent,
+    payload: unknown,
+    handlers: RepoStreamHandlers
+  ): void {
     switch (event) {
       case 'repo-snapshot':
         handlers.onSnapshot(payload as WireSharedState);
@@ -536,6 +630,9 @@ export class DiffstalkerClient {
         break;
       case 'repo-missing':
         handlers.onMissing(payload as RepoMissingEvent);
+        break;
+      case 'draft-change':
+        handlers.onDraftChange?.(payload as DraftChangeEvent);
         break;
     }
   }

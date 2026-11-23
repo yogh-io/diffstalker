@@ -23,7 +23,10 @@
  *   (useFollowMode) and auto-mode policy (useAutoMode) mount here, and
  *   the two overlays (fuzzy finder, hotkeys help) render at the shell
  *   level from ui.activeOverlay (fuzzy finder, search, hotkeys help,
- *   settings).
+ *   settings);
+ * - the Work page (`/work`, ui.workOpen) covers the workspace. The view
+ *   under it is not mounted while it is up, and neither are the view tabs
+ *   and the view toolbar.
  */
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
@@ -36,11 +39,7 @@ import { useGlobalKeys } from './composables/useGlobalKeys';
 import { useFollowMode } from './composables/useFollowMode';
 import { useAutoMode } from './composables/useAutoMode';
 import { useSplitMode } from './composables/useMediaQuery';
-import {
-  useUrlSync,
-  type RestoreContext,
-  type UrlState,
-} from './composables/useUrlSync';
+import { useUrlSync, type RestoreContext, type UrlState } from './composables/useUrlSync';
 import AppHeader from './components/AppHeader.vue';
 import ActivityRail from './components/ActivityRail.vue';
 import ViewToolbarStrip from './components/ViewToolbarStrip.vue';
@@ -55,6 +54,8 @@ import JournalView from './views/JournalView.vue';
 import HistoryView from './views/HistoryView.vue';
 import CompareView from './views/CompareView.vue';
 import ExplorerView from './views/ExplorerView.vue';
+import WorkView from './views/WorkView.vue';
+import HoverTip from './components/HoverTip.vue';
 import type { ViewName } from './prefs';
 
 const daemon = useDaemonStore();
@@ -209,6 +210,9 @@ const pendingAnchor = ref<{
  * truthful write relabels the entry.
  */
 async function applyUrlState(state: UrlState, ctx: RestoreContext): Promise<void> {
+  // Before the "names no place" return, so Back from /work to / closes it.
+  ui.setWorkOpen(state.work);
+  if (state.work) return;
   if (state.view === null && state.repo === null) return;
   // Landing somewhere by Back/Forward holds follow mode off briefly: an
   // editor save arriving right after would otherwise yank the user
@@ -324,9 +328,7 @@ function applyChangesAnchor(at: string | null, whole: string | null = null): voi
   // ABSENT MEANS OFF, and a `whole` naming a DIFFERENT file than the
   // anchor is not honoured either: Changes draws the anchored file whole
   // or nothing at all.
-  void repo.setWholeFile(
-    whole === match.path ? { view: 'changes', key, path: match.path } : null
-  );
+  void repo.setWholeFile(whole === match.path ? { view: 'changes', key, path: match.path } : null);
 }
 
 /**
@@ -384,7 +386,8 @@ async function applyHistoryAnchor(
  * while the pull is in flight.
  */
 async function applyCompareAnchor(state: UrlState, ctx: RestoreContext): Promise<void> {
-  const base = state.base !== null && state.base !== repo.selectedCompareBase ? state.base : undefined;
+  const base =
+    state.base !== null && state.base !== repo.selectedCompareBase ? state.base : undefined;
   if (base !== undefined || state.head !== repo.selectedStackHead) {
     await repo.setComparePick({ base, head: state.head });
     if (ctx.isStale()) return;
@@ -476,7 +479,7 @@ watch(
   }
 );
 
-if (urlSync.initial.view !== null || urlSync.initial.repo !== null) {
+if (urlSync.initial.view !== null || urlSync.initial.repo !== null || urlSync.initial.work) {
   if (urlSync.initial.repo !== null) {
     disarmAutoActivate();
     // The URL repo wins over the initial follow target too (follow resumes on
@@ -486,30 +489,27 @@ if (urlSync.initial.view !== null || urlSync.initial.repo !== null) {
   void urlSync.restore(urlSync.initial);
 }
 
-watch(
-  [() => daemon.repos, () => daemon.follow],
-  ([repos, follow]) => {
-    if (!autoActivateArmed) return;
-    if (follow === null) {
-      // Follow still loading — normally wait, but arm the bounded
-      // fallback so a stuck /follow cannot deadlock the empty state.
-      if (fallbackTimer === null && repos.length > 0) {
-        fallbackTimer = setTimeout(() => {
-          fallbackTimer = null;
-          if (!autoActivateArmed) return;
-          disarmAutoActivate();
-          activateFirst(daemon.repos);
-        }, FOLLOW_FALLBACK_MS);
-      }
-      return;
+watch([() => daemon.repos, () => daemon.follow], ([repos, follow]) => {
+  if (!autoActivateArmed) return;
+  if (follow === null) {
+    // Follow still loading — normally wait, but arm the bounded
+    // fallback so a stuck /follow cannot deadlock the empty state.
+    if (fallbackTimer === null && repos.length > 0) {
+      fallbackTimer = setTimeout(() => {
+        fallbackTimer = null;
+        if (!autoActivateArmed) return;
+        disarmAutoActivate();
+        activateFirst(daemon.repos);
+      }, FOLLOW_FALLBACK_MS);
     }
-    disarmAutoActivate();
-    if (daemon.followEnabled && follow.followedRepoId !== null && follow.followedPath !== null) {
-      return; // useFollowMode navigates to the followed repo
-    }
-    activateFirst(repos);
+    return;
   }
-);
+  disarmAutoActivate();
+  if (daemon.followEnabled && follow.followedRepoId !== null && follow.followedPath !== null) {
+    return; // useFollowMode navigates to the followed repo
+  }
+  activateFirst(repos);
+});
 
 onUnmounted(() => {
   if (fallbackTimer !== null) clearTimeout(fallbackTimer);
@@ -519,10 +519,12 @@ onUnmounted(() => {
 <template>
   <div class="shell">
     <AppHeader />
-    <ActivityRail />
-    <ViewToolbarStrip />
+    <!-- The Work page is about no one repo: no view tabs, no view toolbar. -->
+    <ActivityRail v-if="!ui.workOpen" />
+    <ViewToolbarStrip v-if="!ui.workOpen" />
     <main class="workspace">
-      <RepoEmptyState v-if="!hasActiveRepo" />
+      <WorkView v-if="ui.workOpen" />
+      <RepoEmptyState v-else-if="!hasActiveRepo" />
       <!-- Keyed on the active repo: a repo switch (switcher or follow
            mode) REMOUNTS the view, discarding component-local state that
            belongs to the old repo — History's loaded-log latch, Compare's
@@ -535,6 +537,7 @@ onUnmounted(() => {
     <SearchOverlay v-else-if="ui.activeOverlay === 'search'" />
     <HotkeysOverlay v-else-if="ui.activeOverlay === 'help'" />
     <SettingsOverlay v-else-if="ui.activeOverlay === 'settings'" />
+    <HoverTip />
   </div>
 </template>
 

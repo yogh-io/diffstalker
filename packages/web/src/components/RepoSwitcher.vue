@@ -12,12 +12,14 @@
 
 import { computed } from 'vue';
 import { useDaemonStore } from '../stores/daemon';
+import { useUiStore } from '../stores/ui';
 import { useActiveWorktrees } from '../composables/useActiveWorktrees';
 import { basename } from '../utils/format';
 import RepoPicker from './RepoPicker.vue';
 import { useDismissable } from '../composables/useDismissable';
 
 const daemon = useDaemonStore();
+const ui = useUiStore();
 const { hasMultiple, projectName } = useActiveWorktrees();
 
 // `open` and `rootEl` must keep these exact names: Vue matches ref="rootEl"
@@ -34,7 +36,15 @@ const activeRepo = computed(
  * otherwise the repo's own directory name. Keeps the worktree/branch name
  * from appearing twice across the picker and the switcher.
  */
+/** A repo picked on the Work page is a repo to look at: leave the page for it. */
+function onOpened(): void {
+  open.value = false;
+  ui.setWorkOpen(false);
+}
+
 const triggerLabel = computed(() => {
+  // The Work page is about every repo, so it names none.
+  if (ui.workOpen) return 'repo';
   if (!activeRepo.value) return 'no repo';
   return hasMultiple.value ? projectName.value : basename(activeRepo.value.path);
 });
@@ -46,17 +56,17 @@ const triggerLabel = computed(() => {
       class="switch-btn chrome-chip"
       aria-haspopup="true"
       :aria-expanded="open"
-      :title="activeRepo ? activeRepo.path : undefined"
+      :title="activeRepo && !ui.workOpen ? activeRepo.path : undefined"
       @click="open = !open"
     >
-      <span class="repo-label mono">{{ triggerLabel }}</span>
+      <span class="repo-label mono" :class="{ empty: ui.workOpen }">{{ triggerLabel }}</span>
       <span class="caret popover-caret" aria-hidden="true">&#9662;</span>
     </button>
 
     <!-- v-if, not v-show: mounting is what resets the picker's query,
          selection and expand state, and what re-runs its discovery scan. -->
     <div v-if="open" class="panel popover-panel">
-      <RepoPicker @opened="open = false" />
+      <RepoPicker @opened="onOpened" />
     </div>
   </div>
 </template>
@@ -81,6 +91,10 @@ const triggerLabel = computed(() => {
 /* A long repo name (e.g. a branch-named worktree dir) must ellipsize on
    ONE line, not wrap at its hyphens into a tall stack. Full name on hover
    (the button's title). */
+.repo-label.empty {
+  color: var(--text-dim);
+}
+
 .repo-label {
   font-size: var(--fs-base);
   font-weight: 600;

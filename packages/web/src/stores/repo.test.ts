@@ -1762,11 +1762,17 @@ describe('stacked compare', () => {
    * asked with a base reports that base as its own — for a layer that is
    * the layer below, which the store must NOT show as the trunk.
    */
-  function withStack(stack: CompareStack = STACK): void {
+  function withStack(stack: CompareStack = STACK, resolvable: string[] = []): void {
     onRequest = (call) => {
       if (call.url.startsWith('/repos/r1/compare/stack')) return { body: stack };
       if (call.url.startsWith('/repos/r1/compare?')) {
-        const base = new URLSearchParams(call.url.split('?')[1]).get('base');
+        const query = new URLSearchParams(call.url.split('?')[1]);
+        const head = query.get('head');
+        const known = stack.layers.some((l) => l.name === head) || resolvable.includes(head ?? '');
+        if (head !== null && !known) {
+          return { status: 400, body: { error: `Unknown head ref: ${head}` } };
+        }
+        const base = query.get('base');
         if (base !== null) return { body: { ...(compareBody() as object), baseBranch: base } };
       }
       return undefined;
@@ -1860,9 +1866,31 @@ describe('stacked compare', () => {
     expect(store.selectedStackHead).toBe('feature/gone');
     expect(store.compare.baseBranch).toBe('origin/main');
     expect(store.compareStack).toEqual(STACK);
-    // Nothing was pulled under a name that resolves to nothing.
-    expect(compareUrls()).toEqual(['/repos/r1/compare?staged=false&unstaged=false&untracked=false']);
+    // The daemon was asked once, against the trunk, and said it does not know the name.
+    expect(compareUrls()).toEqual([
+      '/repos/r1/compare?staged=false&unstaged=false&untracked=false',
+      '/repos/r1/compare?head=feature%2Fgone',
+    ]);
     expect(consoleError).toHaveBeenCalledTimes(1);
+  });
+
+  test('a head that is not a layer but resolves is compared against the trunk', async () => {
+    withStack(STACK, ['side']);
+    const { store } = await openStore();
+    store.compareUncommitted = { staged: true, unstaged: true, untracked: true };
+    await store.setComparePick({ base: 'origin/dev', head: 'side' });
+
+    // No uncommitted parts: they only exist against HEAD.
+    expect(compareUrls()).toEqual(['/repos/r1/compare?base=origin%2Fdev&head=side']);
+    expect(store.compare.error).toBeNull();
+    expect(store.compare.compareDiff).not.toBeNull();
+    expect(store.comparePair).toEqual({ base: 'origin/dev', head: 'side' });
+    expect(store.pickedLayer).toBeNull();
+
+    await store.refreshCompareCount();
+    expect(fake.callsTo('/compare/count').map((c) => c.url).at(-1)).toBe(
+      '/repos/r1/compare/count?base=origin%2Fdev&head=side'
+    );
   });
 
   test('a picked layer whose branch disappears shows the same error on the next refresh', async () => {
@@ -2069,6 +2097,20 @@ describe('stacked compare', () => {
     await store.open('/other');
     expect(store.selectedStackHead).toBeNull();
     expect(store.compareStack).toBeNull();
+  });
+});
+
+// --- PR drafts ---
+
+describe('draft-change', () => {
+  test('the stream event lands in lastDraftChange, a repeat is a new value, a switch clears it', async () => {
+    const { store, source } = await openStore();
+    source.emit('draft-change', { branch: 'x', prefix: false });
+    expect(store.lastDraftChange).toEqual({ event: { branch: 'x', prefix: false }, seq: 1 });
+    source.emit('draft-change', { branch: 'x', prefix: false });
+    expect(store.lastDraftChange?.seq).toBe(2);
+    await store.open('/other');
+    expect(store.lastDraftChange).toBeNull();
   });
 });
 

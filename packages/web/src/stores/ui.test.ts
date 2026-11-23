@@ -211,6 +211,33 @@ describe('wrap mode', () => {
   });
 });
 
+describe('Work page and PR draft panel', () => {
+  test('the Work page opens and closes, and is never persisted', () => {
+    const store = useUiStore();
+    expect(store.workOpen).toBe(false);
+    store.openWork();
+    expect(store.workOpen).toBe(true);
+    store.closeWork();
+    expect(store.workOpen).toBe(false);
+    store.setWorkOpen(true);
+    expect(store.workOpen).toBe(true);
+    expect(localStorage.getItem(PREFS_KEY)).toBeNull();
+  });
+
+  test('the draft panel defaults off; togglePrDraft flips and persists', () => {
+    const store = useUiStore();
+    expect(store.prDraftOpen).toBe(false);
+    store.togglePrDraft();
+    expect(store.prDraftOpen).toBe(true);
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY)!).prDraftOpen).toBe(true);
+  });
+
+  test('restores the stored panel state', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ prDraftOpen: true }));
+    expect(useUiStore().prDraftOpen).toBe(true);
+  });
+});
+
 describe('recent repos', () => {
   test('adds most-recent-first, dedupes, caps at 8, persists', () => {
     const store = useUiStore();

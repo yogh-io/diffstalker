@@ -39,6 +39,7 @@ beforeEach(() => {
   setActivePinia(createPinia());
   resetUserNav();
   syncOptions = {};
+  restoreInitial = false;
   setUrl('/');
   vi.stubGlobal(
     'fetch',
@@ -60,10 +61,13 @@ afterEach(() => {
 
 /** ONE harness for every mount: options ride in through this slot. */
 let syncOptions: UrlSyncOptions = {};
+/** Apply the address the page loaded with, the way App does. */
+let restoreInitial = false;
 
 const Harness = defineComponent({
   setup() {
-    useUrlSync(syncOptions);
+    const sync = useUrlSync(syncOptions);
+    if (restoreInitial) void sync.restore(sync.initial);
     return () => null;
   },
 });
@@ -92,7 +96,16 @@ function activeRepo(path = `${HOME}/w/diffstalker`): void {
 
 /** Every UrlState field, so a test only spells out what it is about. */
 function state(part: Partial<UrlState>): UrlState {
-  return { repo: null, view: null, at: null, base: null, head: null, whole: null, ...part };
+  return {
+    repo: null,
+    view: null,
+    at: null,
+    base: null,
+    head: null,
+    whole: null,
+    work: false,
+    ...part,
+  };
 }
 
 describe('parseUrl', () => {
@@ -391,6 +404,172 @@ describe('history entries', () => {
 
     expect(push).toHaveBeenCalledTimes(1);
     expect(here()).toBe('/changes/~/w/two');
+  });
+});
+
+describe('the Work page (/work)', () => {
+  /** The restore App does for `/work`: the flag first, then nothing else. */
+  function workRestore(): UrlSyncOptions {
+    return {
+      onRestore: (popped) => {
+        const ui = useUiStore();
+        ui.setWorkOpen(popped.work);
+        if (popped.view) ui.setActiveView(popped.view);
+      },
+    };
+  }
+
+  function twoRepos(): void {
+    const daemon = useDaemonStore();
+    daemon.repos = [
+      { id: 'r1', path: `${HOME}/w/one`, branch: 'main' },
+      { id: 'r2', path: `${HOME}/w/two`, branch: 'main' },
+    ];
+    activeRepo(`${HOME}/w/one`);
+  }
+
+  /** The repo switch a row click or a follow event makes, without a daemon. */
+  function switchTo(id: string, path: string): void {
+    const repo = useRepoStore();
+    repo.repoId = id;
+    repo.repoPath = path;
+    useDaemonStore().activeRepoId = id;
+  }
+
+  test('a cold load of /work keeps the address, opens the page and names the tab', async () => {
+    setUrl('/work');
+    syncOptions = workRestore();
+    const push = vi.spyOn(window.history, 'pushState');
+    restoreInitial = true;
+    mount(Harness);
+    await flushPromises();
+    expect(useUiStore().workOpen).toBe(true);
+    expect(here()).toBe('/work');
+    expect(document.title).toBe('work — diffstalker');
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  test('opening the page from a repo pushes one entry', async () => {
+    twoRepos();
+    mount(Harness);
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+    useUiStore().openWork();
+    await flushPromises();
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(here()).toBe('/work');
+  });
+
+  test('a row click that opens another repo in Compare is one entry', async () => {
+    twoRepos();
+    mount(Harness);
+    await flushPromises();
+    const ui = useUiStore();
+    ui.openWork();
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+    const replace = vi.spyOn(window.history, 'replaceState');
+
+    // WorkView opens the repo first, with the page still up...
+    switchTo('r2', `${HOME}/w/two`);
+    await flushPromises();
+    expect(here()).toBe('/work');
+    // ...then declares the gesture and picks the view and the branch.
+    beginUserNav({ repo: `${HOME}/w/two`, view: 'compare' });
+    ui.setActiveView('compare');
+    useRepoStore().selectedStackHead = 'side';
+    await flushPromises();
+
+    expect(ui.workOpen).toBe(false);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(replace).not.toHaveBeenCalled();
+    expect(here()).toBe('/compare/~/w/two?head=side');
+  });
+
+  test('a gesture that closes the page before its repo lands still makes one entry', async () => {
+    twoRepos();
+    mount(Harness);
+    await flushPromises();
+    useUiStore().openWork();
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+
+    // The repo switcher's order: the gesture first, the open after.
+    beginUserNav({ repo: `${HOME}/w/two` });
+    await flushPromises();
+    expect(here()).toBe('/work');
+    switchTo('r2', `${HOME}/w/two`);
+    await flushPromises();
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(here()).toBe('/changes/~/w/two');
+  });
+
+  test('Back from /work to a repo closes the page and pushes nothing', async () => {
+    twoRepos();
+    syncOptions = workRestore();
+    mount(Harness);
+    await flushPromises();
+    const ui = useUiStore();
+    ui.openWork();
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+
+    setUrl('/changes/~/w/one');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await flushPromises();
+    expect(ui.workOpen).toBe(false);
+    expect(push).not.toHaveBeenCalled();
+    expect(here()).toBe('/changes/~/w/one');
+  });
+
+  test('Back from /work to / closes the page too', async () => {
+    syncOptions = workRestore();
+    setUrl('/work');
+    restoreInitial = true;
+    mount(Harness);
+    await flushPromises();
+    const ui = useUiStore();
+    expect(ui.workOpen).toBe(true);
+
+    setUrl('/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await flushPromises();
+    expect(ui.workOpen).toBe(false);
+  });
+
+  test('follow mode moving the repo under the open page writes nothing', async () => {
+    twoRepos();
+    mount(Harness);
+    await flushPromises();
+    useUiStore().openWork();
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+    const replace = vi.spyOn(window.history, 'replaceState');
+
+    switchTo('r2', `${HOME}/w/two`);
+    useUiStore().setActiveView('explorer');
+    await flushPromises();
+    expect(push).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+    expect(here()).toBe('/work');
+  });
+
+  test('a view key or tab click closes the page as one entry', async () => {
+    twoRepos();
+    mount(Harness);
+    await flushPromises();
+    const ui = useUiStore();
+    ui.openWork();
+    await flushPromises();
+    const push = vi.spyOn(window.history, 'pushState');
+
+    beginUserNav({ view: 'history' });
+    ui.setActiveView('history');
+    await flushPromises();
+    expect(ui.workOpen).toBe(false);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(here()).toBe('/history/~/w/one');
   });
 });
 
