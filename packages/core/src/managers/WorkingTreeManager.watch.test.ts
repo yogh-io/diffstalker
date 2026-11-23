@@ -10,7 +10,8 @@
  * what it sees: one inotify watch per directory and none per file, nothing
  * watched that git ignores (global and info/exclude rules included), new and
  * recreated directories picked up, git's own writes seen without polling,
- * and an unviewed repo that only goes stale.
+ * an unviewed repo that only goes stale, and a PR draft written under the
+ * common git dir that is reported as a draft change without a git refresh.
  *
  * What is being pinned: a FIFO inside a watched tree must never freeze the
  * process. Opening a pipe blocks until a writer arrives. On bun 1.3, fs.watch
@@ -36,6 +37,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { WorkingTreeManager } from './WorkingTreeManager.js';
 import { GitOperationQueue } from './GitOperationQueue.js';
 import { TreeWatcher } from './TreeWatcher.js';
+import type { DraftChangeEvent } from '../types/work.js';
 import {
   createFixtureRepo,
   removeFixtureRepo,
@@ -61,6 +63,7 @@ const SCENARIOS = [
   'a resync during the first crawl leaves a newly skipped tree unwatched',
   'an entry named like its folder costs no recrawl',
   'a worktree removed and added back is watched again',
+  'a PR draft write emits draft-change and no refresh',
 ] as const;
 
 /** Long enough for any refresh a change could start, spacing included. */
@@ -426,6 +429,38 @@ if (process.env[SCENARIO_ENV] === '1') {
       } finally {
         fs.rmSync(worktree, { recursive: true, force: true });
       }
+    });
+
+    test(SCENARIOS[12], async () => {
+      const m = startManager();
+      await waitFor(() => m.state.status !== null);
+      await tick(QUIET_MS);
+      const changes = countChanges(m);
+      const drafts: DraftChangeEvent[] = [];
+      m.on('draft-change', (event) => drafts.push(event));
+      // Like draftChangeTouches in view/prBody, which a manager test may not import.
+      const touches = (event: DraftChangeEvent, branch: string): boolean =>
+        event.branch === branch ||
+        (event.prefix && (event.branch === '' || branch.startsWith(`${event.branch}/`)));
+
+      // A new directory tree: the file may land before its directory is
+      // watched, so a prefix event above it is what reports it.
+      const draftDir = path.join(repoPath, '.git', 'diffstalker', 'pr', 'feature', 'x');
+      fs.mkdirSync(draftDir, { recursive: true });
+      fs.writeFileSync(path.join(draftDir, 'ai.md'), 'agent text\n');
+      await waitFor(() => drafts.some((event) => touches(event, 'feature/x')));
+
+      // Once watched, a write names the branch itself.
+      await tick(300);
+      drafts.length = 0;
+      fs.writeFileSync(path.join(draftDir, 'ai.md'), 'agent text, again\n');
+      await waitFor(() =>
+        drafts.some((event) => event.branch === 'feature/x' && !event.prefix)
+      );
+
+      await tick(QUIET_MS);
+      expect(changes.count).toBe(0);
+      expect(m.stale).toBe(false);
     });
   });
 } else {

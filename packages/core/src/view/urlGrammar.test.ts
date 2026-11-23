@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  EMPTY_URL_STATE,
+  WORK_PATH,
   buildUrlPath,
   encodeQueryValue,
   isViewName,
@@ -252,5 +254,36 @@ describe('head — the picked layer of a stack (Compare only)', () => {
     expect(back.base).toBe('upstream/main');
     expect(back.head).toBe('feature/aer-4693 nginx+image');
     expect(back.at).toBe('src/a.ts');
+  });
+});
+
+describe('/work — the Work page', () => {
+  test('one segment, with or without a trailing slash or a query', () => {
+    const work = { ...EMPTY_URL_STATE, work: true };
+    expect(parseUrl(WORK_PATH)).toEqual(work);
+    expect(parseUrl('/work/')).toEqual(work);
+    expect(parseUrl('/work', '?x=1')).toEqual(work);
+  });
+
+  test('a second segment names no place', () => {
+    expect(parseUrl('/work/x')).toEqual(EMPTY_URL_STATE);
+  });
+
+  test('it is not a view, so link and the stored view never see it', () => {
+    expect(isViewName('work')).toBe(false);
+  });
+
+  test('every other place says work: false', () => {
+    expect(parseUrl('/').work).toBe(false);
+    expect(parseUrl('/compare').work).toBe(false);
+    expect(parseUrl('/compare/~/w/ds').work).toBe(false);
+  });
+
+  test('a repo directory named work under a view is still a repo', () => {
+    const state = parseUrl('/changes/~/work');
+    expect(state.work).toBe(false);
+    expect(state.view).toBe('changes');
+    expect(state.repo).toEqual({ homeRelative: true, path: 'work' });
+    expect(parseUrl('/changes/work').repo).toEqual({ homeRelative: false, path: 'work' });
   });
 });

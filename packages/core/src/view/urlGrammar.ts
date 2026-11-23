@@ -2,6 +2,7 @@
  * The web UI's URL grammar, as pure functions — the ONE copy of it.
  *
  *   /<view>/<repo-segments…>[?base=…][&head=…][&whole=<path>][&at=…]
+ *   /work                       the Work page (docs/work-page.md §5)
  *
  * The web client reads these URLs (useUrlSync) and `diffstalker link`
  * writes them, and the two must agree byte for byte: a link that encodes a
@@ -23,6 +24,9 @@ export type ViewName = (typeof VIEW_NAMES)[number];
 export function isViewName(value: unknown): value is ViewName {
   return typeof value === 'string' && (VIEW_NAMES as readonly string[]).includes(value);
 }
+
+/** The Work page. Not a view: it names no repo, and `diffstalker link` never writes it. */
+export const WORK_PATH = '/work';
 
 /** Segment 1 when the repo path is relative to the daemon's $HOME. */
 export const HOME_SENTINEL = '~';
@@ -89,6 +93,8 @@ export interface UrlState {
    * meant. One value, never a list — the mode is one file at a time.
    */
   whole: string | null;
+  /** The Work page is open. Every other field is empty then. */
+  work: boolean;
 }
 
 export const EMPTY_URL_STATE: UrlState = {
@@ -98,15 +104,17 @@ export const EMPTY_URL_STATE: UrlState = {
   base: null,
   head: null,
   whole: null,
+  work: false,
 };
 
 /**
  * Parse a location into the place it names. Anything that is not
  * view-first — `/`, a stale repo-first link from the old grammar, junk —
- * names no place at all.
+ * names no place at all. `/work` alone is the Work page; `/work/x` is junk.
  */
 export function parseUrl(pathname: string, search: string = ''): UrlState {
   const raw = pathname.split('/').filter(Boolean);
+  if (raw.length === 1 && raw[0] === WORK_PATH.slice(1)) return { ...EMPTY_URL_STATE, work: true };
   if (raw.length === 0 || !isViewName(raw[0])) return EMPTY_URL_STATE;
   const view = raw[0];
   const rest = raw.slice(1);
@@ -117,12 +125,20 @@ export function parseUrl(pathname: string, search: string = ''): UrlState {
   const head = query.get('head') || null;
   // The file drawn whole. An empty value is the same as absent: no file.
   const whole = query.get('whole') || null;
-  if (rest.length === 0) return { repo: null, view, at, base, head, whole };
+  if (rest.length === 0) return { repo: null, view, at, base, head, whole, work: false };
   // The sentinel test runs on the RAW segment: a directory named `~` is
   // written `%7E` and must not be read as "under $HOME".
   const homeRelative = rest[0] === HOME_SENTINEL;
   const segs = (homeRelative ? rest.slice(1) : rest).map(safeDecode);
-  return { repo: { homeRelative, path: segs.join('/') }, view, at, base, head, whole };
+  return {
+    repo: { homeRelative, path: segs.join('/') },
+    view,
+    at,
+    base,
+    head,
+    whole,
+    work: false,
+  };
 }
 
 /**

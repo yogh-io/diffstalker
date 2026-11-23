@@ -171,6 +171,21 @@ export async function listWorktreesRaw(anyRepoPath: string): Promise<RawWorktree
  * Returns an empty array when the path is not a git repository at all.
  */
 export async function listWorktrees(anyRepoPath: string): Promise<WorktreeInfo[]> {
+  return (await listWorktreesWithBase(anyRepoPath)).map(withoutBase);
+}
+
+function withoutBase({ baseBranch: _baseBranch, ...info }: WorktreeWithBase): WorktreeInfo {
+  return info;
+}
+
+/** A worktree with the name of the base its `aheadOfBase` counts against. */
+export interface WorktreeWithBase extends WorktreeInfo {
+  /** The base `aheadOfBase` counts against, `upstream/main`; null when there is no count. */
+  baseBranch: string | null;
+}
+
+/** listWorktrees, plus each worktree's base name. */
+export async function listWorktreesWithBase(anyRepoPath: string): Promise<WorktreeWithBase[]> {
   const dir = toDirectory(anyRepoPath);
   if (!dir) return [];
 
@@ -182,7 +197,8 @@ export async function listWorktrees(anyRepoPath: string): Promise<WorktreeInfo[]
     return raw.map((wt) => ({
       ...wt,
       lastActivity: wt.isBare ? null : finiteOrNull(lastGitActivity(wt.path)),
-      aheadOfBase: ahead.get(wt.path) ?? null,
+      aheadOfBase: ahead.get(wt.path)?.ahead ?? null,
+      baseBranch: ahead.get(wt.path)?.base ?? null,
     }));
   } catch (err) {
     logger.debug('worktree list failed', err, { dir });
@@ -223,6 +239,11 @@ const WORKTREE_GIT_CONCURRENCY = 8;
 
 const gitPool = new TaskPool(WORKTREE_GIT_CONCURRENCY);
 
+/** Run a git spawn through the shared pool of 8. */
+export function runGitPooled<T>(task: () => Promise<T>): Promise<T> {
+  return gitPool.run(task);
+}
+
 /**
  * The default-base count of a worktree depends only on its HEAD commit and
  * on the mainline refs, so a result stays right until one of those moves.
@@ -232,6 +253,14 @@ const gitPool = new TaskPool(WORKTREE_GIT_CONCURRENCY);
 interface DefaultBaseEntry {
   key: string;
   ahead: number | null;
+  /** The base the count is against, `upstream/main`; null with no count. */
+  branch: string | null;
+}
+
+/** A count of commits ahead, and the base it counts against. */
+interface AheadOfBase {
+  ahead: number;
+  base: string;
 }
 
 const DEFAULT_BASE_CACHE_LIMIT = 512;
@@ -268,7 +297,7 @@ async function defaultBaseAhead(
   worktreePath: string,
   head: string,
   mainlines: Mainline[]
-): Promise<number | null> {
+): Promise<AheadOfBase | null> {
   const counted = await Promise.all(
     mainlines.map(async ({ remote, ref, commit }) => ({
       remote,
@@ -276,7 +305,8 @@ async function defaultBaseAhead(
       ahead: await gitPool.run(() => countAhead(worktreePath, commit, head)),
     }))
   );
-  return pickDefaultBase(counted)?.ahead ?? null;
+  const picked = pickDefaultBase(counted);
+  return picked === null ? null : { ahead: picked.ahead, base: picked.branch };
 }
 
 /**
@@ -287,16 +317,24 @@ async function defaultBaseAhead(
 async function cachedDefaultBaseAhead(
   wt: RawWorktreeInfo,
   mainlines: Mainline[]
-): Promise<number | null> {
+): Promise<AheadOfBase | null> {
   // An unborn HEAD (git reports the zero id) has no commits to count.
   if (wt.head === null || UNBORN_HEAD.test(wt.head)) return null;
   const key = defaultBaseKey(wt.head, mainlines);
   const hit = defaultBaseCache.get(wt.path);
-  if (hit !== undefined && hit.key === key) return hit.ahead;
+  if (hit !== undefined && hit.key === key) {
+    return hit.ahead === null || hit.branch === null
+      ? null
+      : { ahead: hit.ahead, base: hit.branch };
+  }
   try {
-    const ahead = await defaultBaseAhead(wt.path, wt.head, mainlines);
-    rememberDefaultBase(wt.path, { key, ahead });
-    return ahead;
+    const counted = await defaultBaseAhead(wt.path, wt.head, mainlines);
+    rememberDefaultBase(wt.path, {
+      key,
+      ahead: counted?.ahead ?? null,
+      branch: counted?.base ?? null,
+    });
+    return counted;
   } catch (err) {
     logger.warn('default base-branch count failed', err, { worktree: wt.path });
     return null;
@@ -335,7 +373,7 @@ async function chosenBaseAhead(worktreePath: string, chosen: string): Promise<nu
 async function aheadOfBaseCounts(
   repoDir: string,
   worktrees: RawWorktreeInfo[]
-): Promise<Map<string, number>> {
+): Promise<Map<string, AheadOfBase>> {
   let mainlines: Mainline[] | null;
   try {
     mainlines = await remoteMainlines(repoDir);
@@ -346,15 +384,19 @@ async function aheadOfBaseCounts(
   const entries = await Promise.all(
     worktrees
       .filter((wt) => !wt.isBare && isExistingDirectory(wt.path))
-      .map(async (wt): Promise<[string, number] | null> => {
+      .map(async (wt): Promise<[string, AheadOfBase] | null> => {
         const chosen = getCachedBaseBranch(wt.path);
-        let ahead: number | null = null;
-        if (chosen !== undefined) ahead = await chosenBaseAhead(wt.path, chosen);
-        else if (mainlines !== null) ahead = await cachedDefaultBaseAhead(wt, mainlines);
-        return ahead === null ? null : [wt.path, ahead];
+        let counted: AheadOfBase | null = null;
+        if (chosen !== undefined) {
+          const ahead = await chosenBaseAhead(wt.path, chosen);
+          counted = ahead === null ? null : { ahead, base: chosen };
+        } else if (mainlines !== null) {
+          counted = await cachedDefaultBaseAhead(wt, mainlines);
+        }
+        return counted === null ? null : [wt.path, counted];
       })
   );
-  return new Map(entries.filter((e): e is [string, number] => e !== null));
+  return new Map(entries.filter((e): e is [string, AheadOfBase] => e !== null));
 }
 
 /**

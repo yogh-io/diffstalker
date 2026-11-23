@@ -36,9 +36,11 @@ import {
 import { HunkTimeTracker } from '../git/hunkTimes.js';
 import { quoteGitPath, rawFromLines } from '../git/diffParse.js';
 import { resolveGitDirs, type GitDirs } from '../git/worktree.js';
+import { draftChangeOfEntry } from '../git/prDraft.js';
 import { splitDiffByFile } from '../view/splitDiffByFile.js';
 import { OVERSIZE_UNTRACKED_MARKER } from '../types/journal.js';
 import type { JournalObservation } from '../types/journal.js';
+import type { DraftChangeEvent } from '../types/work.js';
 
 export interface GitState {
   status: GitStatus | null;
@@ -71,7 +73,27 @@ export interface WholeTreeDiffs {
 type WorkingTreeEventMap = {
   'state-change': [GitState];
   'journal-observation': [JournalObservation];
+  /** A PR draft under `<common>/diffstalker/pr/` changed. No git refresh follows. */
+  'draft-change': [DraftChangeEvent];
 };
+
+/** How long draft events for one branch settle before one is emitted. */
+const DRAFT_CHANGE_SETTLE_MS = 100;
+
+const DRAFTS_DIR = 'diffstalker';
+const DRAFTS_PR_DIR = 'diffstalker/pr';
+
+/** The common-dir subtrees the watcher crawls: info, refs, and the PR drafts. */
+function watchedCommonDir(rel: string): boolean {
+  return (
+    rel === 'info' ||
+    rel === 'refs' ||
+    rel.startsWith('refs/') ||
+    rel === DRAFTS_DIR ||
+    rel === DRAFTS_PR_DIR ||
+    rel.startsWith(`${DRAFTS_PR_DIR}/`)
+  );
+}
 
 /** Untracked files above this size are not read for the journal; they get a header-only marker section instead. */
 const MAX_UNTRACKED_JOURNAL_BYTES = 256 * 1024;
@@ -186,6 +208,8 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
   private _stale = true;
 
   private changeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** One settle timer per pending draft event, keyed by `${prefix}:${branch}`. */
+  private draftTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** A change landed while a full refresh or a mutation ran: it gets a refresh after. */
   private changedDuringRefresh = false;
   private lastFullRefreshEnd = 0;
@@ -382,8 +406,13 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
 
     this.watchers.push(
       new TreeWatcher(dirs.commonDir, {
-        skipDir: (rel) => !(rel === 'info' || rel === 'refs' || rel.startsWith('refs/')),
-        onChange: (rel) => {
+        skipDir: (rel) => !watchedCommonDir(rel),
+        onChange: (rel, isDir) => {
+          const draftChange = draftChangeOfEntry(rel, isDir);
+          if (draftChange !== null) {
+            this.noteDraftChange(draftChange);
+            return;
+          }
           onCommonEntry(rel);
           if (dirs.gitDir === dirs.commonDir) onGitDirEntry(rel);
         },
@@ -400,6 +429,19 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
         logger.error('Starting a git dir watcher threw', err, { repo: this.repoPath });
       });
     }
+  }
+
+  /** Emit a draft change once its burst settles. Touches no git state. */
+  private noteDraftChange(change: DraftChangeEvent): void {
+    if (this.disposed) return;
+    const key = `${change.prefix}:${change.branch}`;
+    if (this.draftTimers.has(key)) return;
+    const timer = setTimeout(() => {
+      this.draftTimers.delete(key);
+      if (!this.disposed) this.emit('draft-change', change);
+    }, DRAFT_CHANGE_SETTLE_MS);
+    timer.unref();
+    this.draftTimers.set(key, timer);
   }
 
   private async watchWorkingTree(dirs: GitDirs, generation: number): Promise<void> {
@@ -475,6 +517,8 @@ export class WorkingTreeManager extends EventEmitter<WorkingTreeEventMap> {
     this.treeWatcher = null;
     if (this.changeTimer !== null) clearTimeout(this.changeTimer);
     this.changeTimer = null;
+    for (const timer of this.draftTimers.values()) clearTimeout(timer);
+    this.draftTimers.clear();
     this.settleRefreshWaiters(null);
   }
 

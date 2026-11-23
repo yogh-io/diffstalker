@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   clearDefaultBaseCache,
   listWorktrees,
+  listWorktreesWithBase,
   parseWorktreePorcelain,
   pickDefaultWorktree,
   resolveGitDirs,
@@ -419,6 +420,37 @@ describe('listWorktrees aheadOfBase (fixture)', () => {
       });
     } finally {
       fs.rmSync(orphanPath, { recursive: true, force: true });
+    }
+  });
+
+  it('names the base each count is against, one per remote', async () => {
+    const worktrees = await listWorktreesWithBase(repoPath);
+    const byBranch = new Map(worktrees.map((wt) => [wt.branch, wt]));
+    expect(byBranch.get('feature')).toMatchObject({ aheadOfBase: 1, baseBranch: 'origin/main' });
+    expect(byBranch.get('on-fork')).toMatchObject({ aheadOfBase: 1, baseBranch: 'fork/main' });
+    // From the cache, the same names.
+    expect(await listWorktreesWithBase(repoPath)).toEqual(worktrees);
+    // listWorktrees is the same listing without the name.
+    expect(await listWorktrees(repoPath)).toEqual(
+      worktrees.map(({ baseBranch: _baseBranch, ...rest }) => rest)
+    );
+  });
+
+  it('names a persisted base choice as the base', async () => {
+    const savedCacheHome = process.env.XDG_CACHE_HOME;
+    const cacheHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ds-worktree-xdg-'));
+    process.env.XDG_CACHE_HOME = cacheHome;
+    try {
+      setCachedBaseBranch(linkedPath, 'origin/main');
+      const linked = (await listWorktreesWithBase(repoPath)).find((wt) => wt.branch === 'on-fork');
+      expect(linked).toMatchObject({ aheadOfBase: 2, baseBranch: 'origin/main' });
+      setCachedBaseBranch(linkedPath, 'gone/branch');
+      const unknown = (await listWorktreesWithBase(repoPath)).find((wt) => wt.branch === 'on-fork');
+      expect(unknown).toMatchObject({ aheadOfBase: null, baseBranch: null });
+    } finally {
+      fs.rmSync(cacheHome, { recursive: true, force: true });
+      if (savedCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+      else process.env.XDG_CACHE_HOME = savedCacheHome;
     }
   });
 
