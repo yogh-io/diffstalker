@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 diffstalker is a tool for watching and staging git changes, built with TypeScript. It has two clients: a web UI (Vue) and a terminal UI (neo-blessed).
 
-The git state engine lives in a **daemon** (`diffstalkerd`): a Node http server exposing `@diffstalker/core` over REST + Server-Sent Events. Both UIs are **clients** of that daemon — neither holds in-process git. On launch the CLI attaches to a running daemon or spawns one on a unix socket, opens repos over REST, and follows live state over SSE. The daemon owns follow mode: it watches ONE hook file external tools append repo/file paths to, and broadcasts `follow-change` so clients can switch focus. It also owns the persistent settings (`~/.config/diffstalker/daemon.json`) and the **watch directories** in them: folders it scans for git repos so clients can offer "your projects" instead of an empty path field. It keeps an append-only edit **journal** per repo, and, with the opt-in grammars package installed, computes in-file symbol **outlines** in a worker thread. The web UI is served by the daemon itself at `GET /`.
+The git state engine lives in a **daemon** (`diffstalkerd`): a Node http server exposing `@diffstalker/core` over REST + Server-Sent Events. Both UIs are **clients** of that daemon — neither holds in-process git. On launch the CLI attaches to a running daemon or spawns one on a unix socket, opens repos over REST, and follows live state over SSE. The daemon owns follow mode: it watches ONE hook file external tools append repo/file paths to, and broadcasts `follow-change` so clients can switch focus. It also owns the persistent settings (`~/.config/diffstalker/daemon.json`) and the **watch directories** in them: folders it scans for git repos so clients can offer "your projects" instead of an empty path field. It keeps an append-only edit **journal** per repo, and, with the opt-in grammars package installed, computes in-file symbol **outlines** in a worker thread. It serves a **Work page** too: the author's PRs through `gh` (reads, plus one write on an explicit click: a PR's top zone), worktrees with unfinished work, and PR body drafts kept in `<git-common-dir>/diffstalker/pr/<branch>/` (see `docs/work-page.md`). The web UI is served by the daemon itself at `GET /`.
 
 **The web UI is the client that gets new work.** The CLI (`packages/cli`) is kept and must keep building and passing lint, but it is demoted: nobody is testing it day to day, and a feature request that does not name a client targets the web UI. Do not build CLI-side UI (new modals, new panes) unless asked.
 
@@ -133,6 +133,8 @@ packages/core/src/
 │   ├── hunkTimes.ts        # Per-hunk edit timestamps
 │   ├── discoverRepos.ts    # Watch-directory scan: git repos under a dir (fs only, no git)
 │   ├── worktree.ts         # Worktree/bare-repo resolution and listing
+│   ├── prDraft.ts          # PR draft files in <common>/diffstalker/pr/<branch>/: path checks, reads, atomic top.md writes, adopt
+│   ├── workScan.ts         # One repo's facts for the Work page: worktrees, branches and what is pushed, GitHub remotes, drafts
 │   ├── ignoreUtils.ts      # Gitignore checking (git check-ignore, for status)
 │   └── ignoreRules.ts      # The watcher's ignore rules: all .gitignore files, info/exclude, core.excludesFile, git's precedence
 ├── managers/               # EventEmitter-based state managers (daemon-side only)
@@ -162,6 +164,8 @@ packages/core/src/
 │   ├── finderModel.ts      # The one copy of the fuzzy-finder matching/selection logic
 │   ├── outlineModel.ts     # What the outline panel says in each of its states
 │   ├── urlGrammar.ts       # The web UI's URL grammar (read by useUrlSync, written by `diffstalker link`)
+│   ├── prBody.ts           # The PR body as text: compose the two draft zones, {{...}} placeholders, the top-zone cut and replace
+│   ├── workModel.ts        # classifyWork: the Work page's sections, states and stale marks, from repo facts + PRs + marks
 │   ├── themes.ts           # The six theme names + diff palette, shared by CLI and web
 │   ├── formatPath.ts, formatDate.ts, commitFormat.ts # Pure formatters
 │   └── languageDetection.ts # getLanguageFromPath (highlight.js names; NO emphasize/ANSI — that stays in cli)
@@ -173,8 +177,9 @@ packages/core/src/
 │   ├── fdRead.ts           # Open-then-read-from-the-same-fd, shared by blob and explorer reads
 │   ├── imageSniff.ts       # Pure magic-byte image validation (PNG/JPEG/GIF only) + the caps
 │   ├── binaryDetect.ts     # isBinaryContent: the NUL scan, shared by diff.ts and explorerData.ts
+│   ├── githubRemote.ts     # A GitHub remote URL to owner/name, to match a PR to a repo
 │   └── blobRef.ts          # blobUrl/mediaUrl — the one copy of the byte-endpoint URL shape
-└── types/                  # Shared type declarations: remote.ts (RemoteOperation), journal.ts (JournalEntry, JournalStore)
+└── types/                  # Shared type declarations: remote.ts (RemoteOperation), journal.ts (JournalEntry, JournalStore), work.ts (Work page + PR draft wire types)
 ```
 
 `view/` holds framework-agnostic presentation logic extracted from the CLI so the CLI and the web client
@@ -203,13 +208,15 @@ packages/daemon/src/
 ├── install.ts              # How this daemon was installed (npm/bun/pnpm/yarn/pacman) and the update command
 ├── version.ts              # Running version vs npm's latest (cached lookup), for GET /version
 ├── restart.ts              # The systemd restart command, only when systemd started this process
+├── github.ts               # The author's PRs through `gh api graphql`: injected runner, single-flight refresh, cache, one-PR read, the top-zone write
+├── workMarks.ts            # The Work page's marks (track, dismiss) in $XDG_STATE_HOME/diffstalker/work.json
 ├── symbols/
 │   ├── resolveArtifacts.ts # Finds the grammars (--grammars, the opt-in package) and verifies checksums
 │   ├── pool.ts             # Owns the symbol worker: wall-clock deadline, respawn after a poisoned parse
 │   └── symbolWorker.ts     # The worker thread the engine runs in (no try/catch around it on purpose)
 └── routes/                 # One module per endpoint group
     ├── shared.ts           # RouteDeps, requireRepo/requireRepoHandle, field/param validation, git -> HTTP status
-    ├── health.ts           # GET /health (ok, ready, home, http port, symbol capability)
+    ├── health.ts           # GET /health (ok, ready, home, http port, symbol capability, gh on PATH)
     ├── version.ts          # GET /version
     ├── repos.ts            # /repos list/open/close, /repos/:id/worktrees, /worktrees, /resolve
     ├── workingTree.ts      # /status, /diff, /stage, /unstage, /repos/:id/events (SSE)
@@ -218,6 +225,8 @@ packages/daemon/src/
     ├── explorer.ts         # /tree, /file (with ?symbols=true), /files
     ├── search.ts           # POST /repos/:id/search (POST on purpose: a GET would be a cross-site timing oracle)
     ├── journal.ts          # GET /repos/:id/journal?since=
+    ├── work.ts             # POST /work/repo (POST on purpose: it runs a git scan), /work/prs[/refresh], /work/marks
+    ├── draft.ts            # /repos/:id/draft[/adopt] (PR drafts), /repos/:id/pr (the cached PR, never runs gh), POST /pr/check and /pr/top (run gh)
     ├── blob.ts             # /blob (image bytes) + /media (per-side image metadata)
     ├── daemon.ts           # GET /events (daemon-scope SSE, optionally combined with one repo), /follow
     └── settings.ts         # /settings + /discovered + /browse (both API modes)
@@ -266,10 +275,10 @@ packages/cli/src/
 packages/web/src/
 ├── main.ts, App.vue        # Entry + shell
 ├── api/                    # Browser fetch + SSE client (client.ts, transport.ts, errors.ts)
-├── stores/                 # Pinia: daemon, repo, worktrees, explorer, filter, settings, ui, failureLog
-├── views/                  # ChangesView, CompareView, HistoryView, ExplorerView, JournalView
-├── components/             # Diff stack, file tree, overlays (finder, search, hotkeys, settings), pickers, image views
-├── composables/            # useUrlSync, useFollowMode, useAutoMode, useGlobalKeys, scroll/drag helpers, ...
+├── stores/                 # Pinia: daemon, repo, worktrees, explorer, filter, settings, ui, failureLog, work (the Work page's scan, PRs, marks), draft (one branch's PR draft)
+├── views/                  # ChangesView, CompareView, HistoryView, ExplorerView, JournalView, WorkView (the Work page at /work)
+├── components/             # Diff stack, file tree, overlays (finder, search, hotkeys, settings), pickers, image views, PrDraftPanel (the PR draft panel, in Compare and the Work page), WorkRow / WorkRowDetail / WorkDraftEditor / WorkIcon (the Work page's rows), HoverTip (the `data-tip` tooltip, mounted once in App)
+├── composables/            # useUrlSync, useFollowMode, useAutoMode, useGlobalKeys, draftSession (one branch's PR draft editor), useCopy (clipboard with a short note), scroll/drag helpers, ...
 ├── utils/                  # diffRows/diffSplit/diffHighlight, hljs, refPair, listNav, imageRefusal, ...
 ├── theme/                  # Palette + theme CSS built on core/view/themes
 └── prefs.ts                # Per-browser preferences (localStorage)

@@ -183,8 +183,11 @@ interface CompareStack {
   `jsp-to-html…nginx`, and `base…HEAD` when there is none.
 - **URL.** `?head=<name>` joins `base` in the URL grammar
   (`core/view/urlGrammar.ts`), Compare only. On load the store pulls the
-  stack, and if the named layer is not in it, Compare shows
-  `<name> is not a layer of this stack` in its error line and `all` stays
+  stack, and if the named layer is not in it, Compare asks the daemon for
+  trunk...`<name>`: a head that resolves (a branch the Work page opened that
+  is in no worktree) is compared against the trunk, as `docs/work-page.md`
+  §5.4 says. Only a head the daemon refuses shows
+  `<name> is not a layer of this stack` in its error line, and `all` stays
   available. No silent fallback to `all`.
 - **Refresh.** The stack is re-pulled whenever Compare is re-pulled
   (`state-change` already fires on ref and HEAD moves). A picked layer whose

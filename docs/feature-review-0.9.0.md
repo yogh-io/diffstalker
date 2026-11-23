@@ -160,6 +160,23 @@ Kept here so the same ideas do not get re-proposed as though they were new.
 >   input; anything that talks to GitHub (PR numbers, titles, review state);
 >   stack mutations from the browser.
 
+> **Update, 2026-11-23: the §6 trigger fired for a work overview.** The
+> author asked for one page that tracks all his unfinished work across
+> repos, and for writing the human zone of PR bodies in diffstalker.
+> `docs/work-page.md` records the decision. What it changes here:
+>
+> - **Lifted: anything that talks to GitHub.** The daemon reads the
+>   author's PRs through `gh`, review state and CI included. It writes one
+>   thing, on the author's explicit click: a PR's top zone ("Update
+>   GitHub"). It never creates, comments on, closes or merges a PR. The
+>   first version was read-only by rule; the author lifted that for this
+>   one button after using the page.
+> - **Lifted: a cross-repo dashboard.** The Work page, built from git state,
+>   `gh` and PR draft files. Not a cross-repo journal; that stays rejected.
+> - **Still rejected, and re-confirmed:** git mutations from the browser;
+>   anything AI-powered inside diffstalker (agents work through files, from
+>   outside); anything that measures the person; notifications.
+
 Conventional viewer features, judged real but not worth it now: expanding
 context around a hunk; an ignore-whitespace toggle; marking a file as seen;
 filtering or sorting the changed-file set; bounding a very large changeset with a

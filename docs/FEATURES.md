@@ -738,7 +738,11 @@ mutation it makes is file-level **stage / unstage** (from the Changes list);
 there is no commit, discard, hunk-staging, or remote/branch operation (those
 live in the terminal UI). Its other non-GET calls are opening a repo
 (`POST /repos`) and releasing it (`DELETE /repos/:id`) — attach/refcount, not
-git operations.
+git operations — and, for the Work page and PR drafts, saving the author's
+own draft text, saving the page's track/dismiss marks, asking the daemon to
+re-read PR state from GitHub (through `gh`), and, on an explicit **Update
+GitHub** click, writing the author's words into one PR's top zone, the one
+change it makes on GitHub.
 
 ### Views
 
@@ -816,7 +820,43 @@ git operations.
   not name a layer a pushed branch also sits at. Uncommitted toggles apply
   only to the checked-out layer. A
   fork above HEAD is not drawn as a tree; the strip says so. The layer is in
-  the URL (`?head=`). See `docs/stacked-compare.md`.
+  the URL (`?head=`). A `?head=` that is no layer but is a real branch (the
+  Work page opens branches that are in no worktree) is compared against the
+  trunk; only a name git does not know gets the "not a layer" line. See
+  `docs/stacked-compare.md`.
+- **PR draft panel** — in a Work page row's fold-out (the main place to
+  edit drafts), and in Compare, where a **PR draft** toggle in the top bar
+  opens it beside the diffs (above them in portrait) for the branch on
+  screen: the picked layer's local branch, else HEAD's branch (a detached
+  HEAD or a remote-only layer has none, and the panel says so). Top to
+  bottom: the PR line (`PR #9087 open` as a link with **check again**,
+  which reads that one PR fresh; or `PR state not checked` with a **check
+  PRs** button), an editor for the author's own words, an agent's
+  suggestion, the AI zone, and the raw body with every `{{…}}` placeholder
+  marked and counted: as `gh` would send it, or for an open PR the body
+  **Update GitHub** would make. With an open PR and no draft yet, the
+  editor starts with the PR's top zone (`From the PR on GitHub`), and
+  nothing is saved until the author types. When the saved words differ
+  from the PR's top zone, the panel says **Your words differ from the PR on
+  GitHub**, shows GitHub's text, and offers **Take GitHub's text** (saved
+  as the draft) and **Update GitHub…**, which asks once more and then
+  replaces only the PR's top zone, keeping everything below the `---` line
+  as GitHub has it. It refuses while the words hold a placeholder, are not
+  saved, or when GitHub's top zone changed since it was shown. The
+  editor saves `top.md` 400 ms after the last keystroke; if another tab or an
+  editor changed the file first, the panel says **changed elsewhere**, keeps
+  what was typed, and saves nothing until **reload**. Switching branch or
+  repo, or closing the panel, first saves what is waiting. An empty editor
+  deletes the draft. An agent's suggestion (`top.suggested.md`) shows greyed
+  with **start from this** while nothing is written, then `agent text, not
+  edited` until the first edit; once there is text it sits collapsed below for
+  reference. The AI zone (`ai.md`) is read-only. Changes to the draft files
+  arrive live while the repo is open (an agent writing `ai.md` shows up
+  without a reload). Drafts live in the repo's common git dir
+  (`diffstalker/pr/<branch>/`), shared by every worktree and never
+  committed; diffstalker writes only `top.md`, never the agent's files, and
+  changes a PR only through **Update GitHub**. In Compare, shown or hidden
+  is remembered per browser. See `docs/work-page.md` §3 and §6.
 - File cards in the stacked diffs (every surface built on the stack —
   Changes, Compare, History, Journal): each file is one bordered, rounded
   card with a tinted body, a 3px left spine, and a header ranked one surface
@@ -924,6 +964,75 @@ git operations.
   position never jumps. Only Changes has this — Compare, History and Journal
   keep the plain note (their old side is a commit, which the viewer's
   worktree/index/head vocabulary cannot name yet).
+- **Work page** (`/work`) — one page with all the author's work across the
+  watched repos, found without bookkeeping. Click the diffstalker wordmark
+  to open it (and again to close it). It scans every repo under the watch
+  directories plus every open repo when it opens and when **Refresh** is
+  pressed, never on a timer, and fills in as repos answer
+  (`scanned 12 of 40 repos`). Three sections: **Work** (open PRs by the
+  author, branches with a written PR draft, tracked items), **Candidates**
+  (worktrees with uncommitted changes, branches ahead of their base or with
+  unpushed commits, and fresh worktrees on a new branch) and **Done** (PRs
+  merged or closed in the last seven days, with `worktree still on disk`
+  when one is left). Candidates with no activity in the last 14 days
+  (uncommitted file edits count) sit in a collapsed `N older candidates`
+  list right below, with the same buttons. After the seven days a merged
+  or closed branch is finished and leaves the page for good, unless it
+  gets a new commit, or still has uncommitted changes (then it is a
+  candidate that keeps its PR). Inside each section the rows sit under a
+  heading per repo, and a PR stack's layers sit together, bottom first.
+  Every row is one line of columns that line up across the whole page:
+  **Stage** (five progress pips and a colour: local only, pushed, draft PR,
+  in review, changes requested, approved, merged), the branch and the PR
+  title (with a red **conflicts** label when GitHub says the PR has merge
+  conflicts, and `by <author>` on a PR someone asked the author to review), **Stack** (`3/8` for a PR stacked on other open PRs), the
+  **PR** number (one click to GitHub), **Review** (approved, changes
+  requested or waiting, and open review threads), **CI** (checks passed,
+  failed or running), **Local** (uncommitted and unpushed
+  counts), **Draft** (a written draft, its placeholders, words that differ
+  from GitHub), **Status** (where it stands and whose move it is:
+  `awaiting review`, `needs reviewer`, `changes requested`, `approved`,
+  `your review`, …; bold when it is the author's) and **When** (how long
+  ago the last activity was, `3 days 12 hours ago`; on hover what it was —
+  files edited, a commit, stage or checkout, the draft edited, or a review
+  or comment and who made it, bots left out — and the date and time). A red alert
+  by the stage says someone waits on the author: a reviewer asked for
+  changes and was not asked to review again yet, or the author is asked to
+  review the PR (the reasons are on hover). PRs the author is asked to
+  review show as candidates without a local branch; **Track** keeps one in
+  Work. **Copy for a session** (in the fold-out, and on rows without a
+  compare button) puts the PR link, title, author, branch, base, head
+  commit, local clone and worktree on the clipboard. A click on
+  a column heading sorts the rows inside each repo by it (again to reverse,
+  a third time for the default order); sections and repo headings stay put.
+  Tooltips on the page show at once, just above the pointer; a heading's
+  tooltip says what it sorts by. Two toggles in the header group the rows:
+  **By repository** (on by default) and **By time** (`Last day`, `Last
+  week`, `Last month`, `Older`, each with its count); with both on the repo
+  headings sit inside each time heading, with both off it is one list. The
+  browser remembers both. A click on a row opens its
+  fold-out: the recent activity with times, the facts behind the icons,
+  **Open in Compare**, **Open #N on GitHub**, **Dismiss**, and the PR draft
+  panel for that branch. The compare button on the row opens Compare in
+  its worktree, or in the main worktree with `?head=` when it is checked
+  out nowhere; a PR with no local clone or branch has none. **Track** moves
+  a candidate to Work, **Stop tracking** undoes that, and **Dismiss** hides
+  any item until something about it changes (a new commit, uncommitted
+  changes appearing or going away, a draft edit, a PR update); dismissed
+  items sit behind an `N dismissed` disclosure with **Show**. Marks are the only state the page keeps (`work.json` in the
+  daemon's state dir), and marks whose item is gone are pruned only after a
+  complete scan: every watch directory listed in full, every repo answered,
+  and a real answer from GitHub. A watch directory that could not be read,
+  or holds more repos than the daemon lists, is named on the page. PR state
+  comes from `gh` (on open only when the daemon has never asked, and on
+  Refresh); the header says
+  `PRs checked 14:02 as JornC`, or why it could not (`gh not found`,
+  `gh not logged in`, `could not reach GitHub: …`) next to the time of the
+  list it kept. Everything from git keeps working without `gh`. On the
+  page the view tabs are hidden and the
+  repo picker names no repo; picking one leaves the page for it. Only the
+  overlay keys and the view keys act; a view key leaves it for that view.
+  See `docs/work-page.md`.
 
 ### Header & global
 
@@ -940,7 +1049,9 @@ git operations.
   open its loaded commit list becomes the authority, so the badge can never
   contradict the list it labels. No base branch to compare against shows no
   badge at all, never a misleading `(0)`.
-- **The URL names one place.** `/<view>/<repo-segments>?at=…&base=…` — the
+- **The URL names one place.** `/<view>/<repo-segments>?at=…&base=…`, or
+  `/work` for the Work page (a place of its own, not a view: follow mode
+  moving the repo under it writes nothing, and Back from it closes it) — the
   view leads, so parsing is positional and a repo directory called
   `history` is just a directory. `~` as the first repo segment means
   $HOME-relative (a directory literally named `~` writes as `%7E`); a repo
