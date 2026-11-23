@@ -3,23 +3,30 @@
  *
  * Reads, plus one write: `setTopZone` replaces the top zone of one PR's
  * body, and only when the author presses "Update GitHub". The only command
- * run is `gh api graphql` with a fixed query. No value from a request ever
- * becomes an argument: the search strings are fixed, a page cursor comes
- * from GitHub's own answer and is shape-checked, and the one-PR read and
- * the write send their variables as JSON on stdin (`--input -`). Search
- * variables go in with `-f` (raw text), never `-F`, which reads `@file`
- * and types values.
+ * run is `gh api graphql --input -`: a fixed query and its variables go in
+ * as JSON on stdin, so the argv never changes. No value from a request is
+ * ever sent: the search strings are fixed, the date in the closed search is
+ * built from the daemon's own clock and shape-checked, and a page cursor,
+ * owner or name comes from GitHub's own answer and is shape-checked.
  *
- * Three searches, side by side: the author's open PRs, every closed one
- * (newest update first), and the open PRs the author is asked to review.
- * The closed list has no date window, because it is what tells the page a
- * branch is finished (docs/work-page.md §5.2). Each stops at
- * MAX_PRS_PER_SEARCH.
+ * A refresh reads, side by side:
+ * - The author's open PRs and the open PRs the author is asked to review,
+ *   as light lists: what shows a change, plus CI, conflicts, the decision
+ *   and the draft flag. A finished check does not move `updatedAt`.
+ * - The details (body, reviewers, reviews, comments, threads) only of a PR
+ *   that is new or whose `updatedAt` or head commit moved, ten per request.
+ *   The rest keep the details read before.
+ * - The closed PRs: the newest 300 on the first refresh, then only those
+ *   updated since the last good one, less a margin, merged in. The closed
+ *   list has no date window: it is what tells the page a branch is finished
+ *   (docs/work-page.md §5.2).
+ * Each search stops at MAX_PRS_PER_SEARCH.
  *
  * `gh` runs only on a refresh (POST /work/prs/refresh), single-flight. The
- * answer is cached in memory; a failed refresh keeps the last good list.
- * The runner is injected: only index.ts makes the real one, so a daemon
- * made without one (every test) acts as if `gh` were missing.
+ * answer is cached in memory. A failed refresh keeps the last good list and
+ * is not retried: a timed-out request costs GitHub points. The runner is
+ * injected: only index.ts makes the real one, so a daemon made without one
+ * (every test) acts as if `gh` were missing.
  */
 
 import { execFile } from 'node:child_process';
@@ -44,12 +51,20 @@ import {
 } from '@diffstalker/core/types/work';
 import { systemProbe } from './install.js';
 
-/** One deadline for a whole refresh, every page included. */
+/** One deadline for a whole refresh, every request included. */
 export const GH_TIMEOUT_MS = 20_000;
 
 const GH_MAX_BUFFER = 32 * 1024 * 1024;
 const PAGE_SIZE = 100;
 const MAX_MESSAGE_LENGTH = 200;
+/** PRs per detail request. */
+export const DETAIL_BATCH = 10;
+const DETAIL_REQUESTS_AT_ONCE = 3;
+/** The closed search looks this far back past the last good refresh: GitHub's index lags. */
+export const CLOSED_MARGIN_MS = 10 * 60 * 1000;
+
+/** The whole argv of every `gh` run. */
+export const GH_ARGS: readonly string[] = ['api', 'graphql', '--input', '-'];
 
 export type GhErrorKind = 'missing' | 'logged-out' | 'failed';
 
@@ -123,92 +138,80 @@ const CLOSED_FIELDS = `number title url state isDraft merged mergedAt closedAt u
       headRepositoryOwner { login }
       repository { nameWithOwner }`;
 
-/**
- * Only an open PR's body is compared with a draft, and only an open PR's
- * progress is shown, so only the open search reads them.
- */
-const OPEN_FIELDS = `${CLOSED_FIELDS}
-      body reviewDecision mergeable
+/** An open PR, light: what shows a change, and what changes without moving `updatedAt`. */
+const LIVE_FIELDS = `${CLOSED_FIELDS}
+      reviewDecision mergeable
+      commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }`;
+
+/** The costly part of an open PR, read only when it changed. */
+const DETAIL_FIELDS = `body
       reviewRequests(first: 20) { totalCount nodes { requestedReviewer {
         __typename ... on User { login } ... on Team { slug } } } }
       latestOpinionatedReviews(first: 20) { nodes { ${AUTHOR} state } }
       reviews(last: 20) { nodes { ${AUTHOR} state submittedAt } }
       comments(last: 20) { nodes { ${AUTHOR} createdAt } }
-      reviewThreads(first: 100) { nodes { isResolved comments(last: 1) { nodes { ${AUTHOR} createdAt } } } }
-      commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }`;
+      reviewThreads(first: 100) { nodes { isResolved comments(last: 1) { nodes { ${AUTHOR} createdAt } } } }`;
 
-function pageFields(fields: string): string {
-  return `pageInfo { hasNextPage endCursor }
-    nodes { ... on PullRequest { ${fields} } }`;
-}
+/** A whole PR, with the node id the write needs. */
+const PR_FRAGMENT = `fragment Pr on PullRequest { id ${LIVE_FIELDS}
+      ${DETAIL_FIELDS} }`;
 
-/** One search, for the pages after the first. */
-function pageQuery(fields: string): string {
-  return `query($q: String!, $after: String!) {
-  search(query: $q, type: ISSUE, first: ${PAGE_SIZE}, after: $after) { ${pageFields(fields)} }
+function searchQuery(fields: string, withViewer: boolean): string {
+  return `query($q: String!, $after: String) {${withViewer ? '\n  viewer { login }' : ''}
+  search(query: $q, type: ISSUE, first: ${PAGE_SIZE}, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes { ... on PullRequest { ${fields} } }
+  }
 }`;
 }
 
-/**
- * The first page of a search. The open one also asks who `gh` is logged in
- * as. The two run as separate requests, side by side: in one request they
- * passed GitHub's 10 s limit and came back as a 502.
- */
-function firstQuery(fields: string, withViewer: boolean): string {
-  return `query($q: String!) {${withViewer ? '\n  viewer { login }' : ''}
-  search(query: $q, type: ISSUE, first: ${PAGE_SIZE}) { ${pageFields(fields)} }
-}`;
+/** The open and the review-request search. Also asks who `gh` is logged in as. */
+export const LIVE_QUERY = searchQuery(LIVE_FIELDS, true);
+export const CLOSED_QUERY = searchQuery(CLOSED_FIELDS, false);
+
+/** `size` whole PRs by owner, name and number, as p0, p1, …. */
+function detailQuery(size: number): string {
+  const slots = Array.from({ length: size }, (_, i) => i);
+  const params = slots.map((i) => `$owner${i}: String!, $name${i}: String!, $number${i}: Int!`);
+  const reads = slots.map(
+    (i) =>
+      `  p${i}: repository(owner: $owner${i}, name: $name${i}) { pullRequest(number: $number${i}) { ...Pr } }`
+  );
+  return `query(${params.join(', ')}) {\n${reads.join('\n')}\n}\n${PR_FRAGMENT}`;
 }
 
-export const OPEN_FIRST_QUERY = firstQuery(OPEN_FIELDS, true);
-export const CLOSED_FIRST_QUERY = firstQuery(CLOSED_FIELDS, false);
-export const OPEN_PAGE_QUERY = pageQuery(OPEN_FIELDS);
-export const CLOSED_PAGE_QUERY = pageQuery(CLOSED_FIELDS);
-
-/** One PR, fresh, with everything the open search reads plus its node id. */
-export const PR_ONE_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) { pullRequest(number: $number) { id ${OPEN_FIELDS} } }
-}`;
+/** One fixed text per batch size; the first reads one PR. */
+export const DETAIL_QUERIES: readonly string[] = Array.from({ length: DETAIL_BATCH }, (_, i) =>
+  detailQuery(i + 1)
+);
 
 /** The one write: a PR's whole body. setTopZone builds it from GitHub's own lower zone. */
 export const UPDATE_BODY_MUTATION = `mutation($id: ID!, $body: String!) {
-  updatePullRequest(input: { pullRequestId: $id, body: $body }) { pullRequest { id ${OPEN_FIELDS} } }
-}`;
+  updatePullRequest(input: { pullRequestId: $id, body: $body }) { pullRequest { ...Pr } }
+}
+${PR_FRAGMENT}`;
 
 export const OPEN_SEARCH = 'is:pr author:@me is:open';
 /** Open PRs the `gh` account is asked to review: usually someone else's. */
 export const REVIEW_SEARCH = 'is:pr is:open review-requested:@me';
 export const CLOSED_SEARCH = 'is:pr author:@me is:closed sort:updated-desc';
 
-interface Search {
-  text: string;
-  firstQuery: string;
-  pageQuery: string;
-  withBody: boolean;
-}
+const SEARCH_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
-const OPEN: Search = {
-  text: OPEN_SEARCH,
-  firstQuery: OPEN_FIRST_QUERY,
-  pageQuery: OPEN_PAGE_QUERY,
-  withBody: true,
-};
-export const REVIEW_FIRST_QUERY = firstQuery(OPEN_FIELDS, false);
-const REVIEW: Search = {
-  text: REVIEW_SEARCH,
-  firstQuery: REVIEW_FIRST_QUERY,
-  pageQuery: OPEN_PAGE_QUERY,
-  withBody: true,
-};
-const CLOSED: Search = {
-  text: CLOSED_SEARCH,
-  firstQuery: CLOSED_FIRST_QUERY,
-  pageQuery: CLOSED_PAGE_QUERY,
-  withBody: false,
-};
+/** The closed search for what changed since `since`, less the margin. Built from a number only. */
+function closedSinceSearch(since: number): string {
+  const at = new Date(since - CLOSED_MARGIN_MS);
+  const two = (n: number) => String(n).padStart(2, '0');
+  const date =
+    `${at.getUTCFullYear()}-${two(at.getUTCMonth() + 1)}-${two(at.getUTCDate())}` +
+    `T${two(at.getUTCHours())}:${two(at.getUTCMinutes())}:${two(at.getUTCSeconds())}Z`;
+  if (!SEARCH_DATE.test(date)) throw new GhError('failed', 'The clock gave no usable date');
+  return `is:pr author:@me is:closed updated:>=${date} sort:updated-desc`;
+}
 
 /** A GraphQL cursor as GitHub writes them; never flag-shaped. */
 const CURSOR = /^[A-Za-z0-9+/=_:][A-Za-z0-9+/=_:-]{0,199}$/;
+const OWNER_AND_NAME = /^([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})$/;
 
 function shapeError(what: string): GhError {
   return new GhError('failed', `GitHub answered in an unexpected shape (${what})`);
@@ -384,9 +387,30 @@ function changesRequestedBy(rec: Json): string[] {
   return out;
 }
 
-function parseProgress(rec: Json): PrProgress {
+/** The progress a light list carries. */
+type LiveProgress = Pick<PrProgress, 'decision' | 'checks' | 'headCommittedAt' | 'conflicting'>;
+
+/** An open PR as a light list has it. */
+interface LivePr {
+  pr: PrInfo;
+  live: LiveProgress;
+}
+
+/** A PR read whole. */
+type FullPr = PrInfo & { body: string; progress: PrProgress };
+
+function parseLive(rec: Json): LiveProgress {
   const decision = textOrNull(rec, 'reviewDecision');
   const head = headOf(rec);
+  return {
+    decision: decision === null ? null : (DECISION[decision] ?? null),
+    checks: head.checks,
+    headCommittedAt: head.committedAt,
+    conflicting: text(rec, 'mergeable') === 'CONFLICTING',
+  };
+}
+
+function parseProgress(rec: Json): PrProgress {
   const threads = threadFacts(rec);
   const requests = record(rec.reviewRequests, 'reviewRequests');
   const pending = requests.totalCount;
@@ -398,19 +422,17 @@ function parseProgress(rec: Json): PrProgress {
     .map(commentEvent)
     .filter((event) => event !== null);
   return {
-    decision: decision === null ? null : (DECISION[decision] ?? null),
+    ...parseLive(rec),
     unresolvedThreads: threads.unresolved,
     pendingReviewers: pending,
     requestedReviewers: requested,
     changesRequestedBy: changesRequestedBy(rec),
-    checks: head.checks,
-    headCommittedAt: head.committedAt,
-    conflicting: text(rec, 'mergeable') === 'CONFLICTING',
     events: newestEvents([...reviewEvents(rec), ...comments, ...threads.events]),
   };
 }
 
-function parsePr(node: unknown, withBody: boolean): PrInfo {
+/** What every search reads; no body, no progress. */
+function parseBase(node: unknown): PrInfo {
   const rec = record(node, 'pull request');
   const number = rec.number;
   if (typeof number !== 'number' || !Number.isInteger(number) || number < 1)
@@ -432,11 +454,11 @@ function parsePr(node: unknown, withBody: boolean): PrInfo {
     mergedAt: textOrNull(rec, 'mergedAt'),
     closedAt: textOrNull(rec, 'closedAt'),
     updatedAt: text(rec, 'updatedAt'),
-    body: withBody ? text(rec, 'body') : null,
+    body: null,
     headRefName: text(rec, 'headRefName'),
     headRefOid: text(rec, 'headRefOid'),
     baseRefName: text(rec, 'baseRefName'),
-    progress: withBody ? parseProgress(rec) : null,
+    progress: null,
     headOwner: owner,
     author: rec.author === null ? null : text(record(rec.author, 'author'), 'login'),
     reviewRequested: false,
@@ -445,55 +467,139 @@ function parsePr(node: unknown, withBody: boolean): PrInfo {
   };
 }
 
-interface Page {
-  prs: PrInfo[];
+function parseLivePr(node: unknown): LivePr {
+  return { pr: parseBase(node), live: parseLive(record(node, 'pull request')) };
+}
+
+/** The node id and the whole PR. */
+function parseFull(node: unknown): { id: string; pr: FullPr } {
+  const rec = record(node, 'pull request');
+  return {
+    id: text(rec, 'id'),
+    pr: { ...parseBase(rec), body: text(rec, 'body'), progress: parseProgress(rec) },
+  };
+}
+
+interface Page<T> {
+  items: T[];
   hasNextPage: boolean;
   endCursor: string | null;
 }
 
-function parsePage(value: unknown, search: Search): Page {
+function parsePage<T>(value: unknown, parse: (node: unknown) => T): Page<T> {
   const page = record(value, 'search');
   const info = record(page.pageInfo, 'pageInfo');
   if (!Array.isArray(page.nodes)) throw shapeError('nodes');
   return {
-    prs: page.nodes.map((node) => parsePr(node, search.withBody)),
+    items: page.nodes.map(parse),
     hasNextPage: flag(info, 'hasNextPage'),
     endCursor: textOrNull(info, 'endCursor'),
   };
 }
 
-type Remaining = () => number;
-
-/** Run one query of a search; the answer's `data`. */
+/** One fixed query with its variables on stdin; the answer's `data`. */
 async function ask(
   runner: GhRunner,
   query: string,
-  search: Search,
-  remaining: Remaining,
-  after?: string
+  variables: Record<string, unknown>,
+  timeoutMs: number
 ): Promise<Json> {
-  const args = ['api', 'graphql', '-f', `query=${query}`, '-f', `q=${search.text}`];
-  if (after !== undefined) args.push('-f', `after=${after}`);
-  return dataOf(parseJson(await runner.run(args, remaining())));
+  const input = JSON.stringify({ query, variables });
+  return dataOf(parseJson(await runner.run(GH_ARGS, timeoutMs, input)));
 }
 
-/** A search's pages, up to MAX_PRS_PER_SEARCH, and the viewer when the first page asked. */
-async function collect(
+type Remaining = () => number;
+
+/** A search's pages, up to MAX_PRS_PER_SEARCH, and its first answer. */
+async function collect<T>(
   runner: GhRunner,
-  search: Search,
+  query: string,
+  search: string,
+  parse: (node: unknown) => T,
   remaining: Remaining
-): Promise<{ prs: PrInfo[]; capped: boolean; data: Json }> {
-  const data = await ask(runner, search.firstQuery, search, remaining);
-  let page = parsePage(data.search, search);
-  const prs = [...page.prs];
-  while (page.hasNextPage && prs.length < MAX_PRS_PER_SEARCH) {
-    const cursor = page.endCursor;
-    if (cursor === null || !CURSOR.test(cursor)) throw shapeError('endCursor');
-    const next = await ask(runner, search.pageQuery, search, remaining, cursor);
-    page = parsePage(next.search, search);
-    prs.push(...page.prs);
+): Promise<{ items: T[]; capped: boolean; first: Json }> {
+  const items: T[] = [];
+  let first: Json | undefined;
+  let after: string | null = null;
+  for (;;) {
+    const data = await ask(runner, query, { q: search, after }, remaining());
+    first ??= data;
+    const page = parsePage(data.search, parse);
+    items.push(...page.items);
+    if (!page.hasNextPage || items.length >= MAX_PRS_PER_SEARCH) {
+      return { items: items.slice(0, MAX_PRS_PER_SEARCH), capped: page.hasNextPage, first };
+    }
+    if (page.endCursor === null || !CURSOR.test(page.endCursor)) throw shapeError('endCursor');
+    after = page.endCursor;
   }
-  return { prs: prs.slice(0, MAX_PRS_PER_SEARCH), capped: page.hasNextPage, data };
+}
+
+/** `owner/name`, GitHub's own spelling, checked before it goes back. */
+function ownerAndName(pr: PrInfo): { owner: string; name: string } {
+  const match = OWNER_AND_NAME.exec(pr.repo);
+  if (match === null) throw shapeError('nameWithOwner');
+  return { owner: match[1], name: match[2] };
+}
+
+/** Whole PRs, one to DETAIL_BATCH, in the order asked. */
+async function readFull(
+  runner: GhRunner,
+  prs: readonly PrInfo[],
+  timeoutMs: number
+): Promise<Array<{ id: string; pr: FullPr }>> {
+  const variables: Record<string, string | number> = {};
+  prs.forEach((pr, i) => {
+    const { owner, name } = ownerAndName(pr);
+    variables[`owner${i}`] = owner;
+    variables[`name${i}`] = name;
+    variables[`number${i}`] = pr.number;
+  });
+  const data = await ask(runner, DETAIL_QUERIES[prs.length - 1], variables, timeoutMs);
+  return prs.map((_, i) => {
+    const node = record(data[`p${i}`], 'repository').pullRequest;
+    if (node === null) throw new GhError('failed', 'GitHub no longer has this PR');
+    return parseFull(node);
+  });
+}
+
+function keyOf(pr: PrInfo): string {
+  return `${pr.repoKey}#${pr.number}`;
+}
+
+/** The details read before still fit: the PR did not move since. */
+function isCurrent(full: FullPr | undefined, pr: PrInfo): full is FullPr {
+  return full !== undefined && full.updatedAt === pr.updatedAt && full.headRefOid === pr.headRefOid;
+}
+
+/**
+ * Read these PRs whole into `details`, DETAIL_BATCH per request. A batch
+ * that arrived stays even when another fails; no batch starts after one failed.
+ */
+async function readDetails(
+  runner: GhRunner,
+  prs: readonly PrInfo[],
+  details: Map<string, FullPr>,
+  remaining: Remaining
+): Promise<void> {
+  const batches: PrInfo[][] = [];
+  for (let i = 0; i < prs.length; i += DETAIL_BATCH) batches.push(prs.slice(i, i + DETAIL_BATCH));
+  let next = 0;
+  let failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < batches.length) {
+      const batch = batches[next++];
+      try {
+        const read = await readFull(runner, batch, remaining());
+        read.forEach((full, i) => details.set(keyOf(batch[i]), full.pr));
+      } catch (err) {
+        failed = true;
+        throw err;
+      }
+    }
+  };
+  const workers = Array.from({ length: Math.min(DETAIL_REQUESTS_AT_ONCE, batches.length) }, worker);
+  const failure = (await Promise.allSettled(workers)).find((r) => r.status === 'rejected');
+  if (failure !== undefined) throw failure.reason;
 }
 
 /** Open first, then the newest update first. */
@@ -506,11 +612,11 @@ function comparePrs(a: PrInfo, b: PrInfo): number {
   return a.number - b.number;
 }
 
-/** A PR closed mid-run is in both searches: keep the newer answer. */
+/** One copy per PR: the newer answer, or the first on a tie. */
 function dedupe(prs: PrInfo[]): PrInfo[] {
   const byKey = new Map<string, PrInfo>();
   for (const pr of prs) {
-    const key = `${pr.repoKey}#${pr.number}`;
+    const key = keyOf(pr);
     const seen = byKey.get(key);
     if (seen === undefined || Date.parse(pr.updatedAt) > Date.parse(seen.updatedAt))
       byKey.set(key, pr);
@@ -518,31 +624,44 @@ function dedupe(prs: PrInfo[]): PrInfo[] {
   return [...byKey.values()];
 }
 
-interface Fetched {
+interface Live {
   prs: PrInfo[];
   viewer: string;
   capped: boolean;
+  /** How many PRs were read whole. */
+  read: number;
 }
 
-async function fetchPrs(runner: GhRunner): Promise<Fetched> {
-  const deadline = performance.now() + GH_TIMEOUT_MS;
-  const remaining = (): number => {
-    const left = Math.floor(deadline - performance.now());
-    if (left <= 0) throw new GhError('failed', 'gh timed out');
-    return left;
-  };
-  const [open, closed, review] = await Promise.all([
-    collect(runner, OPEN, remaining),
-    collect(runner, CLOSED, remaining),
-    collect(runner, REVIEW, remaining),
+/** The two light lists, each PR with its details: kept when it did not move, else read. */
+async function fetchLive(
+  runner: GhRunner,
+  details: Map<string, FullPr>,
+  remaining: Remaining
+): Promise<Live> {
+  const [open, review] = await Promise.all([
+    collect(runner, LIVE_QUERY, OPEN_SEARCH, parseLivePr, remaining),
+    collect(runner, LIVE_QUERY, REVIEW_SEARCH, parseLivePr, remaining),
   ]);
-  const viewer = text(record(open.data.viewer, 'viewer'), 'login');
-  const asked = review.prs.map((pr) => ({ ...pr, reviewRequested: true }));
+  const asked = review.items.map(({ pr, live }) => ({
+    pr: { ...pr, reviewRequested: true },
+    live,
+  }));
+  const all = [...open.items, ...asked];
+  const moved = new Map<string, PrInfo>();
+  for (const { pr } of all) {
+    if (!isCurrent(details.get(keyOf(pr)), pr)) moved.set(keyOf(pr), pr);
+  }
+  await readDetails(runner, [...moved.values()], details, remaining);
+  const prs = all.map(({ pr, live }): PrInfo => {
+    const full = details.get(keyOf(pr));
+    if (full === undefined) throw shapeError('details');
+    return { ...pr, body: full.body, progress: { ...full.progress, ...live } };
+  });
   return {
-    prs: dedupe([...open.prs, ...closed.prs, ...asked]).sort(comparePrs),
-    viewer,
-    // Older closed PRs past the cap only matter as a limit (docs/work-page.md §5.2).
+    prs,
+    viewer: text(record(open.first.viewer, 'viewer'), 'login'),
     capped: open.capped,
+    read: moved.size,
   };
 }
 
@@ -577,29 +696,10 @@ export interface PrService {
   setTopZone(pr: PrInfo, top: string, expectedTop: string): Promise<PrInfo>;
 }
 
-/** `owner/name` split; GitHub's own spelling, so it has exactly one slash. */
-function ownerAndName(pr: PrInfo): { owner: string; name: string } {
-  const [owner, name, ...rest] = pr.repo.split('/');
-  if (!owner || !name || rest.length > 0) throw shapeError('nameWithOwner');
-  return { owner, name };
-}
-
-/** One fixed query with its variables on stdin. */
-async function askJson(
-  runner: GhRunner,
-  query: string,
-  variables: Record<string, unknown>
-): Promise<Json> {
-  const input = JSON.stringify({ query, variables });
-  return dataOf(
-    parseJson(await runner.run(['api', 'graphql', '--input', '-'], GH_TIMEOUT_MS, input))
-  );
-}
-
-/** The node id and the PR from a node that carries both. */
-function parseWithId(node: unknown): { id: string; pr: PrInfo } {
-  const rec = record(node, 'pull request');
-  return { id: text(rec, 'id'), pr: parsePr(rec, true) };
+/** The closed list of the last good refresh, and when that refresh started. */
+interface ClosedCache {
+  prs: PrInfo[];
+  since: number;
 }
 
 export function createPrService(runner: GhRunner | null, now: () => number = Date.now): PrService {
@@ -612,6 +712,40 @@ export function createPrService(runner: GhRunner | null, now: () => number = Dat
     capped: false,
   };
   let inflight: Promise<PrSnapshot> | null = null;
+  /** The last whole read of each open PR. */
+  const details = new Map<string, FullPr>();
+  let closed: ClosedCache | null = null;
+
+  async function fetchAll(gh: GhRunner): Promise<PrSnapshot> {
+    const started = now();
+    const closedSearch = closed === null ? CLOSED_SEARCH : closedSinceSearch(closed.since);
+    const deadline = performance.now() + GH_TIMEOUT_MS;
+    const remaining = (): number => {
+      const left = Math.floor(deadline - performance.now());
+      if (left <= 0) throw new GhError('failed', 'gh timed out');
+      return left;
+    };
+    const [live, answer] = await Promise.all([
+      fetchLive(gh, details, remaining),
+      collect(gh, CLOSED_QUERY, closedSearch, parseBase, remaining),
+    ]);
+    const closedPrs = dedupe([...answer.items, ...(closed?.prs ?? [])])
+      .sort(comparePrs)
+      .slice(0, MAX_PRS_PER_SEARCH);
+    closed = { prs: closedPrs, since: started };
+    const keep = new Set(live.prs.map(keyOf));
+    for (const key of details.keys()) if (!keep.has(key)) details.delete(key);
+    logDebug('PR refresh', undefined, { readWhole: live.read, closedFound: answer.items.length });
+    return {
+      status: 'ok',
+      message: null,
+      checkedAt: now(),
+      viewer: live.viewer,
+      // A PR closed mid-run is in both lists: the newer answer wins.
+      prs: dedupe([...live.prs, ...closedPrs]).sort(comparePrs),
+      capped: live.capped,
+    };
+  }
 
   async function run(): Promise<PrSnapshot> {
     if (runner === null) {
@@ -619,8 +753,7 @@ export function createPrService(runner: GhRunner | null, now: () => number = Dat
       return current;
     }
     try {
-      const fetched = await fetchPrs(runner);
-      current = { status: 'ok', message: null, checkedAt: now(), ...fetched };
+      current = await fetchAll(runner);
     } catch (err) {
       if (err instanceof GhError) {
         logWarn('PR refresh failed', err, { status: STATUS_OF[err.kind] });
@@ -637,9 +770,10 @@ export function createPrService(runner: GhRunner | null, now: () => number = Dat
     return current;
   }
 
-  /** Put a fresh copy of a PR in the cached list, in place of the old one. */
-  function store(fresh: PrInfo): PrInfo {
-    const same = (pr: PrInfo) => pr.repoKey === fresh.repoKey && pr.number === fresh.number;
+  /** Put a fresh whole PR in the cached list, in place of the old one. */
+  function store(fresh: FullPr): PrInfo {
+    details.set(keyOf(fresh), fresh);
+    const same = (pr: PrInfo) => keyOf(pr) === keyOf(fresh);
     const prs = current.prs.some(same)
       ? current.prs.map((pr) => (same(pr) ? fresh : pr))
       : [fresh, ...current.prs];
@@ -647,13 +781,10 @@ export function createPrService(runner: GhRunner | null, now: () => number = Dat
     return fresh;
   }
 
-  async function readOne(pr: PrInfo): Promise<{ id: string; pr: PrInfo }> {
+  async function readOne(pr: PrInfo): Promise<{ id: string; pr: FullPr }> {
     if (runner === null) throw new GhError('missing', 'gh not found');
-    const { owner, name } = ownerAndName(pr);
-    const data = await askJson(runner, PR_ONE_QUERY, { owner, name, number: pr.number });
-    const node = record(data.repository, 'repository').pullRequest;
-    if (node === null) throw new GhError('failed', 'GitHub no longer has this PR');
-    return parseWithId(node);
+    const [fresh] = await readFull(runner, [pr], GH_TIMEOUT_MS);
+    return fresh;
   }
 
   return {
@@ -665,15 +796,16 @@ export function createPrService(runner: GhRunner | null, now: () => number = Dat
       const fresh = await readOne(pr);
       store(fresh.pr);
       if (fresh.pr.state !== 'open') throw new GhError('failed', 'The PR is not open');
-      const body = fresh.pr.body ?? '';
-      if (topZoneOf(body) !== normalizeBody(expectedTop)) throw new TopZoneChangedError();
-      const data = await askJson(runner as GhRunner, UPDATE_BODY_MUTATION, {
-        id: fresh.id,
-        body: replaceTopZone(body, top),
-      });
+      if (topZoneOf(fresh.pr.body) !== normalizeBody(expectedTop)) throw new TopZoneChangedError();
+      const data = await ask(
+        runner as GhRunner,
+        UPDATE_BODY_MUTATION,
+        { id: fresh.id, body: replaceTopZone(fresh.pr.body, top) },
+        GH_TIMEOUT_MS
+      );
       const node = record(data.updatePullRequest, 'updatePullRequest').pullRequest;
       logDebug('PR top zone updated', undefined, { pr: `${fresh.pr.repo}#${fresh.pr.number}` });
-      return store(parseWithId(node).pr);
+      return store(parseFull(node).pr);
     },
     refresh() {
       inflight ??= run().finally(() => {

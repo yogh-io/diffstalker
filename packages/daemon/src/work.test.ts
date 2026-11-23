@@ -29,10 +29,11 @@ let tmpDir: string;
 let watchRoot: string;
 let discoveredPath: string;
 
-const runnerCalls: string[][] = [];
+const runnerCalls: Array<{ args: string[]; input: string }> = [];
 
 function prNode(): Record<string, unknown> {
   return {
+    id: 'PR_node',
     number: 9087,
     title: 'Fix it',
     url: 'https://github.com/aerius/calculator/pull/9087',
@@ -62,21 +63,25 @@ function prNode(): Record<string, unknown> {
 
 const fakeGh: GhRunner = {
   available: () => true,
-  run: (args) => {
-    runnerCalls.push([...args]);
-    const page = (nodes: unknown[]) => ({
-      pageInfo: { hasNextPage: false, endCursor: null },
-      nodes,
-    });
-    // The open and the closed search are two requests; the open one asks for the viewer.
-    const open = args.includes(`q=${OPEN_SEARCH}`);
-    return Promise.resolve(
-      JSON.stringify({
-        data: open
-          ? { viewer: { login: 'JornC' }, search: page([prNode()]) }
-          : { search: page([]) },
-      })
-    );
+  run: (args, _timeout, input = '') => {
+    runnerCalls.push({ args: [...args], input });
+    const { query, variables } = JSON.parse(input) as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
+    if (query.includes('search(')) {
+      const nodes = variables.q === OPEN_SEARCH ? [prNode()] : [];
+      return Promise.resolve(
+        JSON.stringify({
+          data: {
+            viewer: { login: 'JornC' },
+            search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes },
+          },
+        })
+      );
+    }
+    // A detail read of the one open PR.
+    return Promise.resolve(JSON.stringify({ data: { p0: { pullRequest: prNode() } } }));
   },
 };
 
@@ -179,13 +184,14 @@ describe('the PR list', () => {
     const snapshot = (await res.json()) as PrSnapshot;
     expect(snapshot).toMatchObject({ status: 'ok', viewer: 'JornC' });
     expect(snapshot.prs.map((pr) => pr.number)).toEqual([9087]);
-    expect(runnerCalls).toHaveLength(3);
+    // Three searches, then the one open PR read whole.
+    expect(runnerCalls).toHaveLength(4);
 
     expect(await (await request('/work/prs')).json()).toEqual(snapshot);
-    expect(runnerCalls).toHaveLength(3);
+    expect(runnerCalls).toHaveLength(4);
   });
 
-  test('a body of junk and a query string change nothing in the argv', async () => {
+  test('a body of junk and a query string change nothing gh is given', async () => {
     const res = await request('/work/prs/refresh?q=--paginate&query=evil', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -197,8 +203,14 @@ describe('the PR list', () => {
       }),
     });
     expect(res.status).toBe(200);
-    expect(runnerCalls).toHaveLength(6);
-    expect(runnerCalls.slice(3)).toEqual(runnerCalls.slice(0, 3));
+    // Nothing changed, so no PR is read whole again.
+    expect(runnerCalls).toHaveLength(7);
+    for (const call of runnerCalls) {
+      expect(call.args).toEqual(['api', 'graphql', '--input', '-']);
+      for (const junk of ['--paginate', 'evil', '-F', '/etc/passwd', '-X']) {
+        expect(call.input).not.toContain(junk);
+      }
+    }
   });
 
   test('the branch PR comes from the cache, matched by the remotes', async () => {
@@ -211,7 +223,7 @@ describe('the PR list', () => {
     ).toMatchObject({ pr: null });
     expect((await request(`/repos/${repoId}/pr?branch=-x`)).status).toBe(400);
     expect((await request(`/repos/${repoId}/pr`)).status).toBe(400);
-    expect(runnerCalls).toHaveLength(6);
+    expect(runnerCalls).toHaveLength(7);
   });
 
   test('/health says gh is there, from the runner', async () => {

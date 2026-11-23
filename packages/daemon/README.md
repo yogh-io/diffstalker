@@ -575,20 +575,27 @@ open repo's common-dir watcher also watches `diffstalker/pr/` and sends
 `prefix: true` means a directory changed, so every draft at or below
 `branch` may have changed (`""` is all of them).
 
-PR state comes from `gh`: three fixed `gh api graphql` queries, side by
-side, for the author's open PRs (with review state, requested reviewers,
-threads, checks, conflicts and recent events), the open PRs the author is
-asked to review (the same fields), and the author's closed PRs (newest update first, no date
-window: an old closed PR is what tells the page a branch is finished), at
-most 300 of each, variables passed with `-f` only, no value from a request
-in the argv. The one-PR read (`/pr/check`) and the one write (`/pr/top`,
-"Update GitHub": a PR's top zone, nothing else) send a fixed query with its
-variables as JSON on stdin (`--input -`), and the write's text is `top.md`
-from disk, never the request's. It runs only on `POST /work/prs/refresh` (POST, so the CSRF guard
-covers it: `gh` sends the author's token), never in the background, with
-one 20 s deadline. The answer is kept in memory; `GET /work/prs` and
-`GET /repos/:id/pr` read it and never run `gh`. When `gh` is missing or
-logged out the status says so, and everything from git keeps working.
+PR state comes from `gh`: every run is `gh api graphql --input -` with a
+fixed query and its variables as JSON on stdin, so no value, from a request
+or from GitHub, is ever in the argv. A refresh reads, side by side, light
+lists of the author's open PRs and of the open PRs the author is asked to
+review (what shows a change, plus checks, conflicts, the review decision
+and the draft flag, about 1 point each), and the author's closed PRs. Only
+a PR that is new, or whose `updatedAt` or head commit moved, is then read
+whole (body, requested reviewers, threads and recent events), ten per
+request; the others keep what was read before. The closed list is the
+newest 300 on the first refresh, then only the PRs updated since the last
+good refresh (less 10 minutes) are asked for and merged in; it has no date
+window, since an old closed PR is what tells the page a branch is finished.
+At most 300 of each list. The one-PR read (`/pr/check`) and the one write
+(`/pr/top`, "Update GitHub": a PR's top zone, nothing else) go the same
+way, and the write's text is `top.md` from disk, never the request's. It
+runs only on `POST /work/prs/refresh` (POST, so the CSRF guard covers it:
+`gh` sends the author's token), never in the background, with one 20 s
+deadline, and a failed refresh is not retried. The answer is kept in
+memory; `GET /work/prs` and `GET /repos/:id/pr` read it and never run
+`gh`. When `gh` is missing or logged out the status says so, and
+everything from git keeps working.
 `POST /work/repo` is POST too: it runs a full git scan, and the CSRF guard
 covers only non-GET requests.
 

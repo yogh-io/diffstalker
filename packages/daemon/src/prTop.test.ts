@@ -13,7 +13,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { DRAFT_VERSION_ABSENT, type BranchPr, type PrDraft } from '@diffstalker/core/types/work';
 import { createDaemon, type Daemon } from './server.js';
-import { OPEN_SEARCH, PR_ONE_QUERY, UPDATE_BODY_MUTATION, type GhRunner } from './github.js';
+import { DETAIL_QUERIES, OPEN_SEARCH, UPDATE_BODY_MUTATION, type GhRunner } from './github.js';
 import { createFixtureRepo, gitExec, removeFixtureRepo, writeFixtureFile } from './test-helpers.js';
 
 const FIXTURE = 'daemon-pr-top';
@@ -62,22 +62,24 @@ const fakeGh: GhRunner = {
   available: () => true,
   run: async (args, _timeout, input) => {
     calls.push({ args: [...args], input });
-    if (input !== undefined && input !== '') {
-      const request = JSON.parse(input) as { query: string; variables: Record<string, unknown> };
-      if (request.query === UPDATE_BODY_MUTATION) {
-        githubBody = String(request.variables.body);
-        return JSON.stringify({ data: { updatePullRequest: { pullRequest: prNode() } } });
-      }
-      return JSON.stringify({ data: { repository: { pullRequest: prNode() } } });
+    const request = JSON.parse(input ?? '') as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
+    if (request.query === UPDATE_BODY_MUTATION) {
+      githubBody = String(request.variables.body);
+      return JSON.stringify({ data: { updatePullRequest: { pullRequest: prNode() } } });
     }
-    const page = (nodes: unknown[]) => ({
-      pageInfo: { hasNextPage: false, endCursor: null },
-      nodes,
-    });
-    if (args.includes(`q=${OPEN_SEARCH}`)) {
-      return JSON.stringify({ data: { viewer: { login: 'JornC' }, search: page([prNode()]) } });
+    if (request.query.includes('search(')) {
+      const nodes = request.variables.q === OPEN_SEARCH ? [prNode()] : [];
+      return JSON.stringify({
+        data: {
+          viewer: { login: 'JornC' },
+          search: { pageInfo: { hasNextPage: false, endCursor: null }, nodes },
+        },
+      });
     }
-    return JSON.stringify({ data: { search: page([]) } });
+    return JSON.stringify({ data: { p0: { pullRequest: prNode() } } });
   },
 };
 
@@ -166,7 +168,7 @@ describe('POST /repos/:id/pr/top', () => {
       ['api', 'graphql', '--input', '-'],
     ]);
     const [read, write] = calls.map((call) => JSON.parse(call.input ?? '') as { query: string });
-    expect(read.query).toBe(PR_ONE_QUERY);
+    expect(read.query).toBe(DETAIL_QUERIES[0]);
     expect(write.query).toBe(UPDATE_BODY_MUTATION);
   });
 
@@ -235,7 +237,7 @@ describe('POST /repos/:id/pr/check', () => {
     expect(((await res.json()) as BranchPr).pr?.body).toBe(githubBody);
     expect(calls).toHaveLength(1);
     const variables = (JSON.parse(calls[0].input ?? '') as { variables: unknown }).variables;
-    expect(variables).toEqual({ owner: 'aerius', name: 'calculator', number: 7 });
+    expect(variables).toEqual({ owner0: 'aerius', name0: 'calculator', number0: 7 });
   });
 
   test('GET is not routed', async () => {
