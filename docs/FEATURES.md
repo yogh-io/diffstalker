@@ -967,9 +967,12 @@ change it makes on GitHub.
 - **Work page** (`/work`) — one page with all the author's work across the
   watched repos, found without bookkeeping. Click the diffstalker wordmark
   to open it (and again to close it). It scans every repo under the watch
-  directories plus every open repo when it opens and when **Refresh** is
-  pressed, never on a timer, and fills in as repos answer
-  (`scanned 12 of 40 repos`). Three sections: **Work** (open PRs by the
+  directories plus every open repo when it opens, when it is shown again
+  (the tab becomes visible or the window gets focus: repos older than a
+  minute, PRs older than five minutes) and when **Refresh** is pressed,
+  never on a timer, and fills in as repos answer (`scanned 12 of 40
+  repos`). The header says how old each part is (`Repos scanned 2 minutes
+  ago`, `PRs checked 6 minutes ago as JornC`, the time on hover). Three sections: **Work** (open PRs by the
   author, branches with a written PR draft, tracked items), **Candidates**
   (worktrees with uncommitted changes, branches ahead of their base or with
   unpushed commits, and fresh worktrees on a new branch) and **Done** (PRs
@@ -994,7 +997,7 @@ change it makes on GitHub.
   `awaiting review`, `needs reviewer`, `changes requested`, `approved`,
   `your review`, …; bold when it is the author's) and **When** (how long
   ago the last activity was, `3 days 12 hours ago`; on hover what it was —
-  files edited, a commit, stage or checkout, the draft edited, or a review
+  files edited, a commit or checkout, the draft edited, or a review
   or comment and who made it, bots left out — and the date and time). A red alert
   by the stage says someone waits on the author: a reviewer asked for
   changes and was not asked to review again yet, or the author is asked to
@@ -1026,9 +1029,9 @@ change it makes on GitHub.
   complete scan: every watch directory listed in full, every repo answered,
   and a real answer from GitHub. A watch directory that could not be read,
   or holds more repos than the daemon lists, is named on the page. PR state
-  comes from `gh` (on open only when the daemon has never asked, and on
-  Refresh); the header says
-  `PRs checked 14:02 as JornC`, or why it could not (`gh not found`,
+  comes from `gh` (on open and shown again when the list is older than five
+  minutes, and on Refresh); the header says how old the list is, or why it
+  could not be read (`gh not found`,
   `gh not logged in`, `could not reach GitHub: …`) next to the time of the
   list it kept. Everything from git keeps working without `gh`. On the
   page the view tabs are hidden and the

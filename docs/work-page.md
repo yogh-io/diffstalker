@@ -49,14 +49,21 @@ version was read-only by rule; the author asked for that button.
   daemon writes `top.md` only from the author's typing (or an explicit
   "start from this" click). It never writes `top.suggested.md` or `ai.md`.
   Agents never write `top.md`.
-- **No background work.** The page scans when it is opened and when the
-  refresh button is pressed. No polling, no timers, no watchers for repos
-  nobody is looking at (CLAUDE.md, "Daemon-side managers and events").
+- **No background work.** The page scans when it is opened, when it is
+  shown again (the tab becomes visible or the window gets focus), and when
+  the refresh button is pressed. Shown again, it scans the repos only when
+  the last scan is older than 60 s, and asks GitHub only when the PR list
+  is older than 5 minutes; opening the page asks GitHub on the same rule.
+  No polling, no timers, no watchers for repos nobody is looking at
+  (CLAUDE.md, "Daemon-side managers and events"). Rows do not change while
+  the author looks at the page; instead the header says how old each part
+  is (`Repos scanned 2 minutes ago`, `PRs checked 6 minutes ago`, the time
+  on hover). "Shown again" was added on 2026-11-23, after a study of what a
+  refresh costs (§4.6); the author agreed to the wording.
 - **Nothing measures the person** (`docs/feature-review-0.9.0.md` §4): no
   "away for", no time on task, no totals. An item's time says how long ago
   something happened to a piece of work (`3 days 12 hours ago`, the date
-  and time on hover), as History and Compare already do for commits. The
-  gh line keeps a clock time (`PRs checked 14:02`).
+  and time on hover), as History and Compare already do for commits.
 
 ## 3. PR drafts
 
@@ -195,49 +202,53 @@ is the truth.
 
 `gh search prs` does not return the head branch, which is what links a PR to
 a worktree. GraphQL search does. The daemon runs, with `execFile` and no
-shell:
+shell, always the same argv:
 
 ```
-gh api graphql -f query=<fixed query string> -f q=<fixed search>
+gh api graphql --input -
 ```
 
-for three searches, as three requests side by side: `is:pr author:@me
-is:open`, `is:pr author:@me is:closed sort:updated-desc` (closed includes
-merged), and `is:pr is:open review-requested:@me` (PRs the author is asked
-to review, read with the open search's fields; their `reviewRequested` is
-true). In one request the first two passed GitHub's 10 s limit and came
-back as HTTP 502.
-The closed search has no date window: an old closed PR is how the page
-knows a branch is finished (§5.2). **No value from a request ever becomes a
-`gh` argument.** Variables go in with `-f` (raw text), never `-F`, which
-reads `@file`. A page cursor comes from GitHub's own answer and is
-shape-checked before it is passed back. Per PR: `number title url state
-isDraft merged mergedAt closedAt updatedAt headRefName headRefOid
-headRepositoryOwner{login} repository{nameWithOwner} author{login}`, plus
-`viewer{login}`.
-Both read `baseRefName` (for stacks). The open search also reads `body`
-(only an open PR's body is compared with a draft, §3.5, so a closed PR's
-`body` is null) and its progress (`PrProgress`, null for a closed PR):
-`reviewDecision`, `mergeable` (conflicts), the requested reviewers (the
-first 20: logins, `team:<slug>` for a team, and the total), the reviewers
-whose latest approving-or-not review asks for changes
-(`latestOpinionatedReviews`),
-the last 20 reviews and 20 comments, the first 100 review threads
-(resolved or not, and each one's last comment), and the head commit's
-`statusCheckRollup`. From those it keeps the open-thread count and the
-newest 10 events by people: a review (`approved`, `changes requested`,
-`reviewed`) or a comment. The head commit's `committedDate` comes with its
-checks. Bots (`__typename` `Bot`: SonarCloud, Amplify)
-and deleted accounts are left out; a review and its inline comments in the
-same minute count once per kind.
+with a fixed query and its variables as JSON on stdin. **No value from a
+request ever reaches `gh`**: the search strings are fixed; a page cursor,
+an owner/name and a date are shape-checked before they are sent; the one
+write sends `top.md` from disk (§3.6).
 
-Two more queries, both with their variables as JSON on stdin (`gh api
-graphql --input -`), so not even GitHub's own values go in as arguments:
-one PR by owner, name and number (with its node `id`), and the one write,
-`updatePullRequest { pullRequestId, body }` (§3.6). Paged, at most 300 PRs per
-search (the author has 45 open today). The closed search always reaches
-that cap once the author has 300 closed PRs, so only a capped open search
-sets `capped`. Timeout 20 s.
+A refresh (built 2026-11-23, §4.6):
+
+1. **Light lists**, side by side: `is:pr author:@me is:open` and
+   `is:pr is:open review-requested:@me` (PRs the author is asked to review;
+   their `reviewRequested` is true). Per PR only what detects a change and
+   fills the cheap columns: number, url, title, state, draft flag, dates,
+   head and base branch, head commit, owner, author, repo, `mergeable`
+   (conflicts), `reviewDecision`, and the head commit's `committedDate` and
+   check state. About 1 point each.
+2. **Whole reads** only for an open PR that is new, or whose `updatedAt` or
+   head commit changed since the daemon's cached copy: ten per request,
+   one fixed query per batch size, at most three requests at once. They add
+   `body` and the progress (`PrProgress`): the requested reviewers (the
+   first 20: logins, `team:<slug>`, and the total), the reviewers whose
+   latest approving-or-not review asks for changes
+   (`latestOpinionatedReviews`), the last 20 reviews and comments, and the
+   first 100 review threads (each one's last comment, resolved or not).
+   From those it keeps the open-thread count and the newest 10 events by
+   people. Bots (`__typename` `Bot`: SonarCloud, Amplify) and deleted
+   accounts are left out; a review and its inline comments in the same
+   minute count once per kind. Checks, conflicts, decision, draft flag and
+   head commit date always come from the light list: a finished check does
+   not move `updatedAt`.
+3. **Closed PRs**, alongside: the first refresh after a daemon start reads
+   the newest 300 (`is:pr author:@me is:closed sort:updated-desc`). Later
+   ones read only `updated:>=` the start of the last good refresh less 10
+   minutes, and merge the answer into the cached list, capped at 300. The
+   closed search has no other date window: an old closed PR is how the page
+   knows a branch is finished (§5.2).
+
+A failed request keeps the last good snapshot and is never retried at once
+(a timeout costs extra points); whole reads that arrived are kept, and a
+failed refresh does not move the closed search's date. The one-PR read
+(`/pr/check`) and the one write, `updatePullRequest { pullRequestId, body }`
+(§3.6), use the same query as a batch of one. Only a capped open list sets
+`capped`. One deadline of 20 s for a whole refresh.
 
 ### 4.2 Errors
 
@@ -303,6 +314,46 @@ could start scans and time them. Same reasoning as search being POST
   points (of 5,000 an hour) and takes 6 to 8 s on GitHub's side, whatever
   the page size. Open and closed side by side: 344 PRs in 7.2 s.
 - `gh api graphql --input -` takes `{ query, variables }` on stdin.
+
+### 4.6 What a refresh costs (study, 2026-11-23)
+
+Measured on the author's machine, before the changes below:
+
+- No branch reaches GitHub. The scan of 84 discovered paths (81 repos,
+  about 435 worktrees, 1,444 branches) runs local git only, no fetch.
+  GitHub sees the same 5 requests for 1 repo or 1,000.
+- GitHub: 215 rate-limit points per refresh (of 5,000 an hour), 100 of
+  each 106 from asking up to 100 review threads per PR; GitHub bills the
+  size asked, not the result. The open search took 5.6 to 10.8 s against
+  GitHub's 10 s cut-off; one of three refreshes failed with a 502. Two
+  refreshes in a row re-read 341 unchanged PRs. No secondary-limit signal.
+- Local: 986 git processes (2,025 after a daemon start), about 13
+  CPU-seconds in about 2 s, 95% of it `git status`. The daemon stayed
+  responsive (/health p95 6 ms). 3 of 84 paths were worktrees of a repo
+  scanned anyway.
+
+Built after it (2026-11-23): the GitHub refresh of §4.1. Measured on the
+same account: the first refresh after a daemon start 50 points in 11.1 s
+(it waits for the open list before the whole reads), each later one 3
+points in 3.9 s, against 215 points before. The open light list is still
+the slowest request, 3.9 to 6.7 s: under the cut-off, not far below it.
+Not verified: that every new review comment moves `updatedAt`.
+
+Decided: keep the button as "check now"; make the GitHub refresh read a
+light list and fetch details only for PRs that changed; scan each repo
+family once and cache commit counts by commit id; catch up when the page
+is shown again (§2). Rejected: timers (a full refresh every minute uses
+the hourly budget in about 23 minutes), webhooks (admin on every repo,
+`gh webhook forward` is for testing), the events API (minutes to hours
+late, no CI), ETags (GraphQL has none), watching working trees (half the
+inotify limit), and skipping idle worktrees (the author wants every
+worktree current).
+
+On the author's machine `core.untrackedCache` is on globally, and one
+normal `git status` stored the cache in 429 of the 432 worktrees' index
+files. The scan never writes an index, so it only reads that cache; the
+author's own git keeps it fresh. hetverledenvan's status went from about
+0.43 to 0.09 s.
 
 ## 5. The Work page
 
@@ -371,8 +422,9 @@ shows. An older one, or one with no known activity, sits in a collapsed `N older
 the same Track and Dismiss buttons. Nothing is dropped. On the author's
 machine 290 candidates came out of 87 repos, and only 12 of them were
 under a week old. Activity (`WorkActivity`) is the newest of: the
-worktree's `changedAt` (§5.1, "files edited"), its index or HEAD mtime
-("commit, stage or checkout"), the draft's mtime, the open PR's head
+worktree's `changedAt` (§5.1, "files edited"), the mtime of its HEAD and
+HEAD reflog ("commit or checkout"; not the index, which a plain `git
+status` rewrites), the draft's mtime, the open PR's head
 commit (`committedDate`: the author's last commit on it, so a PR whose only
 comments are from bots still has a time), the newest event by a person on
 its PR (§4.1), and the PR's merge or close. The PR's `updatedAt` does not
@@ -518,7 +570,10 @@ Status (`workStatus` in `utils/workFormat.ts`), first that applies:
 | `nothing yet` / `branch gone` | a fresh worktree / the branch was deleted | nobody |
 
 The local activity kinds read `files edited` (a changed file's mtime) and
-`commit, stage or checkout` (the worktree's index or HEAD file moved).
+`commit or checkout` (the worktree's HEAD or HEAD reflog moved: a commit,
+checkout, reset or rebase). The index file does not count: a plain
+`git status`, an editor or a shell prompt rewrites it, and the untracked
+cache makes that more often. The repo picker's ages use the same rule.
 
 Two toggles in the header group the rows, in every section:
 
@@ -570,13 +625,15 @@ button; its PR number still links to GitHub.
 
 Order: Work, Candidates and the older candidates by newest activity
 (§5.2), Done by close date. The page header shows the `gh` line
-(`PRs checked 14:02 as JornC`, or the §4.2 notice), the two grouping toggles and a
-refresh button.
+(`PRs checked 6 minutes ago as JornC`, or the §4.2 notice), the scan line
+(`Repos scanned 2 minutes ago`, or `scanned 12 of 40 repos` while it runs),
+both with the time on hover and counting up while the page is open, the
+filter, the two grouping toggles and a refresh button ("check now").
 
 ### 5.5 The fold-out
 
 - **Activity**: the PR's events (§4.1), its merge or close, and the local
-  times (files edited, commit, stage or checkout, draft edited), the PR's
+  times (files edited, commit or checkout, draft edited), the PR's
   head commit, newest first, at
   most 8, each with how long ago (the date and time on hover). Someone
   else's in full colour.
