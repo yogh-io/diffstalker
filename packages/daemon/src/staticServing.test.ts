@@ -85,6 +85,22 @@ describe('daemon static serving (web UI)', () => {
     }
   });
 
+  test('GET /work is the Work page (the SPA), while /work/... is the API', async () => {
+    for (const page of ['/work', '/work/']) {
+      const res = await fetch(`${baseUrl}${page}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
+      expect(await res.text()).toBe(INDEX_HTML);
+    }
+    const prs = await fetch(`${baseUrl}/work/prs`);
+    expect(prs.status).toBe(200);
+    expect(prs.headers.get('content-type')).toBe('application/json');
+    expect(await prs.json()).toMatchObject({ status: 'never' });
+    const unknown = await fetch(`${baseUrl}/work/nope`);
+    expect(unknown.status).toBe(404);
+    expect(unknown.headers.get('content-type')).toBe('application/json');
+  });
+
   test('API_PREFIXES names the first segment of every registered route', () => {
     // Read the route modules rather than the router: a new
     // `router.get('/foo', ...)` anywhere in src/routes must land here too,

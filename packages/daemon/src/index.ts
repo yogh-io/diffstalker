@@ -17,12 +17,13 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { runtimeDir, cacheDir, configDir } from '@diffstalker/core/utils/xdg';
+import { runtimeDir, cacheDir, configDir, stateDir } from '@diffstalker/core/utils/xdg';
 import { expandPath } from '@diffstalker/core/utils/pathUtils';
 import { setDebug, error as logError } from '@diffstalker/core/utils/logger';
 import { createDaemon, type Daemon, ListenOptions } from './server.js';
 import { readCurrentVersion } from './version.js';
 import { resolveSymbolArtifacts } from './symbols/resolveArtifacts.js';
+import { createGhRunner } from './github.js';
 
 const SOCKET_NAME = 'diffstalkerd.sock';
 
@@ -349,6 +350,9 @@ async function main(): Promise<void> {
     webRoot,
     symbols,
     updateCheck: !options.noUpdateCheck,
+    // The one place the real gh runner is made (see github.ts).
+    gh: createGhRunner(),
+    workMarksFile: path.join(stateDir(), 'work.json'),
   });
 
   await openStartupRepos(daemon, options.repoPaths ?? []);

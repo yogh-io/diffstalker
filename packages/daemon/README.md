@@ -83,7 +83,8 @@ daemon itself. `GET /` and any unmatched non-API GET path return the SPA's
 immutable cache. The REST/SSE API always takes precedence over static files,
 and an unknown path under an API prefix (`/health`, `/version`, `/repos`,
 `/resolve`, `/worktrees`, `/events`, `/follow`, `/settings`, `/discovered`,
-`/browse`) is a JSON 404, never the SPA page.
+`/browse`, `/work`) is a JSON 404, never the SPA page. `/work` alone is the
+exception: it is the web UI's Work page, while `/work/...` is the API.
 
 Without `--socket`, the daemon binds a unix socket at
 `$XDG_RUNTIME_DIR/diffstalker/diffstalkerd.sock`. The directory is created
@@ -217,14 +218,14 @@ when the repo is open but its directory is gone or is no longer a git repo
 for real failures.
 
 Ref-like values (the body fields `name`, `hash`, `branch` and the `base`
-query param) must not be empty or start with `-`; such values are rejected
+and `branch` query params) must not be empty or start with `-`; such values are rejected
 with a 400 so they can never be parsed as git flags.
 
 ### Reads
 
 | Method | Path                       | What                                             |
 | ------ | -------------------------- | ------------------------------------------------ |
-| GET    | `/health`                  | `{ok, ready, home, http: {port}, symbols}` — `http.port` is the loopback port a browser reaches the web UI on, or null when only a socket is bound (what `diffstalker link` needs to build a URL at all) |
+| GET    | `/health`                  | `{ok, ready, home, http: {port}, symbols, gh}` — `http.port` is the loopback port a browser reaches the web UI on, or null when only a socket is bound (what `diffstalker link` needs to build a URL at all). `gh` says whether the `gh` binary is on PATH (a PATH lookup, no spawn); see [Work page and PR drafts](#work-page-and-pr-drafts) |
 | GET    | `/version`                 | `{current, latest, status, install, restart}` — the running version against npm's `latest` dist-tag (`current` \| `outdated` \| `ahead` \| `unknown`). The npm lookup is cached (6h, 5min after a failure) and only ever runs when this endpoint is called; `--no-update-check` skips it, leaving `latest: null`. `install` is `{method, package, command}` — how this daemon was installed (`npm` \| `bun` \| `pnpm` \| `yarn` \| `pacman` \| `unknown`) and the one command that updates it, detected once from where the daemon's own files live. An install nothing owns reports `unknown` with a null command rather than a guess. `restart` is the command that restarts this daemon (`systemctl --user restart diffstalkerd`, or `sudo systemctl restart …` for a system unit), set only when systemd started this very process (`$SYSTEMD_EXEC_PID` is its pid) and `/proc/self/cgroup` names a plain `.service` unit; otherwise null |
 | GET    | `/repos`                   | List open repos (`id`, `path`, `branch`)         |
 | POST   | `/repos`                   | Open a repo: `{"path": "/abs/path"}` → `{id, path}` (201 created, 200 already open or still kept warm after its release). 400 for a relative path or a directory that is not a git repository, 404 when the path does not exist. One missing last segment under a repo still opens the repo above it (`<repo>/nope` opens `<repo>`); a path missing more than one level deep (`<repo>/nope/deeper`) is a 404 |
@@ -253,12 +254,17 @@ with a 400 so they can never be parsed as git flags.
 | GET    | `/repos/:id/blob?path=&side=&v=` | Raw image bytes for `<img src>`; `side` is `worktree` \| `index` \| `head`, `v` is an ignored cache key. Only PNG/JPEG/GIF, typed from magic bytes. Status-independent (no `git status`), so a clean committed image is reachable. See [Image bytes](#image-bytes) |
 | GET    | `/repos/:id/files`         | All tracked + untracked (not ignored) paths: the fuzzy-finder source |
 | GET    | `/repos/:id/journal?since=` | Append-only edit journal: `{epoch, prunedBefore, entries}`; `since=<seq>` returns only entries with a higher seq (all when omitted) |
-| GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher and `journal-append {entries}` per journal observation |
-| GET    | `/events?repo=`            | Daemon-scope SSE: `snapshot` (open repos) on connect, then `repo-opened` / `repo-closed` / `follow-change` / `settings-change` / `discovery-change`. With `repo=<id>` the same stream also carries that repo's events — `repo-snapshot` right after the daemon `snapshot`, then `state-change` / `journal-append` as on `/repos/:id/events`. An id that is not open is still a 200: one `repo-missing {id}` follows the snapshot; an empty `repo=` is the same as none. See [One stream per tab](#one-stream-per-tab) |
+| GET    | `/repos/:id/draft?branch=` | The branch's PR draft: `{branch, top, suggested, ai, adoptedUnedited, version}` (`PrDraft` in `@diffstalker/core/types/work`), each text null when its file is missing. `version` is the sha256 of `top.md`, or `absent`. 400 for a missing or refused branch name, 422 when a draft file is a link, not a regular file, or over 256 KB |
+| GET    | `/repos/:id/pr?branch=`    | The cached PR for one branch: `{pr, status, message, checkedAt, viewer}`, matched by the repo's GitHub remotes and the branch name. Answers from the cache and never runs `gh`; `pr` is null before the first refresh |
+| GET    | `/repos/:id/events`        | SSE: `snapshot` on connect, then `state-change` events from the file watcher, `journal-append {entries}` per journal observation, and `draft-change {branch, prefix}` when a PR draft file changes (no git refresh comes with it) |
+| GET    | `/events?repo=`            | Daemon-scope SSE: `snapshot` (open repos) on connect, then `repo-opened` / `repo-closed` / `follow-change` / `settings-change` / `discovery-change`. With `repo=<id>` the same stream also carries that repo's events — `repo-snapshot` right after the daemon `snapshot`, then `state-change` / `journal-append` / `draft-change` as on `/repos/:id/events`. An id that is not open is still a 200: one `repo-missing {id}` follows the snapshot; an empty `repo=` is the same as none. See [One stream per tab](#one-stream-per-tab) |
 | GET    | `/follow`                  | Follow state: `{targetFile, enabled, followedRepoId, followedPath}` |
 | GET    | `/settings`                | Daemon settings: `{watchRoots, persisted}`. `persisted: false` means this daemon holds them in memory only (no settings file) |
 | GET    | `/discovered`              | Repos found under the watch directories: `{roots: [{path, repos: [{path, name, branch, lastActivity}], error, capped}]}`. See [Watch directories](#watch-directories) |
 | GET    | `/browse?path=`            | One directory level of the daemon's filesystem, for picking a watch directory: `{path, parent, home, entries: [{name, path, isRepo}]}`. Directory names only — no files, no dot directories. No `path` starts at the daemon's home; 400 for a relative path, 404 for one it cannot read |
+| POST   | `/work/repo`               | `{"path": "/abs/path"}` → one repo's facts for the Work page: `{path, root, name, worktrees, branches, branchesCapped, identities, drafts}` (`WorkRepoFacts`). A read, but POST: it runs a full git scan, and only a non-GET request gets the CSRF check, so a GET would let any website start scans and time them. The path must be absolute (400) and be a discovered or open repo (404 otherwise); 404 when it is not a git repository, 500 when the scan fails. One scan per path runs at a time; a request while it runs joins it |
+| GET    | `/work/prs`                | The cached PR list: `{status, message, checkedAt, viewer, prs, capped}` (`PrSnapshot`). Never runs `gh`; `status` is `never` until the first refresh |
+| GET    | `/work/marks`              | The Work page's marks: `{tracked, dismissed}` |
 
 ### Mutations (all respond `{state, result?}`)
 
@@ -266,6 +272,12 @@ with a 400 so they can never be parsed as git flags.
 | ------ | -------------------------- | ------------------------------------------------ |
 | PUT    | `/settings`                | Replace the settings: `{"watchRoots": ["/abs/dir", "~/projects"]}` → `{watchRoots, persisted}`. Whole document, not a patch. Each path is expanded, made absolute and checked to be an existing directory; a refusal is a 400 naming the path, and nothing is saved |
 | POST   | `/discovered/rescan`       | Re-walk every watch directory now and return the new `{roots}` (filesystem only, no git processes) |
+| POST   | `/work/prs/refresh`        | Run the `gh` query now and return the new `PrSnapshot`. The body is ignored. A refresh while one runs joins it. A `gh` failure is a 200 with its `status`; the last good list and its `checkedAt` stay |
+| PUT    | `/work/marks`              | `{"key": "...", "action": "track" \| "dismiss" \| "drop" \| "undismiss", "fingerprint"?: "...", "prune"?: ["..."]}` → `{tracked, dismissed}`. `dismiss` needs a `fingerprint`; `prune` keys are dropped from both kinds first. 400 for a bad request or more than 2000 marks of a kind, 500 when the file cannot be written |
+| PUT    | `/repos/:id/draft`         | `{"branch": "...", "top": "...", "version": "..."}` → `PrDraft`. Saves `top.md` when `version` still matches (409 `Draft changed elsewhere` otherwise). An empty `top` deletes `top.md` and `adopted`, and the branch's directory when nothing else is in it. 413 over 256 KB; 422 when any draft file cannot be read, and then nothing is written |
+| POST   | `/repos/:id/draft/adopt`   | `{"branch": "...", "version": "..."}` → `PrDraft`. "Start from this": copies `top.suggested.md` into `top.md` and writes its sha256 to `adopted`. 409 when the version moved, `top.md` is not empty, or there is no suggestion; 422 when any draft file cannot be read, and then nothing is written |
+| POST   | `/repos/:id/pr/check`      | `{"branch": "..."}` → `{pr, status, message, checkedAt, viewer}`. Reads that branch's PR fresh from GitHub (one `gh` call) and puts it in the cached list. 404 when the list has no PR for the branch; 502/503 when `gh` fails |
+| POST   | `/repos/:id/pr/top`        | `{"branch": "...", "version": "...", "expectedTop": "..."}` → same shape. "Update GitHub": replaces the open PR's top zone with `top.md` and keeps the body from the `---` line on, as GitHub has it. Refuses, writing nothing: 409 when `top.md`'s version moved, the PR is not open, or GitHub's top zone is not `expectedTop`; 422 when `top.md` is empty or has a `{{...}}`; 404 when no PR is known; 502/503 when `gh` fails |
 | POST   | `/repos/:id/stage`         | `{"path": "file.txt"}` — stage one file (404 when not in status) |
 | POST   | `/repos/:id/unstage`       | `{"path": "file.txt"}` — unstage one file        |
 | POST   | `/repos/:id/stage-all`     | Stage everything                                 |
@@ -343,7 +355,7 @@ hung. `GET /events?repo=<id>` folds both into ONE stream:
 
 - On connect: the daemon `snapshot` first, then the repo's `repo-snapshot`
   (renamed only because `snapshot` is already taken on this stream). After
-  that, `state-change` and `journal-append` exactly as on
+  that, `state-change`, `journal-append` and `draft-change` exactly as on
   `/repos/:id/events`, with the same payloads and the same dedup.
 - An id that is not open (the daemon restarted and the browser's
   EventSource reconnected before the page re-POSTed `/repos`) is still a
@@ -539,6 +551,54 @@ is configured but currently unreadable (an unmounted disk) keeps its place
 in the settings and is reported with an `error` — it is never quietly
 dropped. Both `/settings` and `/discovered` are served on every transport,
 including a `--port` listener: the settings UI lives in the web client.
+
+## Work page and PR drafts
+
+See `docs/work-page.md` for the design.
+
+PR drafts live in the repo's common git dir, shared by every worktree and
+never committed: `<common>/diffstalker/pr/<branch>/`, with `feature/x`
+nesting as `pr/feature/x/`. The daemon writes only `top.md` (the author's
+words, from the draft panel) and `adopted` (the sha256 of a suggestion the
+author started from). `top.suggested.md` and `ai.md` belong to agents: the
+daemon reads them and never writes or removes them. A branch name is
+checked as a path before any read or write: no empty, `.` or `..` part, no
+part starting with `.` or ending in `.lock`, no part named like a draft
+file, no backslash or control character, and no symlinked directory on the
+way down from the common dir (`diffstalker` and `pr` included). A save
+reads every draft file first, so one it cannot read fails the save before
+anything is written. The Work scan leaves out a draft or directory it
+cannot read, with a warning, and does not fail. Draft files are opened
+without following a link and must be regular files of at most 256 KB. An
+open repo's common-dir watcher also watches `diffstalker/pr/` and sends
+`draft-change {branch, prefix}` on the repo stream, without a git refresh.
+`prefix: true` means a directory changed, so every draft at or below
+`branch` may have changed (`""` is all of them).
+
+PR state comes from `gh`: three fixed `gh api graphql` queries, side by
+side, for the author's open PRs (with review state, requested reviewers,
+threads, checks, conflicts and recent events), the open PRs the author is
+asked to review (the same fields), and the author's closed PRs (newest update first, no date
+window: an old closed PR is what tells the page a branch is finished), at
+most 300 of each, variables passed with `-f` only, no value from a request
+in the argv. The one-PR read (`/pr/check`) and the one write (`/pr/top`,
+"Update GitHub": a PR's top zone, nothing else) send a fixed query with its
+variables as JSON on stdin (`--input -`), and the write's text is `top.md`
+from disk, never the request's. It runs only on `POST /work/prs/refresh` (POST, so the CSRF guard
+covers it: `gh` sends the author's token), never in the background, with
+one 20 s deadline. The answer is kept in memory; `GET /work/prs` and
+`GET /repos/:id/pr` read it and never run `gh`. When `gh` is missing or
+logged out the status says so, and everything from git keeps working.
+`POST /work/repo` is POST too: it runs a full git scan, and the CSRF guard
+covers only non-GET requests.
+
+The Work page's marks (track, dismiss) are kept at
+`$XDG_STATE_HOME/diffstalker/work.json`, written atomically like
+`daemon.json`. Every daemon of the user shares the file (the dev daemon of
+`bun run serve` too), so `GET /work/marks` reads it and `PUT` applies its
+change to what is on disk, not to what this daemon remembers. The page
+names the marks whose item is gone (`prune`), since only it knows which
+items exist.
 
 ## Follow mode
 

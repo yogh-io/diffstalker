@@ -48,6 +48,10 @@ import { registerBlobRoutes } from './routes/blob.js';
 import { registerDaemonRoutes } from './routes/daemon.js';
 import { registerSettingsRoutes } from './routes/settings.js';
 import { createBlobSemaphore } from './blobSemaphore.js';
+import { createPrService, type GhRunner } from './github.js';
+import { WorkMarksStore } from './workMarks.js';
+import { createWorkScanner, registerWorkRoutes } from './routes/work.js';
+import { registerDraftRoutes } from './routes/draft.js';
 
 /** Which slice of the REST API a listener exposes. */
 export type ApiMode = 'full' | 'web';
@@ -156,6 +160,17 @@ export interface DaemonOptions {
    * suite never hits the registry; production uses the npm dist-tags URL.
    */
   fetchLatestVersion?: LatestVersionFetcher;
+  /**
+   * Runs `gh` for the Work page's PR list. Omit it and the daemon acts as
+   * if `gh` were missing: only index.ts passes the real runner, so no test
+   * can run `gh` by forgetting to pass a fake.
+   */
+  gh?: GhRunner;
+  /**
+   * Where the Work page's marks live. Omit and they are kept in memory
+   * only. The entry point passes `$XDG_STATE_HOME/diffstalker/work.json`.
+   */
+  workMarksFile?: string;
 }
 
 /** True when something accepts connections on the unix socket path. */
@@ -221,6 +236,12 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
   // and the git processes and open fds they would spawn come out of the same
   // budget.
   const blobGate = createBlobSemaphore();
+  // Once per daemon, like the blob gate: both routing tables share one
+  // PR cache (so one single-flight refresh), one marks file and one
+  // single-flight per repo scan.
+  const prs = createPrService(options.gh ?? null);
+  const workMarks = new WorkMarksStore(options.workMarksFile ?? null);
+  const workScans = createWorkScanner();
   /**
    * Symbols get their OWN budget, not the blob gate's. One extraction at a
    * time because one worker answers them, and a short queue because a
@@ -252,6 +273,8 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
       version,
       symbols: symbolSupport,
       httpPort,
+      prs,
+      workMarks,
     };
     registerHealthRoutes(router, deps);
     registerVersionRoutes(router, deps);
@@ -276,6 +299,11 @@ export function createDaemon(options: DaemonOptions = {}): Daemon {
     // Both modes: the settings panel that drives these lives in the web UI
     // (see routes/settings.ts on why the port gets them too).
     registerSettingsRoutes(router, deps);
+    // Both modes: the Work page and the draft panel are web UI. None of
+    // these touches git state; the one that runs `gh` is POST, behind the
+    // CSRF guard (see routes/work.ts).
+    registerWorkRoutes(router, deps, workScans);
+    registerDraftRoutes(router, deps);
 
     routers.set(mode, router);
     return router;

@@ -34,7 +34,20 @@ export const API_PREFIXES: ReadonlySet<string> = new Set([
   'settings',
   'discovered',
   'browse',
+  'work',
 ]);
+
+/**
+ * API prefixes whose bare path is an SPA page: `/work` is the Work page,
+ * while everything below it (`/work/prs`, ...) is the API.
+ */
+const SPA_PAGES: ReadonlySet<string> = new Set(['work']);
+
+/** An unmatched path under an API prefix is an unknown API route, never the SPA. */
+function isApiPath(segments: string[]): boolean {
+  if (segments.length === 0 || !API_PREFIXES.has(segments[0])) return false;
+  return !(segments.length === 1 && SPA_PAGES.has(segments[0]));
+}
 
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -110,7 +123,7 @@ export function createStaticHandler(webRoot: string): StaticHandler {
     }
 
     const segments = decoded.split('/').filter(Boolean);
-    if (segments.length > 0 && API_PREFIXES.has(segments[0])) {
+    if (isApiPath(segments)) {
       // API territory: an unmatched path here is an unknown API route,
       // not an SPA route.
       throw new HttpError(404, `Unknown route: GET ${pathname}`);

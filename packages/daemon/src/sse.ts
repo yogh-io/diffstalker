@@ -6,7 +6,9 @@
  * SHARED state out to every connected response, plus the journal's 'append'
  * event fanned out as `journal-append {epoch, entries}` on the same channel
  * (the epoch lets clients drop a batch that raced a store reset instead of
- * splicing entries from two seq spaces together). The channel is
+ * splicing entries from two seq spaces together), and the working tree's
+ * 'draft-change' event as `draft-change {branch, prefix}` (a PR draft file
+ * changed; no git refresh comes with it). The channel is
  * created lazily on the first subscriber and torn down (listeners removed,
  * keep-alive cleared) when the last subscriber disconnects. A repo with a
  * channel is a viewed repo: its file changes refresh it. Without one they
@@ -35,6 +37,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { GitStateManager } from '@diffstalker/core/managers/GitStateManager';
 import type { GitState } from '@diffstalker/core/managers/WorkingTreeManager';
 import type { JournalEntry } from '@diffstalker/core/types/journal';
+import type { DraftChangeEvent } from '@diffstalker/core/types/work';
 import { serializeSharedState } from './serialize.js';
 
 const KEEP_ALIVE_MS = 25_000;
@@ -53,6 +56,8 @@ interface Channel {
   listener: (state: GitState) => void;
   /** Fans one observation's appended journal entries out as journal-append. */
   journalListener: (entries: JournalEntry[]) => void;
+  /** Fans a PR draft change out as draft-change. */
+  draftListener: (change: DraftChangeEvent) => void;
   keepAlive: ReturnType<typeof setInterval>;
   /** Last state-change payload fanned out; identical payloads are skipped. */
   lastData: string | null;
@@ -159,6 +164,14 @@ export class SseHub {
             writeEvent(subscriber, 'journal-append', data);
           }
         },
+        draftListener: (change: DraftChangeEvent): void => {
+          // No dedup: the client compares versions, and its own write
+          // coming back is a no-op there.
+          const data = JSON.stringify(change);
+          for (const subscriber of subscribers.keys()) {
+            writeEvent(subscriber, 'draft-change', data);
+          }
+        },
         keepAlive: setInterval(() => {
           // Attached responses are pinged by the daemon hub; pinging them
           // here too would only double the idle traffic.
@@ -170,6 +183,7 @@ export class SseHub {
       };
       manager.workingTree.on('state-change', newChannel.listener);
       manager.journal.on('append', newChannel.journalListener);
+      manager.workingTree.on('draft-change', newChannel.draftListener);
       newChannel.keepAlive.unref();
 
       channel = newChannel;
@@ -203,6 +217,7 @@ export class SseHub {
     channel.manager.workingTree.setViewed(false);
     channel.manager.workingTree.off('state-change', channel.listener);
     channel.manager.journal.off('append', channel.journalListener);
+    channel.manager.workingTree.off('draft-change', channel.draftListener);
     clearInterval(channel.keepAlive);
     for (const [subscriber, { owned }] of channel.subscribers) {
       // Only end what this channel opened. An attached response still

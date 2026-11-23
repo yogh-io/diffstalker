@@ -22,6 +22,8 @@ import type { DiscoveryController } from '../discovery.js';
 import type { VersionService } from '../version.js';
 import type { SymbolPool } from '../symbols/pool.js';
 import type { BlobSemaphore } from '../blobSemaphore.js';
+import type { PrService } from '../github.js';
+import type { WorkMarksStore } from '../workMarks.js';
 import { serializeSharedState } from '../serialize.js';
 
 /** Everything a route module needs, injected by createDaemon. */
@@ -55,6 +57,10 @@ export interface RouteDeps {
    * are registered before listen() binds anything.
    */
   httpPort: () => number | null;
+  /** The author's PRs from `gh`, cached; only a refresh runs `gh`. */
+  prs: PrService;
+  /** The Work page's track and dismiss marks. */
+  workMarks: WorkMarksStore;
 }
 
 export interface SymbolSupport {

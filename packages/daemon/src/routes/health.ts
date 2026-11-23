@@ -19,12 +19,14 @@ export function registerHealthRoutes(router: Router, deps: RouteDeps): void {
     // `diffstalker link`) cannot otherwise know a browser URL exists at
     // all, and guessing one produces links that fail by landing nowhere.
     // Read live, not captured: routes are registered before listen().
+    // `gh` says whether the gh binary is on PATH: a lookup, never a spawn.
     sendJson(res, 200, {
       ok: true,
       ready: true,
       home: os.homedir(),
       http: { port: deps.httpPort() },
       symbols: { extensions: deps.symbols?.extensions ?? [] },
+      gh: deps.prs.ghAvailable(),
     });
   });
 }
