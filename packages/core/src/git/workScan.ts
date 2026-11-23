@@ -17,13 +17,18 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { GIT_PREFIX, execGitBytes } from './gitClient.js';
+import { mainlinesOf, type RemoteRef } from './diff.js';
 import {
-  listWorktreesWithBase,
+  countNotOn,
+  listWorktreesRaw,
   resolveGitDirs,
   runGitPooled,
+  withBaseCounts,
+  type RawWorktreeInfo,
   type WorktreeWithBase,
 } from './worktree.js';
 import { listDrafts } from './prDraft.js';
+import { loadBaseBranchChoices } from '../utils/baseBranchCache.js';
 import { githubIdentity, parseGithubRemote } from '../utils/githubRemote.js';
 import * as logger from '../utils/logger.js';
 import type { WorkBranch, WorkRepoFacts, WorkWorktree } from '../types/work.js';
@@ -100,7 +105,7 @@ interface WorktreeChanges {
   changedAt: number | null;
 }
 
-async function worktreeChanges(worktree: WorktreeWithBase): Promise<WorktreeChanges> {
+async function worktreeChanges(worktree: RawWorktreeInfo): Promise<WorktreeChanges> {
   if (worktree.isBare || !fs.existsSync(worktree.path))
     return { uncommitted: null, changedAt: null };
   let out: string;
@@ -122,7 +127,7 @@ async function worktreeChanges(worktree: WorktreeWithBase): Promise<WorktreeChan
 }
 
 /** The label for a repo: its main worktree's name, or the bare dir's parent for `.bare`. */
-function repoName(main: WorktreeWithBase): string {
+function repoName(main: RawWorktreeInfo): string {
   const base = path.basename(main.path);
   return main.isBare && base.startsWith('.') ? path.basename(path.dirname(main.path)) : base;
 }
@@ -132,6 +137,8 @@ interface Refs {
   locals: Array<[string, string]>;
   /** Branch name to the tips of its remote-tracking copies. */
   copies: Map<string, string[]>;
+  /** Every ref under `refs/remotes/` by full name, symrefs too: the mainlines come from these. */
+  remotes: Map<string, RemoteRef>;
 }
 
 function compareNames(a: string, b: string): number {
@@ -147,10 +154,12 @@ async function readRefs(root: string): Promise<Refs> {
   );
   const locals: Array<[string, string]> = [];
   const copies = new Map<string, string[]>();
+  const remotes = new Map<string, RemoteRef>();
   for (const line of out.split('\n')) {
     if (!line) continue;
     // A ref name cannot hold a space, so the split is exact.
-    const [tip, refname, symref] = line.split(' ');
+    const [tip, refname, symref = ''] = line.split(' ');
+    if (refname.startsWith(REMOTE_PREFIX)) remotes.set(refname, { commit: tip, symref });
     if (symref) continue;
     if (refname.startsWith(LOCAL_PREFIX)) {
       locals.push([owned(refname.slice(LOCAL_PREFIX.length)), owned(tip)]);
@@ -164,18 +173,21 @@ async function readRefs(root: string): Promise<Refs> {
     }
   }
   locals.sort(([a], [b]) => compareNames(a, b));
-  return { locals, copies };
+  return { locals, copies, remotes };
 }
 
 /** Commits on `tip` that are on none of the copies. Hashes only, never names. */
 async function unpushedCount(root: string, tip: string, copyTips: string[]): Promise<number> {
   if (copyTips.includes(tip)) return 0;
-  const out = await git(root, ['rev-list', '--count', tip, '--not', ...copyTips], SMALL_MAX_BYTES);
-  return parseInt(out.trim(), 10);
+  return countNotOn(root, tip, copyTips);
 }
 
-async function readBranches(root: string): Promise<{ branches: WorkBranch[]; capped: boolean }> {
-  const { locals, copies } = await readRefs(root);
+interface Branches {
+  branches: WorkBranch[];
+  capped: boolean;
+}
+
+async function readBranches(root: string, { locals, copies }: Refs): Promise<Branches> {
   const kept = locals.slice(0, MAX_WORK_BRANCHES);
   const branches = await Promise.all(
     kept.map(async ([name, tip]): Promise<WorkBranch> => {
@@ -208,7 +220,28 @@ export async function readGithubIdentities(repoPath: string): Promise<string[]> 
   return [...identities];
 }
 
-function commonDirOf(main: WorktreeWithBase, repoPath: string): string {
+/** The remote names; null when they cannot be listed, logged. */
+async function readRemoteNames(repoPath: string): Promise<string[] | null> {
+  try {
+    return (await git(repoPath, ['remote'], SMALL_MAX_BYTES)).split('\n').filter(Boolean);
+  } catch (err) {
+    logger.warn('default base-branch discovery failed', err, { repo: repoPath });
+    return null;
+  }
+}
+
+/** One ref read gives both the mainlines, for the ahead-of-base counts, and the branches. */
+async function readCounts(
+  repoPath: string,
+  listed: RawWorktreeInfo[],
+  savedBase: (worktreePath: string) => string | undefined
+): Promise<[WorktreeWithBase[], Branches]> {
+  const [refs, remotes] = await Promise.all([readRefs(repoPath), readRemoteNames(repoPath)]);
+  const mainlines = remotes === null ? null : mainlinesOf(remotes, refs.remotes);
+  return Promise.all([withBaseCounts(listed, mainlines, savedBase), readBranches(repoPath, refs)]);
+}
+
+function commonDirOf(main: RawWorktreeInfo, repoPath: string): string {
   if (main.isBare) return main.path;
   const dirs = resolveGitDirs(main.path) ?? resolveGitDirs(repoPath);
   if (dirs === null) throw new Error(`Cannot find the git dir of ${repoPath}`);
@@ -217,21 +250,21 @@ function commonDirOf(main: WorktreeWithBase, repoPath: string): string {
 
 /** null when the path is not a git repo. */
 export async function scanWorkRepo(repoPath: string): Promise<WorkRepoFacts | null> {
-  const listed = await listWorktreesWithBase(repoPath);
+  const listed = await listWorktreesRaw(repoPath, { pooled: true });
   if (listed.length === 0) return null;
   const main = listed.find((wt) => wt.isMain) ?? listed[0];
   const root = main.path;
   const commonDir = commonDirOf(main, repoPath);
 
   // Refs and config are shared by every worktree; the asked path exists.
-  const [changes, { branches, capped }, identities, drafts] = await Promise.all([
+  const [changes, [counted, { branches, capped }], identities, drafts] = await Promise.all([
     Promise.all(listed.map(worktreeChanges)),
-    readBranches(repoPath),
+    readCounts(repoPath, listed, loadBaseBranchChoices()),
     readGithubIdentities(repoPath),
     listDrafts(commonDir),
   ]);
 
-  const worktrees = listed.map((wt, i): WorkWorktree => ({
+  const worktrees = counted.map((wt, i): WorkWorktree => ({
     path: wt.path,
     branch: wt.branch,
     head: wt.head,

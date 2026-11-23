@@ -1,10 +1,11 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
-  clearDefaultBaseCache,
+  COMMIT_COUNT_LIMIT,
+  cachedCommitCount,
+  clearCommitCounts,
   listWorktrees,
   listWorktreesWithBase,
   parseWorktreePorcelain,
@@ -14,50 +15,15 @@ import {
 } from './worktree.js';
 import { findDefaultBase } from './diff.js';
 import { setCachedBaseBranch } from '../utils/baseBranchCache.js';
-import { createFixtureRepo, gitExec, removeFixtureRepo, writeFixtureFile } from './test-helpers.js';
-
-/** One recorded git call: the directory it ran in, then its argv. */
-interface GitCall {
-  cwd: string;
-  args: string[];
-}
-
-/**
- * Run `body` with a `git` on PATH that records its cwd and argv, then execs
- * the real one. The spawn count is the only witness that a cached listing
- * ran no git for a worktree.
- */
-async function withGitProbe(body: (calls: () => GitCall[]) => Promise<void>): Promise<void> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-worktree-probe-'));
-  const logPath = path.join(dir, 'argv.log');
-  const realGit = execSync('command -v git', { encoding: 'utf-8' }).trim();
-  fs.writeFileSync(
-    path.join(dir, 'git'),
-    `#!/bin/sh\nprintf '%s\\0' '--call--' "$PWD" "$@" >> '${logPath}'\nexec '${realGit}' "$@"\n`,
-    { mode: 0o755 }
-  );
-  const originalPath = process.env.PATH;
-  process.env.PATH = `${dir}:${originalPath ?? ''}`;
-  try {
-    await body(() => readCalls(logPath));
-  } finally {
-    process.env.PATH = originalPath;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-function readCalls(logPath: string): GitCall[] {
-  if (!fs.existsSync(logPath)) return [];
-  const parts = fs.readFileSync(logPath, 'utf-8').split('\0');
-  parts.pop();
-  const calls: GitCall[] = [];
-  for (const part of parts) {
-    if (part === '--call--') calls.push({ cwd: '', args: [] });
-    else if (calls[calls.length - 1].cwd === '') calls[calls.length - 1].cwd = part;
-    else calls[calls.length - 1].args.push(part);
-  }
-  return calls;
-}
+import {
+  createFixtureRepo,
+  gitExec,
+  gitSubcommand as subcommand,
+  removeFixtureRepo,
+  withGitProbe,
+  writeFixtureFile,
+  type GitCall,
+} from './test-helpers.js';
 
 describe('parseWorktreePorcelain', () => {
   it('parses a bare-repo layout with several worktrees', () => {
@@ -271,7 +237,7 @@ describe('listWorktrees aheadOfBase (fixture)', () => {
    * `on-fork`, one commit past fork/main (and two past origin/main).
    */
   beforeEach(() => {
-    clearDefaultBaseCache();
+    clearCommitCounts();
     repoPath = createFixtureRepo(REPO_NAME);
     const root = commit(repoPath, 'root.txt');
     upstreamTip = commit(repoPath, 'upstream.txt');
@@ -294,7 +260,7 @@ describe('listWorktrees aheadOfBase (fixture)', () => {
   afterEach(() => {
     removeFixtureRepo(REPO_NAME);
     removeFixtureRepo(LINKED_NAME);
-    clearDefaultBaseCache();
+    clearCommitCounts();
   });
 
   async function aheadByBranch(): Promise<Map<string | null, number | null>> {
@@ -311,12 +277,6 @@ describe('listWorktrees aheadOfBase (fixture)', () => {
       )
     );
     return new Map(entries);
-  }
-
-  /** The git subcommand of a call, past the `-c key=value` pairs. */
-  function subcommand(call: GitCall): string {
-    const at = call.args.findIndex((a, i) => !a.startsWith('-') && call.args[i - 1] !== '-c');
-    return call.args[at];
   }
 
   function revListCalls(calls: GitCall[]): GitCall[] {
@@ -358,6 +318,34 @@ describe('listWorktrees aheadOfBase (fixture)', () => {
       );
       expect(recounted).toEqual(new Set([fs.realpathSync(linkedPath)]));
     });
+  });
+
+  it('a HEAD back on a commit it was counted at is not counted again', async () => {
+    await withGitProbe(async (calls) => {
+      await aheadByBranch();
+      const counted = gitExec(linkedPath, 'rev-parse HEAD').trim();
+      commit(linkedPath, 'more.txt');
+      expect((await aheadByBranch()).get('on-fork')).toBe(2);
+      gitExec(linkedPath, `reset -q --hard ${counted}`);
+      const before = calls().length;
+
+      expect((await aheadByBranch()).get('on-fork')).toBe(1);
+      expect(revListCalls(calls().slice(before))).toEqual([]);
+    });
+  });
+
+  it('reads the saved base choices once per listing, not once per worktree', async () => {
+    const reads = vi.spyOn(fs, 'readFileSync');
+    try {
+      const worktrees = await listWorktrees(repoPath);
+      expect(worktrees).toHaveLength(2);
+      const baseReads = reads.mock.calls.filter(([file]) =>
+        String(file).endsWith('base-branches.json')
+      );
+      expect(baseReads).toHaveLength(1);
+    } finally {
+      reads.mockRestore();
+    }
   });
 
   it('a mainline ref that moved recounts every worktree', async () => {
@@ -468,5 +456,64 @@ describe('listWorktrees aheadOfBase (fixture)', () => {
     } finally {
       stderr.mockRestore();
     }
+  });
+});
+
+describe('cachedCommitCount', () => {
+  beforeEach(() => clearCommitCounts());
+  afterEach(() => clearCommitCounts());
+
+  function fakeCount(): { runs: () => number; count: () => Promise<number> } {
+    let runs = 0;
+    return {
+      runs: () => runs,
+      count: () => {
+        runs += 1;
+        return Promise.resolve(7);
+      },
+    };
+  }
+
+  it('counts once per directory, tip and set of bases, whatever their order', async () => {
+    const fake = fakeCount();
+    expect(await cachedCommitCount('/r', 'tip', ['a', 'b'], fake.count)).toBe(7);
+    expect(await cachedCommitCount('/r', 'tip', ['b', 'a'], fake.count)).toBe(7);
+    expect(fake.runs()).toBe(1);
+    await cachedCommitCount('/other', 'tip', ['a', 'b'], fake.count);
+    await cachedCommitCount('/r', 'tip', ['a'], fake.count);
+    await cachedCommitCount('/r', 'moved', ['a', 'b'], fake.count);
+    expect(fake.runs()).toBe(4);
+  });
+
+  it('does not keep a failed count', async () => {
+    await expect(
+      cachedCommitCount('/r', 'tip', ['a'], () => Promise.reject(new Error('gone')))
+    ).rejects.toThrow('gone');
+    const fake = fakeCount();
+    await cachedCommitCount('/r', 'tip', ['a'], fake.count);
+    expect(fake.runs()).toBe(1);
+  });
+
+  it('holds far more than 512 worktrees, so a big scan is never counted twice', async () => {
+    const fake = fakeCount();
+    const worktrees = Array.from({ length: 4 * 512 }, (_, i) => `/wt-${i}`);
+    for (const wt of worktrees) await cachedCommitCount(wt, 'head', ['main'], fake.count);
+    for (const wt of worktrees) await cachedCommitCount(wt, 'head', ['main'], fake.count);
+    expect(fake.runs()).toBe(worktrees.length);
+  });
+
+  it(`drops the least recently used past ${COMMIT_COUNT_LIMIT}`, async () => {
+    const fake = fakeCount();
+    for (let i = 0; i < COMMIT_COUNT_LIMIT; i++) {
+      await cachedCommitCount(`/wt-${i}`, 'head', ['main'], fake.count);
+    }
+    // The hit makes /wt-0 the newest, so /wt-1 is the oldest when one more comes in.
+    await cachedCommitCount('/wt-0', 'head', ['main'], fake.count);
+    await cachedCommitCount('/new', 'head', ['main'], fake.count);
+    const runs = fake.runs();
+    await cachedCommitCount('/wt-0', 'head', ['main'], fake.count);
+    expect(fake.runs()).toBe(runs);
+    await cachedCommitCount('/wt-1', 'head', ['main'], fake.count);
+    expect(fake.runs()).toBe(runs + 1);
   });
 });

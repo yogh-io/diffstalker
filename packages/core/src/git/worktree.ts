@@ -1,8 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { createGit } from './gitClient.js';
-import { countAhead, pickDefaultBase, remoteMainlines, type Mainline } from './diff.js';
-import { getCachedBaseBranch } from '../utils/baseBranchCache.js';
+import { GIT_PREFIX, createGit, execGitBytes } from './gitClient.js';
+import { pickDefaultBase, remoteMainlines, type Mainline } from './diff.js';
+import { loadBaseBranchChoices } from '../utils/baseBranchCache.js';
 import { expandPath } from '../utils/pathUtils.js';
 import * as logger from '../utils/logger.js';
 
@@ -147,20 +147,30 @@ function isExistingDirectory(candidate: string): boolean {
  * know WHICH worktrees exist (resolving a path to a repo root, in
  * particular) use this; `git log --all` per family is far too much work to
  * answer that question.
+ *
+ * `pooled` runs the spawn in the shared git pool, for a scan that spawns
+ * many. Opening a repo leaves it off, so it never waits behind a scan.
  */
-export async function listWorktreesRaw(anyRepoPath: string): Promise<RawWorktreeInfo[]> {
+export async function listWorktreesRaw(
+  anyRepoPath: string,
+  { pooled = false }: { pooled?: boolean } = {}
+): Promise<RawWorktreeInfo[]> {
   const dir = toDirectory(anyRepoPath);
   if (!dir) return [];
 
   try {
-    const git = createGit(dir);
-    return parseWorktreePorcelain(await git.raw(['worktree', 'list', '--porcelain']));
+    return await readWorktreeList(dir, pooled);
   } catch (err) {
     // Same contract as resolveWorktreeRoot: empty for a non-repo, reason
     // at debug.
     logger.debug('worktree list failed', err, { dir });
     return [];
   }
+}
+
+async function readWorktreeList(dir: string, pooled: boolean): Promise<RawWorktreeInfo[]> {
+  const list = () => createGit(dir).raw(['worktree', 'list', '--porcelain']);
+  return parseWorktreePorcelain(await (pooled ? gitPool.run(list) : list()));
 }
 
 /**
@@ -189,21 +199,46 @@ export async function listWorktreesWithBase(anyRepoPath: string): Promise<Worktr
   const dir = toDirectory(anyRepoPath);
   if (!dir) return [];
 
+  let raw: RawWorktreeInfo[];
   try {
-    const git = createGit(dir);
-    const out = await git.raw(['worktree', 'list', '--porcelain']);
-    const raw = parseWorktreePorcelain(out);
-    const ahead = await aheadOfBaseCounts(dir, raw);
-    return raw.map((wt) => ({
-      ...wt,
-      lastActivity: wt.isBare ? null : finiteOrNull(lastGitActivity(wt.path)),
-      aheadOfBase: ahead.get(wt.path)?.ahead ?? null,
-      baseBranch: ahead.get(wt.path)?.base ?? null,
-    }));
+    raw = await readWorktreeList(dir, false);
   } catch (err) {
     logger.debug('worktree list failed', err, { dir });
     return [];
   }
+  return withBaseCounts(raw, await readMainlines(dir), loadBaseBranchChoices());
+}
+
+/**
+ * Each remote's mainline, read once for the whole family: every worktree
+ * shares the refs. Null when the read fails, logged.
+ */
+async function readMainlines(repoDir: string): Promise<Mainline[] | null> {
+  try {
+    return await remoteMainlines(repoDir);
+  } catch (err) {
+    logger.warn('default base-branch discovery failed', err, { repo: repoDir });
+    return null;
+  }
+}
+
+/**
+ * A family's worktrees with their activity and their ahead-of-base count.
+ * `mainlines` is null when they could not be read; `savedBase` gives a
+ * worktree's persisted base choice.
+ */
+export async function withBaseCounts(
+  raw: RawWorktreeInfo[],
+  mainlines: Mainline[] | null,
+  savedBase: (worktreePath: string) => string | undefined
+): Promise<WorktreeWithBase[]> {
+  const ahead = await aheadOfBaseCounts(raw, mainlines, savedBase);
+  return raw.map((wt) => ({
+    ...wt,
+    lastActivity: wt.isBare ? null : finiteOrNull(lastGitActivity(wt.path)),
+    aheadOfBase: ahead.get(wt.path)?.ahead ?? null,
+    baseBranch: ahead.get(wt.path)?.base ?? null,
+  }));
 }
 
 /** `-Infinity` (nothing stat'able) becomes null; a real mtime passes through. */
@@ -235,7 +270,7 @@ class TaskPool {
 }
 
 /** Git spawns a listing has in flight at once: 8 keeps every stall under 30 ms without slowing a cold listing. */
-const WORKTREE_GIT_CONCURRENCY = 8;
+export const WORKTREE_GIT_CONCURRENCY = 8;
 
 const gitPool = new TaskPool(WORKTREE_GIT_CONCURRENCY);
 
@@ -245,16 +280,67 @@ export function runGitPooled<T>(task: () => Promise<T>): Promise<T> {
 }
 
 /**
- * The default-base count of a worktree depends only on its HEAD commit and
- * on the mainline refs, so a result stays right until one of those moves.
- * Keyed by worktree path, the entry's `key` names the inputs it was
- * computed from. Bounded by evicting the oldest entry.
+ * Commit counts, keyed by the directory they ran in and the exact commit
+ * ids. Commits never change, so a kept count stays right; a moved HEAD or
+ * ref asks for other ids. Per directory, so a shallow clone never answers
+ * for a full one. The least recently used goes first past the limit. A
+ * Work scan of 436 worktrees uses about 1,100; an entry is a few hundred
+ * bytes.
  */
-interface DefaultBaseEntry {
-  key: string;
-  ahead: number | null;
-  /** The base the count is against, `upstream/main`; null with no count. */
-  branch: string | null;
+export const COMMIT_COUNT_LIMIT = 8192;
+
+const commitCounts = new Map<string, number>();
+
+const COUNT_MAX_BYTES = 1024 * 1024;
+
+const UNBORN_HEAD = /^0+$/;
+
+/** Drop every cached commit count (tests). */
+export function clearCommitCounts(): void {
+  commitCounts.clear();
+}
+
+/**
+ * `count()` once per directory, tip and set of bases; later calls with the
+ * same ids are served from memory. A failed count is not kept.
+ */
+export async function cachedCommitCount(
+  cwd: string,
+  tip: string,
+  bases: readonly string[],
+  count: () => Promise<number>
+): Promise<number> {
+  // A copy: a key cut from git output would keep the whole output alive.
+  const key = Buffer.from([cwd, tip, ...[...bases].sort()].join('\n'), 'utf8').toString('utf8');
+  const hit = commitCounts.get(key);
+  if (hit !== undefined) {
+    commitCounts.delete(key);
+    commitCounts.set(key, hit);
+    return hit;
+  }
+  const counted = await count();
+  commitCounts.set(key, counted);
+  if (commitCounts.size > COMMIT_COUNT_LIMIT) {
+    commitCounts.delete(commitCounts.keys().next().value!);
+  }
+  return counted;
+}
+
+/**
+ * Commits on `tip` that are on none of `bases`, counted in `cwd` through
+ * the pool, cached by commit ids. Ids only, never names: a name moves.
+ */
+export function countNotOn(cwd: string, tip: string, bases: readonly string[]): Promise<number> {
+  return cachedCommitCount(cwd, tip, bases, async () => {
+    const out = await gitPool.run(() =>
+      execGitBytes(
+        cwd,
+        [...GIT_PREFIX, 'rev-list', '--count', tip, '--not', ...bases],
+        COUNT_MAX_BYTES
+      )
+    );
+    return parseInt(out.toString('utf8').trim(), 10);
+  });
 }
 
 /** A count of commits ahead, and the base it counts against. */
@@ -263,78 +349,29 @@ interface AheadOfBase {
   base: string;
 }
 
-const DEFAULT_BASE_CACHE_LIMIT = 512;
-
-const defaultBaseCache = new Map<string, DefaultBaseEntry>();
-
-const UNBORN_HEAD = /^0+$/;
-
-/** Drop every cached default-base count (tests). */
-export function clearDefaultBaseCache(): void {
-  defaultBaseCache.clear();
-}
-
-function rememberDefaultBase(worktreePath: string, entry: DefaultBaseEntry): void {
-  defaultBaseCache.delete(worktreePath);
-  defaultBaseCache.set(worktreePath, entry);
-  if (defaultBaseCache.size > DEFAULT_BASE_CACHE_LIMIT) {
-    defaultBaseCache.delete(defaultBaseCache.keys().next().value!);
-  }
-}
-
-/** The inputs a worktree's default-base count was computed from. */
-function defaultBaseKey(head: string, mainlines: Mainline[]): string {
-  return [head, ...mainlines.map((m) => `${m.ref}=${m.commit}`).sort()].join('\n');
-}
-
 /**
  * The commits a worktree has on top of its default base, counting against
  * the given mainlines. Same selection rule as findDefaultBase. Null when
- * there is no mainline. Counts by commit id, not ref name, so the result
- * belongs to exactly the inputs it is cached under.
+ * there is no mainline or no HEAD. A failed count is logged and reads as
+ * unknown.
  */
 async function defaultBaseAhead(
-  worktreePath: string,
-  head: string,
-  mainlines: Mainline[]
-): Promise<AheadOfBase | null> {
-  const counted = await Promise.all(
-    mainlines.map(async ({ remote, ref, commit }) => ({
-      remote,
-      ref,
-      ahead: await gitPool.run(() => countAhead(worktreePath, commit, head)),
-    }))
-  );
-  const picked = pickDefaultBase(counted);
-  return picked === null ? null : { ahead: picked.ahead, base: picked.branch };
-}
-
-/**
- * defaultBaseAhead through the cache: a worktree with a HEAD is served
- * from it while its inputs stand still. A failed count is logged, not
- * cached, and reads as unknown.
- */
-async function cachedDefaultBaseAhead(
   wt: RawWorktreeInfo,
   mainlines: Mainline[]
 ): Promise<AheadOfBase | null> {
   // An unborn HEAD (git reports the zero id) has no commits to count.
   if (wt.head === null || UNBORN_HEAD.test(wt.head)) return null;
-  const key = defaultBaseKey(wt.head, mainlines);
-  const hit = defaultBaseCache.get(wt.path);
-  if (hit !== undefined && hit.key === key) {
-    return hit.ahead === null || hit.branch === null
-      ? null
-      : { ahead: hit.ahead, base: hit.branch };
-  }
+  const head = wt.head;
   try {
-    const counted = await defaultBaseAhead(wt.path, wt.head, mainlines);
-    rememberDefaultBase(wt.path, {
-      key,
-      ahead: counted?.ahead ?? null,
-      branch: counted?.base ?? null,
-    });
-    return counted;
+    const counted = await Promise.all(
+      mainlines.map(async ({ remote, ref, commit }) => ({
+        remote,
+        ref,
+        ahead: await countNotOn(wt.path, head, [commit]),
+      }))
+    );
+    const picked = pickDefaultBase(counted);
+    return picked === null ? null : { ahead: picked.ahead, base: picked.branch };
   } catch (err) {
     logger.warn('default base-branch count failed', err, { worktree: wt.path });
     return null;
@@ -366,32 +403,25 @@ async function chosenBaseAhead(worktreePath: string, chosen: string): Promise<nu
  * Git lists a deleted worktree until it is pruned. It has no count, and
  * trying for one on every listing only fills the log.
  *
- * The mainlines are read once for the whole family: every worktree shares
- * the refs. When that read fails, no worktree gets a default-base count
- * (the persisted choices still do), and nothing is cached.
+ * When the mainlines could not be read, no worktree gets a default-base
+ * count; the persisted choices still do.
  */
 async function aheadOfBaseCounts(
-  repoDir: string,
-  worktrees: RawWorktreeInfo[]
+  worktrees: RawWorktreeInfo[],
+  mainlines: Mainline[] | null,
+  savedBase: (worktreePath: string) => string | undefined
 ): Promise<Map<string, AheadOfBase>> {
-  let mainlines: Mainline[] | null;
-  try {
-    mainlines = await remoteMainlines(repoDir);
-  } catch (err) {
-    logger.warn('default base-branch discovery failed', err, { repo: repoDir });
-    mainlines = null;
-  }
   const entries = await Promise.all(
     worktrees
       .filter((wt) => !wt.isBare && isExistingDirectory(wt.path))
       .map(async (wt): Promise<[string, AheadOfBase] | null> => {
-        const chosen = getCachedBaseBranch(wt.path);
+        const chosen = savedBase(wt.path);
         let counted: AheadOfBase | null = null;
         if (chosen !== undefined) {
           const ahead = await chosenBaseAhead(wt.path, chosen);
           counted = ahead === null ? null : { ahead, base: chosen };
         } else if (mainlines !== null) {
-          counted = await cachedDefaultBaseAhead(wt, mainlines);
+          counted = await defaultBaseAhead(wt, mainlines);
         }
         return counted === null ? null : [wt.path, counted];
       })

@@ -8,13 +8,15 @@ import {
   readGithubIdentities,
   scanWorkRepo,
 } from './workScan.js';
-import { clearDefaultBaseCache } from './worktree.js';
+import { WORKTREE_GIT_CONCURRENCY, clearCommitCounts, runGitPooled } from './worktree.js';
 import {
   createFixtureRepo,
   createRepoWithRemote,
   gitExec,
+  gitSubcommand,
   removeFixtureRepo,
   removeRepoWithRemote,
+  withGitProbe,
   writeFixtureFile,
 } from './test-helpers.js';
 import type { WorkRepoFacts } from '../types/work.js';
@@ -121,7 +123,7 @@ describe('scanWorkRepo (fixture)', () => {
   }
 
   beforeAll(async () => {
-    clearDefaultBaseCache();
+    clearCommitCounts();
     removeRepoWithRemote(NAME);
     removeFixtureRepo(LINKED);
     ({ repoPath } = createRepoWithRemote(NAME));
@@ -173,7 +175,7 @@ describe('scanWorkRepo (fixture)', () => {
     removeRepoWithRemote(NAME);
     removeFixtureRepo(LINKED);
     removeFixtureRepo(PLAIN);
-    clearDefaultBaseCache();
+    clearCommitCounts();
   });
 
   it('names the repo by its main worktree', () => {
@@ -266,5 +268,68 @@ describe('scanWorkRepo (fixture)', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('reads the refs once, and counts nothing it counted before', async () => {
+    await withGitProbe(async (calls) => {
+      const again = (await scanWorkRepo(repoPath))!;
+      expect(again).toEqual(facts);
+      // One status per worktree; the rest once for the whole repo.
+      expect(calls().map(gitSubcommand).sort()).toEqual([
+        'config',
+        'for-each-ref',
+        'remote',
+        'status',
+        'status',
+        'worktree',
+      ]);
+    });
+  });
+
+  it('reads the saved base choices once per scan, not once per worktree', async () => {
+    const reads = vi.spyOn(fs, 'readFileSync');
+    try {
+      await scanWorkRepo(repoPath);
+      const baseReads = reads.mock.calls.filter(([file]) =>
+        String(file).endsWith('base-branches.json')
+      );
+      expect(baseReads).toHaveLength(1);
+    } finally {
+      reads.mockRestore();
+    }
+  });
+
+  it('spawns no git while the shared pool is full', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const holders = Array.from({ length: WORKTREE_GIT_CONCURRENCY }, () =>
+      runGitPooled(() => gate)
+    );
+    await withGitProbe(async (calls) => {
+      const scanning = scanWorkRepo(repoPath);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(calls()).toEqual([]);
+      release();
+      await Promise.all(holders);
+      expect((await scanning)?.root).toBe(facts.root);
+      expect(calls().length).toBeGreaterThan(0);
+    });
+  });
+
+  it('counts a branch that moved again, and only that one', async () => {
+    const tree = gitExec(repoPath, 'rev-parse pushed^{tree}').trim();
+    const moved = gitExec(repoPath, `commit-tree -p ${tips.pushed} -m moved ${tree}`).trim();
+    gitExec(repoPath, `update-ref refs/heads/pushed ${moved}`);
+    await withGitProbe(async (calls) => {
+      const scanned = (await scanWorkRepo(repoPath))!;
+      expect(scanned.branches.find((b) => b.name === 'pushed')).toMatchObject({
+        tip: moved,
+        unpushed: 1,
+      });
+      const counted = calls().filter((c) => gitSubcommand(c) === 'rev-list');
+      expect(counted.map((c) => c.args.slice(c.args.indexOf('rev-list')))).toEqual([
+        ['rev-list', '--count', moved, '--not', tips.pushed],
+      ]);
+    });
   });
 });

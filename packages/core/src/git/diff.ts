@@ -451,9 +451,8 @@ export interface Mainline {
 export async function remoteMainlines(repoPath: string): Promise<Mainline[]> {
   const git = createGit(repoPath);
   const remotes = (await git.raw(['remote'])).split('\n').filter(Boolean);
-  // refname -> commit + symref target ('' for a plain ref). A ref name
-  // cannot hold a space, so the space split is exact.
-  const refs = new Map<string, { commit: string; symref: string }>();
+  // A ref name cannot hold a space, so the space split is exact.
+  const refs = new Map<string, RemoteRef>();
   const out = await git.raw([
     'for-each-ref',
     '--format=%(refname) %(objectname) %(symref)',
@@ -463,7 +462,23 @@ export async function remoteMainlines(repoPath: string): Promise<Mainline[]> {
     const [ref, commit, symref = ''] = line.split(' ');
     if (ref) refs.set(ref, { commit, symref });
   }
+  return mainlinesOf(remotes, refs);
+}
 
+/** A remote-tracking ref: its commit, and its symref target ('' for a plain ref). */
+export interface RemoteRef {
+  commit: string;
+  symref: string;
+}
+
+/**
+ * remoteMainlines from refs already read: the remote names, and every ref
+ * under `refs/remotes/` by full name. Pure.
+ */
+export function mainlinesOf(
+  remotes: readonly string[],
+  refs: ReadonlyMap<string, RemoteRef>
+): Mainline[] {
   const mainlines: Mainline[] = [];
   for (const remote of remotes) {
     const prefix = `${REMOTE_REF_PREFIX}${remote}/`;

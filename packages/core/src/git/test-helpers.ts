@@ -1,5 +1,6 @@
 import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 const FIXTURES_DIR = path.resolve(import.meta.dirname, '../../test-fixtures');
@@ -75,4 +76,53 @@ export function createRepoWithRemote(name: string): { remotePath: string; repoPa
 export function removeRepoWithRemote(name: string): void {
   removeFixtureRepo(name);
   removeFixtureRepo(`${name}-remote`);
+}
+
+/** One recorded git call: the directory it ran in, then its argv. */
+export interface GitCall {
+  cwd: string;
+  args: string[];
+}
+
+/**
+ * Run `body` with a `git` on PATH that records its cwd and argv, then execs
+ * the real one. The spawn count is the only witness that a cached listing
+ * ran no git for a worktree.
+ */
+export async function withGitProbe(body: (calls: () => GitCall[]) => Promise<void>): Promise<void> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-worktree-probe-'));
+  const logPath = path.join(dir, 'argv.log');
+  const realGit = execSync('command -v git', { encoding: 'utf-8' }).trim();
+  fs.writeFileSync(
+    path.join(dir, 'git'),
+    `#!/bin/sh\nprintf '%s\\0' '--call--' "$PWD" "$@" >> '${logPath}'\nexec '${realGit}' "$@"\n`,
+    { mode: 0o755 }
+  );
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${dir}:${originalPath ?? ''}`;
+  try {
+    await body(() => readCalls(logPath));
+  } finally {
+    process.env.PATH = originalPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function readCalls(logPath: string): GitCall[] {
+  if (!fs.existsSync(logPath)) return [];
+  const parts = fs.readFileSync(logPath, 'utf-8').split('\0');
+  parts.pop();
+  const calls: GitCall[] = [];
+  for (const part of parts) {
+    if (part === '--call--') calls.push({ cwd: '', args: [] });
+    else if (calls[calls.length - 1].cwd === '') calls[calls.length - 1].cwd = part;
+    else calls[calls.length - 1].args.push(part);
+  }
+  return calls;
+}
+
+/** The git subcommand of a call, past the `-c key=value` pairs. */
+export function gitSubcommand(call: GitCall): string {
+  const at = call.args.findIndex((a, i) => !a.startsWith('-') && call.args[i - 1] !== '-c');
+  return call.args[at];
 }

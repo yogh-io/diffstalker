@@ -37,10 +37,14 @@ function saveCache(cache: BaseBranchCache): void {
  * Returns undefined if no cached value exists.
  */
 export function getCachedBaseBranch(repoPath: string): string | undefined {
+  return loadBaseBranchChoices()(repoPath);
+}
+
+/** Every saved base-branch choice, read once, for a caller that looks up many repos. */
+export function loadBaseBranchChoices(): (repoPath: string) => string | undefined {
   const cache = loadCache();
   // Normalize path for consistent lookup
-  const normalizedPath = path.resolve(repoPath);
-  return cache[normalizedPath];
+  return (repoPath) => cache[path.resolve(repoPath)];
 }
 
 /**
