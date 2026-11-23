@@ -73,6 +73,25 @@ describe('discoverRepos', () => {
     expect(alpha?.lastActivity).toBeGreaterThan(Date.now() - 60_000);
   });
 
+  it('a fresh index is no activity: a plain git status rewrites it', async () => {
+    const project = path.join(root, 'quiet');
+    const gitDir = path.join(project, '.git');
+    fs.mkdirSync(path.join(gitDir, 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(gitDir, 'HEAD'), 'ref: refs/heads/main\n');
+    fs.writeFileSync(path.join(gitDir, 'logs', 'HEAD'), '');
+    fs.writeFileSync(path.join(gitDir, 'index'), '');
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(path.join(gitDir, 'HEAD'), old, old);
+    fs.utimesSync(path.join(gitDir, 'logs', 'HEAD'), old, old);
+    try {
+      const { repos } = await discoverRepos(root);
+      const found = repos.find((repo) => repo.name === 'quiet');
+      expect(found?.lastActivity).toBe(old.getTime());
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+
   it("counts a linked worktree's activity toward its project (bare layout)", async () => {
     // A bare repo with worktrees around it: the bare dir's own index and
     // HEAD sit untouched while all the work lands in a worktree's git dir.

@@ -144,9 +144,10 @@ export async function branchFromHead(gitDir: string): Promise<string | null> {
 }
 
 /**
- * When this repo was last touched: the newest mtime of `index` and `HEAD`
- * in the git dir and in each linked worktree's git dir under it. Null
- * when none can be stat'ed.
+ * When this repo was last worked in: the newest mtime of `HEAD` and its
+ * reflog `logs/HEAD`, in the git dir and in each linked worktree's git dir
+ * under it. Not `index`: a plain `git status` rewrites it. Null when none
+ * can be stat'ed.
  */
 async function lastActivityOf(gitDir: string): Promise<number | null> {
   const dirs = [gitDir];
@@ -156,7 +157,7 @@ async function lastActivityOf(gitDir: string): Promise<number | null> {
   } catch {
     // No worktrees dir: a repo without linked worktrees, the usual case.
   }
-  const files = dirs.flatMap((dir) => [path.join(dir, 'index'), path.join(dir, 'HEAD')]);
+  const files = dirs.flatMap((dir) => [path.join(dir, 'HEAD'), path.join(dir, 'logs', 'HEAD')]);
   const times = await Promise.all(
     files.map(async (file) => {
       try {

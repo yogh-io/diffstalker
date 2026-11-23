@@ -8,7 +8,7 @@
  * forty repos does not block other requests. Git runs with optional locks
  * off, so a scan never rewrites an index.
  *
- * A plain file edit moves no index or HEAD, so a worktree being edited
+ * A plain file edit moves no HEAD or reflog, so a worktree being edited
  * right now can look months old by `lastActivity`. `changedAt` is the
  * newest mtime of its uncommitted paths, from at most MAX_CHANGED_STATS
  * lstats per worktree.

@@ -428,14 +428,16 @@ export function pickDefaultWorktree<T extends RawWorktreeInfo>(worktrees: T[]): 
 }
 
 /**
- * Most recent mtime among the worktree's git `index` and `HEAD`, or of the
- * working directory itself when the git dir can't be resolved. -Infinity when
- * nothing can be stat'ed.
+ * Most recent mtime among the worktree's `HEAD` and its reflog `logs/HEAD`:
+ * a commit, checkout, reset or rebase. Not the `index`: a plain `git status`
+ * rewrites it (stat refresh, untracked cache), so an editor or a shell prompt
+ * would look like work. The working directory itself when the git dir can't
+ * be resolved. -Infinity when nothing can be stat'ed.
  */
 function lastGitActivity(worktreePath: string): number {
   const gitDir = resolveWorktreeGitDir(worktreePath);
   const candidates = gitDir
-    ? [path.join(gitDir, 'index'), path.join(gitDir, 'HEAD')]
+    ? [path.join(gitDir, 'HEAD'), path.join(gitDir, 'logs', 'HEAD')]
     : [worktreePath];
 
   let latest = -Infinity;

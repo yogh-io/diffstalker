@@ -119,18 +119,21 @@ describe('pickDefaultWorktree', () => {
 
   /**
    * Create a fake linked worktree: a working dir whose `.git` file points at
-   * a gitdir under `<root>/.bare/worktrees/<name>` containing an index whose
-   * mtime is `indexAgeMs` in the past.
+   * a gitdir under `<root>/.bare/worktrees/<name>` whose HEAD reflog's
+   * mtime is `reflogAgeMs` in the past, and whose index is brand new (a
+   * `git status` just rewrote it; that must not count).
    */
-  function makeWorktree(name: string, indexAgeMs: number): WorktreeInfo {
+  function makeWorktree(name: string, reflogAgeMs: number): WorktreeInfo {
     const worktreePath = path.join(root, name);
     const gitDir = path.join(root, '.bare', 'worktrees', name);
     fs.mkdirSync(worktreePath, { recursive: true });
-    fs.mkdirSync(gitDir, { recursive: true });
+    fs.mkdirSync(path.join(gitDir, 'logs'), { recursive: true });
     fs.writeFileSync(path.join(worktreePath, '.git'), `gitdir: ${gitDir}\n`);
     fs.writeFileSync(path.join(gitDir, 'index'), '');
-    const mtime = new Date(Date.now() - indexAgeMs);
-    fs.utimesSync(path.join(gitDir, 'index'), mtime, mtime);
+    const reflog = path.join(gitDir, 'logs', 'HEAD');
+    fs.writeFileSync(reflog, '');
+    const mtime = new Date(Date.now() - reflogAgeMs);
+    fs.utimesSync(reflog, mtime, mtime);
     return {
       path: worktreePath,
       branch: name,
@@ -141,7 +144,7 @@ describe('pickDefaultWorktree', () => {
     };
   }
 
-  it('picks the worktree with the most recent git index activity', () => {
+  it('picks the worktree with the most recent commit or checkout, not index write', () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'diffstalker-wt-'));
     const stale = makeWorktree('stale', 60 * 60 * 1000);
     const fresh = makeWorktree('fresh', 0);

@@ -234,11 +234,11 @@ export interface WorkWorktree {
   head: string | null;
   isMain: boolean;
   isBare: boolean;
-  /** Newest index/HEAD mtime, epoch ms; null when unknown. */
+  /** Newest mtime of HEAD and its reflog (a commit, checkout, reset), epoch ms; null when unknown. */
   lastActivity: number | null;
   /**
    * Newest mtime of the uncommitted paths (up to 200 are read), epoch ms. A
-   * plain edit moves no index or HEAD, so this is what sees one. null when
+   * plain edit moves no HEAD or reflog, so this is what sees one. null when
    * there are none, none could be read, or for a bare entry.
    */
   changedAt: number | null;
@@ -386,8 +386,8 @@ export interface WorkActivity {
   /** Epoch ms. */
   at: number;
   /**
-   * `edited`: a file in the worktree changed. `git`: the index or HEAD
-   * moved (a commit, a stage, a checkout). `draft`: a draft file changed.
+   * `edited`: a file in the worktree changed. `git`: HEAD or its reflog
+   * moved (a commit, checkout, reset or rebase). `draft`: a draft file changed.
    * `head-commit`: the open PR's newest commit was made. The rest come
    * from GitHub's reviews, comments, merge or close.
    */
