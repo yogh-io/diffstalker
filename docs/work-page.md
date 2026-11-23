@@ -339,6 +339,13 @@ points in 3.9 s, against 215 points before. The open light list is still
 the slowest request, 3.9 to 6.7 s: under the cut-off, not far below it.
 Not verified: that every new review comment moves `updatedAt`.
 
+The local scan after it: warm 983 to 763 git processes, 11.3 to 9.0
+CPU-seconds, 1.64 to 1.13 s; cold (after a daemon start) 2,019 to 1,880
+processes. The answers were byte-identical for all 84 paths, old code
+against new, in three rounds. With the untracked cache on as well, a
+page-style scan through the daemon took about 1.2 s (2.0 to 2.4 s
+before).
+
 Decided: keep the button as "check now"; make the GitHub refresh read a
 light list and fetch details only for PRs that changed; scan each repo
 family once and cache commit counts by commit id; catch up when the page
@@ -368,9 +375,8 @@ requests in flight and fills in as answers arrive.
 
 Per repo (`core/git/workScan.ts`):
 
-- worktrees (`listWorktrees`, which already counts commits ahead of the
-  base with the same rule as Compare, cached by HEAD and mainline refs;
-  the scan also needs that base's name, which the same cache gains);
+- worktrees (`listWorktrees`, which counts commits ahead of the base with
+  the same rule as Compare; the scan also needs that base's name);
 - per non-bare worktree: number of uncommitted paths (changed + untracked),
   from `git status --porcelain -z` with optional locks off, the way the
   daemon's own status runs, so a scan never rewrites an index;
@@ -387,9 +393,25 @@ Per repo (`core/git/workScan.ts`):
   `top.md` text, adopted-unedited, newest mtime. The page counts the
   placeholders from the text (`git/` may not import `view/prBody`).
 
-Git work per worktree runs through the same pool size as worktree listing
-(8 spawns), so a full scan does not block other requests. The `lstat`s of
-one worktree take one slot of that pool too.
+Every git spawn of a scan goes through one pool of 8, so a full scan does
+not block other requests; the worktree list for opening a repo stays
+outside it, so opening never waits behind a scan. The `lstat`s of one
+worktree take one slot too.
+
+What a scan does not do twice:
+
+- Commit counts (ahead of the base, unpushed) are cached by the exact
+  commit ids and the directory: a count for the same commits never
+  changes. At most 8,192 counts, least recently used dropped; a full scan
+  uses about 1,100. The cache is in memory, so the first scan after a
+  daemon start counts everything.
+- One `for-each-ref` gives both the branches and the mainlines, and
+  `base-branches.json` is read once per scan.
+- One scan per repo family (`routes/work.ts`): the daemon finds a path's
+  common git dir without git, and a request for another path of the same
+  family joins the scan in flight, or takes its answer up to 5 s after it
+  ended (re-stamped with the asked path). A path that scan already answered
+  always starts a new scan, so Refresh still checks every worktree.
 
 ### 5.2 The three sections
 
