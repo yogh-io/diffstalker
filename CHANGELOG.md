@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-11-23
+
+### Added
+
+- **A Work page for all your unfinished work.** Click the diffstalker
+  wordmark. It lists your open PRs, the PRs you are asked to review, and
+  the worktrees and branches with work in them, across every watched repo,
+  found without bookkeeping. Each row is one line of columns: how far along
+  it is (with a colour), its layer in a PR stack, the PR link, review
+  state, CI, merge conflicts, local changes, the draft, whose move it is,
+  and how long ago something last happened. Group the rows by repository
+  and by time, keep only the last day, week or month, and sort by any
+  column. A red alert marks what waits on you: changes requested and not
+  asked to review again yet, or a review you are asked for. **Track**
+  keeps a candidate in view; **Dismiss** hides an item until something
+  about it changes. The page catches up when you come back to it and says
+  how old each part is. PR state comes from `gh`; without it the page
+  shows what git knows.
+- **PR body drafts.** Write the top zone of a PR description per branch,
+  in a Work row's fold-out or in Compare. Drafts live in the repo's git
+  dir (`diffstalker/pr/<branch>/`), where agents read them and leave a
+  suggestion or the AI zone in files of their own. For an open PR the
+  editor starts from its text on GitHub. When your words differ from the
+  PR, **Take GitHub's text** copies them over, and **Update GitHub**
+  replaces only the PR's top zone after asking once more. That button is
+  the only change diffstalker makes on GitHub.
+- **Copy for a session** puts a PR's link, branch, head commit and local
+  clone on the clipboard, to paste into an agent session.
+- The daemon serves the Work page and the drafts: `/work/*`,
+  `/repos/:id/draft`, `/repos/:id/pr`, and `gh` in `GET /health`. See the
+  daemon README.
+
+### Changed
+
+- **Repo ages in the picker follow commits and checkouts,** not git's
+  index file, which a plain `git status` rewrites.
+- **Compare takes any branch as `?head=`.** A branch that is no layer of
+  the stack is compared against the trunk.
+
+### Fixed
+
+- **A huge change no longer mounts every diff at once.** A repo with
+  15,000 changed files made one Compare tab use 10 to 14 GiB. Files now
+  mount while their rows fit in 20,000; the rest wait behind the **Load
+  diff** gate, and `e` still loads everything. A compare that refreshes
+  keeps every file whose diff did not change.
+
 ## [0.13.14] - 2026-11-11
 
 ### Fixed
