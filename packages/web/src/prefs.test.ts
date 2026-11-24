@@ -31,6 +31,7 @@ describe('loadPrefs', () => {
       prDraftOpen: false,
       workByRepo: true,
       workByTime: false,
+      workFolded: [],
     });
   });
 
@@ -54,6 +55,7 @@ describe('loadPrefs', () => {
       prDraftOpen: false,
       workByRepo: true,
       workByTime: false,
+      workFolded: [],
     });
   });
 
@@ -77,6 +79,7 @@ describe('loadPrefs', () => {
       prDraftOpen: false,
       workByRepo: true,
       workByTime: false,
+      workFolded: [],
     });
   });
 
@@ -107,6 +110,7 @@ describe('loadPrefs', () => {
       prDraftOpen: false,
       workByRepo: true,
       workByTime: false,
+      workFolded: [],
     });
   });
 
@@ -211,6 +215,13 @@ describe('loadPrefs', () => {
     expect(loadPrefs()).toMatchObject({ workByRepo: true, workByTime: false });
   });
 
+  test('the Work page folds: known section names only, in page order, none by default', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ workFolded: ['done', 'older', 7, 'work'] }));
+    expect(loadPrefs().workFolded).toEqual(['work', 'done']);
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ workFolded: 'done' }));
+    expect(loadPrefs().workFolded).toEqual([]);
+  });
+
   test('prDraftOpen: persists a stored boolean, drops anything else', () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ prDraftOpen: true }));
     expect(loadPrefs().prDraftOpen).toBe(true);
@@ -247,6 +258,7 @@ describe('loadPrefs', () => {
       prDraftOpen: false,
       workByRepo: true,
       workByTime: false,
+      workFolded: [],
     });
     // Writes are swallowed too — prefs just don't persist.
     expect(() => savePrefs({ activeView: 'history' })).not.toThrow();
@@ -275,6 +287,7 @@ describe('savePrefs', () => {
       prDraftOpen: false,
       workByRepo: true,
       workByTime: false,
+      workFolded: [],
     });
   });
 

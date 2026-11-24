@@ -591,6 +591,7 @@ export function checkedLine(checkedAt: number, viewer: string | null, now: numbe
 export const TIME_BUCKETS: ReadonlyArray<{ key: string; label: string; within: number }> = [
   { key: 'day', label: 'Last day', within: DAY_MS },
   { key: 'week', label: 'Last week', within: 7 * DAY_MS },
+  { key: 'two-weeks', label: 'Last 2 weeks', within: 14 * DAY_MS },
   { key: 'month', label: 'Last month', within: 30 * DAY_MS },
   { key: 'older', label: 'Older', within: Infinity },
 ];

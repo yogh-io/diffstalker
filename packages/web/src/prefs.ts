@@ -33,6 +33,10 @@ export function isImageDiffMode(value: unknown): value is ImageDiffMode {
   return typeof value === 'string' && (IMAGE_DIFF_MODES as readonly string[]).includes(value);
 }
 
+/** The Work page's sections a reader can fold away. */
+export const WORK_SECTIONS = ['work', 'candidates', 'done'] as const;
+export type WorkSectionName = (typeof WORK_SECTIONS)[number];
+
 export interface Prefs {
   /** null = no explicit choice yet; derive from prefers-color-scheme. */
   theme: ThemeName | null;
@@ -94,8 +98,10 @@ export interface Prefs {
   prDraftOpen: boolean;
   /** The Work page groups rows under a heading per repo. */
   workByRepo: boolean;
-  /** The Work page groups rows under last day / week / month / older. */
+  /** The Work page groups rows under last day / week / 2 weeks / month / older. */
   workByTime: boolean;
+  /** The Work page sections the reader folded away. */
+  workFolded: WorkSectionName[];
 }
 
 /** The prefs fields that store a split fraction (number | null). */
@@ -131,6 +137,7 @@ function defaults(): Prefs {
     prDraftOpen: false,
     workByRepo: true,
     workByTime: false,
+    workFolded: [],
   };
 }
 
@@ -184,6 +191,10 @@ function sanitize(raw: unknown): Prefs {
   if (typeof record.prDraftOpen === 'boolean') prefs.prDraftOpen = record.prDraftOpen;
   if (typeof record.workByRepo === 'boolean') prefs.workByRepo = record.workByRepo;
   if (typeof record.workByTime === 'boolean') prefs.workByTime = record.workByTime;
+  const folded: unknown = record.workFolded;
+  if (Array.isArray(folded)) {
+    prefs.workFolded = WORK_SECTIONS.filter((name) => folded.includes(name));
+  }
   return prefs;
 }
 

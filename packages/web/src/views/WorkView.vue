@@ -9,6 +9,10 @@
  *   CANDIDATE_RECENT_DAYS sit folded right below, as older candidates.
  * - Done: PRs merged or closed in the last seven days.
  *
+ * With a time filter on, Done comes right after Work: looking back, what
+ * finished reads before the candidates. Each section folds away, and the
+ * browser remembers which ones are folded.
+ *
  * Dismiss hides an item until something about it changes. The page scans
  * when it opens and when Refresh is pressed, never on its own. An item's
  * time reads as how long ago (`3 days 12 hours ago`), the date and time on
@@ -19,7 +23,7 @@
  * across sections; inside a section the rows are grouped by repo. A row
  * opens a fold-out; the PR number and the compare button are one click to
  * GitHub and to Compare. "Last day" keeps only what moved in the last 24
- * hours.
+ * hours; the other filters keep a week, 2 weeks or a month.
  */
 
 import { computed, onMounted, onUnmounted, ref } from 'vue';
@@ -40,6 +44,7 @@ import {
   layoutWork,
 } from '../utils/workFormat';
 import type { WorkSort, WorkSortKey } from '../utils/workFormat';
+import type { WorkSectionName } from '../prefs';
 import WorkRow from '../components/WorkRow.vue';
 import type { WorkClassification, WorkItem, WorkMarkAction } from '@diffstalker/core/types/work';
 
@@ -79,15 +84,19 @@ onMounted(() => {
   void work.load();
 });
 
-type BlockName = 'work' | 'candidates' | 'older' | 'done';
+type BlockName = WorkSectionName | 'older';
 
-/** In page order. `older` is the folded rest of Candidates, so it sits right after them. */
-const BLOCKS: ReadonlyArray<{ name: BlockName; title: string }> = [
-  { name: 'work', title: 'Work' },
-  { name: 'candidates', title: 'Candidates' },
-  { name: 'older', title: 'older candidates' },
-  { name: 'done', title: 'Done' },
-];
+const TITLES: Record<WorkSectionName, string> = {
+  work: 'Work',
+  candidates: 'Candidates',
+  done: 'Done',
+};
+
+/** Page order. `older` is the folded rest of Candidates, so it sits right after them. */
+const ORDER: readonly BlockName[] = ['work', 'candidates', 'older', 'done'];
+
+/** Page order with a time filter on: looking back, what finished reads before the candidates. */
+const ORDER_FILTERED: readonly BlockName[] = ['work', 'done', 'candidates', 'older'];
 
 interface Column {
   label: string;
@@ -164,22 +173,43 @@ function shown(items: WorkItem[], key: string | null): WorkItem[] {
 
 /** Per filter, how many items it keeps across every section. */
 const windowCounts = computed(() => {
-  const all = BLOCKS.flatMap((block) => classification.value[block.name]);
+  const all = ORDER.flatMap((name) => classification.value[name]);
   return Object.fromEntries(WINDOWS.map((window) => [window.key, shown(all, window.key).length]));
 });
 
-const blocks = computed(() =>
-  BLOCKS.map((block) => {
-    const items = shown(classification.value[block.name], within.value);
-    const lines = layoutWork(items, {
-      byRepo: ui.workByRepo,
-      byTime: ui.workByTime,
-      sort: sort.value,
-      now: clock.value,
-    });
-    return { ...block, items, lines };
-  }).filter((block) => block.items.length > 0)
-);
+/** The older candidates fold; not stored, it starts closed. */
+const olderOpen = ref(false);
+
+function isOpen(name: BlockName): boolean {
+  return name === 'older' ? olderOpen.value : !ui.workFolded.includes(name);
+}
+
+function onToggle(name: BlockName, event: Event): void {
+  const open = (event.target as HTMLDetailsElement).open;
+  if (name === 'older') olderOpen.value = open;
+  else ui.setWorkFolded(name, !open);
+}
+
+const blocks = computed(() => {
+  const order = within.value === null ? ORDER : ORDER_FILTERED;
+  const shownBlocks = order
+    .map((name) => {
+      const items = shown(classification.value[name], within.value);
+      const lines = layoutWork(items, {
+        byRepo: ui.workByRepo,
+        byTime: ui.workByTime,
+        sort: sort.value,
+        now: clock.value,
+      });
+      return { name, title: name === 'older' ? '' : TITLES[name], items, lines };
+    })
+    .filter((block) => block.items.length > 0);
+  // The older candidates belong to Candidates: they fold away with it.
+  const candidatesFolded = shownBlocks.some(
+    (block) => block.name === 'candidates' && !isOpen('candidates')
+  );
+  return candidatesFolded ? shownBlocks.filter((block) => block.name !== 'older') : shownBlocks;
+});
 
 function olderSummary(count: number): string {
   return `${count} older ${count === 1 ? 'candidate' : 'candidates'}`;
@@ -225,7 +255,7 @@ const allClear = computed(
   () =>
     work.scanFinished &&
     !nothingToScan.value &&
-    BLOCKS.every((block) => classification.value[block.name].length === 0) &&
+    ORDER.every((name) => classification.value[name].length === 0) &&
     classification.value.dismissed.length === 0
 );
 
@@ -305,7 +335,7 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
           :class="{ on: ui.workByTime }"
           :aria-pressed="ui.workByTime"
           data-testid="work-by-time"
-          data-tip="Group the rows by their last activity: last day, last week, last month, older"
+          data-tip="Group the rows by their last activity: last day, week, 2 weeks, month, older"
           @click="ui.toggleWorkByTime()"
         >
           By time
@@ -382,20 +412,23 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
       </template>
     </div>
 
-    <component
-      :is="block.name === 'older' ? 'details' : 'section'"
+    <details
       v-for="block in blocks"
       :key="block.name"
       class="work-section"
       :class="{ fold: block.name === 'older' }"
+      :open="isOpen(block.name)"
       :data-testid="`work-section-${block.name}`"
+      @toggle="onToggle(block.name, $event)"
     >
       <summary v-if="block.name === 'older'" class="eyebrow">
         {{ olderSummary(block.items.length) }}
       </summary>
-      <h2 v-else class="section-title eyebrow">
-        {{ block.title }} <span class="count">{{ block.items.length }}</span>
-      </h2>
+      <summary v-else class="section-title eyebrow">
+        <h2 class="section-name">
+          {{ block.title }} <span class="count">{{ block.items.length }}</span>
+        </h2>
+      </summary>
       <ul class="rows">
         <template v-for="line in block.lines" :key="line.key">
           <li v-if="line.kind === 'time'" class="time-head" data-testid="work-time">
@@ -414,7 +447,7 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
           <WorkRow v-else :item="line.item" :now="clock" @open="openItem" @mark="mark" />
         </template>
       </ul>
-    </component>
+    </details>
 
     <details
       v-if="classification.dismissed.length > 0"
@@ -582,7 +615,14 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
 }
 
 .section-title {
-  margin: 0 0 0.375rem;
+  margin-bottom: 0.375rem;
+  cursor: pointer;
+}
+
+.section-name {
+  display: inline;
+  margin: 0;
+  font: inherit;
   font-weight: 500;
 }
 

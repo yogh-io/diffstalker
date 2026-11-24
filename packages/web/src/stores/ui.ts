@@ -17,8 +17,8 @@
 
 import { shallowRef } from 'vue';
 import { defineStore } from 'pinia';
-import { loadPrefs, savePrefs, MAX_RECENT_REPOS } from '../prefs';
-import type { ViewName, DiffMode, ImageDiffMode } from '../prefs';
+import { loadPrefs, savePrefs, MAX_RECENT_REPOS, WORK_SECTIONS } from '../prefs';
+import type { ViewName, DiffMode, ImageDiffMode, WorkSectionName } from '../prefs';
 import type { ThemeName } from '../theme/themes';
 
 /** The rail's view entries, in order. */
@@ -95,6 +95,7 @@ export const useUiStore = defineStore('ui', () => {
   /** How the Work page groups its rows; reader preferences. */
   const workByRepo = shallowRef<boolean>(stored.workByRepo);
   const workByTime = shallowRef<boolean>(stored.workByTime);
+  const workFolded = shallowRef<readonly WorkSectionName[]>(stored.workFolded);
 
   /** Stamp the current theme onto <html>. Called once at app setup. */
   function init(): void {
@@ -182,6 +183,15 @@ export const useUiStore = defineStore('ui', () => {
   function toggleWorkByTime(): void {
     workByTime.value = !workByTime.value;
     savePrefs({ workByTime: workByTime.value });
+  }
+
+  function setWorkFolded(name: WorkSectionName, folded: boolean): void {
+    if (workFolded.value.includes(name) === folded) return;
+    const next = WORK_SECTIONS.filter((section) =>
+      section === name ? folded : workFolded.value.includes(section)
+    );
+    workFolded.value = next;
+    savePrefs({ workFolded: next });
   }
 
   function setActiveStackKey(key: string | null): void {
@@ -282,6 +292,7 @@ export const useUiStore = defineStore('ui', () => {
     prDraftOpen,
     workByRepo,
     workByTime,
+    workFolded,
     stackScrollRequest,
     expandGatedRequest,
     outlineRequest,
@@ -304,6 +315,7 @@ export const useUiStore = defineStore('ui', () => {
     togglePrDraft,
     toggleWorkByRepo,
     toggleWorkByTime,
+    setWorkFolded,
     requestStackScroll,
     requestExpandGated,
     requestOutline,

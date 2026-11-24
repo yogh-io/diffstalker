@@ -349,7 +349,13 @@ describe('layoutWork', () => {
       repoName: repo,
       activity: hoursAgo === null ? null : NOW - hoursAgo * HOUR,
     });
-  const items = [at('a1', 'a', 1), at('b1', 'b', 30), at('a2', 'a', 24 * 10), at('c1', 'c', null)];
+  const items = [
+    at('a1', 'a', 1),
+    at('b1', 'b', 30),
+    at('a2', 'a', 24 * 10),
+    at('b2', 'b', 24 * 20),
+    at('c1', 'c', null),
+  ];
   const label = (line: WorkLine): string => {
     if (line.kind === 'item') return line.item.key;
     return line.kind === 'time' ? `[${line.label}]` : `<${line.name}>`;
@@ -358,11 +364,11 @@ describe('layoutWork', () => {
     layoutWork(items, { byRepo, byTime, sort: null, now: NOW }).map(label);
 
   test('neither: one plain list', () => {
-    expect(shape(false, false)).toEqual(['a1', 'b1', 'a2', 'c1']);
+    expect(shape(false, false)).toEqual(['a1', 'b1', 'a2', 'b2', 'c1']);
   });
 
   test('by repository', () => {
-    expect(shape(true, false)).toEqual(['<a>', 'a1', 'a2', '<b>', 'b1', '<c>', 'c1']);
+    expect(shape(true, false)).toEqual(['<a>', 'a1', 'a2', '<b>', 'b1', 'b2', '<c>', 'c1']);
   });
 
   test('by time: unknown activity is older; empty buckets have no heading', () => {
@@ -371,8 +377,10 @@ describe('layoutWork', () => {
       'a1',
       '[Last week]',
       'b1',
-      '[Last month]',
+      '[Last 2 weeks]',
       'a2',
+      '[Last month]',
+      'b2',
       '[Older]',
       'c1',
     ]);
@@ -386,9 +394,12 @@ describe('layoutWork', () => {
       '[Last week]',
       '<b>',
       'b1',
-      '[Last month]',
+      '[Last 2 weeks]',
       '<a>',
       'a2',
+      '[Last month]',
+      '<b>',
+      'b2',
       '[Older]',
       '<c>',
       'c1',

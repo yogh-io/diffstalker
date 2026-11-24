@@ -13,6 +13,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import WorkView from './WorkView.vue';
 import { formatFull } from '../utils/workFormat';
 import { useUiStore } from '../stores/ui';
+import { PREFS_KEY } from '../prefs';
 import { useRepoStore } from '../stores/repo';
 import { useDaemonStore } from '../stores/daemon';
 import { useWorkStore } from '../stores/work';
@@ -209,6 +210,20 @@ function branchesOf(wrapper: VueWrapper, section: string): string[] {
   return rowsOf(wrapper, section).map((row) => row.find('.branch').text());
 }
 
+/** Open or close a section the way a click on its summary does. */
+async function setOpen(wrapper: VueWrapper, section: string, open: boolean): Promise<void> {
+  const el = wrapper.find(`[data-testid="work-section-${section}"]`).element as HTMLDetailsElement;
+  el.open = open;
+  el.dispatchEvent(new Event('toggle'));
+  await flushPromises();
+}
+
+function sectionOrder(wrapper: VueWrapper): Array<string | undefined> {
+  return wrapper
+    .findAll('[data-testid^="work-section-"]')
+    .map((block) => block.attributes('data-testid'));
+}
+
 async function expand(row: ReturnType<typeof rowsOf>[number]): Promise<void> {
   await row.find('[data-testid="work-row-line"]').trigger('click');
   await flushPromises();
@@ -261,10 +276,7 @@ describe('sections', () => {
 
   test('older candidates sit folded right after Candidates', async () => {
     const wrapper = await mountPage();
-    const order = wrapper
-      .findAll('[data-testid^="work-section-"]')
-      .map((block) => block.attributes('data-testid'));
-    expect(order).toEqual([
+    expect(sectionOrder(wrapper)).toEqual([
       'work-section-work',
       'work-section-candidates',
       'work-section-older',
@@ -275,6 +287,46 @@ describe('sections', () => {
     expect(older.attributes('open')).toBeUndefined();
     expect(older.find('summary').text()).toBe('1 older candidate');
     expect(branchesOf(wrapper, 'older')).toEqual(['stale']);
+  });
+
+  test('with a time filter on, Done comes right after Work', async () => {
+    const wrapper = await mountPage();
+    await wrapper.find('[data-testid="work-within-two-weeks"]').trigger('click');
+    expect(sectionOrder(wrapper)).toEqual([
+      'work-section-work',
+      'work-section-done',
+      'work-section-candidates',
+    ]);
+  });
+
+  test('a section folds away, stays folded, and the browser remembers it', async () => {
+    const wrapper = await mountPage();
+    const done = () => wrapper.find('[data-testid="work-section-done"]');
+    expect((done().element as HTMLDetailsElement).open).toBe(true);
+    await setOpen(wrapper, 'done', false);
+    expect(useUiStore().workFolded).toEqual(['done']);
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}').workFolded).toEqual(['done']);
+    // A re-render keeps it folded; the heading still counts its rows.
+    await wrapper.find('[data-testid="work-within-day"]').trigger('click');
+    expect((done().element as HTMLDetailsElement).open).toBe(false);
+    expect(done().find('summary').text()).toBe('Done 1');
+  });
+
+  test('a stored fold holds on the next visit', async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ workFolded: ['work'] }));
+    const wrapper = await mountPage();
+    const section = wrapper.find('[data-testid="work-section-work"]');
+    expect((section.element as HTMLDetailsElement).open).toBe(false);
+    await setOpen(wrapper, 'work', true);
+    expect(useUiStore().workFolded).toEqual([]);
+  });
+
+  test('folding Candidates takes the older candidates with it', async () => {
+    const wrapper = await mountPage();
+    await setOpen(wrapper, 'candidates', false);
+    expect(wrapper.find('[data-testid="work-section-older"]').exists()).toBe(false);
+    await setOpen(wrapper, 'candidates', true);
+    expect(wrapper.find('[data-testid="work-section-older"]').exists()).toBe(true);
   });
 
   test('a watch directory that could not be read is named, not taken for no repos', async () => {
