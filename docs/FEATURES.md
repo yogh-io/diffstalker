@@ -1011,11 +1011,14 @@ change it makes on GitHub.
   Tooltips on the page show at once, just above the pointer; a heading's
   tooltip says what it sorts by. Two toggles in the header group the rows:
   **By repository** (on by default) and **By time** (`Last day`, `Last
-  week`, `Last month`, `Older`, each with its count); with both on the repo
-  headings sit inside each time heading, with both off it is one list. The
-  browser remembers both. Beside them **All / Last day / Last week / Last
-  month** (with counts) keeps only what moved in that window; it is not
-  remembered. A click on a row opens its
+  week`, `Last 2 weeks`, `Last month`, `Older`, each with its count); with
+  both on the repo headings sit inside each time heading, with both off it
+  is one list. The browser remembers both. Beside them **All / Last day /
+  Last week / Last 2 weeks / Last month** (with counts) keeps only what
+  moved in that window; it is not remembered. With a filter on, Done sits
+  right after Work, before Candidates. Each section folds away with a click
+  on its heading (the count stays), and the browser remembers which ones
+  are folded. A click on a row opens its
   fold-out: the recent activity with times, the facts behind the icons,
   **Open in Compare**, **Open #N on GitHub**, **Dismiss**, and the PR draft
   panel for that branch. The compare button on the row opens Compare in

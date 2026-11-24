@@ -602,19 +602,27 @@ Two toggles in the header group the rows, in every section:
 - **By repository** (on by default): a heading per repo, the repo with the
   newest item first.
 - **By time** (off by default): a heading per age of the last activity,
-  with its count: `Last day` (24 hours), `Last week` (7 days), `Last month`
-  (30 days), `Older` (and unknown). A stack's layers may land under
+  with its count: `Last day` (24 hours), `Last week` (7 days), `Last 2
+  weeks` (14 days), `Last month` (30 days), `Older` (and unknown). A stack's layers may land under
   different headings.
 
 With both on, the repo headings sit inside each time heading; with both
 off the section is one plain list. Both are reader preferences in
 `prefs.ts` (localStorage).
 
-Beside them, a filter: `All`, `Last day`, `Last week`, `Last month`, each
-with how many items it keeps. It uses the same windows as the time
-headings and keeps only items with activity in that window, in every
-section, with either grouping. It is not stored, so a filter left on
-cannot hide work the next time the page opens.
+Beside them, a filter: `All`, `Last day`, `Last week`, `Last 2 weeks`,
+`Last month`, each with how many items it keeps. It uses the same windows
+as the time headings and keeps only items with activity in that window, in
+every section, with either grouping. It is not stored, so a filter left on
+cannot hide work the next time the page opens. With a filter on, Done
+moves up to right after Work: looking back over a window, what finished
+reads before the candidates.
+
+Each section (Work, Candidates, Done) folds away with a click on its
+heading, which keeps its count. Folding Candidates folds the older
+candidates with it. The browser remembers the folded sections (`prefs.ts`),
+unlike the filter: a folded section still shows its count, so it hides no
+work.
 
 A sort heading's tooltip says what it sorts by and in which order.
 
@@ -646,7 +654,7 @@ the `is not a layer of this stack` line. This amends
 button; its PR number still links to GitHub.
 
 Order: Work, Candidates and the older candidates by newest activity
-(§5.2), Done by close date. The page header shows the `gh` line
+(§5.2), Done by close date; with a filter on, Done sits after Work. The page header shows the `gh` line
 (`PRs checked 6 minutes ago as JornC`, or the §4.2 notice), the scan line
 (`Repos scanned 2 minutes ago`, or `scanned 12 of 40 repos` while it runs),
 both with the time on hover and counting up while the page is open, the
