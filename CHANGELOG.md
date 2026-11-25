@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.2] - 2026-11-25
+
+### Changed
+
+- **Drafted branches go straight to Work.** A branch counts as Work when
+  any draft zone has text: your words (`top.md`), an agent's suggestion
+  (`top.suggested.md`) or the AI zone (`ai.md`). Before, only your words
+  did. A file with only whitespace does not count.
+- **PRs you are asked to review show in Work**, not as candidates that
+  needed Track.
+
 ## [0.14.1] - 2026-11-24
 
 ### Added
