@@ -339,19 +339,23 @@ function byBranch(a: DraftFacts, b: DraftFacts): number {
   return a.branch < b.branch ? -1 : 1;
 }
 
+function hasText(file: DraftBytes | null): boolean {
+  return file !== null && file.bytes.toString('utf8').trim() !== '';
+}
+
 /** The facts of one draft directory, or null when it holds no draft file. */
 function draftFactsAt(dir: string, branch: string): DraftFacts | null {
   const top = openDraftFile(dir, DRAFT_TOP_FILE, true);
   const adopted = openDraftFile(dir, DRAFT_ADOPTED_FILE, true);
-  const suggested = openDraftFile(dir, DRAFT_SUGGESTED_FILE, false);
-  const ai = openDraftFile(dir, DRAFT_AI_FILE, false);
+  const suggested = openDraftFile(dir, DRAFT_SUGGESTED_FILE, true);
+  const ai = openDraftFile(dir, DRAFT_AI_FILE, true);
   const present = [top, adopted, suggested, ai].filter((f): f is DraftFile => f !== null);
   if (present.length === 0) return null;
   return {
     branch,
-    hasTop: top !== null,
-    hasSuggested: suggested !== null,
-    hasAi: ai !== null,
+    hasTop: hasText(top),
+    hasSuggested: hasText(suggested),
+    hasAi: hasText(ai),
     top: textOf(top),
     adoptedUnedited: isAdoptedUnedited(top, adopted),
     mtime: Math.max(...present.map((f) => f.mtimeMs)),

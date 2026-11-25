@@ -111,6 +111,11 @@ function hasTop(draft: DraftFacts | null): boolean {
   return draft !== null && draft.top !== null && draft.top.trim() !== '';
 }
 
+/** The author's zone, an agent's suggestion or the AI zone below the line has text. */
+function hasDraft(draft: DraftFacts | null): boolean {
+  return hasTop(draft) || draft?.hasSuggested === true || draft?.hasAi === true;
+}
+
 /** docs/work-page.md §5.4: how far along, for the colour and the progress icon. */
 function stageOf(state: WorkItemState, pr: PrInfo | null): WorkStage {
   if (pr !== null) {
@@ -278,7 +283,7 @@ function factsOf(item: Draft): WorkItemFacts {
 /** docs/work-page.md §5.2, first match wins; null: not work at all. */
 function sectionOf(item: Draft, facts: WorkItemFacts): WorkSection | null {
   if (item.pr !== null && !item.leftover) return item.pr.state === 'open' ? 'work' : 'done';
-  if (facts.draft || item.tracked) return 'work';
+  if (hasDraft(item.draft) || item.tracked) return 'work';
   if (item.worktree === null) return null;
   if (facts.uncommitted > 0 || facts.ahead > 0) return 'candidates';
   if (item.kind === 'branch' && (facts.unpushed > 0 || isFresh(item.worktree))) return 'candidates';
@@ -486,12 +491,6 @@ const EMPTY_FACTS: WorkItemFacts = {
 
 const NO_TIMES: WorkLocalTimes = { edited: null, git: null, draft: null };
 
-/** An open PR the author is asked to review: a candidate until tracked. */
-function prSection(pr: PrInfo, tracked: boolean): WorkSection {
-  if (pr.state !== 'open') return 'done';
-  return pr.reviewRequested && !tracked ? 'candidates' : 'work';
-}
-
 /** A PR that no local branch took: it only links to GitHub. */
 function prOnlyItem(pr: PrInfo, repos: readonly WorkRepoFacts[], context: Context): WorkItem {
   const { marks } = context;
@@ -503,7 +502,7 @@ function prOnlyItem(pr: PrInfo, repos: readonly WorkRepoFacts[], context: Contex
   return {
     key,
     kind: 'pr',
-    section: prSection(pr, tracked),
+    section: pr.state === 'open' ? 'work' : 'done',
     repoRoot: clone?.root ?? null,
     repoName: clone?.name ?? pr.repo,
     worktreePath: null,
@@ -623,8 +622,7 @@ export function classifyWork(
   };
   for (const item of items) {
     if (marks.dismissed[item.key]?.fingerprint === item.fingerprint) result.dismissed.push(item);
-    else if (item.section === 'candidates' && !isRecent(item, now) && item.attention.length === 0)
-      result.older.push(item);
+    else if (item.section === 'candidates' && !isRecent(item, now)) result.older.push(item);
     else result[item.section].push(item);
   }
   result.work.sort(byActivity);

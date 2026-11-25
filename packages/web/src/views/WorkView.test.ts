@@ -460,7 +460,7 @@ describe('who waits on the author', () => {
     );
   });
 
-  test('a review request: a candidate by its author, with an alert and a copy button', async () => {
+  test('a review request: work by its author, with an alert and a copy button', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     prsAnswer = snapshot({
@@ -474,9 +474,8 @@ describe('who waits on the author', () => {
       ],
     });
     const wrapper = await mountPage();
-    const row = rowsOf(wrapper, 'candidates').find(
-      (r) => r.find('.branch').text() === 'their-branch'
-    )!;
+    const row = rowsOf(wrapper, 'work').find((r) => r.find('.branch').text() === 'their-branch')!;
+    expect(row.find('[data-testid="work-track"]').exists()).toBe(false);
     expect(row.find('[data-testid="work-by"]').text()).toBe('by SerhatG');
     expect(row.find('[data-testid="work-attention"]').attributes('data-tip')).toBe(
       'SerhatG asks you to review this'
@@ -488,7 +487,8 @@ describe('who waits on the author', () => {
       'Pull request: https://github.com/aerius/calculator/pull/752'
     );
     expect(row.find('[data-testid="work-copy"]').attributes('data-tip')).toBe('Copied');
-    expect(rowsOf(wrapper, 'work')[0].find('[data-testid="work-attention"]').exists()).toBe(false);
+    const mine = rowsOf(wrapper, 'work').find((r) => r.find('.branch').text() !== 'their-branch')!;
+    expect(mine.find('[data-testid="work-attention"]').exists()).toBe(false);
   });
 });
 

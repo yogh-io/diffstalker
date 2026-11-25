@@ -75,6 +75,7 @@ export interface DraftChangeEvent {
 /** One draft found in a repo scan. */
 export interface DraftFacts {
   branch: string;
+  /** The three `has` flags: the file holds more than whitespace. */
   hasTop: boolean;
   hasSuggested: boolean;
   hasAi: boolean;

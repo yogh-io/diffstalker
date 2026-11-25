@@ -3,7 +3,8 @@
  * The Work page (`/work`, docs/work-page.md §5): every piece of the
  * author's work across the watched repos, found without bookkeeping.
  *
- * - Work: open PRs, branches with a draft, tracked items.
+ * - Work: open PRs (the author's, and those the author is asked to
+ *   review), branches with a draft (any zone with text), tracked items.
  * - Candidates: worktrees with changes, branches ahead or unpushed, fresh
  *   worktrees. Track moves one to Work. Those with no activity in the last
  *   CANDIDATE_RECENT_DAYS sit folded right below, as older candidates.

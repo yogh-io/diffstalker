@@ -389,9 +389,10 @@ Per repo (`core/git/workScan.ts`):
   the same name exists on any remote and how many commits are not on it
   (the "pushed" rule of `docs/stacked-compare.md` §3 rule 6);
 - the GitHub identities from the remotes (§4.4);
-- the drafts under `<common>/diffstalker/pr/`: branch, which files exist,
-  `top.md` text, adopted-unedited, newest mtime. The page counts the
-  placeholders from the text (`git/` may not import `view/prBody`).
+- the drafts under `<common>/diffstalker/pr/`: branch, which of `top.md`,
+  `top.suggested.md` and `ai.md` have text (more than whitespace), `top.md`
+  text, adopted-unedited, newest mtime. The page counts the placeholders
+  from the text (`git/` may not import `view/prBody`).
 
 Every git spawn of a scan goes through one pool of 8, so a full scan does
 not block other requests; the worktree list for opening a repo stays
@@ -423,8 +424,18 @@ detached worktree, or per PR with no local branch).
 **Work**: shown without any click.
 
 - a PR by the author that is open;
-- a branch with a draft (`top.md` exists and is not empty);
+- an open PR the author is asked to review. It never takes a local branch
+  (its head branch name is someone else's choice and would clash with the
+  author's), so it shows like a PR with no local branch. It leaves when the
+  review is no longer asked for;
+- a branch with a draft: `top.md`, `top.suggested.md` or `ai.md` has text.
+  An agent that prepares a PR body (§7) moves the branch here before the
+  author writes a word;
 - an item the author tracked.
+
+Until 2026-11-25 a review request was a candidate until tracked, and only
+`top.md` counted as a draft. The author asked for both to count as work
+without a Track click.
 
 **Candidates**: plausible work, not yet confirmed.
 
@@ -432,15 +443,11 @@ detached worktree, or per PR with no local branch).
 - a worktree whose branch has commits not on its base;
 - a branch with commits not pushed;
 - a fresh worktree on a branch that is not its base branch, with nothing in
-  it yet (future work: making the worktree is enough to show it);
-- an open PR the author is asked to review. It never takes a local branch
-  (its head branch name is someone else's choice and would clash with the
-  author's), so it shows like a PR with no local branch. **Track** moves it
-  to Work. It leaves when the review is no longer asked for.
+  it yet (future work: making the worktree is enough to show it).
 
 Candidates are folded by age. A candidate active in the last 14 days
-(`CANDIDATE_RECENT_DAYS`), or one that someone waits on (§5.4, the alert),
-shows. An older one, or one with no known activity, sits in a collapsed `N older candidates` list right below, with
+(`CANDIDATE_RECENT_DAYS`) shows. An older one, or one with no known
+activity, sits in a collapsed `N older candidates` list right below, with
 the same Track and Dismiss buttons. Nothing is dropped. On the author's
 machine 290 candidates came out of 87 repos, and only 12 of them were
 under a week old. Activity (`WorkActivity`) is the newest of: the

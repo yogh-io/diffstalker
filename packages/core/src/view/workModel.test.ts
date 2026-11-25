@@ -40,7 +40,7 @@ function br(name: string, over: Partial<WorkBranch> = {}): WorkBranch {
 function draft(branch: string, top: string | null, over: Partial<DraftFacts> = {}): DraftFacts {
   return {
     branch,
-    hasTop: top !== null,
+    hasTop: top !== null && top.trim() !== '',
     hasSuggested: false,
     hasAi: false,
     top,
@@ -164,6 +164,17 @@ describe('sections', () => {
     const result = classifyWork([blank], snapshot(), NO_MARKS, NOW);
     expect(result.work).toEqual([]);
     expect(result.candidates).toEqual([]);
+  });
+
+  test('a suggestion or an AI zone alone is work', () => {
+    for (const zone of [{ hasSuggested: true }, { hasAi: true }]) {
+      const r = withFeature({ uncommitted: 2 });
+      r.drafts = [draft('x', null, zone)];
+      const result = classifyWork([r], snapshot(), NO_MARKS, NOW);
+      expect(keys(result.work)).toEqual([branchKey(ROOT, 'x')]);
+      expect(result.candidates).toEqual([]);
+      expect(only(result.work).facts.draft).toBe(false);
+    }
   });
 
   test('a tracked item is work', () => {
@@ -751,7 +762,7 @@ describe('activity from GitHub', () => {
       reviewRequested: true,
       progress: progress({ headCommittedAt }),
     });
-    const item = only(classifyWork([], snapshot([theirs]), NO_MARKS, NOW).candidates);
+    const item = only(classifyWork([], snapshot([theirs]), NO_MARKS, NOW).work);
     expect(item.lastActivity?.other).toBe(true);
   });
 
@@ -932,24 +943,19 @@ describe('review requests', () => {
   const theirs = (over: Partial<PrInfo> = {}) =>
     pr(752, 'their-branch', { author: 'SerhatG', reviewRequested: true, ...over });
 
-  test('a candidate without a local branch, that wants the author', () => {
+  test('is work without a local branch or a Track, and wants the author', () => {
     const result = classifyWork([repo()], snapshot([theirs()]), NO_MARKS, NOW);
-    const item = only(result.candidates);
-    expect(item).toMatchObject({ kind: 'pr', note: 'no-local-branch', open: null });
+    const item = only(result.work);
+    expect(item).toMatchObject({ kind: 'pr', note: 'no-local-branch', open: null, tracked: false });
     expect(item.attention).toEqual(['review-requested']);
+    expect(result.candidates).toEqual([]);
   });
 
-  test('Track moves it to Work', () => {
-    const tracked = marks({ tracked: { [prKey(theirs())]: { at: 1 } } });
-    const result = classifyWork([repo()], snapshot([theirs()]), tracked, NOW);
-    expect(only(result.work).tracked).toBe(true);
-  });
-
-  test('an old one does not fold away: someone waits', () => {
+  test('an old one stays in Work', () => {
     const old = theirs({ updatedAt: '2026-01-01T00:00:00Z' });
     const result = classifyWork([repo()], snapshot([old]), NO_MARKS, NOW);
     expect(result.older).toEqual([]);
-    expect(result.candidates).toHaveLength(1);
+    expect(result.work).toHaveLength(1);
   });
 
   test('never takes a local branch of the same name', () => {

@@ -363,6 +363,23 @@ describe('listDrafts', () => {
     expect(drafts[0].mtime).toBe(fs.statSync(draftFile('a', 'top.md')).mtimeMs);
   });
 
+  it('says which files have text; a blank one is still listed', async () => {
+    put('blank', 'top.md', ' \n');
+    put('blank', 'top.suggested.md', '\n');
+    put('blank', 'ai.md', '  ');
+    put('full', 'top.suggested.md', 'Why: {{fill}}');
+    put('full', 'ai.md', '<details>x</details>');
+
+    const [blank, full] = await listDrafts(commonDir);
+    expect(blank).toMatchObject({
+      branch: 'blank',
+      hasTop: false,
+      hasSuggested: false,
+      hasAi: false,
+    });
+    expect(full).toMatchObject({ branch: 'full', hasTop: false, hasSuggested: true, hasAi: true });
+  });
+
   it('reports adopted-unedited', async () => {
     put('feature', 'top.suggested.md', 'theirs');
     await adoptSuggestion(commonDir, 'feature', DRAFT_VERSION_ABSENT);
