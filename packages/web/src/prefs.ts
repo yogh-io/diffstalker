@@ -37,6 +37,14 @@ export function isImageDiffMode(value: unknown): value is ImageDiffMode {
 export const WORK_SECTIONS = ['work', 'candidates', 'done'] as const;
 export type WorkSectionName = (typeof WORK_SECTIONS)[number];
 
+/** The Work page's time filters, by key: last day, week, 2 weeks, month. */
+export const WORK_WINDOWS = ['day', 'week', 'two-weeks', 'month'] as const;
+export type WorkWindow = (typeof WORK_WINDOWS)[number];
+
+export function isWorkWindow(value: unknown): value is WorkWindow {
+  return typeof value === 'string' && (WORK_WINDOWS as readonly string[]).includes(value);
+}
+
 export interface Prefs {
   /** null = no explicit choice yet; derive from prefers-color-scheme. */
   theme: ThemeName | null;
@@ -102,6 +110,8 @@ export interface Prefs {
   workByTime: boolean;
   /** The Work page sections the reader folded away. */
   workFolded: WorkSectionName[];
+  /** The Work page's time filter; null = All. */
+  workWithin: WorkWindow | null;
 }
 
 /** The prefs fields that store a split fraction (number | null). */
@@ -138,6 +148,7 @@ function defaults(): Prefs {
     workByRepo: true,
     workByTime: false,
     workFolded: [],
+    workWithin: null,
   };
 }
 
@@ -195,6 +206,7 @@ function sanitize(raw: unknown): Prefs {
   if (Array.isArray(folded)) {
     prefs.workFolded = WORK_SECTIONS.filter((name) => folded.includes(name));
   }
+  if (isWorkWindow(record.workWithin)) prefs.workWithin = record.workWithin;
   return prefs;
 }
 

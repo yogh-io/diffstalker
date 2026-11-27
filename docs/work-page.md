@@ -620,16 +620,16 @@ off the section is one plain list. Both are reader preferences in
 Beside them, a filter: `All`, `Last day`, `Last week`, `Last 2 weeks`,
 `Last month`, each with how many items it keeps. It uses the same windows
 as the time headings and keeps only items with activity in that window, in
-every section, with either grouping. It is not stored, so a filter left on
-cannot hide work the next time the page opens. With a filter on, Done
+every section, with either grouping. The browser remembers it
+(`prefs.ts`), like the groupings; each filter shows its count, and `All`
+is never lit while a filter is on. With a filter on, Done
 moves up to right after Work: looking back over a window, what finished
 reads before the candidates.
 
 Each section (Work, Candidates, Done) folds away with a click on its
 heading, which keeps its count. Folding Candidates folds the older
-candidates with it. The browser remembers the folded sections (`prefs.ts`),
-unlike the filter: a folded section still shows its count, so it hides no
-work.
+candidates with it. The browser remembers the folded sections (`prefs.ts`):
+a folded section still shows its count, so it hides no work.
 
 A sort heading's tooltip says what it sorts by and in which order.
 

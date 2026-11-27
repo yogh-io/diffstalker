@@ -32,6 +32,7 @@ describe('loadPrefs', () => {
       workByRepo: true,
       workByTime: false,
       workFolded: [],
+      workWithin: null,
     });
   });
 
@@ -56,6 +57,7 @@ describe('loadPrefs', () => {
       workByRepo: true,
       workByTime: false,
       workFolded: [],
+      workWithin: null,
     });
   });
 
@@ -80,6 +82,7 @@ describe('loadPrefs', () => {
       workByRepo: true,
       workByTime: false,
       workFolded: [],
+      workWithin: null,
     });
   });
 
@@ -111,6 +114,7 @@ describe('loadPrefs', () => {
       workByRepo: true,
       workByTime: false,
       workFolded: [],
+      workWithin: null,
     });
   });
 
@@ -222,6 +226,15 @@ describe('loadPrefs', () => {
     expect(loadPrefs().workFolded).toEqual([]);
   });
 
+  test('the Work page filter: a known window key, All (null) by default', () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ workWithin: 'two-weeks' }));
+    expect(loadPrefs().workWithin).toBe('two-weeks');
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ workWithin: 'older' }));
+    expect(loadPrefs().workWithin).toBeNull();
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ workWithin: 7 }));
+    expect(loadPrefs().workWithin).toBeNull();
+  });
+
   test('prDraftOpen: persists a stored boolean, drops anything else', () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ prDraftOpen: true }));
     expect(loadPrefs().prDraftOpen).toBe(true);
@@ -259,6 +272,7 @@ describe('loadPrefs', () => {
       workByRepo: true,
       workByTime: false,
       workFolded: [],
+      workWithin: null,
     });
     // Writes are swallowed too — prefs just don't persist.
     expect(() => savePrefs({ activeView: 'history' })).not.toThrow();
@@ -288,6 +302,7 @@ describe('savePrefs', () => {
       workByRepo: true,
       workByTime: false,
       workFolded: [],
+      workWithin: null,
     });
   });
 

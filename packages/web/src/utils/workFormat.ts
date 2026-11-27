@@ -19,6 +19,7 @@ import type {
   WorkItemState,
   WorkStage,
 } from '@diffstalker/core/types/work';
+import type { WorkWindow } from '../prefs';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -588,7 +589,11 @@ export function checkedLine(checkedAt: number, viewer: string | null, now: numbe
 }
 
 /** The time headings of "by time", newest first; `older` also takes unknown activity. */
-export const TIME_BUCKETS: ReadonlyArray<{ key: string; label: string; within: number }> = [
+export const TIME_BUCKETS: ReadonlyArray<{
+  key: WorkWindow | 'older';
+  label: string;
+  within: number;
+}> = [
   { key: 'day', label: 'Last day', within: DAY_MS },
   { key: 'week', label: 'Last week', within: 7 * DAY_MS },
   { key: 'two-weeks', label: 'Last 2 weeks', within: 14 * DAY_MS },

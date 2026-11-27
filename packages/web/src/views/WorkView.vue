@@ -45,7 +45,7 @@ import {
   layoutWork,
 } from '../utils/workFormat';
 import type { WorkSort, WorkSortKey } from '../utils/workFormat';
-import type { WorkSectionName } from '../prefs';
+import type { WorkSectionName, WorkWindow } from '../prefs';
 import WorkRow from '../components/WorkRow.vue';
 import type { WorkClassification, WorkItem, WorkMarkAction } from '@diffstalker/core/types/work';
 
@@ -159,15 +159,16 @@ function ariaSort(key: WorkSortKey | null): 'ascending' | 'descending' | undefin
 
 const classification = computed<WorkClassification>(() => work.classification);
 
-/** The filter: every item, or only those with activity in the last day, week or month. Not stored. */
-const WINDOWS = TIME_BUCKETS.filter((bucket) => bucket.within !== Infinity);
-const within = ref<string | null>(null);
+/** The filter: every item, or only those with activity in the last day, week or month. Stored. */
+const WINDOWS = TIME_BUCKETS.filter(
+  (bucket): bucket is (typeof TIME_BUCKETS)[number] & { key: WorkWindow } => bucket.key !== 'older'
+);
 
-function windowOf(key: string | null): number | null {
+function windowOf(key: WorkWindow | null): number | null {
   return WINDOWS.find((window) => window.key === key)?.within ?? null;
 }
 
-function shown(items: WorkItem[], key: string | null): WorkItem[] {
+function shown(items: WorkItem[], key: WorkWindow | null): WorkItem[] {
   const ms = windowOf(key);
   return ms === null ? items : items.filter((item) => activeWithin(item, clock.value, ms));
 }
@@ -192,10 +193,10 @@ function onToggle(name: BlockName, event: Event): void {
 }
 
 const blocks = computed(() => {
-  const order = within.value === null ? ORDER : ORDER_FILTERED;
+  const order = ui.workWithin === null ? ORDER : ORDER_FILTERED;
   const shownBlocks = order
     .map((name) => {
-      const items = shown(classification.value[name], within.value);
+      const items = shown(classification.value[name], ui.workWithin);
       const lines = layoutWork(items, {
         byRepo: ui.workByRepo,
         byTime: ui.workByTime,
@@ -300,10 +301,10 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
       <div class="filters" role="group" aria-label="Show">
         <button
           class="filter chrome-chip"
-          :class="{ on: within === null }"
-          :aria-pressed="within === null"
+          :class="{ on: ui.workWithin === null }"
+          :aria-pressed="ui.workWithin === null"
           data-testid="work-within-all"
-          @click="within = null"
+          @click="ui.setWorkWithin(null)"
         >
           All
         </button>
@@ -311,11 +312,11 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
           v-for="window in WINDOWS"
           :key="window.key"
           class="filter chrome-chip"
-          :class="{ on: within === window.key }"
-          :aria-pressed="within === window.key"
+          :class="{ on: ui.workWithin === window.key }"
+          :aria-pressed="ui.workWithin === window.key"
           :data-testid="`work-within-${window.key}`"
           :data-tip="`Only what moved in the ${window.label.toLowerCase()}`"
-          @click="within = window.key"
+          @click="ui.setWorkWithin(window.key)"
         >
           {{ window.label }} <span class="filter-count">{{ windowCounts[window.key] }}</span>
         </button>
@@ -387,11 +388,11 @@ function mark(item: WorkItem, action: WorkMarkAction): void {
       here.
     </p>
     <p
-      v-else-if="within !== null && blocks.length === 0 && work.scanFinished"
+      v-else-if="ui.workWithin !== null && blocks.length === 0 && work.scanFinished"
       class="panel-note"
       data-testid="work-within-empty"
     >
-      Nothing moved in the {{ WINDOWS.find((w) => w.key === within)?.label.toLowerCase() }}.
+      Nothing moved in the {{ WINDOWS.find((w) => w.key === ui.workWithin)?.label.toLowerCase() }}.
     </p>
 
     <div v-if="blocks.length > 0" class="col-heads" data-testid="work-col-heads">

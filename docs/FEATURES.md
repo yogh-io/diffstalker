@@ -1017,7 +1017,7 @@ change it makes on GitHub.
   both on the repo headings sit inside each time heading, with both off it
   is one list. The browser remembers both. Beside them **All / Last day /
   Last week / Last 2 weeks / Last month** (with counts) keeps only what
-  moved in that window; it is not remembered. With a filter on, Done sits
+  moved in that window; the browser remembers it. With a filter on, Done sits
   right after Work, before Candidates. Each section folds away with a click
   on its heading (the count stays), and the browser remembers which ones
   are folded. A click on a row opens its

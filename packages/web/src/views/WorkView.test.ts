@@ -531,6 +531,20 @@ describe('the time filter', () => {
     expect(branchesOf(wrapper, 'older')).toEqual(['stale']);
   });
 
+  test('the browser remembers the filter for the next visit', async () => {
+    const first = await mountPage();
+    await first.find('[data-testid="work-within-day"]').trigger('click');
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}').workWithin).toBe('day');
+    first.unmount();
+
+    setActivePinia(createPinia());
+    const wrapper = await mountPage();
+    expect(wrapper.find('[data-testid="work-within-day"]').attributes('aria-pressed')).toBe('true');
+    expect(branchesOf(wrapper, 'work')).toEqual(['with-pr']);
+    await wrapper.find('[data-testid="work-within-all"]').trigger('click');
+    expect(JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}').workWithin).toBeNull();
+  });
+
   test('a PR with no local branch and only bot comments counts its head commit', async () => {
     prsAnswer = snapshot({
       prs: [
